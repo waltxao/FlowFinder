@@ -235,6 +235,317 @@ pub extern "C" fn ff_get_system_memory() -> u64 {
     0
 }
 
+// ── File Operations ─────────────────────────────────────────────────
+
+/// Copy a file from `src` to `dst`.
+///
+/// Uses CoW cloning when available (same-volume APFS), falling back to
+/// standard byte-for-byte copy otherwise.
+///
+/// # Arguments
+///
+/// - `src` — NUL-terminated UTF-8 source path string.
+/// - `dst` — NUL-terminated UTF-8 destination path string.
+///
+/// # Returns
+///
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if a path is invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `src` and `dst` must be valid, NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub extern "C" fn ff_copy_file(src: *const c_char, dst: *const c_char) -> c_int {
+    if src.is_null() || dst.is_null() {
+        set_last_error("src or dst is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let src_str = unsafe {
+        match CStr::from_ptr(src).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("src is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    let dst_str = unsafe {
+        match CStr::from_ptr(dst).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("dst is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::file_ops::copy_file(std::path::Path::new(src_str), std::path::Path::new(dst_str)) {
+        Ok(_) => {
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            let msg = format!("copy_file failed: {}", e);
+            set_last_error(msg);
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Move a file or directory from `src` to `dst`.
+///
+/// Attempts a fast rename first. If `src` and `dst` are on different
+/// volumes, falls back to copy + delete.
+///
+/// # Arguments
+///
+/// - `src` — NUL-terminated UTF-8 source path string.
+/// - `dst` — NUL-terminated UTF-8 destination path string.
+///
+/// # Returns
+///
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if a path is invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `src` and `dst` must be valid, NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub extern "C" fn ff_move_file(src: *const c_char, dst: *const c_char) -> c_int {
+    if src.is_null() || dst.is_null() {
+        set_last_error("src or dst is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let src_str = unsafe {
+        match CStr::from_ptr(src).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("src is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    let dst_str = unsafe {
+        match CStr::from_ptr(dst).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("dst is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::file_ops::move_file(std::path::Path::new(src_str), std::path::Path::new(dst_str)) {
+        Ok(()) => {
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            let msg = format!("move_file failed: {}", e);
+            set_last_error(msg);
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Delete a file at `path`.
+///
+/// # Arguments
+///
+/// - `path` — NUL-terminated UTF-8 path string.
+///
+/// # Returns
+///
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if the path is invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `path` must be a valid, NUL-terminated UTF-8 string.
+#[no_mangle]
+pub extern "C" fn ff_delete_file(path: *const c_char) -> c_int {
+    if path.is_null() {
+        set_last_error("path is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::file_ops::delete_file(std::path::Path::new(path_str)) {
+        Ok(()) => {
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            let msg = format!("delete_file failed: {}", e);
+            set_last_error(msg);
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Delete a directory and all its contents at `path`.
+///
+/// # Arguments
+///
+/// - `path` — NUL-terminated UTF-8 path string.
+///
+/// # Returns
+///
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if the path is invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `path` must be a valid, NUL-terminated UTF-8 string.
+#[no_mangle]
+pub extern "C" fn ff_delete_dir(path: *const c_char) -> c_int {
+    if path.is_null() {
+        set_last_error("path is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::file_ops::delete_dir(std::path::Path::new(path_str)) {
+        Ok(()) => {
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            let msg = format!("delete_dir failed: {}", e);
+            set_last_error(msg);
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Create a directory and all parent directories at `path`.
+///
+/// # Arguments
+///
+/// - `path` — NUL-terminated UTF-8 path string.
+///
+/// # Returns
+///
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if the path is invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `path` must be a valid, NUL-terminated UTF-8 string.
+#[no_mangle]
+pub extern "C" fn ff_create_dir(path: *const c_char) -> c_int {
+    if path.is_null() {
+        set_last_error("path is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::file_ops::create_dir(std::path::Path::new(path_str)) {
+        Ok(()) => {
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            let msg = format!("create_dir failed: {}", e);
+            set_last_error(msg);
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Rename a file or directory from `src` to `dst`.
+///
+/// # Arguments
+///
+/// - `src` — NUL-terminated UTF-8 source path string.
+/// - `dst` — NUL-terminated UTF-8 destination path string.
+///
+/// # Returns
+///
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if a path is invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `src` and `dst` must be valid, NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub extern "C" fn ff_rename(src: *const c_char, dst: *const c_char) -> c_int {
+    if src.is_null() || dst.is_null() {
+        set_last_error("src or dst is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let src_str = unsafe {
+        match CStr::from_ptr(src).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("src is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    let dst_str = unsafe {
+        match CStr::from_ptr(dst).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("dst is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::file_ops::rename(std::path::Path::new(src_str), std::path::Path::new(dst_str)) {
+        Ok(()) => {
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            let msg = format!("rename failed: {}", e);
+            set_last_error(msg);
+            FF_ERR_IO
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]

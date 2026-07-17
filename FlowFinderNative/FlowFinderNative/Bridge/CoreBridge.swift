@@ -131,6 +131,295 @@ public final class CoreBridge {
         return entries
     }
 
+    // MARK: - File Operations
+
+    /// Copy a file from src to dst
+    /// - Parameters:
+    ///   - src: Source file path
+    ///   - dst: Destination file path
+    /// - Throws: CoreBridgeError if operation fails
+    public func copyFile(src: String, dst: String) throws {
+        guard !src.isEmpty, !dst.isEmpty else {
+            throw CoreBridgeError.invalidPath("Source or destination path is empty")
+        }
+
+        var ffiResult: Int32 = -1
+        let semaphore = DispatchSemaphore(value: 0)
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+
+            let result = src.withCString { cSrc in
+                dst.withCString { cDst in
+                    ff_copy_file(cSrc, cDst)
+                }
+            }
+            ffiResult = result
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    /// Move a file or directory from src to dst
+    /// - Parameters:
+    ///   - src: Source path
+    ///   - dst: Destination path
+    /// - Throws: CoreBridgeError if operation fails
+    public func moveFile(src: String, dst: String) throws {
+        guard !src.isEmpty, !dst.isEmpty else {
+            throw CoreBridgeError.invalidPath("Source or destination path is empty")
+        }
+
+        var ffiResult: Int32 = -1
+        let semaphore = DispatchSemaphore(value: 0)
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+
+            let result = src.withCString { cSrc in
+                dst.withCString { cDst in
+                    ff_move_file(cSrc, cDst)
+                }
+            }
+            ffiResult = result
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    /// Delete a file at path
+    /// - Parameter path: File path to delete
+    /// - Throws: CoreBridgeError if operation fails
+    public func deleteFile(path: String) throws {
+        guard !path.isEmpty else {
+            throw CoreBridgeError.invalidPath("Path is empty")
+        }
+
+        var ffiResult: Int32 = -1
+        let semaphore = DispatchSemaphore(value: 0)
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+
+            let result = path.withCString { cPath in
+                ff_delete_file(cPath)
+            }
+            ffiResult = result
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    /// Delete a directory and all its contents at path
+    /// - Parameter path: Directory path to delete
+    /// - Throws: CoreBridgeError if operation fails
+    public func deleteDirectory(path: String) throws {
+        guard !path.isEmpty else {
+            throw CoreBridgeError.invalidPath("Path is empty")
+        }
+
+        var ffiResult: Int32 = -1
+        let semaphore = DispatchSemaphore(value: 0)
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+
+            let result = path.withCString { cPath in
+                ff_delete_dir(cPath)
+            }
+            ffiResult = result
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    /// Create a directory and all parent directories at path
+    /// - Parameter path: Directory path to create
+    /// - Throws: CoreBridgeError if operation fails
+    public func createDirectory(path: String) throws {
+        guard !path.isEmpty else {
+            throw CoreBridgeError.invalidPath("Path is empty")
+        }
+
+        var ffiResult: Int32 = -1
+        let semaphore = DispatchSemaphore(value: 0)
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+
+            let result = path.withCString { cPath in
+                ff_create_dir(cPath)
+            }
+            ffiResult = result
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    /// Rename a file or directory from src to dst
+    /// - Parameters:
+    ///   - src: Source path
+    ///   - dst: Destination path
+    /// - Throws: CoreBridgeError if operation fails
+    public func renameFile(src: String, dst: String) throws {
+        guard !src.isEmpty, !dst.isEmpty else {
+            throw CoreBridgeError.invalidPath("Source or destination path is empty")
+        }
+
+        var ffiResult: Int32 = -1
+        let semaphore = DispatchSemaphore(value: 0)
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+
+            let result = src.withCString { cSrc in
+                dst.withCString { cDst in
+                    ff_rename(cSrc, cDst)
+                }
+            }
+            ffiResult = result
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    // MARK: - Async File Operations
+
+    /// Copy a file asynchronously
+    /// - Parameters:
+    ///   - src: Source file path
+    ///   - dst: Destination file path
+    ///   - completion: Completion handler with optional error
+    public func copyFileAsync(src: String, dst: String, completion: @escaping (CoreBridgeError?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try self?.copyFile(src: src, dst: dst)
+                completion(nil)
+            } catch let error as CoreBridgeError {
+                completion(error)
+            } catch {
+                completion(CoreBridgeError.unknownError)
+            }
+        }
+    }
+
+    /// Move a file asynchronously
+    /// - Parameters:
+    ///   - src: Source path
+    ///   - dst: Destination path
+    ///   - completion: Completion handler with optional error
+    public func moveFileAsync(src: String, dst: String, completion: @escaping (CoreBridgeError?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try self?.moveFile(src: src, dst: dst)
+                completion(nil)
+            } catch let error as CoreBridgeError {
+                completion(error)
+            } catch {
+                completion(CoreBridgeError.unknownError)
+            }
+        }
+    }
+
+    /// Delete a file asynchronously
+    /// - Parameters:
+    ///   - path: File path to delete
+    ///   - completion: Completion handler with optional error
+    public func deleteFileAsync(path: String, completion: @escaping (CoreBridgeError?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try self?.deleteFile(path: path)
+                completion(nil)
+            } catch let error as CoreBridgeError {
+                completion(error)
+            } catch {
+                completion(CoreBridgeError.unknownError)
+            }
+        }
+    }
+
+    /// Delete a directory asynchronously
+    /// - Parameters:
+    ///   - path: Directory path to delete
+    ///   - completion: Completion handler with optional error
+    public func deleteDirectoryAsync(path: String, completion: @escaping (CoreBridgeError?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try self?.deleteDirectory(path: path)
+                completion(nil)
+            } catch let error as CoreBridgeError {
+                completion(error)
+            } catch {
+                completion(CoreBridgeError.unknownError)
+            }
+        }
+    }
+
+    /// Create a directory asynchronously
+    /// - Parameters:
+    ///   - path: Directory path to create
+    ///   - completion: Completion handler with optional error
+    public func createDirectoryAsync(path: String, completion: @escaping (CoreBridgeError?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try self?.createDirectory(path: path)
+                completion(nil)
+            } catch let error as CoreBridgeError {
+                completion(error)
+            } catch {
+                completion(CoreBridgeError.unknownError)
+            }
+        }
+    }
+
+    /// Rename a file or directory asynchronously
+    /// - Parameters:
+    ///   - src: Source path
+    ///   - dst: Destination path
+    ///   - completion: Completion handler with optional error
+    public func renameFileAsync(src: String, dst: String, completion: @escaping (CoreBridgeError?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try self?.renameFile(src: src, dst: dst)
+                completion(nil)
+            } catch let error as CoreBridgeError {
+                completion(error)
+            } catch {
+                completion(CoreBridgeError.unknownError)
+            }
+        }
+    }
+
     // MARK: - Error Handling
 
     /// Get the last error message from the Rust core

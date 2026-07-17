@@ -58,6 +58,177 @@ final class FlowFinderNativeTests: XCTestCase {
         }
     }
 
+    // MARK: - File Operations Tests
+
+    func testCopyFile() throws {
+        let bridge = CoreBridge.shared
+        let tmpDir = FileManager.default.temporaryDirectory
+        let srcPath = tmpDir.appendingPathComponent("test_src.txt").path
+        let dstPath = tmpDir.appendingPathComponent("test_dst.txt").path
+
+        // Clean up any existing files
+        try? FileManager.default.removeItem(atPath: srcPath)
+        try? FileManager.default.removeItem(atPath: dstPath)
+
+        // Create source file
+        try "hello world".write(toFile: srcPath, atomically: true, encoding: .utf8)
+
+        // Copy file
+        try bridge.copyFile(src: srcPath, dst: dstPath)
+
+        // Verify destination exists
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "Destination file should exist after copy")
+
+        // Clean up
+        try? FileManager.default.removeItem(atPath: srcPath)
+        try? FileManager.default.removeItem(atPath: dstPath)
+    }
+
+    func testMoveFile() throws {
+        let bridge = CoreBridge.shared
+        let tmpDir = FileManager.default.temporaryDirectory
+        let srcPath = tmpDir.appendingPathComponent("test_move_src.txt").path
+        let dstPath = tmpDir.appendingPathComponent("test_move_dst.txt").path
+
+        // Clean up any existing files
+        try? FileManager.default.removeItem(atPath: srcPath)
+        try? FileManager.default.removeItem(atPath: dstPath)
+
+        // Create source file
+        try "move me".write(toFile: srcPath, atomically: true, encoding: .utf8)
+
+        // Move file
+        try bridge.moveFile(src: srcPath, dst: dstPath)
+
+        // Verify source no longer exists and destination does
+        XCTAssertFalse(FileManager.default.fileExists(atPath: srcPath), "Source file should not exist after move")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "Destination file should exist after move")
+
+        // Clean up
+        try? FileManager.default.removeItem(atPath: dstPath)
+    }
+
+    func testDeleteFile() throws {
+        let bridge = CoreBridge.shared
+        let tmpDir = FileManager.default.temporaryDirectory
+        let filePath = tmpDir.appendingPathComponent("test_delete.txt").path
+
+        // Clean up any existing file
+        try? FileManager.default.removeItem(atPath: filePath)
+
+        // Create file
+        try "delete me".write(toFile: filePath, atomically: true, encoding: .utf8)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: filePath), "File should exist before delete")
+
+        // Delete file
+        try bridge.deleteFile(path: filePath)
+
+        // Verify file no longer exists
+        XCTAssertFalse(FileManager.default.fileExists(atPath: filePath), "File should not exist after delete")
+    }
+
+    func testCreateAndDeleteDirectory() throws {
+        let bridge = CoreBridge.shared
+        let tmpDir = FileManager.default.temporaryDirectory
+        let dirPath = tmpDir.appendingPathComponent("test_create_dir").path
+
+        // Clean up any existing directory
+        try? FileManager.default.removeItem(atPath: dirPath)
+
+        // Create directory
+        try bridge.createDirectory(path: dirPath)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dirPath), "Directory should exist after create")
+
+        // Delete directory
+        try bridge.deleteDirectory(path: dirPath)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dirPath), "Directory should not exist after delete")
+    }
+
+    func testRenameFile() throws {
+        let bridge = CoreBridge.shared
+        let tmpDir = FileManager.default.temporaryDirectory
+        let srcPath = tmpDir.appendingPathComponent("test_rename_old.txt").path
+        let dstPath = tmpDir.appendingPathComponent("test_rename_new.txt").path
+
+        // Clean up any existing files
+        try? FileManager.default.removeItem(atPath: srcPath)
+        try? FileManager.default.removeItem(atPath: dstPath)
+
+        // Create source file
+        try "rename me".write(toFile: srcPath, atomically: true, encoding: .utf8)
+
+        // Rename file
+        try bridge.renameFile(src: srcPath, dst: dstPath)
+
+        // Verify old no longer exists and new does
+        XCTAssertFalse(FileManager.default.fileExists(atPath: srcPath), "Old file should not exist after rename")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "New file should exist after rename")
+
+        // Clean up
+        try? FileManager.default.removeItem(atPath: dstPath)
+    }
+
+    func testCopyFileAsync() throws {
+        let bridge = CoreBridge.shared
+        let tmpDir = FileManager.default.temporaryDirectory
+        let srcPath = tmpDir.appendingPathComponent("test_async_src.txt").path
+        let dstPath = tmpDir.appendingPathComponent("test_async_dst.txt").path
+
+        // Clean up any existing files
+        try? FileManager.default.removeItem(atPath: srcPath)
+        try? FileManager.default.removeItem(atPath: dstPath)
+
+        // Create source file
+        try "async copy".write(toFile: srcPath, atomically: true, encoding: .utf8)
+
+        // Copy file async
+        let expectation = self.expectation(description: "Async copy completes")
+        var copyError: CoreBridgeError?
+
+        bridge.copyFileAsync(src: srcPath, dst: dstPath) { error in
+            copyError = error
+            expectation.fulfill()
+        }
+
+        waitForExpectations(timeout: 5.0, handler: nil)
+
+        // Verify no error and destination exists
+        XCTAssertNil(copyError, "Async copy should not produce an error")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "Destination file should exist after async copy")
+
+        // Clean up
+        try? FileManager.default.removeItem(atPath: srcPath)
+        try? FileManager.default.removeItem(atPath: dstPath)
+    }
+
+    func testDeleteFileAsync() throws {
+        let bridge = CoreBridge.shared
+        let tmpDir = FileManager.default.temporaryDirectory
+        let filePath = tmpDir.appendingPathComponent("test_async_delete.txt").path
+
+        // Clean up any existing file
+        try? FileManager.default.removeItem(atPath: filePath)
+
+        // Create file
+        try "async delete".write(toFile: filePath, atomically: true, encoding: .utf8)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: filePath), "File should exist before async delete")
+
+        // Delete file async
+        let expectation = self.expectation(description: "Async delete completes")
+        var deleteError: CoreBridgeError?
+
+        bridge.deleteFileAsync(path: filePath) { error in
+            deleteError = error
+            expectation.fulfill()
+        }
+
+        waitForExpectations(timeout: 5.0, handler: nil)
+
+        // Verify no error and file no longer exists
+        XCTAssertNil(deleteError, "Async delete should not produce an error")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: filePath), "File should not exist after async delete")
+    }
+
     // MARK: - FileEntry Tests
 
     func testFileEntryInitialization() {

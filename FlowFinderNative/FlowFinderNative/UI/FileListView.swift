@@ -52,11 +52,15 @@ public class FileListView: NSView {
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupUI()
+        setupContextMenu()
+        setupKeyboardShortcuts()
     }
 
     public required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupUI()
+        setupContextMenu()
+        setupKeyboardShortcuts()
     }
 
     private func setupUI() {
@@ -118,6 +122,294 @@ public class FileListView: NSView {
         // NSTableView.register() with class types is not available in Swift;
         // cell creation is handled in the delegate's tableView(_:viewFor:row:) method
         // using makeView(withIdentifier:owner:) for reuse.
+    }
+
+    // MARK: - Context Menu
+
+    private func setupContextMenu() {
+        let menu = NSMenu()
+
+        // Copy
+        let copyItem = NSMenuItem(
+            title: "Copy",
+            action: #selector(copySelectedFile(_:)),
+            keyEquivalent: "c"
+        )
+        copyItem.keyEquivalentModifierMask = .command
+        copyItem.target = self
+        menu.addItem(copyItem)
+
+        // Move
+        let moveItem = NSMenuItem(
+            title: "Move",
+            action: #selector(moveSelectedFile(_:)),
+            keyEquivalent: "x"
+        )
+        moveItem.keyEquivalentModifierMask = .command
+        moveItem.target = self
+        menu.addItem(moveItem)
+
+        // Rename
+        let renameItem = NSMenuItem(
+            title: "Rename",
+            action: #selector(renameSelectedFile(_:)),
+            keyEquivalent: "r"
+        )
+        renameItem.keyEquivalentModifierMask = .command
+        renameItem.target = self
+        menu.addItem(renameItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Delete
+        let deleteItem = NSMenuItem(
+            title: "Delete",
+            action: #selector(deleteSelectedFile(_:)),
+            keyEquivalent: "\u{7F}"
+        )
+        deleteItem.keyEquivalentModifierMask = .command
+        deleteItem.target = self
+        menu.addItem(deleteItem)
+
+        // Create Directory
+        let createDirItem = NSMenuItem(
+            title: "New Folder",
+            action: #selector(createDirectory(_:)),
+            keyEquivalent: "n"
+        )
+        createDirItem.keyEquivalentModifierMask = [.command, .shift]
+        createDirItem.target = self
+        menu.addItem(createDirItem)
+
+        tableView.menu = menu
+    }
+
+    // MARK: - Keyboard Shortcuts
+
+    private func setupKeyboardShortcuts() {
+        // Keyboard shortcuts are handled by the menu items above
+        // Additional shortcuts can be registered via NSResponder
+    }
+
+    // MARK: - Context Menu Actions
+
+    @objc private func copySelectedFile(_ sender: Any?) {
+        guard let entry = selectedEntry else { return }
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = entry.name
+        panel.canCreateDirectories = true
+
+        panel.beginSheetModal(for: window!) { [weak self] result in
+            guard result == .OK, let url = panel.url else { return }
+
+            self?.showProgressIndicator(title: "Copying...") { progress in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        try CoreBridge.shared.copyFile(src: entry.path, dst: url.path)
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.viewModel?.refresh()
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.showErrorAlert(error: error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func moveSelectedFile(_ sender: Any?) {
+        guard let entry = selectedEntry else { return }
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = entry.name
+        panel.canCreateDirectories = true
+
+        panel.beginSheetModal(for: window!) { [weak self] result in
+            guard result == .OK, let url = panel.url else { return }
+
+            self?.showProgressIndicator(title: "Moving...") { progress in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        try CoreBridge.shared.moveFile(src: entry.path, dst: url.path)
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.viewModel?.refresh()
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.showErrorAlert(error: error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func renameSelectedFile(_ sender: Any?) {
+        guard let entry = selectedEntry else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Rename \(entry.name)"
+        alert.informativeText = "Enter a new name:"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        textField.stringValue = entry.name
+        alert.accessoryView = textField
+
+        alert.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+
+            let newName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !newName.isEmpty, newName != entry.name else { return }
+
+            let parentPath = (entry.path as NSString).deletingLastPathComponent
+            let newPath = (parentPath as NSString).appendingPathComponent(newName)
+
+            self?.showProgressIndicator(title: "Renaming...") { progress in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        try CoreBridge.shared.renameFile(src: entry.path, dst: newPath)
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.viewModel?.refresh()
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.showErrorAlert(error: error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func deleteSelectedFile(_ sender: Any?) {
+        guard let entry = selectedEntry else { return }
+
+        let alert = NSAlert()
+        alert.messageText = entry.isDirectory ? "Delete Folder?" : "Delete File?"
+        alert.informativeText = "Are you sure you want to delete \"\(entry.name)\"?\nThis action cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+
+        alert.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+
+            self?.showProgressIndicator(title: "Deleting...") { progress in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        if entry.isDirectory {
+                            try CoreBridge.shared.deleteDirectory(path: entry.path)
+                        } else {
+                            try CoreBridge.shared.deleteFile(path: entry.path)
+                        }
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.viewModel?.refresh()
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.showErrorAlert(error: error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func createDirectory(_ sender: Any?) {
+        guard let currentPath = viewModel?.currentPath else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "New Folder"
+        alert.informativeText = "Enter a name for the new folder:"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        textField.stringValue = "New Folder"
+        textField.selectText(nil)
+        alert.accessoryView = textField
+
+        alert.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+
+            let folderName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !folderName.isEmpty else { return }
+
+            let newPath = (currentPath as NSString).appendingPathComponent(folderName)
+
+            self?.showProgressIndicator(title: "Creating...") { progress in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        try CoreBridge.shared.createDirectory(path: newPath)
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.viewModel?.refresh()
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            progress.close()
+                            self?.showErrorAlert(error: error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Helper Methods
+
+    private var selectedEntry: FileEntry? {
+        guard let viewModel = viewModel,
+              let clickedRow = tableView?.clickedRow,
+              clickedRow >= 0,
+              clickedRow < viewModel.entries.count else { return nil }
+        return viewModel.entries[clickedRow]
+    }
+
+    private func showProgressIndicator(title: String, action: (NSProgressIndicator) -> Void) {
+        let progress = NSProgressIndicator()
+        progress.style = .bar
+        progress.isIndeterminate = true
+        progress.startAnimation(nil)
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.accessoryView = progress
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.isHidden = true
+
+        if let window = window {
+            alert.beginSheetModal(for: window) { _ in }
+        }
+
+        action(progress)
+    }
+
+    private func showErrorAlert(error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Error"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+
+        if let window = window {
+            alert.beginSheetModal(for: window) { _ in }
+        }
     }
 
     public override func resizeSubviews(withOldSize oldSize: NSSize) {

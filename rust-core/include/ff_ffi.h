@@ -40,6 +40,14 @@ typedef void (*FFEntryCallback)(const FFEntryRef *entry, void *user_data);
 /* ── Directory listing API ──────────────────────────────────── */
 ff_error_t ff_list_dir(const char *path, FFEntryCallback callback, void *user_data);
 
+/* ── File operations API ───────────────────────────────────── */
+ff_error_t ff_copy_file(const char *src, const char *dst);
+ff_error_t ff_move_file(const char *src, const char *dst);
+ff_error_t ff_delete_file(const char *path);
+ff_error_t ff_delete_dir(const char *path);
+ff_error_t ff_create_dir(const char *path);
+ff_error_t ff_rename(const char *src, const char *dst);
+
 /* ── Error handling API ─────────────────────────────────────── */
 char *ff_last_error(void);
 void ff_free_string(char *s);
