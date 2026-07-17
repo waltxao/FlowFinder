@@ -1223,6 +1223,383 @@ pub extern "C" fn ff_cache_put(
     FF_OK
 }
 
+// ── Directory Cache FFI (Sub-project 5 aliases) ─────────────────────
+
+/// Alias for ff_cache_get — get cached directory entries.
+#[no_mangle]
+pub extern "C" fn ff_dir_cache_get(
+    path: *const c_char,
+    callback: FFEntryCallback,
+    user_data: *mut c_void,
+) -> c_int {
+    ff_cache_get(path, callback, user_data)
+}
+
+/// Alias for ff_cache_invalidate — invalidate directory cache.
+#[no_mangle]
+pub extern "C" fn ff_dir_cache_invalidate(path: *const c_char) -> c_int {
+    ff_cache_invalidate(path)
+}
+
+/// Clear all directory cache entries.
+#[no_mangle]
+pub extern "C" fn ff_dir_cache_clear() -> c_int {
+    crate::core::dir_cache::clear();
+    clear_last_error();
+    FF_OK
+}
+
+// ── FSEvents Watcher ──────────────────────────────────────────────
+
+/// Callback type for FSEvents notifications.
+/// Arguments: (path, user_data)
+pub type FSEventCallback = extern "C" fn(path: *const c_char, user_data: *mut c_void);
+
+/// Start watching a path for filesystem changes.
+///
+/// # Arguments
+/// - `path` — NUL-terminated UTF-8 path string to watch.
+/// - `callback` — Function called when a change is detected.
+/// - `user_data` — Opaque pointer passed to the callback.
+///
+/// # Returns
+/// - `0` on success.
+/// - `FF_ERR_INVALID_PATH` if the path is invalid.
+#[no_mangle]
+pub extern "C" fn ff_fsevents_start(
+    path: *const c_char,
+    callback: FSEventCallback,
+    user_data: *mut c_void,
+) -> c_int {
+    if path.is_null() {
+        set_last_error("path is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::fsevents::start(path_str, callback, user_data) {
+        0 => {
+            clear_last_error();
+            FF_OK
+        }
+        _ => {
+            set_last_error("fsevents_start failed".to_string());
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Stop the FSEvents watcher.
+///
+/// # Arguments
+/// - `handle` — Handle returned by ff_fsevents_start.
+///
+/// # Returns
+/// - `0` on success.
+#[no_mangle]
+pub extern "C" fn ff_fsevents_stop(_handle: c_int) -> c_int {
+    crate::core::fsevents::stop();
+    clear_last_error();
+    FF_OK
+}
+
+// ── Batch Rename & Organize ────────────────────────────────────────
+
+/// C-compatible batch rename item.
+#[repr(C)]
+pub struct FFRenameItem {
+    pub original_path: *mut c_char,
+    pub new_name: *mut c_char,
+}
+
+/// Callback for batch operation progress.
+pub type FFBatchProgressCallback = extern "C" fn(completed: usize, total: usize, current_file: *const c_char, user_data: *mut c_void);
+
+/// Batch rename files.
+///
+/// # Arguments
+///
+/// - `items` — Array of `FFRenameItem`.
+/// - `item_count` — Number of items.
+///
+/// # Returns
+///
+/// - Number of successful renames on success (>= 0).
+/// - `FF_ERR_INVALID_PATH` if inputs are invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `items` must be a valid pointer to an array of `FFRenameItem`.
+#[no_mangle]
+pub extern "C" fn ff_batch_rename(
+    items: *const FFRenameItem,
+    item_count: usize,
+) -> c_int {
+    if items.is_null() && item_count > 0 {
+        set_last_error("items is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let mut rename_items = Vec::with_capacity(item_count);
+    for i in 0..item_count {
+        let item = unsafe { &*items.add(i) };
+        let original = if item.original_path.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(item.original_path).to_string_lossy().to_string() }
+        };
+        let new_name = if item.new_name.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(item.new_name).to_string_lossy().to_string() }
+        };
+        rename_items.push(crate::core::batch_ops::RenameItem {
+            original_path: original,
+            new_name,
+        });
+    }
+
+    match crate::core::batch_ops::batch_rename(&rename_items, None) {
+        Ok(count) => {
+            clear_last_error();
+            count as c_int
+        }
+        Err(e) => {
+            set_last_error(format!("batch_rename failed: {}", e));
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Organize files by date into folders.
+///
+/// # Arguments
+///
+/// - `path` — NUL-terminated UTF-8 directory path.
+/// - `format` — NUL-terminated UTF-8 format string (e.g., "YYYY/MM/DD").
+///
+/// # Returns
+///
+/// - Number of files moved on success (>= 0).
+/// - `FF_ERR_INVALID_PATH` if inputs are invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `path` and `format` must be valid, NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub extern "C" fn ff_organize_by_date(
+    path: *const c_char,
+    format: *const c_char,
+) -> c_int {
+    if path.is_null() || format.is_null() {
+        set_last_error("path or format is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    let format_str = unsafe {
+        match CStr::from_ptr(format).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("format is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::batch_ops::organize_by_date(path_str, format_str, None) {
+        Ok(count) => {
+            clear_last_error();
+            count as c_int
+        }
+        Err(e) => {
+            set_last_error(format!("organize_by_date failed: {}", e));
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Organize files by file type into category folders.
+///
+/// # Arguments
+///
+/// - `path` — NUL-terminated UTF-8 directory path.
+///
+/// # Returns
+///
+/// - Number of files moved on success (>= 0).
+/// - `FF_ERR_INVALID_PATH` if inputs are invalid.
+/// - `FF_ERR_IO` if a filesystem error occurs.
+///
+/// # Safety
+///
+/// - `path` must be a valid, NUL-terminated UTF-8 string.
+#[no_mangle]
+pub extern "C" fn ff_organize_by_type(
+    path: *const c_char,
+) -> c_int {
+    if path.is_null() {
+        set_last_error("path is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::batch_ops::organize_by_type(path_str, None) {
+        Ok(count) => {
+            clear_last_error();
+            count as c_int
+        }
+        Err(e) => {
+            set_last_error(format!("organize_by_type failed: {}", e));
+            FF_ERR_IO
+        }
+    }
+}
+
+// ── Thumbnail Generation ──────────────────────────────────────────
+
+/// Generate a thumbnail for an image file.
+///
+/// # Arguments
+/// - `path` — NUL-terminated UTF-8 path to the image file.
+/// - `max_size` — Maximum width/height of the thumbnail.
+/// - `callback` — Called with the thumbnail path.
+/// - `user_data` — Opaque pointer passed to the callback.
+///
+/// # Returns
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if the path is invalid.
+#[no_mangle]
+pub extern "C" fn ff_generate_thumbnail(
+    path: *const c_char,
+    max_size: u32,
+    callback: extern "C" fn(thumbnail_path: *const c_char, user_data: *mut c_void),
+    user_data: *mut c_void,
+) -> c_int {
+    if path.is_null() {
+        set_last_error("path is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    match crate::core::thumbnails::generate_thumbnail(path_str, max_size) {
+        Ok(thumb_path) => {
+            let path_c = rust_string_to_c(thumb_path.to_string_lossy().to_string());
+            callback(path_c, user_data);
+            if !path_c.is_null() {
+                unsafe { let _ = CString::from_raw(path_c); }
+            }
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            set_last_error(format!("generate_thumbnail failed: {}", e));
+            FF_ERR_IO
+        }
+    }
+}
+
+/// Generate thumbnails for multiple image files.
+///
+/// # Arguments
+/// - `paths` — Array of NUL-terminated UTF-8 paths.
+/// - `path_count` — Number of paths.
+/// - `max_size` — Maximum width/height of each thumbnail.
+/// - `callback` — Called for each thumbnail path.
+/// - `user_data` — Opaque pointer passed to the callback.
+///
+/// # Returns
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if inputs are invalid.
+#[no_mangle]
+pub extern "C" fn ff_generate_thumbnails(
+    paths: *const *const c_char,
+    path_count: usize,
+    max_size: u32,
+    callback: extern "C" fn(thumbnail_path: *const c_char, user_data: *mut c_void),
+    user_data: *mut c_void,
+) -> c_int {
+    if paths.is_null() && path_count > 0 {
+        set_last_error("paths is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let mut path_strings = Vec::with_capacity(path_count);
+    for i in 0..path_count {
+        let path_ptr = unsafe { *paths.add(i) };
+        if path_ptr.is_null() {
+            set_last_error("path in array is null".to_string());
+            return FF_ERR_INVALID_PATH;
+        }
+        let path_str = unsafe {
+            match CStr::from_ptr(path_ptr).to_str() {
+                Ok(s) => s.to_string(),
+                Err(_) => {
+                    set_last_error("path is not valid UTF-8".to_string());
+                    return FF_ERR_INVALID_PATH;
+                }
+            }
+        };
+        path_strings.push(path_str);
+    }
+
+    match crate::core::thumbnails::generate_thumbnails(&path_strings, max_size) {
+        Ok(thumb_paths) => {
+            for thumb_path in thumb_paths {
+                let path_c = rust_string_to_c(thumb_path.to_string_lossy().to_string());
+                callback(path_c, user_data);
+                if !path_c.is_null() {
+                    unsafe { let _ = CString::from_raw(path_c); }
+                }
+            }
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            set_last_error(format!("generate_thumbnails failed: {}", e));
+            FF_ERR_IO
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1306,6 +1683,24 @@ mod tests {
         let path = CString::new("/nonexistent/path/xyz123").unwrap();
         let result = ff_cache_get(path.as_ptr(), dummy_callback, ptr::null_mut());
         assert_eq!(result, FF_ERR_NOT_FOUND);
+    }
+
+    #[test]
+    fn test_ff_dir_cache_clear() {
+        let result = ff_dir_cache_clear();
+        assert_eq!(result, FF_OK);
+    }
+
+    #[test]
+    fn test_ff_fsevents_start_stop() {
+        extern "C" fn test_callback(_path: *const c_char, _user_data: *mut c_void) {}
+
+        let path = CString::new("/tmp").unwrap();
+        let result = ff_fsevents_start(path.as_ptr(), test_callback, ptr::null_mut());
+        assert_eq!(result, FF_OK);
+
+        let result = ff_fsevents_stop(0);
+        assert_eq!(result, FF_OK);
     }
 
     extern "C" fn dummy_callback(_entry: *const FFEntryRef, _user_data: *mut c_void) {}

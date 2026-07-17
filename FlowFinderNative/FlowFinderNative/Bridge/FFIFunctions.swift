@@ -249,3 +249,123 @@ public func ff_cache_put(
     _ entries: UnsafePointer<FFEntryRef>,
     _ entryCount: Int
 ) -> Int32
+
+// MARK: - Directory Cache (Sub-project 5) FFI Declarations
+
+/// Get cached directory entries for a path (alias)
+/// - Parameters:
+///   - path: Directory path (C string)
+///   - callback: Called for each cached entry
+///   - userData: User data pointer passed to callback
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_dir_cache_get")
+public func ff_dir_cache_get(
+    _ path: UnsafePointer<CChar>,
+    _ callback: @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void,
+    _ userData: UnsafeMutableRawPointer?
+) -> Int32
+
+/// Invalidate the directory cache for a specific path (alias)
+/// - Parameter path: Directory path (C string)
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_dir_cache_invalidate")
+public func ff_dir_cache_invalidate(_ path: UnsafePointer<CChar>) -> Int32
+
+/// Clear all directory cache entries
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_dir_cache_clear")
+public func ff_dir_cache_clear() -> Int32
+
+// MARK: - FSEvents Watcher (Sub-project 5) FFI Declarations
+
+/// Callback type for FSEvents notifications
+public type FSEventCallback = @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+
+/// Start watching a path for filesystem changes
+/// - Parameters:
+///   - path: Directory path to watch (C string)
+///   - callback: Called when a change is detected
+///   - userData: User data pointer passed to callback
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_fsevents_start")
+public func ff_fsevents_start(
+    _ path: UnsafePointer<CChar>,
+    _ callback: FSEventCallback,
+    _ userData: UnsafeMutableRawPointer?
+) -> Int32
+
+/// Stop the FSEvents watcher
+/// - Parameter handle: Handle returned by ff_fsevents_start
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_fsevents_stop")
+public func ff_fsevents_stop(_ handle: Int32) -> Int32
+
+// MARK: - Batch Rename & Organize (Sub-project 6) FFI Declarations
+
+/// C-compatible batch rename item
+public struct FFRenameItem {
+    public var originalPath: UnsafeMutablePointer<CChar>
+    public var newName: UnsafeMutablePointer<CChar>
+}
+
+/// Batch rename files
+/// - Parameters:
+///   - items: Array of FFRenameItem
+///   - itemCount: Number of items
+/// - Returns: Number of successful renames on success (>= 0), negative error code on failure
+@_silgen_name("ff_batch_rename")
+public func ff_batch_rename(
+    _ items: UnsafePointer<FFRenameItem>,
+    _ itemCount: Int
+) -> Int32
+
+/// Organize files by date into folders
+/// - Parameters:
+///   - path: Directory path (C string)
+///   - format: Date format string (C string, e.g., "YYYY/MM/DD")
+/// - Returns: Number of files moved on success (>= 0), negative error code on failure
+@_silgen_name("ff_organize_by_date")
+public func ff_organize_by_date(
+    _ path: UnsafePointer<CChar>,
+    _ format: UnsafePointer<CChar>
+) -> Int32
+
+/// Organize files by file type into category folders
+/// - Parameter path: Directory path (C string)
+/// - Returns: Number of files moved on success (>= 0), negative error code on failure
+@_silgen_name("ff_organize_by_type")
+public func ff_organize_by_type(_ path: UnsafePointer<CChar>) -> Int32
+
+// MARK: - Thumbnail Generation (Sub-project 7) FFI Declarations
+
+/// Generate a thumbnail for an image file
+/// - Parameters:
+///   - path: Image file path (C string)
+///   - maxSize: Maximum width/height of the thumbnail
+///   - callback: Called with the thumbnail path
+///   - userData: User data pointer passed to callback
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_generate_thumbnail")
+public func ff_generate_thumbnail(
+    _ path: UnsafePointer<CChar>,
+    _ maxSize: UInt32,
+    _ callback: @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void,
+    _ userData: UnsafeMutableRawPointer?
+) -> Int32
+
+/// Generate thumbnails for multiple image files
+/// - Parameters:
+///   - paths: Array of image file paths (C strings)
+///   - pathCount: Number of paths
+///   - maxSize: Maximum width/height of each thumbnail
+///   - callback: Called for each thumbnail path
+///   - userData: User data pointer passed to callback
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_generate_thumbnails")
+public func ff_generate_thumbnails(
+    _ paths: UnsafePointer<UnsafePointer<CChar>?>,
+    _ pathCount: Int,
+    _ maxSize: UInt32,
+    _ callback: @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void,
+    _ userData: UnsafeMutableRawPointer?
+) -> Int32

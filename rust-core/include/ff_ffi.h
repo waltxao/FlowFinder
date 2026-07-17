@@ -117,6 +117,34 @@ ff_error_t ff_cache_invalidate(const char *path);
 ff_error_t ff_cache_get(const char *path, FFEntryCallback callback, void *user_data);
 ff_error_t ff_cache_put(const char *path, const FFEntryRef *entries, size_t entry_count);
 
+/* ── Directory Cache API (Sub-project 5) ───────────────────── */
+ff_error_t ff_dir_cache_get(const char *path, FFEntryCallback callback, void *user_data);
+ff_error_t ff_dir_cache_invalidate(const char *path);
+ff_error_t ff_dir_cache_clear(void);
+
+/* ── FSEvents Watcher API (Sub-project 5) ──────────────────── */
+typedef void (*FSEventCallback)(const char *path, void *user_data);
+ff_error_t ff_fsevents_start(const char *path, FSEventCallback callback, void *user_data);
+ff_error_t ff_fsevents_stop(int32_t handle);
+
+/* ── Batch Rename & Organize API (Sub-project 6) ─────────── */
+typedef struct {
+    char *original_path;
+    char *new_name;
+} FFRenameItem;
+
+ff_error_t ff_batch_rename(const FFRenameItem *items, size_t item_count);
+ff_error_t ff_organize_by_date(const char *path, const char *format);
+ff_error_t ff_organize_by_type(const char *path);
+
+/* ── Thumbnail Generation API (Sub-project 7) ─────────────── */
+ff_error_t ff_generate_thumbnail(const char *path, uint32_t max_size,
+                                   void (*callback)(const char *thumbnail_path, void *user_data),
+                                   void *user_data);
+ff_error_t ff_generate_thumbnails(const char **paths, size_t path_count, uint32_t max_size,
+                                   void (*callback)(const char *thumbnail_path, void *user_data),
+                                   void *user_data);
+
 /* ── Error handling API ─────────────────────────────────────── */
 char *ff_last_error(void);
 void ff_free_string(char *s);

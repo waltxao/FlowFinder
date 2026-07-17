@@ -1,9 +1,12 @@
+pub mod batch_ops;
 pub mod bulk_read;
 pub mod cow_copy;
 pub mod dedup_engine;
 pub mod dir_cache;
 pub mod file_ops;
+pub mod fsevents;
 pub mod path_guard;
 pub mod scanner;
 pub mod search_engine;
+pub mod thumbnails;
 pub mod utils;

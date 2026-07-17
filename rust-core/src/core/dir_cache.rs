@@ -68,3 +68,9 @@ pub fn invalidate(path: &str) {
     let mut guard = cache().lock();
     guard.pop(path);
 }
+
+/// Clear all entries from the cache.
+pub fn clear() {
+    let mut guard = cache().lock();
+    guard.clear();
+}
