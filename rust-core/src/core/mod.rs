@@ -5,4 +5,5 @@ pub mod dir_cache;
 pub mod file_ops;
 pub mod path_guard;
 pub mod scanner;
+pub mod search_engine;
 pub mod utils;

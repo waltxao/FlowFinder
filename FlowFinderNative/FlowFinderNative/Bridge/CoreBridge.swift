@@ -420,6 +420,43 @@ public final class CoreBridge {
         }
     }
 
+    // MARK: - Cache Operations
+
+    /// Invalidate the directory cache for a specific path
+    /// - Parameter path: Directory path to invalidate
+    /// - Throws: CoreBridgeError if operation fails
+    public func invalidateCache(path: String) throws {
+        guard !path.isEmpty else {
+            throw CoreBridgeError.invalidPath("Path is empty")
+        }
+
+        var ffiResult: Int32 = -1
+        let semaphore = DispatchSemaphore(value: 0)
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+            let result = path.withCString { cPath in
+                ff_cache_invalidate(cPath)
+            }
+            ffiResult = result
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    /// Clear all directory caches (invalidate all)
+    /// - Throws: CoreBridgeError if operation fails
+    public func clearAllCache() throws {
+        // Invalidate cache for the current path as a proxy for clearing all
+        // The underlying Rust cache has a global scope
+        try invalidateCache(path: "/")
+    }
+
     // MARK: - Error Handling
 
     /// Get the last error message from the Rust core

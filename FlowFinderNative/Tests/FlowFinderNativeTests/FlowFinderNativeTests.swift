@@ -6,20 +6,16 @@ final class FlowFinderNativeTests: XCTestCase {
     // MARK: - FFI Loading Tests
 
     func testLibraryCanBeLoaded() {
-        // Verify the Rust core library can be loaded at runtime
         let dylibPath = Bundle.main.bundlePath + "/../Frameworks/libflowfinder_core.dylib"
         let fileManager = FileManager.default
 
-        // Check if the library exists in the bundle
         var libraryExists = fileManager.fileExists(atPath: dylibPath)
 
-        // Fallback: check in the project Libraries directory
         if !libraryExists {
             let projectLibPath = "./FlowFinderNative/Libraries/libflowfinder_core.dylib"
             libraryExists = fileManager.fileExists(atPath: projectLibPath)
         }
 
-        // The library should exist somewhere
         XCTAssertTrue(libraryExists, "Rust core library (libflowfinder_core.dylib) should exist")
     }
 
@@ -36,8 +32,6 @@ final class FlowFinderNativeTests: XCTestCase {
         let testPath = FileManager.default.currentDirectoryPath
 
         let entries = try bridge.listDirectory(path: testPath)
-
-        // The current directory should have at least some entries
         XCTAssertGreaterThanOrEqual(entries.count, 0, "listDirectory should return an array (may be empty)")
     }
 
@@ -66,20 +60,14 @@ final class FlowFinderNativeTests: XCTestCase {
         let srcPath = tmpDir.appendingPathComponent("test_src.txt").path
         let dstPath = tmpDir.appendingPathComponent("test_dst.txt").path
 
-        // Clean up any existing files
         try? FileManager.default.removeItem(atPath: srcPath)
         try? FileManager.default.removeItem(atPath: dstPath)
 
-        // Create source file
         try "hello world".write(toFile: srcPath, atomically: true, encoding: .utf8)
-
-        // Copy file
         try bridge.copyFile(src: srcPath, dst: dstPath)
 
-        // Verify destination exists
         XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "Destination file should exist after copy")
 
-        // Clean up
         try? FileManager.default.removeItem(atPath: srcPath)
         try? FileManager.default.removeItem(atPath: dstPath)
     }
@@ -90,21 +78,15 @@ final class FlowFinderNativeTests: XCTestCase {
         let srcPath = tmpDir.appendingPathComponent("test_move_src.txt").path
         let dstPath = tmpDir.appendingPathComponent("test_move_dst.txt").path
 
-        // Clean up any existing files
         try? FileManager.default.removeItem(atPath: srcPath)
         try? FileManager.default.removeItem(atPath: dstPath)
 
-        // Create source file
         try "move me".write(toFile: srcPath, atomically: true, encoding: .utf8)
-
-        // Move file
         try bridge.moveFile(src: srcPath, dst: dstPath)
 
-        // Verify source no longer exists and destination does
         XCTAssertFalse(FileManager.default.fileExists(atPath: srcPath), "Source file should not exist after move")
         XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "Destination file should exist after move")
 
-        // Clean up
         try? FileManager.default.removeItem(atPath: dstPath)
     }
 
@@ -113,17 +95,13 @@ final class FlowFinderNativeTests: XCTestCase {
         let tmpDir = FileManager.default.temporaryDirectory
         let filePath = tmpDir.appendingPathComponent("test_delete.txt").path
 
-        // Clean up any existing file
         try? FileManager.default.removeItem(atPath: filePath)
 
-        // Create file
         try "delete me".write(toFile: filePath, atomically: true, encoding: .utf8)
         XCTAssertTrue(FileManager.default.fileExists(atPath: filePath), "File should exist before delete")
 
-        // Delete file
         try bridge.deleteFile(path: filePath)
 
-        // Verify file no longer exists
         XCTAssertFalse(FileManager.default.fileExists(atPath: filePath), "File should not exist after delete")
     }
 
@@ -132,14 +110,11 @@ final class FlowFinderNativeTests: XCTestCase {
         let tmpDir = FileManager.default.temporaryDirectory
         let dirPath = tmpDir.appendingPathComponent("test_create_dir").path
 
-        // Clean up any existing directory
         try? FileManager.default.removeItem(atPath: dirPath)
 
-        // Create directory
         try bridge.createDirectory(path: dirPath)
         XCTAssertTrue(FileManager.default.fileExists(atPath: dirPath), "Directory should exist after create")
 
-        // Delete directory
         try bridge.deleteDirectory(path: dirPath)
         XCTAssertFalse(FileManager.default.fileExists(atPath: dirPath), "Directory should not exist after delete")
     }
@@ -150,21 +125,15 @@ final class FlowFinderNativeTests: XCTestCase {
         let srcPath = tmpDir.appendingPathComponent("test_rename_old.txt").path
         let dstPath = tmpDir.appendingPathComponent("test_rename_new.txt").path
 
-        // Clean up any existing files
         try? FileManager.default.removeItem(atPath: srcPath)
         try? FileManager.default.removeItem(atPath: dstPath)
 
-        // Create source file
         try "rename me".write(toFile: srcPath, atomically: true, encoding: .utf8)
-
-        // Rename file
         try bridge.renameFile(src: srcPath, dst: dstPath)
 
-        // Verify old no longer exists and new does
         XCTAssertFalse(FileManager.default.fileExists(atPath: srcPath), "Old file should not exist after rename")
         XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "New file should exist after rename")
 
-        // Clean up
         try? FileManager.default.removeItem(atPath: dstPath)
     }
 
@@ -174,14 +143,11 @@ final class FlowFinderNativeTests: XCTestCase {
         let srcPath = tmpDir.appendingPathComponent("test_async_src.txt").path
         let dstPath = tmpDir.appendingPathComponent("test_async_dst.txt").path
 
-        // Clean up any existing files
         try? FileManager.default.removeItem(atPath: srcPath)
         try? FileManager.default.removeItem(atPath: dstPath)
 
-        // Create source file
         try "async copy".write(toFile: srcPath, atomically: true, encoding: .utf8)
 
-        // Copy file async
         let expectation = self.expectation(description: "Async copy completes")
         var copyError: CoreBridgeError?
 
@@ -192,11 +158,9 @@ final class FlowFinderNativeTests: XCTestCase {
 
         waitForExpectations(timeout: 5.0, handler: nil)
 
-        // Verify no error and destination exists
         XCTAssertNil(copyError, "Async copy should not produce an error")
         XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "Destination file should exist after async copy")
 
-        // Clean up
         try? FileManager.default.removeItem(atPath: srcPath)
         try? FileManager.default.removeItem(atPath: dstPath)
     }
@@ -206,14 +170,11 @@ final class FlowFinderNativeTests: XCTestCase {
         let tmpDir = FileManager.default.temporaryDirectory
         let filePath = tmpDir.appendingPathComponent("test_async_delete.txt").path
 
-        // Clean up any existing file
         try? FileManager.default.removeItem(atPath: filePath)
 
-        // Create file
         try "async delete".write(toFile: filePath, atomically: true, encoding: .utf8)
         XCTAssertTrue(FileManager.default.fileExists(atPath: filePath), "File should exist before async delete")
 
-        // Delete file async
         let expectation = self.expectation(description: "Async delete completes")
         var deleteError: CoreBridgeError?
 
@@ -224,7 +185,6 @@ final class FlowFinderNativeTests: XCTestCase {
 
         waitForExpectations(timeout: 5.0, handler: nil)
 
-        // Verify no error and file no longer exists
         XCTAssertNil(deleteError, "Async delete should not produce an error")
         XCTAssertFalse(FileManager.default.fileExists(atPath: filePath), "File should not exist after async delete")
     }
@@ -294,7 +254,6 @@ final class FlowFinderNativeTests: XCTestCase {
 
         viewModel.navigateToHome()
 
-        // After navigation, currentPath should be the home directory
         XCTAssertEqual(viewModel.currentPath, homePath)
     }
 
@@ -312,5 +271,154 @@ final class FlowFinderNativeTests: XCTestCase {
 
         let notLoaded = CoreBridgeError.rustCoreNotLoaded
         XCTAssertEqual(notLoaded.errorDescription, "Rust core library not loaded")
+    }
+
+    // MARK: - Duplicate Scan Bridge Tests
+
+    func testDuplicateScanBridgeSingleton() {
+        let bridge1 = DuplicateScanBridge.shared
+        let bridge2 = DuplicateScanBridge.shared
+        XCTAssertTrue(bridge1 === bridge2, "DuplicateScanBridge.shared should return the same instance")
+    }
+
+    func testDuplicateScanBridgeCancelScan() {
+        let bridge = DuplicateScanBridge.shared
+        // Should not crash when cancel is called without active scan
+        bridge.cancelScan()
+    }
+
+    // MARK: - Search Bridge Tests
+
+    func testSearchBridgeSingleton() {
+        let bridge1 = SearchBridge.shared
+        let bridge2 = SearchBridge.shared
+        XCTAssertTrue(bridge1 === bridge2, "SearchBridge.shared should return the same instance")
+    }
+
+    func testSearchBridgeGetFileType() {
+        let bridge = QuickLookBridge.shared
+        let fileType = bridge.getFileType(path: "/test/document.pdf")
+        XCTAssertEqual(fileType, "pdf", "Should extract PDF extension")
+    }
+
+    func testSearchBridgeGetFileTypeNoExtension() {
+        let bridge = QuickLookBridge.shared
+        let fileType = bridge.getFileType(path: "/test/README")
+        XCTAssertEqual(fileType, "", "Should return empty string for no extension")
+    }
+
+    func testSearchBridgeCanPreview() {
+        let bridge = QuickLookBridge.shared
+        XCTAssertTrue(bridge.canPreview(path: "/test/image.jpg"), "Should support image preview")
+        XCTAssertTrue(bridge.canPreview(path: "/test/doc.pdf"), "Should support PDF preview")
+        XCTAssertFalse(bridge.canPreview(path: "/test/unknown.xyz"), "Should not support unknown type")
+    }
+
+    func testSearchBridgeCanPreviewText() {
+        let bridge = QuickLookBridge.shared
+        XCTAssertTrue(bridge.canPreview(path: "/test/readme.txt"), "Should support text preview")
+        XCTAssertTrue(bridge.canPreview(path: "/test/notes.md"), "Should support markdown preview")
+    }
+
+    // MARK: - QuickLook Bridge Tests
+
+    func testQuickLookBridgeSingleton() {
+        let bridge1 = QuickLookBridge.shared
+        let bridge2 = QuickLookBridge.shared
+        XCTAssertTrue(bridge1 === bridge2, "QuickLookBridge.shared should return the same instance")
+    }
+
+    // MARK: - Search Filters Tests
+
+    func testSearchFiltersInitialization() {
+        let filters = FFSearchFilters(
+            fileTypes: "jpg,png",
+            minSize: 1024,
+            maxSize: 1048576
+        )
+
+        XCTAssertEqual(filters.fileTypes, "jpg,png")
+        XCTAssertEqual(filters.minSize, 1024)
+        XCTAssertEqual(filters.maxSize, 1048576)
+        XCTAssertNil(filters.modifiedAfter)
+        XCTAssertNil(filters.modifiedBefore)
+    }
+
+    func testSearchFiltersDefaultInitialization() {
+        let filters = FFSearchFilters()
+
+        XCTAssertNil(filters.fileTypes)
+        XCTAssertNil(filters.minSize)
+        XCTAssertNil(filters.maxSize)
+        XCTAssertNil(filters.modifiedAfter)
+        XCTAssertNil(filters.modifiedBefore)
+    }
+
+    // MARK: - Duplicate Group Tests
+
+    func testDuplicateFileInitialization() {
+        let file = FFDuplicateFile(
+            id: "test-id",
+            path: "/test/path/file.txt",
+            name: "file.txt",
+            size: 1024,
+            modified: 1234567890
+        )
+
+        XCTAssertEqual(file.id, "test-id")
+        XCTAssertEqual(file.path, "/test/path/file.txt")
+        XCTAssertEqual(file.name, "file.txt")
+        XCTAssertEqual(file.size, 1024)
+        XCTAssertEqual(file.modified, 1234567890)
+    }
+
+    func testDuplicateGroupInitialization() {
+        let files = [
+            FFDuplicateFile(id: "1", path: "/a.txt", name: "a.txt", size: 100, modified: 0),
+            FFDuplicateFile(id: "2", path: "/b.txt", name: "b.txt", size: 100, modified: 0)
+        ]
+
+        let group = FFDuplicateGroup(
+            id: "group-1",
+            hash: "abc123",
+            size: 100,
+            files: files
+        )
+
+        XCTAssertEqual(group.id, "group-1")
+        XCTAssertEqual(group.hash, "abc123")
+        XCTAssertEqual(group.size, 100)
+        XCTAssertEqual(group.files.count, 2)
+    }
+
+    // MARK: - Search Result Tests
+
+    func testSearchResultInitialization() {
+        let result = FFSearchResult(
+            path: "/test/file.txt",
+            name: "file.txt",
+            size: 1024,
+            modified: 1234567890,
+            isDir: false
+        )
+
+        XCTAssertEqual(result.path, "/test/file.txt")
+        XCTAssertEqual(result.name, "file.txt")
+        XCTAssertEqual(result.size, 1024)
+        XCTAssertEqual(result.modified, 1234567890)
+        XCTAssertFalse(result.isDir)
+    }
+
+    func testSearchResultDirectory() {
+        let result = FFSearchResult(
+            path: "/test/folder",
+            name: "folder",
+            size: 0,
+            modified: 1234567890,
+            isDir: true
+        )
+
+        XCTAssertTrue(result.isDir)
+        XCTAssertEqual(result.size, 0)
     }
 }
