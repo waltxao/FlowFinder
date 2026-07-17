@@ -1,0 +1,11 @@
+Target dependency graph (4 targets)
+Target 'AllIncludingTests' in project 'Aggregate'
+➜ Explicit dependency on target 'FlowFinderNativeTests-product' in project 'FlowFinderNative'
+➜ Dependency on target 'FlowFinderNativeTests-product' in project 'FlowFinderNative' via transitive dependency through 'FlowFinderNativeTests-test-runner'
+➜ Explicit dependency on target 'FlowFinderNative-product' in project 'FlowFinderNative'
+➜ Explicit dependency on target 'FlowFinderNative' in project 'FlowFinderNative'
+Target 'FlowFinderNativeTests-product' in project 'FlowFinderNative'
+➜ Explicit dependency on target 'FlowFinderNative-product' in project 'FlowFinderNative'
+➜ Explicit dependency on target 'FlowFinderNative' in project 'FlowFinderNative'
+Target 'FlowFinderNative' in project 'FlowFinderNative' (no dependencies)
+Target 'FlowFinderNative-product' in project 'FlowFinderNative' (no dependencies)

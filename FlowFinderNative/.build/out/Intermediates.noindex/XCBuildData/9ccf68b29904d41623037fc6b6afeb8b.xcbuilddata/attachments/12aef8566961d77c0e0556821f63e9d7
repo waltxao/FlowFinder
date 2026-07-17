@@ -1,0 +1,4 @@
+module FlowFinderNative {
+header "FlowFinderNative-Swift.h"
+export *
+}

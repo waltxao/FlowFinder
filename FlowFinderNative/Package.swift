@@ -17,12 +17,13 @@ let package = Package(
         .executableTarget(
             name: "FlowFinderNative",
             path: "FlowFinderNative",
-            exclude: ["Resources"],
+            exclude: ["Resources", "Libraries"],
             swiftSettings: [
                 .unsafeFlags(["-I", "../rust-core/include"])
             ],
             linkerSettings: [
-                .linkedLibrary("flowfinder_core", .when(platforms: [.macOS]))
+                .linkedLibrary("flowfinder_core", .when(platforms: [.macOS])),
+                .unsafeFlags(["-L", "FlowFinderNative/Libraries"], .when(platforms: [.macOS]))
             ]
         )
     ]
