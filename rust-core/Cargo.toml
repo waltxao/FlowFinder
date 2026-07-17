@@ -8,3 +8,9 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 libc = "0.2"
+blake3 = "1.5"
+md5 = "0.7"
+walkdir = "2.5"
+lru = "0.12"
+parking_lot = "0.12"
+log = "0.4"
