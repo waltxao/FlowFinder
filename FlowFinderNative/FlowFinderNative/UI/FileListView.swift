@@ -8,7 +8,24 @@ public class FileListView: NSView {
     private var tableView: NSTableView!
     private var scrollView: NSScrollView!
 
-    public var viewModel: FileEntryViewModel?
+    private var cancellables = Set<AnyCancellable>()
+
+    public var viewModel: PaneViewModel? {
+        didSet {
+            tableView.dataSource = self
+            tableView.delegate = self
+
+            viewModel?.$state
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] state in
+                    self?.reloadData()
+                }
+                .store(in: &cancellables)
+
+            reloadData()
+        }
+    }
+
     public var onDoubleClick: ((FileEntry) -> Void)?
 
     // Reuse identifiers
@@ -378,8 +395,8 @@ public class FileListView: NSView {
         guard let viewModel = viewModel,
               let clickedRow = tableView?.clickedRow,
               clickedRow >= 0,
-              clickedRow < viewModel.entries.count else { return nil }
-        return viewModel.entries[clickedRow]
+              clickedRow < viewModel.files.count else { return nil }
+        return viewModel.files[clickedRow]
     }
 
     private func showProgressIndicator(title: String, action: (NSProgressIndicator) -> Void) {
@@ -429,9 +446,9 @@ public class FileListView: NSView {
         guard let viewModel = viewModel,
               let clickedRow = tableView?.clickedRow,
               clickedRow >= 0,
-              clickedRow < viewModel.entries.count else { return }
+              clickedRow < viewModel.files.count else { return }
 
-        let entry = viewModel.entries[clickedRow]
+        let entry = viewModel.files[clickedRow]
         onDoubleClick?(entry)
     }
 }
@@ -440,7 +457,7 @@ public class FileListView: NSView {
 
 extension FileListView: NSTableViewDataSource {
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        return viewModel?.entries.count ?? 0
+        return viewModel?.files.count ?? 0
     }
 }
 
@@ -449,9 +466,9 @@ extension FileListView: NSTableViewDataSource {
 extension FileListView: NSTableViewDelegate {
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let viewModel = viewModel,
-              row < viewModel.entries.count else { return nil }
+              row < viewModel.files.count else { return nil }
 
-        let entry = viewModel.entries[row]
+        let entry = viewModel.files[row]
 
         switch tableColumn?.identifier.rawValue {
         case "Name":
@@ -496,6 +513,9 @@ extension FileListView: NSTableViewDelegate {
     }
 
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        guard let viewModel = viewModel, row < viewModel.files.count else { return false }
+        let entry = viewModel.files[row]
+        viewModel.selectFile(entry)
         return true
     }
 }

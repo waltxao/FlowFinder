@@ -1,426 +1,288 @@
 import Cocoa
-import SwiftUI
 import Combine
 import QuickLook
 
-// MARK: - FSEventStream Helper
+// MARK: - MainWindowController
 
-/// Simple FSEvents wrapper for monitoring directory changes
-private class DirectoryMonitor {
-    private var stream: FSEventStreamRef?
-    private var callback: (() -> Void)?
-    private var monitoredPaths: [String] = []
-
-    func startMonitoring(paths: [String], callback: @escaping () -> Void) {
-        self.callback = callback
-        self.monitoredPaths = paths
-
-        var context = FSEventStreamContext()
-        context.info = Unmanaged.passUnretained(self).toOpaque()
-
-        let pathsToWatch = paths as CFArray
-
-        stream = FSEventStreamCreate(
-            kCFAllocatorDefault,
-            { _, info, _, _, _, _ in
-                guard let info = info else { return }
-                let monitor = Unmanaged<DirectoryMonitor>.fromOpaque(info).takeUnretainedValue()
-                monitor.callback?()
-            },
-            &context,
-            pathsToWatch,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            0.5,
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
-        )
-
-        if let stream = stream {
-            FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
-            FSEventStreamStart(stream)
-        }
-    }
-
-    func stopMonitoring() {
-        if let stream = stream {
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
-        }
-        stream = nil
-    }
-
-    deinit {
-        stopMonitoring()
-    }
-}
-
-/// Main window controller managing the primary application window
 public class MainWindowController: NSWindowController {
 
     // MARK: - Properties
 
-    private var viewModel = FileEntryViewModel()
+    private let leftPaneViewModel = PaneViewModel()
+    private let rightPaneViewModel = PaneViewModel()
+    private var activePane: PaneSide = .left
     private var cancellables = Set<AnyCancellable>()
-    private var searchBarView: SearchBarView!
-    private var quickLookSidebar: QuickLookPreviewSidebar!
-    private var isQuickLookVisible = false
-    private var directoryMonitor = DirectoryMonitor()
 
-    // Window configuration constants
-    private let minWindowWidth: CGFloat = 800
-    private let minWindowHeight: CGFloat = 600
-    private let defaultWindowWidth: CGFloat = 1200
-    private let defaultWindowHeight: CGFloat = 800
+    private var sidebarView: SidebarView!
+    private var leftPaneView: NSView!
+    private var rightPaneView: NSView!
+    private var detailsBar: DetailsBar!
+    private var mainSplitView: NSSplitView!
+    private var paneSplitView: NSSplitView!
+
+    private var leftPaneToolbar: PaneToolbar!
+    private var rightPaneToolbar: PaneToolbar!
+    private var leftFileListView: FileListView!
+    private var rightFileListView: FileListView!
 
     // MARK: - Initialization
 
     public init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: defaultWindowWidth, height: defaultWindowHeight),
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
 
         window.title = "FlowFinder"
-        window.subtitle = viewModel.currentPath
-        window.minSize = NSSize(width: minWindowWidth, height: minWindowHeight)
-        window.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        window.minSize = NSSize(width: 1000, height: 700)
         window.center()
         window.setFrameAutosaveName("MainWindow")
         window.isRestorable = true
-        window.restorationClass = MainWindowController.self
 
         super.init(window: window)
 
-        setupMenus()
-        setupToolbar()
-        setupContentView()
+        setupUI()
         setupBindings()
-        loadInitialDirectory()
+        loadInitialDirectories()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // MARK: - Menu Setup
+    // MARK: - UI Setup
 
-    private func setupMenus() {
-        guard let mainMenu = NSApp.mainMenu else { return }
-
-        // Tools menu
-        let toolsMenuItem = NSMenuItem(title: "Tools", action: nil, keyEquivalent: "")
-        let toolsMenu = NSMenu(title: "Tools")
-        toolsMenuItem.submenu = toolsMenu
-
-        let scanDuplicatesItem = NSMenuItem(
-            title: "Scan Duplicates",
-            action: #selector(showDuplicateScan),
-            keyEquivalent: "d"
-        )
-        scanDuplicatesItem.keyEquivalentModifierMask = [.command, .shift]
-        scanDuplicatesItem.target = self
-        toolsMenu.addItem(scanDuplicatesItem)
-
-        toolsMenu.addItem(NSMenuItem.separator())
-
-        // Clear Cache
-        let clearCacheItem = NSMenuItem(
-            title: "Clear Cache",
-            action: #selector(clearCache),
-            keyEquivalent: "k"
-        )
-        clearCacheItem.keyEquivalentModifierMask = [.command, .shift]
-        clearCacheItem.target = self
-        toolsMenu.addItem(clearCacheItem)
-
-        mainMenu.addItem(toolsMenuItem)
-
-        // File menu - QuickLook
-        if let fileMenu = mainMenu.item(withTitle: "File")?.submenu {
-            let quickLookItem = NSMenuItem(
-                title: "QuickLook Preview",
-                action: #selector(toggleQuickLook),
-                keyEquivalent: " "
-            )
-            quickLookItem.target = self
-            fileMenu.addItem(quickLookItem)
-
-            let previewSidebarItem = NSMenuItem(
-                title: "Toggle Preview Sidebar",
-                action: #selector(togglePreviewSidebar),
-                keyEquivalent: "p"
-            )
-            previewSidebarItem.keyEquivalentModifierMask = [.command, .option]
-            previewSidebarItem.target = self
-            fileMenu.addItem(previewSidebarItem)
-        }
-    }
-
-    // MARK: - Toolbar Setup
-
-    private func setupToolbar() {
+    private func setupUI() {
         guard let window = window else { return }
 
-        let toolbar = NSToolbar(identifier: "MainToolbar")
-        toolbar.delegate = self
-        toolbar.allowsUserCustomization = true
-        toolbar.displayMode = .iconAndLabel
-        window.toolbar = toolbar
-    }
+        // Sidebar
+        sidebarView = SidebarView()
+        sidebarView.translatesAutoresizingMaskIntoConstraints = false
 
-    // MARK: - Content View Setup
+        // Toolbars
+        leftPaneToolbar = PaneToolbar()
+        leftPaneToolbar.delegate = self
+        leftPaneToolbar.translatesAutoresizingMaskIntoConstraints = false
 
-    private func setupContentView() {
-        guard let window = window else { return }
+        rightPaneToolbar = PaneToolbar()
+        rightPaneToolbar.delegate = self
+        rightPaneToolbar.translatesAutoresizingMaskIntoConstraints = false
 
-        let contentView = ContentView()
-        contentView.setViewModel(viewModel)
-        contentView.onNavigate = { [weak self] entry in
-            self?.viewModel.navigateToEntry(entry)
+        // File List Views
+        leftFileListView = FileListView()
+        leftFileListView.translatesAutoresizingMaskIntoConstraints = false
+        leftFileListView.onDoubleClick = { [weak self] entry in
+            self?.handleDoubleClick(entry, side: .left)
         }
 
-        window.contentView = contentView
+        rightFileListView = FileListView()
+        rightFileListView.translatesAutoresizingMaskIntoConstraints = false
+        rightFileListView.onDoubleClick = { [weak self] entry in
+            self?.handleDoubleClick(entry, side: .right)
+        }
+
+        // Left Pane
+        let leftPaneContainer = NSView()
+        leftPaneContainer.translatesAutoresizingMaskIntoConstraints = false
+        leftPaneContainer.addSubview(leftPaneToolbar)
+        leftPaneContainer.addSubview(leftFileListView)
+
+        NSLayoutConstraint.activate([
+            leftPaneToolbar.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor),
+            leftPaneToolbar.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
+            leftPaneToolbar.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
+
+            leftFileListView.topAnchor.constraint(equalTo: leftPaneToolbar.bottomAnchor),
+            leftFileListView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
+            leftFileListView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
+            leftFileListView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
+        ])
+
+        // Right Pane
+        let rightPaneContainer = NSView()
+        rightPaneContainer.translatesAutoresizingMaskIntoConstraints = false
+        rightPaneContainer.addSubview(rightPaneToolbar)
+        rightPaneContainer.addSubview(rightFileListView)
+
+        NSLayoutConstraint.activate([
+            rightPaneToolbar.topAnchor.constraint(equalTo: rightPaneContainer.topAnchor),
+            rightPaneToolbar.leadingAnchor.constraint(equalTo: rightPaneContainer.leadingAnchor),
+            rightPaneToolbar.trailingAnchor.constraint(equalTo: rightPaneContainer.trailingAnchor),
+
+            rightFileListView.topAnchor.constraint(equalTo: rightPaneToolbar.bottomAnchor),
+            rightFileListView.leadingAnchor.constraint(equalTo: rightPaneContainer.leadingAnchor),
+            rightFileListView.trailingAnchor.constraint(equalTo: rightPaneContainer.leadingAnchor),
+            rightFileListView.bottomAnchor.constraint(equalTo: rightPaneContainer.bottomAnchor),
+        ])
+
+        // Pane Split View (vertical split between top and bottom panes)
+        paneSplitView = NSSplitView()
+        paneSplitView.isVertical = false
+        paneSplitView.dividerStyle = .thin
+        paneSplitView.autosaveName = "PaneSplitView"
+        paneSplitView.translatesAutoresizingMaskIntoConstraints = false
+        paneSplitView.addArrangedSubview(leftPaneContainer)
+        paneSplitView.addArrangedSubview(rightPaneContainer)
+
+        // Main Split View (horizontal split between sidebar and panes)
+        mainSplitView = NSSplitView()
+        mainSplitView.isVertical = true
+        mainSplitView.dividerStyle = .thin
+        mainSplitView.autosaveName = "MainSplitView"
+        mainSplitView.translatesAutoresizingMaskIntoConstraints = false
+        mainSplitView.addArrangedSubview(sidebarView)
+        mainSplitView.addArrangedSubview(paneSplitView)
+
+        // Details Bar
+        detailsBar = DetailsBar()
+        detailsBar.translatesAutoresizingMaskIntoConstraints = false
+        detailsBar.heightAnchor.constraint(equalToConstant: 120).isActive = true
+
+        // Main container
+        let mainContainer = NSView()
+        mainContainer.translatesAutoresizingMaskIntoConstraints = false
+        mainContainer.addSubview(mainSplitView)
+        mainContainer.addSubview(detailsBar)
+
+        window.contentView?.addSubview(mainContainer)
+
+        NSLayoutConstraint.activate([
+            mainContainer.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
+            mainContainer.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor),
+            mainContainer.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor),
+            mainContainer.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
+
+            mainSplitView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
+            mainSplitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            mainSplitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            mainSplitView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
+
+            detailsBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            detailsBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            detailsBar.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
+        ])
+
+        // Sidebar width
+        sidebarView.widthAnchor.constraint(equalToConstant: 220).isActive = true
+
+        // Set initial pane sizes
+        mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+        mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
     }
 
     private func setupBindings() {
-        viewModel.$currentPath
+        // Left pane bindings
+        leftPaneViewModel.$state
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] path in
-                self?.window?.subtitle = path
-                self?.setupDirectoryMonitor(path: path)
+            .sink { [weak self] state in
+                self?.updatePaneUI(side: .left, state: state)
             }
             .store(in: &cancellables)
 
-        viewModel.$errorMessage
+        // Right pane bindings
+        rightPaneViewModel.$state
             .receive(on: DispatchQueue.main)
-            .compactMap { $0 }
-            .sink { [weak self] errorMessage in
-                self?.showError(message: errorMessage)
+            .sink { [weak self] state in
+                self?.updatePaneUI(side: .right, state: state)
             }
             .store(in: &cancellables)
+    }
 
-        NotificationCenter.default.addObserver(
-            forName: .sidebarDidSelectDirectory,
-            object: nil,
-            queue: nil
-        ) { [weak self] notification in
-            guard let entry = notification.object as? FileEntry else { return }
-            self?.viewModel.navigateToEntry(entry)
+    private func updatePaneUI(side: PaneSide, state: PaneState) {
+        let toolbar = side == .left ? leftPaneToolbar : rightPaneToolbar
+        let fileListView = side == .left ? leftFileListView : rightFileListView
+
+        toolbar?.setPath(state.path)
+        toolbar?.setCanGoBack(state.historyIndex > 0)
+        toolbar?.setCanGoForward(state.historyIndex < state.history.count - 1)
+
+        fileListView?.viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
+        fileListView?.reloadData()
+    }
+
+    private func loadInitialDirectories() {
+        // Load default directories
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+        let desktopPath = (homePath as NSString).appendingPathComponent("Desktop")
+        let documentsPath = (homePath as NSString).appendingPathComponent("Documents")
+
+        leftPaneViewModel.navigate(to: desktopPath)
+        rightPaneViewModel.navigate(to: documentsPath)
+    }
+
+    // MARK: - Actions
+
+    private func handleDoubleClick(_ entry: FileEntry, side: PaneSide) {
+        if entry.isDirectory {
+            let viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
+            viewModel.navigate(to: entry.path)
+        } else {
+            NSWorkspace.shared.openFile(entry.path)
         }
     }
 
-    private func loadInitialDirectory() {
-        viewModel.loadDirectory()
-    }
-
-    // MARK: - Menu Actions
-
-    @objc private func showDuplicateScan() {
-        let scanView = DuplicateScanView()
-        scanView.onDeleteDuplicates = { [weak self] groups in
-            self?.showDeleteDuplicatesConfirmation(groups: groups)
-        }
-
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        panel.title = "Scan Duplicates"
-        panel.contentView = scanView
-        panel.center()
-        panel.makeKeyAndOrderFront(nil)
-    }
-
-    @objc private func clearCache() {
-        do {
-            try CoreBridge.shared.clearAllCache()
-            // Refresh the current directory to show updated content
-            viewModel.refresh()
-        } catch {
-            showError(message: "Failed to clear cache: \(error.localizedDescription)")
-        }
-    }
-
-    @objc private func toggleQuickLook() {
-        guard let selectedEntry = viewModel.entries.first else { return }
-        QuickLookPreviewPanel.shared.togglePreview(for: selectedEntry.path)
-    }
-
-    @objc private func togglePreviewSidebar() {
-        isQuickLookVisible.toggle()
-        // Update content view layout based on sidebar visibility
-        if let contentView = window?.contentView as? ContentView {
-            contentView.needsLayout = true
-        }
-    }
-
-    private func showDeleteDuplicatesConfirmation(groups: [FFDuplicateGroup]) {
-        let alert = NSAlert()
-        alert.messageText = "Delete Duplicates"
-        alert.informativeText = "Are you sure you want to delete \(groups.count) duplicate groups? This action cannot be undone."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-
-        alert.beginSheetModal(for: window!) { response in
-            if response == .alertFirstButtonReturn {
-                // Delete duplicates (keep first file in each group)
-                for group in groups {
-                    if group.files.count > 1 {
-                        for file in group.files.dropFirst() {
-                            try? CoreBridge.shared.deleteFile(path: file.path)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Directory Monitoring
-
-    private func setupDirectoryMonitor(path: String) {
-        directoryMonitor.stopMonitoring()
-        directoryMonitor.startMonitoring(paths: [path]) { [weak self] in
-            DispatchQueue.main.async {
-                self?.viewModel.refresh()
-            }
-        }
-    }
-
-    // MARK: - Error Handling
-
-    private func showError(message: String) {
-        let alert = NSAlert()
-        alert.messageText = "Error"
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-    }
-
-    // MARK: - Window Lifecycle
-
-    public override func showWindow(_ sender: Any?) {
-        super.showWindow(sender)
-        window?.makeKeyAndOrderFront(sender)
-    }
-
-    public override func windowWillLoad() {
-        super.windowWillLoad()
-    }
-
-    public override func windowDidLoad() {
-        super.windowDidLoad()
+    private func activatePane(_ side: PaneSide) {
+        activePane = side
+        // Update visual feedback
+        leftPaneView.layer?.borderColor = side == .left ? NSColor.controlAccentColor.cgColor : nil
+        rightPaneView.layer?.borderColor = side == .right ? NSColor.controlAccentColor.cgColor : nil
     }
 }
 
-// MARK: - NSToolbarDelegate
+// MARK: - PaneToolbarDelegate
 
-extension MainWindowController: NSToolbarDelegate {
-
-    public func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        switch itemIdentifier.rawValue {
-        case "SearchBar":
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            searchBarView = SearchBarView(frame: NSRect(x: 0, y: 0, width: 300, height: 32))
-            searchBarView.onSearch = { [weak self] query in
-                self?.performSearch(query: query)
-            }
-            searchBarView.onFilterChanged = { [weak self] filters in
-                self?.performSearchWithFilters(filters: filters)
-            }
-            item.view = searchBarView
-            item.minSize = NSSize(width: 200, height: 32)
-            item.maxSize = NSSize(width: 400, height: 32)
-            return item
-
-        case "QuickLookToggle":
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.label = "Preview"
-            item.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "Preview")
-            item.target = self
-            item.action = #selector(toggleQuickLook)
-            return item
-
-        default:
-            return nil
-        }
+extension MainWindowController: PaneToolbarDelegate {
+    func paneToolbarDidClickBack(_ toolbar: PaneToolbar) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        _ = viewModel.goBack()
     }
 
-    public func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        return [
-            NSToolbarItem.Identifier("SearchBar"),
-            .flexibleSpace,
-            NSToolbarItem.Identifier("QuickLookToggle")
-        ]
+    func paneToolbarDidClickForward(_ toolbar: PaneToolbar) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        _ = viewModel.goForward()
     }
 
-    public func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        return [
-            NSToolbarItem.Identifier("SearchBar"),
-            NSToolbarItem.Identifier("QuickLookToggle"),
-            .flexibleSpace,
-            .space
-        ]
+    func paneToolbarDidClickUp(_ toolbar: PaneToolbar) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        viewModel.goUp()
     }
 
-    // MARK: - Search
-
-    private func performSearch(query: String) {
-        guard !query.isEmpty else {
-            viewModel.loadDirectory()
-            return
-        }
-
-        SearchBridge.shared.search(
-            path: viewModel.currentPath,
-            query: query,
-            resultHandler: { [weak self] result in
-                // Results are collected and displayed
-            },
-            completion: { [weak self] error in
-                if let error = error {
-                    self?.showError(message: error.localizedDescription)
-                }
-            }
-        )
+    func paneToolbarDidClickRefresh(_ toolbar: PaneToolbar) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        viewModel.refresh()
     }
 
-    private func performSearchWithFilters(filters: SearchFilters) {
-        // Convert to FFSearchFilters and perform filtered search
-        let ffFilters = FFSearchFilters(
-            fileTypes: filters.fileTypes,
-            minSize: filters.minSize,
-            maxSize: filters.maxSize
-        )
+    func paneToolbar(_ toolbar: PaneToolbar, didChangeSearchQuery query: String) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        viewModel.setSearchQuery(query)
+    }
 
-        SearchBridge.shared.searchWithFilters(
-            path: viewModel.currentPath,
-            query: "",
-            filters: ffFilters,
-            resultHandler: { [weak self] result in
-                // Results are collected and displayed
-            },
-            completion: { [weak self] error in
-                if let error = error {
-                    self?.showError(message: error.localizedDescription)
-                }
-            }
-        )
+    func paneToolbar(_ toolbar: PaneToolbar, didChangeSortField field: String) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        viewModel.setSortField(field)
+    }
+
+    func paneToolbar(_ toolbar: PaneToolbar, didChangeGroupBy groupBy: String) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        viewModel.setGroupBy(groupBy)
+    }
+
+    func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: String) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        viewModel.setViewMode(mode)
+    }
+
+    func paneToolbarDidClickPath(_ toolbar: PaneToolbar, path: String) {
+        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        viewModel.navigate(to: path)
     }
 }
 
-// MARK: - NSWindowRestoration
+// MARK: - PaneSide
 
-extension MainWindowController: NSWindowRestoration {
-    public static func restoreWindow(withIdentifier identifier: NSUserInterfaceItemIdentifier,
-                                      state: NSCoder,
-                                      completionHandler: @escaping (NSWindow?, Error?) -> Void) {
-        let controller = MainWindowController()
-        completionHandler(controller.window, nil)
-    }
+enum PaneSide {
+    case left
+    case right
 }

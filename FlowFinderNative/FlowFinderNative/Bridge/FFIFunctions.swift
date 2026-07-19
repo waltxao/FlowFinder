@@ -30,11 +30,17 @@ public struct FFVolumeInfo {
 
 /// FFI entry reference structure, corresponding to Rust's ff_entry_t
 public struct FFEntryRef {
-    public let path: UnsafePointer<CChar>
     public let name: UnsafePointer<CChar>
+    public let path: UnsafePointer<CChar>
+    public let `extension`: UnsafePointer<CChar>
     public let isDir: Bool
+    public let isFile: Bool
+    public let isSymlink: Bool
+    public let isHidden: Bool
+    public let isSystemProtected: Bool
     public let size: UInt64
-    public let modified: UInt64
+    public let modified: Int64
+    public let created: Int64
 }
 
 // MARK: - Duplicate Scan Types

@@ -134,21 +134,38 @@ private class SidebarDataSource: NSObject, NSOutlineViewDataSource, NSOutlineVie
         guard let entry = item as? FileEntry else { return nil }
 
         let identifier = NSUserInterfaceItemIdentifier("SidebarCell")
-        let cell = outlineView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
+        let cell = (outlineView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView)
             ?? NSTableCellView()
         cell.identifier = identifier
+
+        // Remove old subviews to avoid duplicate constraints
+        cell.subviews.forEach { $0.removeFromSuperview() }
 
         let textField = NSTextField(labelWithString: entry.name)
         textField.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         textField.textColor = NSColor.labelColor
-        cell.textField = textField
+        textField.lineBreakMode = .byTruncatingTail
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(textField)
 
         let imageView = NSImageView()
         if let folderImage = NSImage(systemSymbolName: "folder", accessibilityDescription: nil) {
             imageView.image = folderImage
         }
         imageView.imageScaling = .scaleProportionallyDown
-        cell.imageView = imageView
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(imageView)
+
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: 16),
+            imageView.heightAnchor.constraint(equalToConstant: 16),
+
+            textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
+            textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+            textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+        ])
 
         return cell
     }

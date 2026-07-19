@@ -1,0 +1,14 @@
+/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core/target/debug/deps/serde-20ef3adf0677e007.d: /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core/target/debug/build/serde-980df2c3018a41ba/out/private.rs
+
+/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core/target/debug/deps/libserde-20ef3adf0677e007.rlib: /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core/target/debug/build/serde-980df2c3018a41ba/out/private.rs
+
+/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core/target/debug/deps/libserde-20ef3adf0677e007.rmeta: /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core/target/debug/build/serde-980df2c3018a41ba/out/private.rs
+
+/Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/waltxao/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core/target/debug/build/serde-980df2c3018a41ba/out/private.rs:
+
+# env-dep:OUT_DIR=/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core/target/debug/build/serde-980df2c3018a41ba/out

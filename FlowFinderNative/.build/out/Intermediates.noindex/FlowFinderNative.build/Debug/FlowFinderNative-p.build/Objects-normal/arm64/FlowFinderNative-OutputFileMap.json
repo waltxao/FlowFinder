@@ -46,6 +46,16 @@
     "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/FFIFunctions.swiftdeps",
     "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/FFIFunctions~partial.swiftmodule"
   },
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/Bridge/SearchBridge.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchBridge.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchBridge.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchBridge.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchBridge.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchBridge.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchBridge.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchBridge.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchBridge~partial.swiftmodule"
+  },
   "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/Model/FileEntry.swift" : {
     "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/FileEntry.swiftconstvalues",
     "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/FileEntry.d",
@@ -66,15 +76,55 @@
     "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/FileEntryViewModel.swiftdeps",
     "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/FileEntryViewModel~partial.swiftmodule"
   },
-  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/UI/ContentView.swift" : {
-    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/ContentView.swiftconstvalues",
-    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/ContentView.d",
-    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/ContentView.dia",
-    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/ContentView.o",
-    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/ContentView.bc",
-    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/ContentView.o",
-    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/ContentView.swiftdeps",
-    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/ContentView~partial.swiftmodule"
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/Model/PaneState.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneState.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneState.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneState.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneState.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneState.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneState.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneState.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneState~partial.swiftmodule"
+  },
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/Model/TaskInfo.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/TaskInfo.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/TaskInfo.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/TaskInfo.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/TaskInfo.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/TaskInfo.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/TaskInfo.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/TaskInfo.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/TaskInfo~partial.swiftmodule"
+  },
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/Model/VolumeInfo.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/VolumeInfo.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/VolumeInfo.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/VolumeInfo.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/VolumeInfo.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/VolumeInfo.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/VolumeInfo.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/VolumeInfo.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/VolumeInfo~partial.swiftmodule"
+  },
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/UI/DetailsBar.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DetailsBar.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DetailsBar.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DetailsBar.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DetailsBar.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DetailsBar.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DetailsBar.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DetailsBar.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DetailsBar~partial.swiftmodule"
+  },
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/UI/DuplicateScanView.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DuplicateScanView.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DuplicateScanView.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DuplicateScanView.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DuplicateScanView.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DuplicateScanView.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DuplicateScanView.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DuplicateScanView.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/DuplicateScanView~partial.swiftmodule"
   },
   "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/UI/FileListView.swift" : {
     "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/FileListView.swiftconstvalues",
@@ -95,6 +145,36 @@
     "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/MainWindowController.o",
     "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/MainWindowController.swiftdeps",
     "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/MainWindowController~partial.swiftmodule"
+  },
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/UI/PaneToolbar.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneToolbar.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneToolbar.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneToolbar.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneToolbar.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneToolbar.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneToolbar.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneToolbar.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/PaneToolbar~partial.swiftmodule"
+  },
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/UI/QuickLookPreviewView.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/QuickLookPreviewView.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/QuickLookPreviewView.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/QuickLookPreviewView.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/QuickLookPreviewView.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/QuickLookPreviewView.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/QuickLookPreviewView.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/QuickLookPreviewView.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/QuickLookPreviewView~partial.swiftmodule"
+  },
+  "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/UI/SearchView.swift" : {
+    "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchView.swiftconstvalues",
+    "dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchView.d",
+    "diagnostics" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchView.dia",
+    "index-unit-output-path" : "/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchView.o",
+    "llvm-bc" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchView.bc",
+    "object" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchView.o",
+    "swift-dependencies" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchView.swiftdeps",
+    "swiftmodule" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SearchView~partial.swiftmodule"
   },
   "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/UI/SidebarView.swift" : {
     "const-values" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/.build/out/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative-p.build/Objects-normal/arm64/SidebarView.swiftconstvalues",

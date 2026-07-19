@@ -5,11 +5,11 @@
       "name" : "FlowFinderNative",
       "path" : "/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative",
       "projects" : [
-        "1aabc26b7c7d0d4cc477c3ffff542e905a6abcd7fb9e9c89d2753a17d97a1689",
+        "c6b97807250dce5101601b4122b3c6b56d3df8dd091146bb20bbcd745c6e7d2d",
         "b116f2ff5289d64983b1113dd780f7594ddfa4574a61e490aff227caed7b3502"
       ]
     },
-    "signature" : "805fd46f93569f1971374bed5672a6310024bc3d50d882c798801ef6c582c479",
+    "signature" : "17cbd113aa34bb5bc1d39207eabf9a8969add0b77c2754b40679d3e1bad80923",
     "type" : "workspace"
   },
   {
@@ -233,6 +233,14 @@
               {
                 "fileType" : "sourcecode.swift",
                 "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_4",
+                "name" : "Bridge/SearchBridge.swift",
+                "path" : "Bridge/SearchBridge.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_5",
                 "name" : "Model/FileEntry.swift",
                 "path" : "Model/FileEntry.swift",
                 "sourceTree" : "<group>",
@@ -240,7 +248,7 @@
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_5",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_6",
                 "name" : "Model/FileEntryViewModel.swift",
                 "path" : "Model/FileEntryViewModel.swift",
                 "sourceTree" : "<group>",
@@ -248,15 +256,47 @@
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_6",
-                "name" : "UI/ContentView.swift",
-                "path" : "UI/ContentView.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_7",
+                "name" : "Model/PaneState.swift",
+                "path" : "Model/PaneState.swift",
                 "sourceTree" : "<group>",
                 "type" : "file"
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_7",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_8",
+                "name" : "Model/TaskInfo.swift",
+                "path" : "Model/TaskInfo.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_9",
+                "name" : "Model/VolumeInfo.swift",
+                "path" : "Model/VolumeInfo.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_10",
+                "name" : "UI/DetailsBar.swift",
+                "path" : "UI/DetailsBar.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_11",
+                "name" : "UI/DuplicateScanView.swift",
+                "path" : "UI/DuplicateScanView.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_12",
                 "name" : "UI/FileListView.swift",
                 "path" : "UI/FileListView.swift",
                 "sourceTree" : "<group>",
@@ -264,7 +304,7 @@
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_8",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_13",
                 "name" : "UI/MainWindowController.swift",
                 "path" : "UI/MainWindowController.swift",
                 "sourceTree" : "<group>",
@@ -272,7 +312,31 @@
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_9",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_14",
+                "name" : "UI/PaneToolbar.swift",
+                "path" : "UI/PaneToolbar.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_15",
+                "name" : "UI/QuickLookPreviewView.swift",
+                "path" : "UI/QuickLookPreviewView.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_16",
+                "name" : "UI/SearchView.swift",
+                "path" : "UI/SearchView.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_17",
                 "name" : "UI/SidebarView.swift",
                 "path" : "UI/SidebarView.swift",
                 "sourceTree" : "<group>",
@@ -322,6 +386,14 @@
               {
                 "fileType" : "sourcecode.swift",
                 "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_4",
+                "name" : "Bridge/SearchBridge.swift",
+                "path" : "Bridge/SearchBridge.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_5",
                 "name" : "Model/FileEntry.swift",
                 "path" : "Model/FileEntry.swift",
                 "sourceTree" : "<group>",
@@ -329,7 +401,7 @@
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_5",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_6",
                 "name" : "Model/FileEntryViewModel.swift",
                 "path" : "Model/FileEntryViewModel.swift",
                 "sourceTree" : "<group>",
@@ -337,15 +409,47 @@
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_6",
-                "name" : "UI/ContentView.swift",
-                "path" : "UI/ContentView.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_7",
+                "name" : "Model/PaneState.swift",
+                "path" : "Model/PaneState.swift",
                 "sourceTree" : "<group>",
                 "type" : "file"
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_7",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_8",
+                "name" : "Model/TaskInfo.swift",
+                "path" : "Model/TaskInfo.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_9",
+                "name" : "Model/VolumeInfo.swift",
+                "path" : "Model/VolumeInfo.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_10",
+                "name" : "UI/DetailsBar.swift",
+                "path" : "UI/DetailsBar.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_11",
+                "name" : "UI/DuplicateScanView.swift",
+                "path" : "UI/DuplicateScanView.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_12",
                 "name" : "UI/FileListView.swift",
                 "path" : "UI/FileListView.swift",
                 "sourceTree" : "<group>",
@@ -353,7 +457,7 @@
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_8",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_13",
                 "name" : "UI/MainWindowController.swift",
                 "path" : "UI/MainWindowController.swift",
                 "sourceTree" : "<group>",
@@ -361,7 +465,31 @@
               },
               {
                 "fileType" : "sourcecode.swift",
-                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_9",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_14",
+                "name" : "UI/PaneToolbar.swift",
+                "path" : "UI/PaneToolbar.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_15",
+                "name" : "UI/QuickLookPreviewView.swift",
+                "path" : "UI/QuickLookPreviewView.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_16",
+                "name" : "UI/SearchView.swift",
+                "path" : "UI/SearchView.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_17",
                 "name" : "UI/SidebarView.swift",
                 "path" : "UI/SidebarView.swift",
                 "sourceTree" : "<group>",
@@ -387,12 +515,12 @@
       "projectIsPackage" : "true",
       "projectName" : "FlowFinderNative",
       "targets" : [
-        "d51840ed6a8da83740b089c25a51419104ea6ff1bc97574f352080bcc627cdcc",
-        "359af9b3b4581e09a4de4f6ac6f8f940b84fc9d16bd940212d5a4370cfca69a3",
+        "04017cb0f22c9748794c26286f5932d19a2d9db744dba04f80fb2e9764e8bd25",
+        "5365d13d3528beb3086e427095eec6bf3a17d5568575a54b8433c5ee29fc7bca",
         "9d221e396abc4a5924d58991b84d655e6bc8401c4b770ad13df94c8fa2e2e9c3"
       ]
     },
-    "signature" : "1aabc26b7c7d0d4cc477c3ffff542e905a6abcd7fb9e9c89d2753a17d97a1689",
+    "signature" : "c6b97807250dce5101601b4122b3c6b56d3df8dd091146bb20bbcd745c6e7d2d",
     "type" : "project"
   },
   {
@@ -410,15 +538,19 @@
             "MACOSX_DEPLOYMENT_TARGET" : "13.0",
             "OTHER_LDFLAGS[__platform_filter=macos]" : [
               "$(inherited)",
-              "-lflowfinder_core",
               "-L",
-              "FlowFinderNative/Libraries"
+              "../rust-core/target/debug",
+              "-lflowfinder_core",
+              "-framework",
+              "QuickLook"
             ],
             "OTHER_SWIFT_FLAGS" : [
               "$(inherited)",
               "$(OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_$(ENABLE_LIBFUZZER))",
               "-I",
-              "../rust-core/include"
+              "../rust-core/include",
+              "-I",
+              "include"
             ],
             "OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_YES" : [
               "-Xfrontend",
@@ -465,15 +597,19 @@
             "MACOSX_DEPLOYMENT_TARGET" : "13.0",
             "OTHER_LDFLAGS[__platform_filter=macos]" : [
               "$(inherited)",
-              "-lflowfinder_core",
               "-L",
-              "FlowFinderNative/Libraries"
+              "../rust-core/target/debug",
+              "-lflowfinder_core",
+              "-framework",
+              "QuickLook"
             ],
             "OTHER_SWIFT_FLAGS" : [
               "$(inherited)",
               "$(OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_$(ENABLE_LIBFUZZER))",
               "-I",
-              "../rust-core/include"
+              "../rust-core/include",
+              "-I",
+              "include"
             ],
             "OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_YES" : [
               "-Xfrontend",
@@ -602,6 +738,78 @@
 
               ],
               "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_10",
+              "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0::10",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_11",
+              "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0::11",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_12",
+              "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0::12",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_13",
+              "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0::13",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_14",
+              "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0::14",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_15",
+              "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0::15",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_16",
+              "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0::16",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_2::REF_17",
+              "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0::17",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
             }
           ],
           "guid" : "PACKAGE-PRODUCT:flowfindernative_FlowFinderNative.FlowFinderNative::BUILDPHASE_0",
@@ -627,7 +835,7 @@
       "productTypeIdentifier" : "com.apple.product-type.tool",
       "type" : "standard"
     },
-    "signature" : "d51840ed6a8da83740b089c25a51419104ea6ff1bc97574f352080bcc627cdcc",
+    "signature" : "04017cb0f22c9748794c26286f5932d19a2d9db744dba04f80fb2e9764e8bd25",
     "type" : "target"
   },
   {
@@ -645,9 +853,11 @@
             "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/FlowFinderNative.modulemap",
             "OTHER_LDFLAGS[__platform_filter=macos]" : [
               "$(inherited)",
-              "-lflowfinder_core",
               "-L",
-              "FlowFinderNative/Libraries"
+              "../rust-core/target/debug",
+              "-lflowfinder_core",
+              "-framework",
+              "QuickLook"
             ],
             "OTHER_SWIFT_FLAGS" : [
               "$(inherited)",
@@ -656,7 +866,9 @@
               "-Xfrontend",
               "FlowFinderNative_main",
               "-I",
-              "../rust-core/include"
+              "../rust-core/include",
+              "-I",
+              "include"
             ],
             "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
             "PRODUCT_BUNDLE_IDENTIFIER" : "flowfindernative.FlowFinderNative",
@@ -703,9 +915,11 @@
               ],
               "OTHER_LDFLAGS[__platform_filter=macos]" : [
                 "$(inherited)",
-                "-lflowfinder_core",
                 "-L",
-                "FlowFinderNative/Libraries"
+                "../rust-core/target/debug",
+                "-lflowfinder_core",
+                "-framework",
+                "QuickLook"
               ]
             }
           },
@@ -722,9 +936,11 @@
             "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/FlowFinderNative.modulemap",
             "OTHER_LDFLAGS[__platform_filter=macos]" : [
               "$(inherited)",
-              "-lflowfinder_core",
               "-L",
-              "FlowFinderNative/Libraries"
+              "../rust-core/target/debug",
+              "-lflowfinder_core",
+              "-framework",
+              "QuickLook"
             ],
             "OTHER_SWIFT_FLAGS" : [
               "$(inherited)",
@@ -733,7 +949,9 @@
               "-Xfrontend",
               "FlowFinderNative_main",
               "-I",
-              "../rust-core/include"
+              "../rust-core/include",
+              "-I",
+              "include"
             ],
             "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
             "PRODUCT_BUNDLE_IDENTIFIER" : "flowfindernative.FlowFinderNative",
@@ -779,9 +997,11 @@
               ],
               "OTHER_LDFLAGS[__platform_filter=macos]" : [
                 "$(inherited)",
-                "-lflowfinder_core",
                 "-L",
-                "FlowFinderNative/Libraries"
+                "../rust-core/target/debug",
+                "-lflowfinder_core",
+                "-framework",
+                "QuickLook"
               ]
             }
           },
@@ -880,6 +1100,78 @@
 
               ],
               "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_10",
+              "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0::10",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_11",
+              "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0::11",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_12",
+              "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0::12",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_13",
+              "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0::13",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_14",
+              "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0::14",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_15",
+              "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0::15",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_16",
+              "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0::16",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:flowfindernative::MAINGROUP::REF_3::REF_17",
+              "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0::17",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
             }
           ],
           "guid" : "PACKAGE-TARGET:FlowFinderNative-5228AB249CA57667-testable::BUILDPHASE_0",
@@ -905,7 +1197,7 @@
       "productTypeIdentifier" : "org.swift.product-type.common.object",
       "type" : "standard"
     },
-    "signature" : "359af9b3b4581e09a4de4f6ac6f8f940b84fc9d16bd940212d5a4370cfca69a3",
+    "signature" : "5365d13d3528beb3086e427095eec6bf3a17d5568575a54b8433c5ee29fc7bca",
     "type" : "target"
   },
   {

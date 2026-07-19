@@ -446,6 +446,13 @@
     "moduleName" : "QuartzCore"
   },
   {
+    "clangModuleMapPath" : "\/Library\/Developer\/CommandLineTools\/SDKs\/MacOSX27.0.sdk\/System\/Library\/Frameworks\/QuickLook.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Volumes\/Iris-Data\/Download\/AI\/文件管理系统\/flowfinder-native\/FlowFinderNative\/.build\/out\/SDKExplicitPrecompiledModules\/QuickLook-DZA6PEBR3ZRQ9KSE1IUAI9CVF.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "QuickLook"
+  },
+  {
     "clangModuleMapPath" : "\/Library\/Developer\/CommandLineTools\/SDKs\/MacOSX27.0.sdk\/System\/Library\/Frameworks\/Security.framework\/Modules\/module.modulemap",
     "clangModulePath" : "\/Volumes\/Iris-Data\/Download\/AI\/文件管理系统\/flowfinder-native\/FlowFinderNative\/.build\/out\/SDKExplicitPrecompiledModules\/Security-DUXFIY3HP13PNZG37WNF186VM.pcm",
     "isBridgingHeaderDependency" : false,

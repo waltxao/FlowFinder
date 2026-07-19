@@ -381,28 +381,45 @@ SWIFT_CLASS("_TtC16FlowFinderNative11AppDelegate")
 @end
 
 @class NSCoder;
-/// Main content view with split view layout (sidebar + file list)
-SWIFT_CLASS("_TtC16FlowFinderNative11ContentView")
-@interface ContentView : NSView
+SWIFT_CLASS("_TtC16FlowFinderNative10DetailsBar")
+@interface DetailsBar : NSView
 - (nonnull instancetype)initWithFrame:(NSRect)frameRect OBJC_DESIGNATED_INITIALIZER;
 - (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
-- (void)resizeSubviewsWithOldSize:(NSSize)oldSize;
 @end
 
+@class NSTableView;
+@class NSTableColumn;
+/// View for displaying duplicate file groups in a table
+SWIFT_CLASS("_TtC16FlowFinderNative20DuplicateResultsView")
+@interface DuplicateResultsView : NSView <NSTableViewDataSource, NSTableViewDelegate>
+- (nonnull instancetype)initWithFrame:(NSRect)frameRect OBJC_DESIGNATED_INITIALIZER;
+- (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
+- (NSInteger)numberOfRowsInTableView:(NSTableView * _Nonnull)tableView SWIFT_WARN_UNUSED_RESULT;
+- (NSView * _Nullable)tableView:(NSTableView * _Nonnull)tableView viewForTableColumn:(NSTableColumn * _Nullable)tableColumn row:(NSInteger)row SWIFT_WARN_UNUSED_RESULT;
+- (CGFloat)tableView:(NSTableView * _Nonnull)tableView heightOfRow:(NSInteger)row SWIFT_WARN_UNUSED_RESULT;
+@end
+
+/// View for scanning and displaying duplicate files
+SWIFT_CLASS("_TtC16FlowFinderNative17DuplicateScanView")
+@interface DuplicateScanView : NSView
+- (nonnull instancetype)initWithFrame:(NSRect)frameRect OBJC_DESIGNATED_INITIALIZER;
+- (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
+@end
+
+@class NSEvent;
 /// NSTableView-based file list view with icon, name, size, and modified date columns
 SWIFT_CLASS("_TtC16FlowFinderNative12FileListView")
 @interface FileListView : NSView
 - (nonnull instancetype)initWithFrame:(NSRect)frameRect OBJC_DESIGNATED_INITIALIZER;
 - (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
+- (void)keyDown:(NSEvent * _Nonnull)event;
 - (void)resizeSubviewsWithOldSize:(NSSize)oldSize;
 @end
 
-@class NSTableView;
 @interface FileListView (SWIFT_EXTENSION(FlowFinderNative)) <NSTableViewDataSource>
 - (NSInteger)numberOfRowsInTableView:(NSTableView * _Nonnull)tableView SWIFT_WARN_UNUSED_RESULT;
 @end
 
-@class NSTableColumn;
 @interface FileListView (SWIFT_EXTENSION(FlowFinderNative)) <NSTableViewDelegate>
 - (NSView * _Nullable)tableView:(NSTableView * _Nonnull)tableView viewForTableColumn:(NSTableColumn * _Nullable)tableColumn row:(NSInteger)row SWIFT_WARN_UNUSED_RESULT;
 - (CGFloat)tableView:(NSTableView * _Nonnull)tableView heightOfRow:(NSInteger)row SWIFT_WARN_UNUSED_RESULT;
@@ -417,19 +434,47 @@ SWIFT_CLASS("_TtC16FlowFinderNative21FileNameTableCellView")
 @end
 
 @class NSWindow;
-/// Main window controller managing the primary application window
 SWIFT_CLASS("_TtC16FlowFinderNative20MainWindowController")
 @interface MainWindowController : NSWindowController
 - (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
 - (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
-- (void)showWindow:(id _Nullable)sender;
-- (void)windowWillLoad;
-- (void)windowDidLoad;
 - (nonnull instancetype)initWithWindow:(NSWindow * _Nullable)window SWIFT_UNAVAILABLE;
 @end
 
-@interface MainWindowController (SWIFT_EXTENSION(FlowFinderNative)) <NSWindowRestoration>
-+ (void)restoreWindowWithIdentifier:(NSUserInterfaceItemIdentifier _Nonnull)identifier state:(NSCoder * _Nonnull)state completionHandler:(void (^ _Nonnull)(NSWindow * _Nullable, NSError * _Nullable))completionHandler;
+SWIFT_CLASS("_TtC16FlowFinderNative11PaneToolbar")
+@interface PaneToolbar : NSView
+- (nonnull instancetype)initWithFrame:(NSRect)frameRect OBJC_DESIGNATED_INITIALIZER;
+- (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
+@end
+
+/// QuickLook preview panel using macOS Quick Look framework
+SWIFT_CLASS("_TtC16FlowFinderNative21QuickLookPreviewPanel")
+@interface QuickLookPreviewPanel : NSObject
+- (nonnull instancetype)init SWIFT_UNAVAILABLE;
++ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
+@end
+
+/// Sidebar view for QuickLook preview with toggle functionality
+SWIFT_CLASS("_TtC16FlowFinderNative23QuickLookPreviewSidebar")
+@interface QuickLookPreviewSidebar : NSView
+- (nonnull instancetype)initWithFrame:(NSRect)frameRect OBJC_DESIGNATED_INITIALIZER;
+- (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
+@end
+
+/// Search bar with filter options for the main window toolbar
+SWIFT_CLASS("_TtC16FlowFinderNative13SearchBarView")
+@interface SearchBarView : NSView
+- (nonnull instancetype)initWithFrame:(NSRect)frameRect OBJC_DESIGNATED_INITIALIZER;
+- (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
+@end
+
+/// View for displaying search results with highlighted text
+SWIFT_CLASS("_TtC16FlowFinderNative17SearchResultsView")
+@interface SearchResultsView : NSView <NSTableViewDataSource, NSTableViewDelegate>
+- (nonnull instancetype)initWithFrame:(NSRect)frameRect OBJC_DESIGNATED_INITIALIZER;
+- (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder OBJC_DESIGNATED_INITIALIZER;
+- (NSInteger)numberOfRowsInTableView:(NSTableView * _Nonnull)tableView SWIFT_WARN_UNUSED_RESULT;
+- (NSView * _Nullable)tableView:(NSTableView * _Nonnull)tableView viewForTableColumn:(NSTableColumn * _Nullable)tableColumn row:(NSInteger)row SWIFT_WARN_UNUSED_RESULT;
 @end
 
 SWIFT_CLASS("_TtC16FlowFinderNative11SidebarView")

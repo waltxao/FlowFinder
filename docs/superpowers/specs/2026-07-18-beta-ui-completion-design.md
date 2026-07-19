@@ -2,7 +2,7 @@
 
 > **版本**：v0.5.0-beta  
 > **日期**：2026-07-18  
-> **状态**：待审核  
+> **状态**：已批准  
 > **平台**：macOS 独占
 
 ---
@@ -22,184 +22,260 @@
 - 沿用原设计文档中的 FFI 接口和数据结构，不重新发明轮子
 - Swift UI 优先使用 AppKit 原生组件，保证 macOS 原生体验
 - 非核心功能（缩略图引擎、任务调度中心、网络韧性）延后至 beta 之后
+- **完整复刻原版 FlowFinder 双面板布局和交互逻辑**
 - 保持与原项目设计决策的一致性，仅在架构适配层面调整
 
-### 1.3 当前状态
+### 1.3 核心布局要求
+
+**必须完整复刻原版 FlowFinder 的双面板文件管理器布局：**
+
+```
+┌──────────┬────────────────────────────────────────────┐
+│          │  Pane 1 Toolbar (导航/搜索/排序/视图)       │
+│ Sidebar  ├────────────────────────────────────────────┤
+│          │                                            │
+│ 收藏夹    │  Pane 1 File List                          │
+│ 标签      │                                            │
+│ 存储设备  ├────────────────────────────────────────────┤
+│          │  Pane 2 Toolbar (导航/搜索/排序/视图)       │
+│          ├────────────────────────────────────────────┤
+│          │                                            │
+│          │  Pane 2 File List                          │
+│          │                                            │
+│          ├────────────────────────────────────────────┤
+│          │  Details Bar (选中文件详情)                  │
+└──────────┴────────────────────────────────────────────┘
+```
+
+- **Sidebar**：收藏夹、标签云、存储设备（本地磁盘/网络磁盘/可移动磁盘）
+- **DualPane**：左右两个独立面板，各有独立工具栏、文件列表、导航历史
+- **DetailsBar**：底部显示选中文件详情（名称、类型、大小、修改日期、创建日期、标签）
+- **可拖拽分隔条**：左右面板宽度可调整
+
+### 1.4 当前状态
 
 | 模块 | 现状 |
 |------|------|
 | Rust Core | 已有完整文件操作、搜索、重复扫描、任务调度、卷管理实现 |
 | FFI 层 | 已暴露 `ff_list_dir`、`ff_copy_file`、`ff_move_file`、`ff_delete_file`、`ff_search`、`ff_scan_duplicates` 等接口 |
 | Swift CoreBridge | 已有同步/异步 API 封装 |
-| Swift UI | 有完整视图骨架，但大量方法体为空或未接入 |
+| Swift UI | 单栏布局，与目标双面板布局不符，需要完全重建 |
 
 ---
 
-## 2. 第一节：文件浏览/管理路径
+## 2. 第一节：整体布局重建
 
-### 2.1 现状
+### 2.1 设计决策
 
-- ✅ CoreBridge 已实现 `listDirectory`、`copyFile`、`moveFile`、`deleteFile`、`deleteDirectory`、`createDirectory`、`renameFile` 的同步/异步 API
-- ✅ FileListView 已绑定复制/移动/删除/重命名/新建文件夹操作
-- ❌ **SidebarView 为空骨架**，无目录树导航
-- ❌ **面包屑导航缺失**，用户无法感知当前路径层级
-- ❌ **QuickLookPreviewView 为空骨架**，空格预览未接入
+#### A. 整体布局结构
 
-### 2.2 设计决策
+```
+MainWindowController
+├── Title Bar (原生窗口标题栏)
+├── ContentView (主内容区)
+│   ├── SidebarView (左侧固定宽度 220px)
+│   │   ├── 收藏夹区域
+│   │   ├── 标签云区域
+│   │   └── 存储设备区域
+│   └── SplitView (右侧主区域，垂直分割)
+│       ├── Top Pane (上半部分)
+│       │   ├── PaneToolbar (水平工具栏)
+│       │   └── FileListView (文件列表)
+│       ├── Divider (可拖拽分隔条)
+│       └── Bottom Pane (下半部分)
+│           ├── PaneToolbar (水平工具栏)
+│           └── FileListView (文件列表)
+└── DetailsBar (底部详情栏，固定高度 120px)
+```
 
-#### A. 目录树导航
+#### B. 双面板状态管理
 
-- 复用 CoreBridge.listDirectory 递归构建目录树
-- 使用 `NSOutlineView` 实现侧边栏，支持展开/折叠
-- 点击目录项 → 调用 `viewModel.navigateToEntry` → 加载该目录
+- 每个面板有独立的状态：当前路径、历史记录、选中文件、加载状态、错误信息
+- 使用 `@Observable` 或 `ObservableObject` 管理双面板状态
+- 活跃面板（active pane）获得键盘焦点，支持跨面板复制/移动
 
-#### B. 面包屑导航
+#### C. 面板切换
 
-- 在 ContentView 顶部添加 `NSTextField` + 按钮组，显示当前路径的各层级
-- 点击任意层级 → 导航到该目录
+- 点击任意面板区域 → 该面板变为活跃面板
+- 活跃面板有视觉高亮（边框或背景色）
+- 菜单操作（删除、重命名等）作用于活跃面板
 
-#### C. 空格预览
-
-- 复用 SearchBridge 中的 QuickLookBridge（已存在）
-- FileListView 选中文件按空格 → 调用 `QuickLookBridge.shared.show()`
-- 与原设计文档的 Quick Look 方案一致
-
-### 2.3 需要修改的文件
+### 2.2 需要新建/修改的文件
 
 | 文件 | 改动 |
 |------|------|
-| `SidebarView.swift` | 实现 NSOutlineView 数据源和代理，调用 CoreBridge.listDirectory |
-| `ContentView.swift` | 添加面包屑导航栏 |
-| `QuickLookPreviewView.swift` | 删除空骨架，改为直接调用 QuickLookBridge |
-| `MainWindowController.swift` | 集成 SearchView 和 DuplicateScanView 的显示逻辑 |
+| `MainWindowController.swift` | 完全重建，实现双面板布局 |
+| `ContentView.swift` | 重建为 NSSplitView 容器 |
+| `SidebarView.swift` | 从目录树改为收藏夹/标签/存储设备 |
+| `PaneToolbar.swift` | 新建，每个面板的工具栏 |
+| `DetailsBar.swift` | 新建，底部详情面板 |
+| `FileListView.swift` | 修改支持双面板数据绑定 |
+| `FileEntryViewModel.swift` | 扩展为双面板状态管理 |
 
 ---
 
-## 3. 第二节：搜索路径
+## 3. 第二节：Sidebar（侧边栏）
 
-### 3.1 现状
+### 3.1 设计决策
 
-- ✅ SearchBridge 已实现 `search` 和 `searchWithFilters`，封装了 FFI 回调
-- ✅ SearchView 有 SearchBarView（搜索框）和 SearchResultsView（结果表格）UI 骨架
-- ❌ **SearchBarView.onSearch 未连接到 SearchBridge**
-- ❌ **SearchBridge.searchCallback 为空**，未解析 FFSearchResult C 结构体
-- ❌ **SearchResultsView 数据未填充**
+#### A. 收藏夹
 
-### 3.2 设计决策
+- 显示用户常用目录（桌面、文档、下载、Home）
+- 支持添加/删除收藏
+- 点击收藏项 → 在活跃面板中导航到该路径
 
-#### A. 搜索触发链路
+#### B. 标签云
 
-1. 用户在 SearchBarView 输入关键词 → `searchFieldChanged()` 触发 `onSearch`
-2. MainWindowController 接收到 onSearch → 调用 `SearchBridge.shared.search()`
-3. SearchBridge 通过 FFI 调用 Rust `ff_search`
-4. Rust 通过回调逐条返回 FFSearchResult
-5. SearchBridge 解析回调 → 调用 `resultHandler` → 更新 SearchResultsView
+- 显示所有标签（从 Rust Core 获取）
+- 点击标签 → 在活跃面板中过滤显示该标签的文件
+- 支持创建新标签
 
-#### B. 回调解析
+#### C. 存储设备
 
-- 在 SearchBridge 中实现 `searchCallback`，解析 Rust 返回的 C 结构体
-- 结构体字段：path, name, size, modified, isDir
-- 通过 `resultHandler` 在 main queue 更新 UI
+- 显示所有磁盘卷（本地磁盘、网络磁盘、可移动磁盘）
+- 使用 `ff_volume_list` 获取卷列表
+- 点击卷 → 在活跃面板中导航到该卷根目录
+- 显示可用容量
 
-#### C. 搜索结果操作
-
-- 双击结果 → 在文件列表中定位到该文件（调用 CoreBridge.listDirectory + 高亮）
-- 右键菜单 → 打开所在文件夹/删除文件
-
-### 3.3 需要修改的文件
+### 3.2 需要修改的文件
 
 | 文件 | 改动 |
 |------|------|
-| `SearchBridge.swift` | 实现 searchCallback 和 searchWithFiltersCallback，解析 FFSearchResult |
-| `SearchView.swift` | 将 SearchBarView.onSearch 连接到 SearchBridge；SearchResultsView 绑定数据源 |
-| `MainWindowController.swift` | 添加搜索面板的显示/隐藏逻辑 |
+| `SidebarView.swift` | 从目录树改为三区域布局 |
+| `VolumeInfo.swift` | 已存在，直接使用 |
+| `MainWindowController.swift` | 集成 Sidebar 点击事件 |
 
 ---
 
-## 4. 第三节：重复扫描路径
+## 4. 第三节：PaneToolbar（面板工具栏）
 
-### 4.1 现状
+### 4.1 设计决策
 
-- ✅ DuplicateScanBridge 已实现 `scanDuplicates` 和 `cancelScan`
-- ✅ MainWindowController 有 `showDuplicateScan()` 方法，创建 DuplicateScanView
-- ❌ **DuplicateScanView 为空骨架**，无进度显示、结果列表、操作按钮
-- ❌ **dedupGroupCallback 未实现**，无法接收重复组数据
-- ❌ **无保留/删除操作**，无法处理扫描结果
+每个面板的工具栏包含：
 
-### 4.2 设计决策
+#### Row 1：导航栏
+- 后退按钮（←）
+- 前进按钮（→）
+- 上一级按钮（↑）
+- 面包屑路径显示（可点击跳转）
+- 刷新按钮
 
-#### A. 扫描流程 UI
+#### Row 2：控制栏
+- 搜索框（实时过滤当前目录文件）
+- 排序下拉菜单（名称/修改日期/大小/类型）
+- 分组下拉菜单（无/种类/日期/大小）
+- 视图切换按钮（列表/网格）
 
-1. 用户点击菜单"扫描重复文件" → MainWindowController 显示 DuplicateScanView 面板
-2. 用户选择目录 → 调用 `DuplicateScanBridge.shared.scanDuplicates()`
-3. 扫描过程中显示进度条和当前扫描文件
-4. 扫描完成 → 显示重复组列表（每组展开显示所有重复文件）
-
-#### B. 结果展示
-
-- 使用 `NSOutlineView` 显示分组结构
-- 每组显示：文件大小、重复数量、路径
-- 支持展开/折叠查看组内文件
-
-#### C. 批量操作
-
-- 每组提供"保留最新"和"全部删除"按钮
-- 删除前显示确认对话框，列出待删除文件
-- 调用 CoreBridge.deleteFile 逐个删除
-
-#### D. 回调解析
-
-- 在 DuplicateScanBridge 中实现 `dedupGroupCallback`，解析 FFDuplicateGroup C 结构体
-- 结构体字段：id, hash, size, files（数组）
-
-### 4.3 需要修改的文件
+### 4.2 需要新建的文件
 
 | 文件 | 改动 |
 |------|------|
-| `DuplicateScanView.swift` | 实现完整 UI：目录选择、进度条、结果表格、操作按钮 |
-| `SearchBridge.swift` | 实现 dedupGroupCallback，解析 FFDuplicateGroup |
-| `MainWindowController.swift` | 确保 showDuplicateScan 正确连接 DuplicateScanBridge |
+| `PaneToolbar.swift` | 新建，实现工具栏 UI 和交互 |
+| `MainWindowController.swift` | 集成工具栏事件 |
 
 ---
 
-## 5. 第四节：实施顺序与里程碑
+## 5. 第四节：DetailsBar（底部详情栏）
 
-### Week 1：文件浏览/管理路径打通
+### 5.1 设计决策
 
-- Day 1-2：实现 SidebarView 目录树
-- Day 3：添加面包屑导航
-- Day 4：接入 QuickLook 空格预览
+- 固定高度 120px，可折叠
+- 显示选中文件的详细信息：
+  - 图标（文件夹/文件类型图标）
+  - 名称
+  - 类型
+  - 大小
+  - 修改日期
+  - 创建日期
+  - 标签
+- 多选时显示"已选中 X 项"
+- 未选中时显示"未选择文件"
+
+### 5.2 需要新建的文件
+
+| 文件 | 改动 |
+|------|------|
+| `DetailsBar.swift` | 新建，实现详情面板 |
+
+---
+
+## 6. 第五节：文件列表与交互
+
+### 6.1 设计决策
+
+#### A. 文件列表
+
+- 使用 `NSTableView` 显示文件和文件夹
+- 列：名称、修改日期、类型、大小
+- 支持排序（点击列头）
+- 支持拖拽调整列宽
+- 支持 Shift/Cmd 多选
+
+#### B. 导航
+
+- 双击文件夹 → 进入该文件夹
+- 双击文件 → 用默认应用打开
+- 后退/前进 → 导航历史
+- 上一级 → 父目录
+- 面包屑点击 → 跳转到任意层级
+
+#### C. 文件操作
+
+- 删除 → 移到废纸篓（支持撤销）
+- 重命名 → 内联编辑
+- 复制/移动 → 跨面板拖拽或菜单操作
+- 新建文件夹 → 在当前目录创建
+- 空格预览 → Quick Look
+
+### 6.2 需要修改的文件
+
+| 文件 | 改动 |
+|------|------|
+| `FileListView.swift` | 修改为支持双面板数据绑定 |
+| `FileEntryViewModel.swift` | 扩展为双面板状态管理 |
+| `MainWindowController.swift` | 处理文件操作菜单 |
+
+---
+
+## 7. 实施顺序与里程碑
+
+### Week 1：整体布局重建
+
+- Day 1-2：重建 MainWindowController 双面板布局
+- Day 3：实现 PaneToolbar
+- Day 4：实现 DetailsBar
 - Day 5：联调验证
 
-### Week 2：搜索路径打通
+### Week 2：Sidebar 和文件列表
+
+- Day 1-2：实现 Sidebar（收藏夹、标签、存储设备）
+- Day 3：实现双面板文件列表
+- Day 4：实现导航和文件操作
+- Day 5：联调验证
+
+### Week 3：搜索和重复扫描
 
 - Day 1-2：实现 SearchBridge 回调解析
-- Day 3：连接 SearchBarView 和 SearchResultsView
-- Day 4：添加搜索结果双击定位和右键菜单
-- Day 5：联调验证
-
-### Week 3：重复扫描路径打通
-
-- Day 1-2：实现 DuplicateScanView 完整 UI
-- Day 3：实现 dedupGroupCallback 解析
-- Day 4：添加保留/删除操作
+- Day 3：连接搜索 UI
+- Day 4：实现重复扫描 UI
 - Day 5：联调验证
 
 ### Week 4：集成测试与 Beta 准备
 
 - Day 1-2：三条路径端到端测试
-- Day 3：错误处理完善（权限拒绝、路径不存在、网络中断）
-- Day 4：打包验证（生成 .app，检查依赖）
+- Day 3：错误处理完善
+- Day 4：打包验证
 - Day 5：Beta 发布准备
 
 ---
 
-## 6. 第五节：与原设计文档的一致性检查
+## 8. 与原设计文档的一致性检查
 
 | 原设计决策 | 本方案实现方式 | 一致性 |
 |-----------|--------------|--------|
-| Quick Look 空格预览 | 复用 SearchBridge 中的 QuickLookBridge | ✅ 一致 |
-| Spotlight 搜索（阶段5） | 使用 Rust `ff_search`（基于内存过滤，非 Spotlight） | ⚠️ 简化版，beta 后升级 |
+| 双面板布局 | 完全复刻原版 DualPaneLayout | ✅ 一致 |
+| Quick Look 空格预览 | 使用 QuickLookBridge | ✅ 一致 |
+| Spotlight 搜索（阶段5） | 使用 Rust `ff_search`（简化版） | ⚠️ 简化版，beta 后升级 |
 | FSEvents 实时监听（阶段5） | 延后至 beta 后 | ⚠️ 延后 |
 | 缩略图引擎（阶段2） | 延后至 beta 后 | ⚠️ 延后 |
 | 任务调度中心（阶段3） | 延后至 beta 后 | ⚠️ 延后 |
@@ -209,46 +285,36 @@
 
 ---
 
-## 7. 风险与缓解
+## 9. 风险与缓解
 
-### 7.1 回调解析复杂度
+### 9.1 双面板状态管理复杂度
 
-**风险**：Rust FFI 回调中的 C 结构体解析可能涉及复杂的内存管理。
-
-**缓解**：
-- 在 SearchBridge 和 DuplicateScanBridge 中实现最小可行解析器
-- 使用 `UnsafeRawPointer` 和 `withMemoryRebound` 安全访问 C 结构体
-- 先处理简单场景（单文件路径），复杂场景后续迭代
-
-### 7.2 目录树性能
-
-**风险**：大目录（万级文件）下构建目录树可能卡顿 UI。
+**风险**：双面板各自独立状态，状态同步和竞态条件可能复杂。
 
 **缓解**：
-- 侧边栏使用异步加载，只展开时加载子目录
-- 限制初始加载深度（如只加载第一层）
-- 使用 `DispatchQueue.global()` 后台构建目录树
+- 使用独立的 ViewModel 管理每个面板状态
+- 活跃面板状态变化时再同步到全局状态
+- 使用 Combine 或 delegate 模式处理面板间通信
 
-### 7.3 重复扫描内存占用
+### 9.2 UI 复杂度
 
-**风险**：扫描大目录时，Rust 端可能积累大量重复组数据。
+**风险**：双面板 + 工具栏 + 侧边栏 + 详情栏的布局复杂度高。
 
 **缓解**：
-- 使用流式回调，边扫描边返回结果
-- Swift 端收到回调后立即更新 UI，不缓存全部结果
-- 提供"取消扫描"按钮，调用 `ff_cancel_scan`
+- 使用 Auto Layout 和 Stack View 简化布局
+- 每个组件独立实现，通过协议通信
+- 先实现最小可用版本，再逐步完善
 
 ---
 
-## 8. 待确认事项
+## 10. 已确认的决策
 
-1. **搜索结果定位**：双击搜索结果时，是打开新窗口定位，还是在当前窗口加载目录并高亮？
-2. **重复扫描默认目录**：默认扫描当前目录，还是让用户选择？
-3. **删除确认方式**：使用系统 Alert，还是自定义面板？
-4. **侧边栏初始状态**：默认展开常用目录（如桌面、文档），还是从根目录开始？
+1. **完整双面板重构**：按原版 FlowFinder 实现双面板布局
+2. **Sidebar**：收藏夹 + 标签云 + 存储设备（非目录树）
+3. **PaneToolbar**：每个面板独立工具栏（导航/搜索/排序/视图）
+4. **DetailsBar**：底部详情面板
+5. **可拖拽分隔条**：左右面板宽度可调整
 
 ---
 
-Spec 已写入 `/docs/superpowers/specs/2026-07-18-beta-ui-completion-design.md`。
-
-请审查这份设计文档，如有需要修改或补充的地方请告诉我。确认后我将开始按计划实施。
+Spec 已更新。现在开始实施。
