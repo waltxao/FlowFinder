@@ -98,6 +98,8 @@ public class FileGridView: NSView {
 
     public var viewModel: PaneViewModel? {
         didSet {
+            // 清空旧订阅，防止累积泄漏
+            cancellables.removeAll()
             collectionView.dataSource = self
             collectionView.delegate = self
             viewModel?.$state
@@ -122,8 +124,8 @@ public class FileGridView: NSView {
     }
 
     private func setupUI() {
-        scrollView = NSScrollView(frame: bounds)
-        scrollView.autoresizingMask = [.width, .height]
+        scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -149,11 +151,13 @@ public class FileGridView: NSView {
 
         scrollView.documentView = collectionView
         addSubview(scrollView)
-    }
 
-    public override func resizeSubviews(withOldSize oldSize: NSSize) {
-        super.resizeSubviews(withOldSize: oldSize)
-        scrollView.frame = bounds
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
     }
 
     public func reloadData() {
