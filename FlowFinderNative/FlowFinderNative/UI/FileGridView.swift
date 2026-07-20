@@ -158,6 +158,159 @@ public class FileGridView: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
+        setupContextMenu()
+    }
+
+    // MARK: - Context Menu
+
+    private func setupContextMenu() {
+        let menu = NSMenu()
+
+        menu.addItem(withTitle: "打开", action: #selector(openSelected(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "复制", action: #selector(copySelected(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: "剪切", action: #selector(cutSelected(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: "粘贴", action: #selector(pasteSelected(_:)), keyEquivalent: "v")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "复制到另一面板", action: #selector(copyToOtherPane(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "移动到另一面板", action: #selector(moveToOtherPane(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "在对侧面板打开", action: #selector(openInOtherPane(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "重命名", action: #selector(renameSelected(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "删除", action: #selector(deleteSelected(_:)), keyEquivalent: "\u{7F}")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "新建文件夹", action: #selector(createDirectory(_:)), keyEquivalent: "n")
+
+        for item in menu.items where item.action != nil {
+            item.target = self
+            if item.keyEquivalent == "n" {
+                item.keyEquivalentModifierMask = [.command, .shift]
+            } else if !item.keyEquivalent.isEmpty {
+                item.keyEquivalentModifierMask = .command
+            }
+        }
+        collectionView.menu = menu
+    }
+
+    // MARK: - Context Menu Helpers
+
+    private var clickedEntry: FileEntry? {
+        let point = collectionView.convert(NSEvent.mouseLocation, from: nil)
+        guard let indexPath = collectionView.indexPathForItem(at: point),
+              let viewModel = viewModel,
+              indexPath.item < viewModel.files.count else { return nil }
+        return viewModel.files[indexPath.item]
+    }
+
+    private func getSide() -> String {
+        return identifier?.rawValue ?? "left"
+    }
+
+    // MARK: - Context Menu Actions
+
+    @objc private func openSelected(_ sender: Any?) {
+        guard let entry = clickedEntry else { return }
+        if entry.isDirectory {
+            onDoubleClick?(entry)
+        } else {
+            NSWorkspace.shared.openFile(entry.path)
+        }
+    }
+
+    @objc private func copySelected(_ sender: Any?) {
+        NotificationCenter.default.post(name: .fileListDidCopy, object: nil, userInfo: ["side": getSide()])
+    }
+
+    @objc private func cutSelected(_ sender: Any?) {
+        NotificationCenter.default.post(name: .fileListDidCut, object: nil, userInfo: ["side": getSide()])
+    }
+
+    @objc private func pasteSelected(_ sender: Any?) {
+        NotificationCenter.default.post(name: .fileListDidPaste, object: nil, userInfo: ["side": getSide()])
+    }
+
+    @objc private func copyToOtherPane(_ sender: Any?) {
+        NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide()])
+    }
+
+    @objc private func moveToOtherPane(_ sender: Any?) {
+        NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide()])
+    }
+
+    @objc private func openInOtherPane(_ sender: Any?) {
+        guard let entry = clickedEntry else { return }
+        NotificationCenter.default.post(name: .fileListDidOpenInOther, object: nil, userInfo: ["side": getSide(), "path": entry.path])
+    }
+
+    @objc private func renameSelected(_ sender: Any?) {
+        guard let entry = clickedEntry else { return }
+        let alert = NSAlert()
+        alert.messageText = "重命名 \"\(entry.name)\""
+        alert.informativeText = "输入新名称："
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "重命名")
+        alert.addButton(withTitle: "取消")
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        textField.stringValue = entry.name
+        alert.accessoryView = textField
+        if let window = window {
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard response == .alertFirstButtonReturn else { return }
+                let newName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !newName.isEmpty, newName != entry.name else { return }
+                self?.viewModel?.renameFile(entry.path, to: newName)
+            }
+        }
+    }
+
+    @objc private func deleteSelected(_ sender: Any?) {
+        let entries = viewModel?.selectedFiles ?? []
+        guard !entries.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = entries.count == 1 ? "删除\"\(entries[0].name)\"？" : "删除 \(entries.count) 个项目？"
+        alert.informativeText = "此操作无法撤销。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        if let window = window {
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard response == .alertFirstButtonReturn else { return }
+                self?.viewModel?.deleteSelected()
+            }
+        }
+    }
+
+    @objc private func createDirectory(_ sender: Any?) {
+        guard let currentPath = viewModel?.currentPath else { return }
+        let alert = NSAlert()
+        alert.messageText = "新建文件夹"
+        alert.informativeText = "输入文件夹名称："
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "创建")
+        alert.addButton(withTitle: "取消")
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        textField.stringValue = "未命名文件夹"
+        alert.accessoryView = textField
+        if let window = window {
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard response == .alertFirstButtonReturn else { return }
+                let folderName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !folderName.isEmpty else { return }
+                let newPath = (currentPath as NSString).appendingPathComponent(folderName)
+                do {
+                    try CoreBridge.shared.createDirectory(path: newPath)
+                    self?.viewModel?.refresh()
+                } catch {
+                    let errAlert = NSAlert()
+                    errAlert.messageText = "错误"
+                    errAlert.informativeText = error.localizedDescription
+                    errAlert.alertStyle = .critical
+                    errAlert.addButton(withTitle: "好")
+                    errAlert.beginSheetModal(for: window) { _ in }
+                }
+            }
+        }
     }
 
     public func reloadData() {
