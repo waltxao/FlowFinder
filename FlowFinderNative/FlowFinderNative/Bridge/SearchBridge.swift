@@ -316,9 +316,48 @@ private func dedupProgressCallback(scanned: Int, total: Int, userData: UnsafeMut
 }
 
 private func dedupGroupCallback(groupPtr: UnsafeRawPointer?, userData: UnsafeMutableRawPointer?) {
-    guard let groupPtr = groupPtr else { return }
-    // Parse the C struct and call the handler
-    // This is a simplified version - in production you'd parse the full struct
+    guard let groupPtr = groupPtr,
+          let userData = userData else { return }
+
+    let context = userData.withMemoryRebound(to: DedupGroupContext.self, capacity: 1) { $0 }
+
+    // 解析 C 结构体 FFDuplicateGroup_C
+    let cGroup = groupPtr.assumingMemoryBound(to: FFDuplicateGroup_C.self).pointee
+
+    let groupId = cGroup.id.map { String(cString: $0) } ?? ""
+    let hash = cGroup.hash.map { String(cString: $0) } ?? ""
+    let groupSize = cGroup.size
+    let fileCount = Int(cGroup.file_count)
+
+    // 解析文件数组
+    var files: [FFDuplicateFile] = []
+    if let filesPtr = cGroup.files {
+        for i in 0..<fileCount {
+            let filePtr = filesPtr.advanced(by: i)
+            let cFile = filePtr.pointee
+            let fileId = cFile.id.map { String(cString: $0) } ?? ""
+            let path = cFile.path.map { String(cString: $0) } ?? ""
+            let name = cFile.name.map { String(cString: $0) } ?? ""
+            files.append(FFDuplicateFile(
+                id: fileId.isEmpty ? path : fileId,
+                path: path,
+                name: name,
+                size: cFile.size,
+                modified: cFile.modified
+            ))
+        }
+    }
+
+    let group = FFDuplicateGroup(
+        id: groupId.isEmpty ? hash : groupId,
+        hash: hash,
+        size: groupSize,
+        files: files
+    )
+
+    DispatchQueue.main.async {
+        context.pointee.groupHandler(group)
+    }
 }
 
 private func searchCallback(resultPtr: UnsafeRawPointer?, userData: UnsafeMutableRawPointer?) {
@@ -327,6 +366,21 @@ private func searchCallback(resultPtr: UnsafeRawPointer?, userData: UnsafeMutabl
 
     let context = userData.withMemoryRebound(to: SearchContext.self, capacity: 1) { $0 }
 
-    // Parse the C struct (simplified)
-    // In production, you'd properly parse the FFSearchResult C struct
+    // 解析 C 结构体 FFSearchResult_C
+    let cResult = resultPtr.assumingMemoryBound(to: FFSearchResult_C.self).pointee
+
+    let path = cResult.path.map { String(cString: $0) } ?? ""
+    let name = cResult.name.map { String(cString: $0) } ?? ""
+
+    let result = FFSearchResult(
+        path: path,
+        name: name,
+        size: cResult.size,
+        modified: cResult.modified,
+        isDir: cResult.is_dir
+    )
+
+    DispatchQueue.main.async {
+        context.pointee.resultHandler(result)
+    }
 }

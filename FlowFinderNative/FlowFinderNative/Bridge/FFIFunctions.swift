@@ -96,6 +96,35 @@ public struct FFSearchFilters {
     }
 }
 
+// MARK: - C-Compatible FFI Structs (raw pointer layout, matches Rust #[repr(C)])
+
+/// C-compatible duplicate file struct (matches Rust FFDuplicateFile)
+public struct FFDuplicateFile_C {
+    public var id: UnsafeMutablePointer<CChar>?
+    public var path: UnsafeMutablePointer<CChar>?
+    public var name: UnsafeMutablePointer<CChar>?
+    public var size: UInt64
+    public var modified: Int64
+}
+
+/// C-compatible duplicate group struct (matches Rust FFDuplicateGroup)
+public struct FFDuplicateGroup_C {
+    public var id: UnsafeMutablePointer<CChar>?
+    public var hash: UnsafeMutablePointer<CChar>?
+    public var size: UInt64
+    public var files: UnsafePointer<FFDuplicateFile_C>?
+    public var file_count: UInt
+}
+
+/// C-compatible search result struct (matches Rust FFSearchResult)
+public struct FFSearchResult_C {
+    public var path: UnsafeMutablePointer<CChar>?
+    public var name: UnsafeMutablePointer<CChar>?
+    public var size: UInt64
+    public var modified: Int64
+    public var is_dir: Bool
+}
+
 // MARK: - FFI Function Declarations
 
 /// List contents of a directory
