@@ -21,14 +21,16 @@ class PaneToolbar: NSView {
     weak var delegate: PaneToolbarDelegate?
 
     private var path: String = ""
-    private var cancellables = Set<AnyCancellable>()
 
-    // UI Components
+    // Row 1: Navigation + Breadcrumb
     private var backButton: NSButton!
     private var forwardButton: NSButton!
     private var upButton: NSButton!
     private var refreshButton: NSButton!
+    private var breadcrumbScrollView: NSScrollView!
     private var breadcrumbStack: NSStackView!
+
+    // Row 2: Search + Sort + Group + View
     private var searchField: NSSearchField!
     private var sortPopup: NSPopUpButton!
     private var sortDirectionButton: NSButton!
@@ -48,42 +50,75 @@ class PaneToolbar: NSView {
 
     private func setupUI() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        layer?.masksToBounds = true  // 裁剪溢出内容
+        layer?.masksToBounds = true
 
-        // 设置固定高度
-        heightAnchor.constraint(equalToConstant: 36).isActive = true
+        // 固定双行高度 72pt（每行 32 + 间距 4 + 边距 4）
+        heightAnchor.constraint(equalToConstant: 72).isActive = true
 
-        // Navigation buttons
-        backButton = createIconButton(imageName: NSImage.goBackTemplateName, action: #selector(backClicked))
-        forwardButton = createIconButton(imageName: NSImage.goForwardTemplateName, action: #selector(forwardClicked))
-        upButton = createIconButton(systemSymbol: "chevron.up", action: #selector(upClicked))
-        refreshButton = createIconButton(imageName: NSImage.refreshTemplateName, action: #selector(refreshClicked))
+        setupRow1()
+        setupRow2()
+    }
 
-        // Breadcrumb (clickable segments)
+    // MARK: - Row 1: Navigation + Breadcrumb
+
+    private func setupRow1() {
+        backButton = createNavButton(systemSymbol: "chevron.backward", action: #selector(backClicked))
+        forwardButton = createNavButton(systemSymbol: "chevron.forward", action: #selector(forwardClicked))
+        upButton = createNavButton(systemSymbol: "chevron.up", action: #selector(upClicked))
+        refreshButton = createNavButton(systemSymbol: "arrow.clockwise", action: #selector(refreshClicked))
+
         breadcrumbStack = NSStackView()
         breadcrumbStack.orientation = .horizontal
         breadcrumbStack.alignment = .centerY
         breadcrumbStack.spacing = 2
         breadcrumbStack.detachesHiddenViews = false
         breadcrumbStack.translatesAutoresizingMaskIntoConstraints = false
+        breadcrumbStack.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
 
-        // Search
+        breadcrumbScrollView = NSScrollView()
+        breadcrumbScrollView.translatesAutoresizingMaskIntoConstraints = false
+        breadcrumbScrollView.hasHorizontalScroller = false
+        breadcrumbScrollView.hasVerticalScroller = false
+        breadcrumbScrollView.autohidesScrollers = true
+        breadcrumbScrollView.drawsBackground = false
+        breadcrumbScrollView.documentView = breadcrumbStack
+
+        let row1 = NSStackView(views: [backButton, forwardButton, upButton, refreshButton, breadcrumbScrollView])
+        row1.orientation = .horizontal
+        row1.alignment = .centerY
+        row1.spacing = 4
+        row1.detachesHiddenViews = false
+        row1.translatesAutoresizingMaskIntoConstraints = false
+        row1.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        addSubview(row1)
+
+        NSLayoutConstraint.activate([
+            row1.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            row1.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            row1.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            row1.heightAnchor.constraint(equalToConstant: 32),
+
+            breadcrumbScrollView.heightAnchor.constraint(equalToConstant: 28),
+        ])
+    }
+
+    // MARK: - Row 2: Search + Sort + Group + View
+
+    private func setupRow2() {
         searchField = NSSearchField()
         searchField.placeholderString = "搜索当前目录"
         searchField.target = self
         searchField.action = #selector(searchChanged)
         searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        // Sort popup
         sortPopup = NSPopUpButton()
         sortPopup.addItems(withTitles: SortField.allCases.map { $0.rawValue })
         sortPopup.target = self
         sortPopup.action = #selector(sortSelected(_:))
         sortPopup.translatesAutoresizingMaskIntoConstraints = false
 
-        // Sort direction toggle
         sortDirectionButton = NSButton()
         sortDirectionButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "升序")
         sortDirectionButton.bezelStyle = .texturedRounded
@@ -91,71 +126,64 @@ class PaneToolbar: NSView {
         sortDirectionButton.action = #selector(sortDirectionToggled)
         sortDirectionButton.translatesAutoresizingMaskIntoConstraints = false
 
-        // Group popup
         groupPopup = NSPopUpButton()
         groupPopup.addItems(withTitles: ["无分组", "按种类", "按日期", "按大小"])
         groupPopup.target = self
         groupPopup.action = #selector(groupSelected(_:))
         groupPopup.translatesAutoresizingMaskIntoConstraints = false
 
-        // View mode buttons (mutually exclusive)
-        listViewButton = createIconButton(imageName: NSImage.listViewTemplateName, action: #selector(listViewClicked))
-        listViewButton.image = NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "列表视图")
-        gridViewButton = createIconButton(imageName: NSImage.iconViewTemplateName, action: #selector(gridViewClicked))
-        gridViewButton.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "网格视图")
+        listViewButton = createViewButton(systemSymbol: "list.bullet", action: #selector(listViewClicked))
+        gridViewButton = createViewButton(systemSymbol: "square.grid.2x2", action: #selector(gridViewClicked))
 
-        // Set initial view mode highlight
         updateViewModeHighlight(.list)
 
-        // Layout: single row
-        let mainStack = NSStackView(views: [
-            backButton, forwardButton, upButton, refreshButton,
-            breadcrumbStack,
+        let row2 = NSStackView(views: [
             searchField,
             sortPopup, sortDirectionButton,
             groupPopup,
             listViewButton, gridViewButton,
         ])
-        mainStack.orientation = .horizontal
-        mainStack.alignment = .centerY
-        mainStack.spacing = 4
-        mainStack.detachesHiddenViews = false
-        mainStack.translatesAutoresizingMaskIntoConstraints = false
-
-        // Make breadcrumb flexible
-        mainStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        breadcrumbStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        searchField.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-
-        addSubview(mainStack)
+        row2.orientation = .horizontal
+        row2.alignment = .centerY
+        row2.spacing = 4
+        row2.detachesHiddenViews = false
+        row2.translatesAutoresizingMaskIntoConstraints = false
+        row2.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        addSubview(row2)
 
         NSLayoutConstraint.activate([
-            mainStack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            mainStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            mainStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            mainStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            row2.topAnchor.constraint(equalTo: breadcrumbScrollView.bottomAnchor, constant: 4),
+            row2.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            row2.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            row2.heightAnchor.constraint(equalToConstant: 32),
         ])
     }
 
-    private func createIconButton(imageName: String, action: Selector) -> NSButton {
+    // MARK: - Button Factory
+
+    private func createNavButton(systemSymbol: String, action: Selector) -> NSButton {
         let button = NSButton()
-        button.image = NSImage(named: imageName) ?? NSImage()
+        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: nil)
         button.bezelStyle = .texturedRounded
         button.imagePosition = .imageOnly
         button.target = self
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return button
     }
 
-    private func createIconButton(systemSymbol: String, action: Selector) -> NSButton {
+    private func createViewButton(systemSymbol: String, action: Selector) -> NSButton {
         let button = NSButton()
-        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: nil) ?? NSImage()
+        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: nil)
         button.bezelStyle = .texturedRounded
         button.imagePosition = .imageOnly
         button.target = self
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return button
     }
 
@@ -163,19 +191,16 @@ class PaneToolbar: NSView {
 
     func setPath(_ path: String) {
         self.path = path
-        // Rebuild breadcrumb segments
         breadcrumbStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
         let segments = path.split(separator: "/").map(String.init)
         var accumulatedPath = ""
 
-        // Root button
         let rootButton = createBreadcrumbButton(title: "Macintosh HD", path: "/")
         breadcrumbStack.addArrangedSubview(rootButton)
 
         for segment in segments {
             accumulatedPath += "/" + segment
-            // Separator
             let sep = NSTextField(labelWithString: "›")
             sep.textColor = NSColor.secondaryLabelColor
             sep.translatesAutoresizingMaskIntoConstraints = false
@@ -195,22 +220,13 @@ class PaneToolbar: NSView {
         button.target = self
         button.action = #selector(breadcrumbClicked(_:))
         button.translatesAutoresizingMaskIntoConstraints = false
-        // Store path in identifier
         button.identifier = NSUserInterfaceItemIdentifier(path)
         return button
     }
 
-    func setCanGoBack(_ canGoBack: Bool) {
-        backButton.isEnabled = canGoBack
-    }
-
-    func setCanGoForward(_ canGoForward: Bool) {
-        forwardButton.isEnabled = canGoForward
-    }
-
-    func setViewMode(_ mode: ViewMode) {
-        updateViewModeHighlight(mode)
-    }
+    func setCanGoBack(_ canGoBack: Bool) { backButton.isEnabled = canGoBack }
+    func setCanGoForward(_ canGoForward: Bool) { forwardButton.isEnabled = canGoForward }
+    func setViewMode(_ mode: ViewMode) { updateViewModeHighlight(mode) }
 
     private func updateViewModeHighlight(_ mode: ViewMode) {
         listViewButton.highlight(mode == .list)
@@ -223,7 +239,6 @@ class PaneToolbar: NSView {
     @objc private func forwardClicked() { delegate?.paneToolbarDidClickForward(self) }
     @objc private func upClicked() { delegate?.paneToolbarDidClickUp(self) }
     @objc private func refreshClicked() { delegate?.paneToolbarDidClickRefresh(self) }
-
     @objc private func searchChanged() {
         delegate?.paneToolbar(self, didChangeSearchQuery: searchField.stringValue)
     }
@@ -238,7 +253,6 @@ class PaneToolbar: NSView {
     @objc private func sortDirectionToggled() {
         let isAscending = sortDirectionButton.image == NSImage(systemSymbolName: "chevron.up", accessibilityDescription: nil)
         sortDirectionButton.image = NSImage(systemSymbolName: isAscending ? "chevron.down" : "chevron.up", accessibilityDescription: isAscending ? "降序" : "升序")
-
         guard let title = sortPopup.titleOfSelectedItem,
               let field = SortField(rawValue: title) else { return }
         delegate?.paneToolbar(self, didChangeSortField: field, ascending: !isAscending)
