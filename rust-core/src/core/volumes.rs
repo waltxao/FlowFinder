@@ -127,9 +127,26 @@ impl VolumeManager {
 
         let device = parts[0];
         let mount_point = parts[2];
-        
-        // Skip system mounts
-        if mount_point.starts_with("/dev") || mount_point == "/" {
+
+        // Compute name early for filter checks
+        let name = Path::new(mount_point)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(mount_point)
+            .to_string();
+
+        // Skip system mounts - 严格过滤系统卷
+        // 排除 /dev 下的系统挂载、根目录、以及 APFS 系统卷
+        if mount_point.starts_with("/dev")
+            || mount_point == "/"
+            || mount_point == "/System/Volumes/Data"
+            // APFS 系统隐藏卷（VM、Preboot、Update、xarts、iSCPreboot、Hardware、Recovery）
+            || Self::is_system_volume(mount_point)
+            // iOS 设备挂载点
+            || mount_point.starts_with("/var/mobile")
+            // 未命名 UUID 卷（通常为 APFS snapshot）
+            || (mount_point.starts_with("/Volumes/") && name.len() == 36 && name.contains('-'))
+        {
             return None;
         }
 
@@ -142,15 +159,9 @@ impl VolumeManager {
         };
 
         let volume_type = VolumeType::from_str(&filesystem);
-        
+
         // Get volume size info
         let (total, used, free) = self.get_volume_size(mount_point);
-        
-        let name = Path::new(mount_point)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(mount_point)
-            .to_string();
 
         Some(VolumeInfo {
             path: mount_point.to_string(),
@@ -165,6 +176,33 @@ impl VolumeManager {
             mount_point: mount_point.to_string(),
             filesystem,
         })
+    }
+
+    /// 检查挂载点是否为 APFS 系统隐藏卷
+    fn is_system_volume(mount_point: &str) -> bool {
+        // 已知的 APFS 系统卷名称
+        const SYSTEM_VOLUME_NAMES: &[&str] = &[
+            "VM", "Preboot", "Update", "xarts", "iSCPreboot",
+            "Hardware", "Recovery", "SSV",
+            "Data", // /System/Volumes/Data 已在上层过滤
+        ];
+
+        // 检查 /Volumes/ 下的卷名是否为系统卷
+        if let Some(vol_name) = mount_point.strip_prefix("/Volumes/") {
+            return SYSTEM_VOLUME_NAMES.iter().any(|&sys| vol_name == sys);
+        }
+
+        // 检查 /System/Volumes/ 下的其他系统卷
+        if mount_point.starts_with("/System/Volumes/") {
+            return true;
+        }
+
+        // 检查 /private/ 下的系统挂载
+        if mount_point.starts_with("/private/") {
+            return true;
+        }
+
+        false
     }
 
     /// Get volume size information
