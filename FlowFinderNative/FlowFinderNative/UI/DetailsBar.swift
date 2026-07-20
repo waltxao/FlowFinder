@@ -16,6 +16,7 @@ class DetailsBar: NSView {
     private var createdField: NSTextField!
     private var tagsField: NSTextField!
     private var collapseButton: NSButton!
+    private var detailsContainer: NSView!
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -29,13 +30,14 @@ class DetailsBar: NSView {
 
     private func setupUI() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         layer?.borderColor = NSColor.separatorColor.cgColor
         layer?.borderWidth = 1
 
         // Icon
         iconView = NSImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyUpOrDown
         addSubview(iconView)
 
         // Collapse button
@@ -49,29 +51,54 @@ class DetailsBar: NSView {
         collapseButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(collapseButton)
 
-        // Details grid
-        let detailsStack = NSStackView()
-        detailsStack.orientation = .vertical
-        detailsStack.spacing = 4
-        detailsStack.translatesAutoresizingMaskIntoConstraints = false
+        // 创建详情行（每行包含 label + value）
+        let (nameRow, nameValue) = createDetailRow(label: "名称:")
+        let (typeRow, typeValue) = createDetailRow(label: "类型:")
+        let (sizeRow, sizeValue) = createDetailRow(label: "大小:")
+        let (modifiedRow, modifiedValue) = createDetailRow(label: "修改:")
+        let (createdRow, createdValue) = createDetailRow(label: "创建:")
+        let (tagsRow, tagsValue) = createDetailRow(label: "标签:")
 
-        nameField = createDetailField(label: "名称:")
-        typeField = createDetailField(label: "类型:")
-        sizeField = createDetailField(label: "大小:")
-        modifiedField = createDetailField(label: "修改:")
-        createdField = createDetailField(label: "创建:")
-        tagsField = createDetailField(label: "标签:")
+        nameField = nameValue
+        typeField = typeValue
+        sizeField = sizeValue
+        modifiedField = modifiedValue
+        createdField = createdValue
+        tagsField = tagsValue
 
-        detailsStack.addArrangedSubview(nameField)
-        detailsStack.addArrangedSubview(typeField)
-        detailsStack.addArrangedSubview(sizeField)
-        detailsStack.addArrangedSubview(modifiedField)
-        detailsStack.addArrangedSubview(createdField)
-        detailsStack.addArrangedSubview(tagsField)
+        // 左列（名称/类型/大小）
+        let leftColumn = NSStackView(views: [nameRow, typeRow, sizeRow])
+        leftColumn.orientation = .vertical
+        leftColumn.spacing = 4
+        leftColumn.alignment = .leading
+        leftColumn.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(detailsStack)
+        // 右列（修改/创建/标签）
+        let rightColumn = NSStackView(views: [modifiedRow, createdRow, tagsRow])
+        rightColumn.orientation = .vertical
+        rightColumn.spacing = 4
+        rightColumn.alignment = .leading
+        rightColumn.translatesAutoresizingMaskIntoConstraints = false
 
-        // Constraints
+        detailsContainer = NSView()
+        detailsContainer.addSubview(leftColumn)
+        detailsContainer.addSubview(rightColumn)
+        detailsContainer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(detailsContainer)
+
+        NSLayoutConstraint.activate([
+            leftColumn.topAnchor.constraint(equalTo: detailsContainer.topAnchor),
+            leftColumn.leadingAnchor.constraint(equalTo: detailsContainer.leadingAnchor),
+            leftColumn.bottomAnchor.constraint(equalTo: detailsContainer.bottomAnchor),
+            leftColumn.widthAnchor.constraint(equalTo: detailsContainer.widthAnchor, multiplier: 0.5),
+
+            rightColumn.topAnchor.constraint(equalTo: detailsContainer.topAnchor),
+            rightColumn.leadingAnchor.constraint(equalTo: leftColumn.trailingAnchor, constant: 12),
+            rightColumn.trailingAnchor.constraint(equalTo: detailsContainer.trailingAnchor),
+            rightColumn.bottomAnchor.constraint(equalTo: detailsContainer.bottomAnchor),
+        ])
+
+        // 主约束
         NSLayoutConstraint.activate([
             collapseButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             collapseButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
@@ -83,14 +110,16 @@ class DetailsBar: NSView {
             iconView.widthAnchor.constraint(equalToConstant: 48),
             iconView.heightAnchor.constraint(equalToConstant: 48),
 
-            detailsStack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            detailsStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
-            detailsStack.trailingAnchor.constraint(equalTo: collapseButton.leadingAnchor, constant: -8),
-            detailsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            detailsContainer.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            detailsContainer.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
+            detailsContainer.trailingAnchor.constraint(equalTo: collapseButton.leadingAnchor, constant: -8),
+            detailsContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
     }
 
-    private func createDetailField(label: String) -> NSTextField {
+    /// 创建 label + value 水平排列的行
+    /// - Returns: (rowView: 包含 label+value 的 NSStackView, valueField: 值 NSTextField)
+    private func createDetailRow(label: String) -> (rowView: NSStackView, valueField: NSTextField) {
         let labelView = NSTextField(labelWithString: label)
         labelView.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         labelView.textColor = NSColor.secondaryLabelColor
@@ -99,27 +128,19 @@ class DetailsBar: NSView {
         valueView.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         valueView.textColor = NSColor.labelColor
         valueView.lineBreakMode = .byTruncatingTail
+        valueView.maximumNumberOfLines = 1
+        valueView.cell?.truncatesLastVisibleLine = true
 
-        let stack = NSStackView(views: [labelView, valueView])
-        stack.orientation = .horizontal
-        stack.spacing = 4
-        stack.alignment = .centerY
+        let row = NSStackView(views: [labelView, valueView])
+        row.orientation = .horizontal
+        row.spacing = 4
+        row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
 
-        // Store reference to value view for updates
-        objc_setAssociatedObject(stack, "valueField", valueView, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        // 固定 label 宽度对齐
+        labelView.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
-        let container = NSView()
-        container.addSubview(stack)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-
-        // Return the value field directly so we can update it
-        return valueView
+        return (row, valueView)
     }
 
     // MARK: - Public API
@@ -186,23 +207,6 @@ class DetailsBar: NSView {
         }
     }
 
-    private func formatBytes(_ bytes: UInt64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
-    }
-
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-
-    /// 折叠状态的高度约束引用（用于 Auto Layout 动画）
-    private var heightConstraint: NSLayoutConstraint?
-
     @objc private func collapseClicked() {
         collapsed.toggle()
 
@@ -210,24 +214,16 @@ class DetailsBar: NSView {
         let symbolName = collapsed ? "chevron.right" : "chevron.down"
         collapseButton.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: collapsed ? "展开" : "折叠")
 
-        // 隐藏/显示详情字段（保留图标和折叠按钮可见）
-        let detailViews: [NSView] = [nameField, typeField, sizeField, modifiedField, createdField, tagsField]
-        for view in detailViews {
-            view.isHidden = collapsed
-        }
+        // 隐藏/显示详情容器（保留图标和折叠按钮可见）
+        detailsContainer.isHidden = collapsed
 
-        // 通过 Auto Layout 约束改变高度（非直接改 frame）
-        if heightConstraint == nil {
-            heightConstraint = heightAnchor.constraint(equalToConstant: 120)
-            heightConstraint?.isActive = true
-        }
-
-        heightConstraint?.constant = collapsed ? 28 : 120
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.25
-            context.allowsImplicitAnimation = true
-            window?.layoutIfNeeded()
+        // 通知父视图重新布局（高度由 MainWindowController 的约束控制）
+        if let window = window {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                context.allowsImplicitAnimation = true
+                window.layoutIfNeeded()
+            }
         }
     }
 }

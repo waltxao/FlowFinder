@@ -49,6 +49,10 @@ class PaneToolbar: NSView {
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.masksToBounds = true  // 裁剪溢出内容
+
+        // 设置固定高度
+        heightAnchor.constraint(equalToConstant: 36).isActive = true
 
         // Navigation buttons
         backButton = createIconButton(imageName: NSImage.goBackTemplateName, action: #selector(backClicked))
@@ -119,9 +123,9 @@ class PaneToolbar: NSView {
         mainStack.translatesAutoresizingMaskIntoConstraints = false
 
         // Make breadcrumb flexible
-        mainStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        breadcrumbStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        searchField.setHuggingPriority(.defaultHigh, for: .horizontal)
+        mainStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        breadcrumbStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        searchField.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
         addSubview(mainStack)
 

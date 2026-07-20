@@ -282,7 +282,7 @@ private class SidebarDataSource: NSObject, NSOutlineViewDataSource, NSOutlineVie
             textField.stringValue = dev.name
             let iconName = dev.isNetwork ? "externaldrive.connected.to.line" : "externaldrive"
             imageView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "设备")
-                ?? NSImage(named: NSImage.volumeName)
+                ?? NSImage(systemSymbolName: "externaldrive", accessibilityDescription: nil)
 
         default:
             textField.stringValue = ""

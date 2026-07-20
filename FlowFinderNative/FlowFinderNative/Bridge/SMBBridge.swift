@@ -42,12 +42,12 @@ public final class SMBBridge {
         var mountpoints: Unmanaged<CFArray>?
 
         let openOptions: CFMutableDictionary = {
-            let dict = CFDictionaryCreateMutable(nil, 0, nil, nil)
+            let dict = CFDictionaryCreateMutable(nil, 0, nil, nil)!
             return dict
         }()
 
         let mountOptions: CFMutableDictionary = {
-            let dict = CFDictionaryCreateMutable(nil, 0, nil, nil)
+            let dict = CFDictionaryCreateMutable(nil, 0, nil, nil)!
             return dict
         }()
 
@@ -144,9 +144,9 @@ public final class SMBBridge {
     }
 
     private func unmountVolume(at path: String) -> Int32 {
-        // 使用 unmount(2) 系统调用
+        // 使用 unmount(2) 系统调用 (Darwin.unmount to disambiguate from instance method)
         return path.withCString { cPath in
-            unmount(cPath, 0)
+            Darwin.unmount(cPath, 0)
         }
     }
 }

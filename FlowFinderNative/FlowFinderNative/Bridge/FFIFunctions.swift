@@ -142,8 +142,7 @@ public func ff_list_dir(
 
 /// Get the last error message
 /// - Returns: Pointer to error description C string (caller must free with ff_free_string)
-@_silgen_name("ff_last_error")
-public func ff_last_error() -> UnsafePointer<CChar>?
+/// Note: Declared in ff_ffi.h, no @_silgen_name needed to avoid ambiguity with C import
 
 /// Free a string allocated by the Rust side
 /// - Parameter string: C string pointer to free

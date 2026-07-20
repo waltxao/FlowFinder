@@ -28,6 +28,15 @@ public class MainWindowController: NSWindowController {
     private var leftFileGridView: FileGridView!
     private var rightFileGridView: FileGridView!
 
+    // Clipboard support (must be in main class, not extension)
+    private var clipboardItems: [String] = []
+    private var clipboardOperation: ClipboardOperation?
+
+    private enum ClipboardOperation {
+        case copy
+        case cut
+    }
+
     // MARK: - Initialization
 
     public init() {
@@ -41,8 +50,9 @@ public class MainWindowController: NSWindowController {
         window.minSize = NSSize(width: 1000, height: 700)
         window.center()
         window.makeKeyAndOrderFront(nil)
-        window.setFrameAutosaveName("MainWindow")
-        window.isRestorable = true
+        // 不使用 autosave，避免加载之前保存的小窗口尺寸
+        // window.setFrameAutosaveName("MainWindow")
+        // window.isRestorable = true
 
         super.init(window: window)
 
@@ -87,6 +97,7 @@ public class MainWindowController: NSWindowController {
         leftPaneContainer.translatesAutoresizingMaskIntoConstraints = false
         leftPaneContainer.wantsLayer = true
         leftPaneContainer.layer?.cornerRadius = 8
+        leftPaneContainer.layer?.masksToBounds = true  // 裁剪溢出内容，防止工具栏重叠
         leftPaneContainer.addSubview(leftPaneToolbar)
         leftPaneContainer.addSubview(leftFileListView)
 
@@ -140,6 +151,7 @@ public class MainWindowController: NSWindowController {
         rightPaneContainer.translatesAutoresizingMaskIntoConstraints = false
         rightPaneContainer.wantsLayer = true
         rightPaneContainer.layer?.cornerRadius = 8
+        rightPaneContainer.layer?.masksToBounds = true  // 裁剪溢出内容，防止工具栏重叠
         rightPaneContainer.addSubview(rightPaneToolbar)
         rightPaneContainer.addSubview(rightFileListView)
 
@@ -178,8 +190,10 @@ public class MainWindowController: NSWindowController {
         paneSplitView = NSSplitView()
         paneSplitView.isVertical = true
         paneSplitView.dividerStyle = .thin
-        paneSplitView.autosaveName = "PaneSplitView"
+        // 不使用 autosaveName，避免加载之前保存的错误位置
+        // paneSplitView.autosaveName = "PaneSplitView"
         paneSplitView.translatesAutoresizingMaskIntoConstraints = false
+        paneSplitView.delegate = self  // 设置 delegate 控制最小面板宽度
         paneSplitView.addArrangedSubview(leftPaneContainer)
         paneSplitView.addArrangedSubview(rightPaneContainer)
 
@@ -187,8 +201,10 @@ public class MainWindowController: NSWindowController {
         mainSplitView = NSSplitView()
         mainSplitView.isVertical = true
         mainSplitView.dividerStyle = .thin
-        mainSplitView.autosaveName = "MainSplitView"
+        // 不使用 autosaveName，避免加载之前保存的错误位置
+        // mainSplitView.autosaveName = "MainSplitView"
         mainSplitView.translatesAutoresizingMaskIntoConstraints = false
+        mainSplitView.delegate = self  // 设置 delegate 控制侧边栏宽度
         mainSplitView.addArrangedSubview(sidebarView)
         mainSplitView.addArrangedSubview(paneSplitView)
 
@@ -231,8 +247,8 @@ public class MainWindowController: NSWindowController {
             taskProgressBar.heightAnchor.constraint(equalToConstant: TaskProgressBar.height),
         ])
 
-        // Sidebar width
-        sidebarView.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        // Sidebar 宽度由 NSSplitViewDelegate 控制（180-280 之间）
+        // 不使用固定宽度约束，避免与 split view 冲突
 
         // Pane holding priorities
         mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
@@ -242,6 +258,22 @@ public class MainWindowController: NSWindowController {
 
         // Set initial active pane
         updateActivePaneVisual()
+
+        // 设置初始 divider 位置
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // mainSplitView: sidebar 固定 220
+            if let mainSplit = self.mainSplitView {
+                mainSplit.setPosition(220, ofDividerAt: 0)
+            }
+            // paneSplitView: 50/50 分割
+            if let paneSplit = self.paneSplitView {
+                let totalWidth = paneSplit.bounds.width
+                if totalWidth > 0 {
+                    paneSplit.setPosition(totalWidth / 2, ofDividerAt: 0)
+                }
+            }
+        }
 
         // 启动任务调度轮询
         TaskSchedulerManager.shared.startPolling()
@@ -408,9 +440,11 @@ public class MainWindowController: NSWindowController {
         case .list:
             listView?.isHidden = false
             gridView?.isHidden = true
+            listView?.reloadData()
         case .grid:
             listView?.isHidden = true
             gridView?.isHidden = false
+            gridView?.reloadData()
         }
     }
 
@@ -600,10 +634,12 @@ extension MainWindowController {
 
     @objc func menuListView(_ sender: Any?) {
         activePaneViewModel.setViewMode(.list)
+        updateViewMode(side: activePane, mode: .list)
     }
 
     @objc func menuGridView(_ sender: Any?) {
         activePaneViewModel.setViewMode(.grid)
+        updateViewMode(side: activePane, mode: .grid)
     }
 
     @objc func menuToggleHiddenFiles(_ sender: Any?) {
@@ -697,14 +733,6 @@ extension MainWindowController {
         activePane == .left ? leftPaneViewModel : rightPaneViewModel
     }
 
-    private var clipboardItems: [String] = []
-    private var clipboardOperation: ClipboardOperation?
-
-    private enum ClipboardOperation {
-        case copy
-        case cut
-    }
-
     private func showError(error: Error) {
         let alert = NSAlert()
         alert.messageText = "错误"
@@ -712,6 +740,45 @@ extension MainWindowController {
         alert.alertStyle = .critical
         alert.addButton(withTitle: "好")
         if let window = window { alert.beginSheetModal(for: window) { _ in } }
+    }
+}
+
+// MARK: - NSSplitViewDelegate
+
+extension MainWindowController: NSSplitViewDelegate {
+    /// 限制每个面板的最小坐标，防止工具栏元素重叠
+    public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        // 主 split view（sidebar + panes）：sidebar 最小 180
+        if splitView === mainSplitView {
+            return 180
+        }
+        // pane split view（left + right panes）：每个面板最小 450
+        if splitView === paneSplitView {
+            return 450
+        }
+        return proposedMinimumPosition
+    }
+
+    /// 限制每个面板的最大坐标，防止一个面板占据过多空间
+    public func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        // 主 split view：sidebar 最大 280
+        if splitView === mainSplitView {
+            return 280
+        }
+        // pane split view：留出至少 450 给另一个面板
+        if splitView === paneSplitView {
+            let totalWidth = splitView.bounds.width
+            return max(totalWidth - 450, 450)
+        }
+        return proposedMaximumPosition
+    }
+
+    /// 拖动时实时更新布局
+    public func splitViewDidResizeSubviews(_ notification: Notification) {
+        // 触发布局更新
+        if let splitView = notification.object as? NSSplitView {
+            splitView.window?.layoutIfNeeded()
+        }
     }
 }
 

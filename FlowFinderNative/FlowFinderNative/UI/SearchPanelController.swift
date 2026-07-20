@@ -175,9 +175,16 @@ public class SearchPanelController: NSWindowController {
             currentQuery = initialQuery
             performSearch()
         }
+        // 确保应用在前台
+        NSApp.activate(ignoringOtherApps: true)
+        // 显示窗口并置前
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
-        searchField.becomeFirstResponder()
+        window?.center()
+        // 设置搜索框为第一响应者
+        DispatchQueue.main.async { [weak self] in
+            self?.window?.makeFirstResponder(self?.searchField)
+        }
     }
 
     // MARK: - Actions

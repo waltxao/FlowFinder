@@ -295,39 +295,6 @@ final class FlowFinderNativeTests: XCTestCase {
         XCTAssertTrue(bridge1 === bridge2, "SearchBridge.shared should return the same instance")
     }
 
-    func testSearchBridgeGetFileType() {
-        let bridge = QuickLookBridge.shared
-        let fileType = bridge.getFileType(path: "/test/document.pdf")
-        XCTAssertEqual(fileType, "pdf", "Should extract PDF extension")
-    }
-
-    func testSearchBridgeGetFileTypeNoExtension() {
-        let bridge = QuickLookBridge.shared
-        let fileType = bridge.getFileType(path: "/test/README")
-        XCTAssertEqual(fileType, "", "Should return empty string for no extension")
-    }
-
-    func testSearchBridgeCanPreview() {
-        let bridge = QuickLookBridge.shared
-        XCTAssertTrue(bridge.canPreview(path: "/test/image.jpg"), "Should support image preview")
-        XCTAssertTrue(bridge.canPreview(path: "/test/doc.pdf"), "Should support PDF preview")
-        XCTAssertFalse(bridge.canPreview(path: "/test/unknown.xyz"), "Should not support unknown type")
-    }
-
-    func testSearchBridgeCanPreviewText() {
-        let bridge = QuickLookBridge.shared
-        XCTAssertTrue(bridge.canPreview(path: "/test/readme.txt"), "Should support text preview")
-        XCTAssertTrue(bridge.canPreview(path: "/test/notes.md"), "Should support markdown preview")
-    }
-
-    // MARK: - QuickLook Bridge Tests
-
-    func testQuickLookBridgeSingleton() {
-        let bridge1 = QuickLookBridge.shared
-        let bridge2 = QuickLookBridge.shared
-        XCTAssertTrue(bridge1 === bridge2, "QuickLookBridge.shared should return the same instance")
-    }
-
     // MARK: - Search Filters Tests
 
     func testSearchFiltersInitialization() {

@@ -63,7 +63,14 @@ public final class ThumbnailManager {
             representationTypes: .thumbnail
         )
 
-        let reqRef = generator.generateBestRepresentation(for: request) { [weak self] thumbnail, error in
+        let reqRef = request
+
+        // 记录活跃请求
+        lock.lock()
+        activeRequests[path] = reqRef
+        lock.unlock()
+
+        generator.generateBestRepresentation(for: request) { [weak self] thumbnail, error in
             if let error = error {
                 print("ThumbnailManager: 生成缩略图失败: \(error.localizedDescription)")
                 DispatchQueue.main.async { completion(nil) }
@@ -77,7 +84,7 @@ public final class ThumbnailManager {
 
             let image = NSImage(
                 cgImage: thumbnail.cgImage,
-                size: thumbnail.actualSize
+                size: CGSize(width: thumbnail.cgImage.width, height: thumbnail.cgImage.height)
             )
 
             // 写入缓存
@@ -86,11 +93,6 @@ public final class ThumbnailManager {
 
             DispatchQueue.main.async { completion(image) }
         }
-
-        // 记录活跃请求
-        lock.lock()
-        activeRequests[path] = reqRef
-        lock.unlock()
     }
 
     /// 同步获取缓存中的缩略图（不触发生成）

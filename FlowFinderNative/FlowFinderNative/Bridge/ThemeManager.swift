@@ -84,7 +84,7 @@ public final class ThemeManager: ObservableObject {
 
     /// 获取当前系统外观（用于 .system 模式判断）
     public var systemIsDark: Bool {
-        guard let appearance = NSAppearance.currentAppearance else { return false }
+        guard let appearance = NSAppearance.current else { return false }
         return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 

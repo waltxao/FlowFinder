@@ -4,7 +4,7 @@ import Combine
 // MARK: - FileGridCollectionViewItem
 
 class FileGridCollectionViewItem: NSCollectionViewItem {
-    private var imageView: NSImageView!
+    private var thumbnailImageView: NSImageView!
     private var nameLabel: NSTextField!
     private var pathLabel: NSTextField!
 
@@ -16,15 +16,15 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
             // 设置图标
             if entry.isDirectory {
-                imageView.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
+                thumbnailImageView.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
                     ?? NSImage(named: NSImage.folderName)
             } else {
                 // 使用 ThumbnailManager 获取缩略图
                 ThumbnailManager.shared.generateThumbnail(path: entry.path, size: CGSize(width: 96, height: 96)) { [weak self] image in
                     if let image = image {
-                        self?.imageView.image = image
+                        self?.thumbnailImageView.image = image
                     } else {
-                        self?.imageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
+                        self?.thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
                             ?? NSImage(named: NSImage.multipleDocumentsName)
                     }
                 }
@@ -45,9 +45,9 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 120))
         view.wantsLayer = true
 
-        imageView = NSImageView()
-        imageView.imageScaling = .scaleProportionallyDown
-        imageView.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailImageView = NSImageView()
+        thumbnailImageView.imageScaling = .scaleProportionallyDown
+        thumbnailImageView.translatesAutoresizingMaskIntoConstraints = false
 
         nameLabel = NSTextField(labelWithString: "")
         nameLabel.font = NSFont.systemFont(ofSize: 11)
@@ -60,17 +60,17 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         pathLabel.isHidden = true
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(imageView)
+        view.addSubview(thumbnailImageView)
         view.addSubview(nameLabel)
         view.addSubview(pathLabel)
 
         NSLayoutConstraint.activate([
-            imageView.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
-            imageView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 64),
-            imageView.heightAnchor.constraint(equalToConstant: 64),
+            thumbnailImageView.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
+            thumbnailImageView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            thumbnailImageView.widthAnchor.constraint(equalToConstant: 64),
+            thumbnailImageView.heightAnchor.constraint(equalToConstant: 64),
 
-            nameLabel.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 4),
+            nameLabel.topAnchor.constraint(equalTo: thumbnailImageView.bottomAnchor, constant: 4),
             nameLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
             nameLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
             nameLabel.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -4),

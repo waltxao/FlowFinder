@@ -1,5 +1,6 @@
 import Cocoa
 import QuickLook
+import Quartz
 
 /// QuickLook 预览面板：使用原生 QLPreviewPanel 单例
 public class QuickLookPreviewPanel: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
@@ -14,7 +15,7 @@ public class QuickLookPreviewPanel: NSObject, QLPreviewPanelDataSource, QLPrevie
 
     /// QLPreviewPanel 单例引用
     private var previewPanel: QLPreviewPanel? {
-        QLPreviewPanel.sharedPreviewPanel()
+        QLPreviewPanel.shared()
     }
 
     private override init() {

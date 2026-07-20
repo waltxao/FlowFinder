@@ -55,10 +55,10 @@ public class FileListView: NSView {
     // MARK: - UI Setup
 
     private func setupUI() {
-        scrollView = NSScrollView(frame: bounds)
-        scrollView.autoresizingMask = [.width, .height]
+        scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
+        scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
 
         tableView = NSTableView()
@@ -66,18 +66,20 @@ public class FileListView: NSView {
         tableView.allowsEmptySelection = true
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
-        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        // 使用 firstColumnOnlyAutoresizingStyle：名称列自动填充剩余空间，其他列保持固定宽度
+        tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.rowHeight = 24
         tableView.dataSource = self
         tableView.delegate = self
 
         // 列顺序：名称 → 修改日期 → 类型 → 大小（匹配 macOS Finder）
-        // 名称列（带图标）
+        // 名称列（带图标）— 自动调整宽度
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         nameCol.title = "名称"
-        nameCol.width = 300
-        nameCol.minWidth = 120
+        nameCol.width = 200
+        nameCol.minWidth = 80
+        nameCol.maxWidth = 1000
         nameCol.resizingMask = [.userResizingMask, .autoresizingMask]
         nameCol.sortDescriptorPrototype = NSSortDescriptor(key: "name", ascending: true)
         tableView.addTableColumn(nameCol)
@@ -85,27 +87,27 @@ public class FileListView: NSView {
         // 修改日期列
         let modifiedCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("modifiedAt"))
         modifiedCol.title = "修改日期"
-        modifiedCol.width = 160
-        modifiedCol.minWidth = 100
-        modifiedCol.resizingMask = [.userResizingMask, .autoresizingMask]
+        modifiedCol.width = 130
+        modifiedCol.minWidth = 80
+        modifiedCol.resizingMask = [.userResizingMask]
         modifiedCol.sortDescriptorPrototype = NSSortDescriptor(key: "modifiedAt", ascending: true)
         tableView.addTableColumn(modifiedCol)
 
         // 类型列
         let typeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("type"))
         typeCol.title = "类型"
-        typeCol.width = 120
-        typeCol.minWidth = 80
-        typeCol.resizingMask = [.userResizingMask, .autoresizingMask]
+        typeCol.width = 80
+        typeCol.minWidth = 50
+        typeCol.resizingMask = [.userResizingMask]
         typeCol.sortDescriptorPrototype = NSSortDescriptor(key: "type", ascending: true)
         tableView.addTableColumn(typeCol)
 
         // 大小列
         let sizeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
         sizeCol.title = "大小"
-        sizeCol.width = 100
-        sizeCol.minWidth = 60
-        sizeCol.resizingMask = [.userResizingMask, .autoresizingMask]
+        sizeCol.width = 70
+        sizeCol.minWidth = 40
+        sizeCol.resizingMask = [.userResizingMask]
         sizeCol.sortDescriptorPrototype = NSSortDescriptor(key: "size", ascending: true)
         tableView.addTableColumn(sizeCol)
 
@@ -115,6 +117,17 @@ public class FileListView: NSView {
 
         scrollView.documentView = tableView
         addSubview(scrollView)
+
+        // 使用 Auto Layout 约束确保 scrollView 正确填充
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        // 强制重新计算列宽
+        tableView.sizeToFit()
 
         // 注册为拖拽目标
         registerForDraggedTypes([.fileURL])
@@ -356,21 +369,32 @@ extension FileListView: NSTableViewDelegate {
             } else {
                 cellView.textField?.textColor = NSColor.labelColor
             }
-            // 添加图标（如果还没有）
+            // 使用 NSTableCellView 的内置 imageView，设置 frame 而非约束
             if cellView.imageView == nil {
                 let iv = NSImageView()
-                iv.translatesAutoresizingMaskIntoConstraints = false
-                cellView.addSubview(iv)
+                iv.imageScaling = .scaleProportionallyDown
                 cellView.imageView = iv
-                cellView.textField?.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 6).isActive = true
-                NSLayoutConstraint.activate([
-                    iv.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                    iv.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                    iv.widthAnchor.constraint(equalToConstant: 16),
-                    iv.heightAnchor.constraint(equalToConstant: 16),
-                ])
             }
-            cellView.imageView?.image = entry.isDirectory ? folderIcon : fileIcon
+            // 设置 imageView 的 frame（避免约束冲突）
+            cellView.imageView?.frame = NSRect(x: 4, y: 4, width: 16, height: 16)
+            // 调整 textField 的位置
+            cellView.textField?.frame = NSRect(x: 26, y: 4, width: cellView.bounds.width - 30, height: 16)
+            // 文件夹用固定图标，文件异步加载缩略图
+            if entry.isDirectory {
+                cellView.imageView?.image = folderIcon
+            } else {
+                // 先设置默认文件图标
+                cellView.imageView?.image = fileIcon
+                // 异步加载缩略图
+                let path = entry.path
+                ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 32, height: 32)) { [weak cellView] image in
+                    guard let image = image else { return }
+                    // 验证 cellView 仍显示同一文件
+                    if cellView?.textField?.stringValue == entry.name {
+                        cellView?.imageView?.image = image
+                    }
+                }
+            }
 
         case "modifiedAt":
             cellView.textField?.stringValue = entry.formattedModificationDate
@@ -411,16 +435,16 @@ extension FileListView: NSDraggingSource {
     }
 }
 
-extension FileListView: NSDraggingDestination {
-    public func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+extension FileListView {
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         return isMoveOperation(sender) ? .move : .copy
     }
 
-    public func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         return isMoveOperation(sender) ? .move : .copy
     }
 
-    public func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let pasteboard = sender.draggingPasteboard
 
         guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
@@ -490,8 +514,14 @@ extension FileListView: NSDraggingDestination {
 
         guard srcResult == 0 && dstResult == 0 else { return false }
 
-        // 比较设备 ID
-        return srcStat.f_fsid.0 == dstStat.f_fsid.0 && srcStat.f_fsid.1 == dstStat.f_fsid.1
+        // 比较设备 ID (使用 memcmp 比较 fsid_t 原始字节)
+        var srcFsid = srcStat.f_fsid
+        var dstFsid = dstStat.f_fsid
+        return withUnsafeBytes(of: &srcFsid) { srcBytes in
+            withUnsafeBytes(of: &dstFsid) { dstBytes in
+                srcBytes.elementsEqual(dstBytes)
+            }
+        }
     }
 }
 
