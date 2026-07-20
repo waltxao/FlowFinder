@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="docs/images/app-icon-mockup.jpg" width="128" height="128" alt="FlowFinder Icon" />
+<img src="docs/images/app-icon.png" width="128" height="128" alt="FlowFinder Icon" />
 
 # FlowFinder
 
-macOS 原生文件管理器 — Swift & AppKit · Rust Core · 玻璃态双栏
+**流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 玻璃态双栏
 
 ![Version](https://img.shields.io/badge/version-0.6.0--alpha-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-green)
@@ -20,7 +20,7 @@ macOS 原生文件管理器 — Swift & AppKit · Rust Core · 玻璃态双栏
 
 ## 简介
 
-FlowFinder 是一款专为 macOS 打造的原生文件管理器，采用 **Swift & AppKit** 构建用户界面，**Rust Core** 提供高性能后端引擎，通过 FFI（C ABI）实现跨语言调用。相较于前代 Tauri + React 版本，原生架构带来了 10-30 倍的目录读取性能提升、更低的内存占用，以及与 macOS Finder 一致的视觉和交互体验。
+FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生文件管理器，采用 **Swift & AppKit** 构建用户界面，**Rust Core** 提供高性能后端引擎，通过 FFI（C ABI）实现跨语言调用。相较于前代 Tauri + React 版本，原生架构带来了 10-30 倍的目录读取性能提升、更低的内存占用，以及与 macOS Finder 一致的视觉和交互体验。
 
 ![FlowFinder 主界面](docs/images/app-mockup-main.jpg)
 
