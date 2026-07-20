@@ -16,10 +16,12 @@ public class MainWindowController: NSWindowController {
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
-    private var detailsBar: DetailsBar!
+    private var leftDetailsBar: DetailsBar!
+    private var rightDetailsBar: DetailsBar!
     private var taskProgressBar: TaskProgressBar!
     private var mainSplitView: NSSplitView!
     private var paneSplitView: NSSplitView!
+    private var vibrancyView: NSVisualEffectView!
 
     private var leftPaneToolbar: PaneToolbar!
     private var rightPaneToolbar: PaneToolbar!
@@ -74,145 +76,43 @@ public class MainWindowController: NSWindowController {
     private func setupUI() {
         guard let window = window else { return }
 
+        // 全窗口 NSVisualEffectView 作为背景（Finder 风格）
+        vibrancyView = NSVisualEffectView()
+        vibrancyView.translatesAutoresizingMaskIntoConstraints = false
+        vibrancyView.material = .windowBackground
+        vibrancyView.blendingMode = .behindWindow
+        vibrancyView.state = .active
+        vibrancyView.wantsLayer = true
+        window.contentView = vibrancyView
+
         // Sidebar
         sidebarView = SidebarView()
         sidebarView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Left Pane
-        leftPaneToolbar = PaneToolbar()
-        leftPaneToolbar.delegate = self
-        leftPaneToolbar.translatesAutoresizingMaskIntoConstraints = false
+        // 左面板（工具栏 + 文件列表 + DetailsBar）
+        leftPaneContainer = createPaneContainer(side: .left)
+        // 右面板
+        rightPaneContainer = createPaneContainer(side: .right)
 
-        leftFileListView = FileListView()
-        leftFileListView.identifier = NSUserInterfaceItemIdentifier("left")
-        leftFileListView.translatesAutoresizingMaskIntoConstraints = false
-        leftFileListView.onDoubleClick = { [weak self] entry in
-            self?.handleDoubleClick(entry, side: .left)
-        }
-        leftFileListView.onSelectionChanged = { [weak self] files in
-            self?.handleSelectionChanged(side: .left, files: files)
-        }
-
-        leftPaneContainer = NSView()
-        leftPaneContainer.translatesAutoresizingMaskIntoConstraints = false
-        leftPaneContainer.wantsLayer = true
-        leftPaneContainer.layer?.cornerRadius = 8
-        leftPaneContainer.layer?.masksToBounds = true  // 裁剪溢出内容，防止工具栏重叠
-        leftPaneContainer.addSubview(leftPaneToolbar)
-        leftPaneContainer.addSubview(leftFileListView)
-
-        NSLayoutConstraint.activate([
-            leftPaneToolbar.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor),
-            leftPaneToolbar.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
-            leftPaneToolbar.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
-
-            leftFileListView.topAnchor.constraint(equalTo: leftPaneToolbar.bottomAnchor),
-            leftFileListView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
-            leftFileListView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
-            leftFileListView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
-        ])
-
-        // Left Grid View（初始隐藏）
-        leftFileGridView = FileGridView()
-        leftFileGridView.identifier = NSUserInterfaceItemIdentifier("left")
-        leftFileGridView.translatesAutoresizingMaskIntoConstraints = false
-        leftFileGridView.isHidden = true
-        leftFileGridView.onDoubleClick = { [weak self] entry in
-            self?.handleDoubleClick(entry, side: .left)
-        }
-        leftFileGridView.onSelectionChanged = { [weak self] files in
-            self?.handleSelectionChanged(side: .left, files: files)
-        }
-        leftPaneContainer.addSubview(leftFileGridView)
-
-        NSLayoutConstraint.activate([
-            leftFileGridView.topAnchor.constraint(equalTo: leftPaneToolbar.bottomAnchor),
-            leftFileGridView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
-            leftFileGridView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
-            leftFileGridView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
-        ])
-
-        // Right Pane
-        rightPaneToolbar = PaneToolbar()
-        rightPaneToolbar.delegate = self
-        rightPaneToolbar.translatesAutoresizingMaskIntoConstraints = false
-
-        rightFileListView = FileListView()
-        rightFileListView.identifier = NSUserInterfaceItemIdentifier("right")
-        rightFileListView.translatesAutoresizingMaskIntoConstraints = false
-        rightFileListView.onDoubleClick = { [weak self] entry in
-            self?.handleDoubleClick(entry, side: .right)
-        }
-        rightFileListView.onSelectionChanged = { [weak self] files in
-            self?.handleSelectionChanged(side: .right, files: files)
-        }
-
-        rightPaneContainer = NSView()
-        rightPaneContainer.translatesAutoresizingMaskIntoConstraints = false
-        rightPaneContainer.wantsLayer = true
-        rightPaneContainer.layer?.cornerRadius = 8
-        rightPaneContainer.layer?.masksToBounds = true  // 裁剪溢出内容，防止工具栏重叠
-        rightPaneContainer.addSubview(rightPaneToolbar)
-        rightPaneContainer.addSubview(rightFileListView)
-
-        NSLayoutConstraint.activate([
-            rightPaneToolbar.topAnchor.constraint(equalTo: rightPaneContainer.topAnchor),
-            rightPaneToolbar.leadingAnchor.constraint(equalTo: rightPaneContainer.leadingAnchor),
-            rightPaneToolbar.trailingAnchor.constraint(equalTo: rightPaneContainer.trailingAnchor),
-
-            rightFileListView.topAnchor.constraint(equalTo: rightPaneToolbar.bottomAnchor),
-            rightFileListView.leadingAnchor.constraint(equalTo: rightPaneContainer.leadingAnchor),
-            rightFileListView.trailingAnchor.constraint(equalTo: rightPaneContainer.trailingAnchor),  // 修复 bug: 原来错误地约束到 leadingAnchor
-            rightFileListView.bottomAnchor.constraint(equalTo: rightPaneContainer.bottomAnchor),
-        ])
-
-        // Right Grid View（初始隐藏）
-        rightFileGridView = FileGridView()
-        rightFileGridView.identifier = NSUserInterfaceItemIdentifier("right")
-        rightFileGridView.translatesAutoresizingMaskIntoConstraints = false
-        rightFileGridView.isHidden = true
-        rightFileGridView.onDoubleClick = { [weak self] entry in
-            self?.handleDoubleClick(entry, side: .right)
-        }
-        rightFileGridView.onSelectionChanged = { [weak self] files in
-            self?.handleSelectionChanged(side: .right, files: files)
-        }
-        rightPaneContainer.addSubview(rightFileGridView)
-
-        NSLayoutConstraint.activate([
-            rightFileGridView.topAnchor.constraint(equalTo: rightPaneToolbar.bottomAnchor),
-            rightFileGridView.leadingAnchor.constraint(equalTo: rightPaneContainer.leadingAnchor),
-            rightFileGridView.trailingAnchor.constraint(equalTo: rightPaneContainer.trailingAnchor),
-            rightFileGridView.bottomAnchor.constraint(equalTo: rightPaneContainer.bottomAnchor),
-        ])
-
-        // Pane Split View (left/right panes)
+        // Pane Split View
         paneSplitView = NSSplitView()
         paneSplitView.isVertical = true
         paneSplitView.dividerStyle = .thin
-        // 不使用 autosaveName，避免加载之前保存的错误位置
-        // paneSplitView.autosaveName = "PaneSplitView"
         paneSplitView.translatesAutoresizingMaskIntoConstraints = false
-        paneSplitView.delegate = self  // 设置 delegate 控制最小面板宽度
+        paneSplitView.delegate = self
         paneSplitView.addArrangedSubview(leftPaneContainer)
         paneSplitView.addArrangedSubview(rightPaneContainer)
 
-        // Main Split View (sidebar + panes)
+        // Main Split View
         mainSplitView = NSSplitView()
         mainSplitView.isVertical = true
         mainSplitView.dividerStyle = .thin
-        // 不使用 autosaveName，避免加载之前保存的错误位置
-        // mainSplitView.autosaveName = "MainSplitView"
         mainSplitView.translatesAutoresizingMaskIntoConstraints = false
-        mainSplitView.delegate = self  // 设置 delegate 控制侧边栏宽度
+        mainSplitView.delegate = self
         mainSplitView.addArrangedSubview(sidebarView)
         mainSplitView.addArrangedSubview(paneSplitView)
 
-        // Details Bar
-        detailsBar = DetailsBar()
-        detailsBar.translatesAutoresizingMaskIntoConstraints = false
-
-        // Task Progress Bar（底部固定进度条）
+        // Task Progress Bar
         taskProgressBar = TaskProgressBar()
         taskProgressBar.translatesAutoresizingMaskIntoConstraints = false
 
@@ -220,26 +120,19 @@ public class MainWindowController: NSWindowController {
         let mainContainer = NSView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.addSubview(mainSplitView)
-        mainContainer.addSubview(detailsBar)
         mainContainer.addSubview(taskProgressBar)
-
-        window.contentView?.addSubview(mainContainer)
+        vibrancyView.addSubview(mainContainer)
 
         NSLayoutConstraint.activate([
-            mainContainer.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
-            mainContainer.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor),
-            mainContainer.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor),
-            mainContainer.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
+            mainContainer.topAnchor.constraint(equalTo: vibrancyView.topAnchor),
+            mainContainer.leadingAnchor.constraint(equalTo: vibrancyView.leadingAnchor),
+            mainContainer.trailingAnchor.constraint(equalTo: vibrancyView.trailingAnchor),
+            mainContainer.bottomAnchor.constraint(equalTo: vibrancyView.bottomAnchor),
 
             mainSplitView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
             mainSplitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             mainSplitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            mainSplitView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
-
-            detailsBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
-            detailsBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            detailsBar.bottomAnchor.constraint(equalTo: taskProgressBar.topAnchor),
-            detailsBar.heightAnchor.constraint(equalToConstant: 120),
+            mainSplitView.bottomAnchor.constraint(equalTo: taskProgressBar.topAnchor),
 
             taskProgressBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             taskProgressBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
@@ -247,36 +140,109 @@ public class MainWindowController: NSWindowController {
             taskProgressBar.heightAnchor.constraint(equalToConstant: TaskProgressBar.height),
         ])
 
-        // Sidebar 宽度由 NSSplitViewDelegate 控制（180-280 之间）
-        // 不使用固定宽度约束，避免与 split view 冲突
-
-        // Pane holding priorities
+        // Holding priorities
         mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
         mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
         paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
 
-        // Set initial active pane
         updateActivePaneVisual()
 
-        // 设置初始 divider 位置
+        // 初始 divider 位置
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            // mainSplitView: sidebar 固定 220
-            if let mainSplit = self.mainSplitView {
-                mainSplit.setPosition(220, ofDividerAt: 0)
-            }
-            // paneSplitView: 50/50 分割
-            if let paneSplit = self.paneSplitView {
-                let totalWidth = paneSplit.bounds.width
-                if totalWidth > 0 {
-                    paneSplit.setPosition(totalWidth / 2, ofDividerAt: 0)
-                }
+            self.mainSplitView.setPosition(220, ofDividerAt: 0)
+            let totalWidth = self.paneSplitView.bounds.width
+            if totalWidth > 0 {
+                self.paneSplitView.setPosition(totalWidth / 2, ofDividerAt: 0)
             }
         }
 
-        // 启动任务调度轮询
         TaskSchedulerManager.shared.startPolling()
+    }
+
+    /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
+    private func createPaneContainer(side: PaneSide) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 8
+        container.layer?.masksToBounds = true
+
+        // 工具栏
+        let toolbar = PaneToolbar()
+        toolbar.delegate = self
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+
+        // 文件列表
+        let listView = FileListView()
+        listView.identifier = NSUserInterfaceItemIdentifier(side == .left ? "left" : "right")
+        listView.translatesAutoresizingMaskIntoConstraints = false
+        listView.onDoubleClick = { [weak self] entry in
+            self?.handleDoubleClick(entry, side: side)
+        }
+        listView.onSelectionChanged = { [weak self] files in
+            self?.handleSelectionChanged(side: side, files: files)
+        }
+
+        // 网格视图（初始隐藏）
+        let gridView = FileGridView()
+        gridView.identifier = NSUserInterfaceItemIdentifier(side == .left ? "left" : "right")
+        gridView.translatesAutoresizingMaskIntoConstraints = false
+        gridView.isHidden = true
+        gridView.onDoubleClick = { [weak self] entry in
+            self?.handleDoubleClick(entry, side: side)
+        }
+        gridView.onSelectionChanged = { [weak self] files in
+            self?.handleSelectionChanged(side: side, files: files)
+        }
+
+        // DetailsBar（每面板一个）
+        let detailsBar = DetailsBar()
+        detailsBar.translatesAutoresizingMaskIntoConstraints = false
+
+        // 添加到容器
+        container.addSubview(toolbar)
+        container.addSubview(listView)
+        container.addSubview(gridView)
+        container.addSubview(detailsBar)
+
+        NSLayoutConstraint.activate([
+            toolbar.topAnchor.constraint(equalTo: container.topAnchor),
+            toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            listView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            listView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            listView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            listView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
+
+            gridView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            gridView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            gridView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            gridView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
+
+            detailsBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            detailsBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            detailsBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            detailsBar.heightAnchor.constraint(equalToConstant: 120),
+        ])
+
+        // 保存引用
+        switch side {
+        case .left:
+            leftPaneToolbar = toolbar
+            leftFileListView = listView
+            leftFileGridView = gridView
+            leftDetailsBar = detailsBar
+        case .right:
+            rightPaneToolbar = toolbar
+            rightFileListView = listView
+            rightFileGridView = gridView
+            rightDetailsBar = detailsBar
+        }
+
+        return container
     }
 
     deinit {
@@ -477,8 +443,7 @@ public class MainWindowController: NSWindowController {
     }
 
     private func handleSelectionChanged(side: PaneSide, files: [FileEntry]) {
-        // 只有活跃面板的选择才更新 DetailsBar
-        guard side == activePane else { return }
+        guard let detailsBar = side == .left ? leftDetailsBar : rightDetailsBar else { return }
         if let first = files.first {
             detailsBar.update(file: first, selectedCount: files.count)
         } else {
