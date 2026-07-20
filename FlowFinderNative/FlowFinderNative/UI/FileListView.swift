@@ -11,6 +11,8 @@ public class FileListView: NSView {
 
     public var viewModel: PaneViewModel? {
         didSet {
+            // 清空旧订阅，防止累积泄漏
+            cancellables.removeAll()
             tableView.dataSource = self
             tableView.delegate = self
             viewModel?.$state
@@ -287,11 +289,6 @@ public class FileListView: NSView {
         if let window = window { alert.beginSheetModal(for: window) { _ in } }
     }
 
-    public override func resizeSubviews(withOldSize oldSize: NSSize) {
-        super.resizeSubviews(withOldSize: oldSize)
-        scrollView.frame = bounds
-    }
-
     public func reloadData() {
         tableView?.reloadData()
     }
@@ -343,14 +340,14 @@ extension FileListView: NSTableViewDelegate {
             ?? NSTableCellView()
         cellView.identifier = cellID
 
-        // Ensure text field exists
+        // Ensure text field exists (NSTableCellView handles layout)
         if cellView.textField == nil {
             let tf = NSTextField(labelWithString: "")
             tf.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
             tf.lineBreakMode = .byTruncatingTail
+            tf.translatesAutoresizingMaskIntoConstraints = false
             cellView.addSubview(tf)
             cellView.textField = tf
-            tf.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 tf.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
                 tf.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
@@ -369,27 +366,36 @@ extension FileListView: NSTableViewDelegate {
             } else {
                 cellView.textField?.textColor = NSColor.labelColor
             }
-            // 使用 NSTableCellView 的内置 imageView，设置 frame 而非约束
+            // 使用 Auto Layout 约束布局 imageView，避免手动 frame 冲突
             if cellView.imageView == nil {
                 let iv = NSImageView()
                 iv.imageScaling = .scaleProportionallyDown
+                iv.translatesAutoresizingMaskIntoConstraints = false
                 cellView.imageView = iv
+                cellView.addSubview(iv)
+                NSLayoutConstraint.activate([
+                    iv.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
+                    iv.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                    iv.widthAnchor.constraint(equalToConstant: 16),
+                    iv.heightAnchor.constraint(equalToConstant: 16),
+                ])
+                // 更新 textField 的 leading 约束到 imageView 之后
+                if let tf = cellView.textField {
+                    // 移除旧的 leading 约束并添加新的
+                    cellView.removeConstraints(cellView.constraints.filter {
+                        $0.firstItem === tf && $0.firstAttribute == .leading
+                    })
+                    tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 4).isActive = true
+                }
             }
-            // 设置 imageView 的 frame（避免约束冲突）
-            cellView.imageView?.frame = NSRect(x: 4, y: 4, width: 16, height: 16)
-            // 调整 textField 的位置
-            cellView.textField?.frame = NSRect(x: 26, y: 4, width: cellView.bounds.width - 30, height: 16)
             // 文件夹用固定图标，文件异步加载缩略图
             if entry.isDirectory {
                 cellView.imageView?.image = folderIcon
             } else {
-                // 先设置默认文件图标
                 cellView.imageView?.image = fileIcon
-                // 异步加载缩略图
                 let path = entry.path
                 ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 32, height: 32)) { [weak cellView] image in
                     guard let image = image else { return }
-                    // 验证 cellView 仍显示同一文件
                     if cellView?.textField?.stringValue == entry.name {
                         cellView?.imageView?.image = image
                     }
