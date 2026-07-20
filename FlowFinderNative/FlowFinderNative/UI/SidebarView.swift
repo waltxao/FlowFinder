@@ -4,6 +4,7 @@ import Cocoa
 
 extension Notification.Name {
     static let sidebarDidSelectDirectory = Notification.Name("sidebarDidSelectDirectory")
+    static let paneDidActivate = Notification.Name("paneDidActivate")
 }
 
 // MARK: - SidebarView

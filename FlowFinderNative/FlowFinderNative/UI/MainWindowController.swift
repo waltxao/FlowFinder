@@ -242,7 +242,19 @@ public class MainWindowController: NSWindowController {
             rightDetailsBar = detailsBar
         }
 
+        // 添加点击手势识别器激活面板
+        let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(handlePaneClick(_:)))
+        container.identifier = NSUserInterfaceItemIdentifier(side == .left ? "left" : "right")
+        container.addGestureRecognizer(clickGesture)
+
         return container
+    }
+
+    @objc private func handlePaneClick(_ gesture: NSClickGestureRecognizer) {
+        guard let view = gesture.view,
+              let id = view.identifier?.rawValue else { return }
+        let side: PaneSide = id == "left" ? .left : .right
+        activatePane(side)
     }
 
     deinit {
@@ -265,6 +277,19 @@ public class MainWindowController: NSWindowController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSidebarDirectorySelected(_:)),
             name: .sidebarDidSelectDirectory, object: nil
+        )
+        // 订阅 FileListView 右键菜单通知
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListCopy(_:)),
+            name: .fileListDidCopy, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListCut(_:)),
+            name: .fileListDidCut, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListPaste(_:)),
+            name: .fileListDidPaste, object: nil
         )
     }
 
@@ -454,6 +479,7 @@ public class MainWindowController: NSWindowController {
     func activatePane(_ side: PaneSide) {
         activePane = side
         updateActivePaneVisual()
+        NotificationCenter.default.post(name: .paneDidActivate, object: nil, userInfo: ["side": side == .left ? "left" : "right"])
     }
 
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {
@@ -571,6 +597,30 @@ extension MainWindowController {
                 self?.activePaneViewModel.refresh()
             }
         }
+    }
+
+    // MARK: - FileListView 右键菜单通知处理
+
+    @objc private func handleFileListCopy(_ notification: Notification) {
+        guard let side = notification.userInfo?["side"] as? String else { return }
+        let vm = side == "left" ? leftPaneViewModel : rightPaneViewModel
+        clipboardItems = vm.selectedFiles.map { $0.path }
+        clipboardOperation = .copy
+        activatePane(side == "left" ? .left : .right)
+    }
+
+    @objc private func handleFileListCut(_ notification: Notification) {
+        guard let side = notification.userInfo?["side"] as? String else { return }
+        let vm = side == "left" ? leftPaneViewModel : rightPaneViewModel
+        clipboardItems = vm.selectedFiles.map { $0.path }
+        clipboardOperation = .cut
+        activatePane(side == "left" ? .left : .right)
+    }
+
+    @objc private func handleFileListPaste(_ notification: Notification) {
+        guard let side = notification.userInfo?["side"] as? String else { return }
+        activatePane(side == "left" ? .left : .right)
+        menuPaste(self)
     }
 
     @objc func menuSelectAll(_ sender: Any?) {
