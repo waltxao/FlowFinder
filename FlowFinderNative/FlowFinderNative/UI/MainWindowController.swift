@@ -714,6 +714,26 @@ extension MainWindowController {
         }
     }
 
+    // MARK: - Menu Bar Cross-Pane Actions
+
+    @objc func menuCopyToOther(_ sender: Any?) {
+        let side = activePane == .left ? "left" : "right"
+        performCrossPaneOperation(side: side, isMove: false)
+    }
+
+    @objc func menuMoveToOther(_ sender: Any?) {
+        let side = activePane == .left ? "left" : "right"
+        performCrossPaneOperation(side: side, isMove: true)
+    }
+
+    @objc func menuOpenInOther(_ sender: Any?) {
+        guard let entry = activePaneViewModel.selectedFiles.first,
+              entry.isDirectory else { return }
+        let destVM: PaneViewModel = activePane == .left ? rightPaneViewModel : leftPaneViewModel
+        destVM.navigate(to: entry.path)
+        activatePane(activePane == .left ? .right : .left)
+    }
+
     @objc func menuSelectAll(_ sender: Any?) {
         activePaneViewModel.selectAll()
     }
