@@ -115,6 +115,12 @@ public class FileListView: NSView {
 
         scrollView.documentView = tableView
         addSubview(scrollView)
+
+        // 注册为拖拽目标
+        registerForDraggedTypes([.fileURL])
+
+        // 启用拖拽源（通过 tableView）
+        tableView.setDraggingSourceOperationMask([.copy, .move, .delete], forLocal: false)
     }
 
     // MARK: - Context Menu (in-app dialog, no NSOpenPanel/NSSavePanel)
@@ -226,6 +232,23 @@ public class FileListView: NSView {
                 self?.showError(error: error)
             }
         }
+    }
+
+    // MARK: - Drag Source
+
+    /// 开始拖拽（在 tableView 的 mouseDown 中触发）
+    @objc private func handleTableDrag() {
+        guard let viewModel = viewModel,
+              let selectedRow = tableView.selectedRow as Int?,
+              selectedRow >= 0, selectedRow < viewModel.files.count else { return }
+
+        let entry = viewModel.files[selectedRow]
+        let url = URL(fileURLWithPath: entry.path)
+
+        let draggingItem = NSDraggingItem(pasteboardWriter: url as NSURL)
+        draggingItem.setDraggingFrame(tableView.rect(ofRow: selectedRow), contents: nil)
+
+        beginDraggingSession(with: [draggingItem], event: NSApp.currentEvent!, source: self)
     }
 
     // MARK: - Helpers
@@ -377,6 +400,98 @@ extension FileListView: NSTableViewDelegate {
         viewModel.selectFile(entry, multi: multi, shiftKey: shift)
         onSelectionChanged?(viewModel.selectedFiles)
         return true
+    }
+}
+
+// MARK: - Drag and Drop
+
+extension FileListView: NSDraggingSource {
+    public func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        return [.copy, .move, .delete]
+    }
+}
+
+extension FileListView: NSDraggingDestination {
+    public func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return isMoveOperation(sender) ? .move : .copy
+    }
+
+    public func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return isMoveOperation(sender) ? .move : .copy
+    }
+
+    public func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              !urls.isEmpty else {
+            return false
+        }
+
+        let destPath = viewModel?.currentPath ?? ""
+        guard !destPath.isEmpty else { return false }
+
+        let isMove = isMoveOperation(sender)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for url in urls {
+                let srcPath = url.path
+                let fileName = url.lastPathComponent
+                let dstPath = (destPath as NSString).appendingPathComponent(fileName)
+
+                do {
+                    if isMove {
+                        try CoreBridge.shared.moveFile(src: srcPath, dst: dstPath)
+                    } else {
+                        try CoreBridge.shared.copyFile(src: srcPath, dst: dstPath)
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self?.showError(error: error)
+                    }
+                    return
+                }
+            }
+
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+            }
+        }
+
+        return true
+    }
+
+    /// 判断是否为移动操作（同卷 + 未按 Cmd）
+    private func isMoveOperation(_ sender: NSDraggingInfo) -> Bool {
+        // Cmd 键切换为复制
+        if sender.draggingSourceOperationMask.contains(.copy) &&
+           !sender.draggingSourceOperationMask.contains(.move) {
+            return false
+        }
+
+        // 检查源和目标是否在同一卷
+        guard let destPath = viewModel?.currentPath else { return false }
+
+        if let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+           let srcPath = urls.first?.path {
+            return isSameVolume(srcPath: srcPath, destPath: destPath)
+        }
+
+        return false
+    }
+
+    /// 检查两个路径是否在同一卷（通过 statfs）
+    private func isSameVolume(srcPath: String, destPath: String) -> Bool {
+        var srcStat = statfs()
+        var dstStat = statfs()
+
+        let srcResult = srcPath.withCString { statfs($0, &srcStat) }
+        let dstResult = destPath.withCString { statfs($0, &dstStat) }
+
+        guard srcResult == 0 && dstResult == 0 else { return false }
+
+        // 比较设备 ID
+        return srcStat.f_fsid.0 == dstStat.f_fsid.0 && srcStat.f_fsid.1 == dstStat.f_fsid.1
     }
 }
 
