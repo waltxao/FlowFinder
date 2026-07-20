@@ -132,6 +132,13 @@ class DetailsBar: NSView {
         updateDetails()
     }
 
+    /// 统一更新方法（MainWindowController 调用）
+    func update(file: FileEntry?, selectedCount: Int) {
+        self.file = file
+        self.selectedCount = selectedCount
+        updateDetails()
+    }
+
     // MARK: - Private
 
     private func updateDetails() {
@@ -158,22 +165,22 @@ class DetailsBar: NSView {
         }
 
         nameField.stringValue = file.name
-        typeField.stringValue = file.isDirectory ? "文件夹" : (file.fileExtension.isEmpty ? "文件" : file.fileExtension)
-        sizeField.stringValue = file.isDirectory ? "-" : formatBytes(file.size)
-        modifiedField.stringValue = formatDate(file.modificationDate)
+        typeField.stringValue = file.kindDescription
+        sizeField.stringValue = file.formattedSize
+        modifiedField.stringValue = file.formattedModificationDate
+        createdField.stringValue = file.formattedCreationDate
 
-        // Tags (placeholder for now)
-        tagsField.stringValue = "无"
+        // Tags from xattr
+        let tags = TagBridge.shared.getTags(path: file.path)
+        tagsField.stringValue = tags.isEmpty ? "无" : tags.map { $0.name }.joined(separator: ", ")
 
         // Icon
         if file.isDirectory {
-            iconView.image = NSImage(named: NSImage.folderName)
+            iconView.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
+                ?? NSImage(named: NSImage.folderName)
         } else {
-            if let fileIcon = NSImage(systemSymbolName: "doc", accessibilityDescription: nil) {
-                iconView.image = fileIcon
-            } else {
-                iconView.image = NSImage(named: NSImage.folderName)
-            }
+            iconView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
+                ?? NSImage(named: NSImage.multipleDocumentsName)
         }
     }
 

@@ -14,8 +14,8 @@ public class MainWindowController: NSWindowController {
     private var cancellables = Set<AnyCancellable>()
 
     private var sidebarView: SidebarView!
-    private var leftPaneView: NSView!
-    private var rightPaneView: NSView!
+    private var leftPaneContainer: NSView!
+    private var rightPaneContainer: NSView!
     private var detailsBar: DetailsBar!
     private var mainSplitView: NSSplitView!
     private var paneSplitView: NSSplitView!
@@ -34,7 +34,6 @@ public class MainWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-
         window.title = "FlowFinder"
         window.minSize = NSSize(width: 1000, height: 700)
         window.center()
@@ -45,6 +44,7 @@ public class MainWindowController: NSWindowController {
 
         setupUI()
         setupBindings()
+        setupNotifications()
         loadInitialDirectories()
     }
 
@@ -61,31 +61,25 @@ public class MainWindowController: NSWindowController {
         sidebarView = SidebarView()
         sidebarView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Toolbars
+        // Left Pane
         leftPaneToolbar = PaneToolbar()
         leftPaneToolbar.delegate = self
         leftPaneToolbar.translatesAutoresizingMaskIntoConstraints = false
 
-        rightPaneToolbar = PaneToolbar()
-        rightPaneToolbar.delegate = self
-        rightPaneToolbar.translatesAutoresizingMaskIntoConstraints = false
-
-        // File List Views
         leftFileListView = FileListView()
+        leftFileListView.identifier = NSUserInterfaceItemIdentifier("left")
         leftFileListView.translatesAutoresizingMaskIntoConstraints = false
         leftFileListView.onDoubleClick = { [weak self] entry in
             self?.handleDoubleClick(entry, side: .left)
         }
-
-        rightFileListView = FileListView()
-        rightFileListView.translatesAutoresizingMaskIntoConstraints = false
-        rightFileListView.onDoubleClick = { [weak self] entry in
-            self?.handleDoubleClick(entry, side: .right)
+        leftFileListView.onSelectionChanged = { [weak self] files in
+            self?.handleSelectionChanged(side: .left, files: files)
         }
 
-        // Left Pane
-        let leftPaneContainer = NSView()
+        leftPaneContainer = NSView()
         leftPaneContainer.translatesAutoresizingMaskIntoConstraints = false
+        leftPaneContainer.wantsLayer = true
+        leftPaneContainer.layer?.cornerRadius = 8
         leftPaneContainer.addSubview(leftPaneToolbar)
         leftPaneContainer.addSubview(leftFileListView)
 
@@ -101,8 +95,24 @@ public class MainWindowController: NSWindowController {
         ])
 
         // Right Pane
-        let rightPaneContainer = NSView()
+        rightPaneToolbar = PaneToolbar()
+        rightPaneToolbar.delegate = self
+        rightPaneToolbar.translatesAutoresizingMaskIntoConstraints = false
+
+        rightFileListView = FileListView()
+        rightFileListView.identifier = NSUserInterfaceItemIdentifier("right")
+        rightFileListView.translatesAutoresizingMaskIntoConstraints = false
+        rightFileListView.onDoubleClick = { [weak self] entry in
+            self?.handleDoubleClick(entry, side: .right)
+        }
+        rightFileListView.onSelectionChanged = { [weak self] files in
+            self?.handleSelectionChanged(side: .right, files: files)
+        }
+
+        rightPaneContainer = NSView()
         rightPaneContainer.translatesAutoresizingMaskIntoConstraints = false
+        rightPaneContainer.wantsLayer = true
+        rightPaneContainer.layer?.cornerRadius = 8
         rightPaneContainer.addSubview(rightPaneToolbar)
         rightPaneContainer.addSubview(rightFileListView)
 
@@ -113,20 +123,20 @@ public class MainWindowController: NSWindowController {
 
             rightFileListView.topAnchor.constraint(equalTo: rightPaneToolbar.bottomAnchor),
             rightFileListView.leadingAnchor.constraint(equalTo: rightPaneContainer.leadingAnchor),
-            rightFileListView.trailingAnchor.constraint(equalTo: rightPaneContainer.leadingAnchor),
+            rightFileListView.trailingAnchor.constraint(equalTo: rightPaneContainer.trailingAnchor),  // 修复 bug: 原来错误地约束到 leadingAnchor
             rightFileListView.bottomAnchor.constraint(equalTo: rightPaneContainer.bottomAnchor),
         ])
 
-        // Pane Split View (vertical split between top and bottom panes)
+        // Pane Split View (left/right panes)
         paneSplitView = NSSplitView()
-        paneSplitView.isVertical = false
+        paneSplitView.isVertical = true
         paneSplitView.dividerStyle = .thin
         paneSplitView.autosaveName = "PaneSplitView"
         paneSplitView.translatesAutoresizingMaskIntoConstraints = false
         paneSplitView.addArrangedSubview(leftPaneContainer)
         paneSplitView.addArrangedSubview(rightPaneContainer)
 
-        // Main Split View (horizontal split between sidebar and panes)
+        // Main Split View (sidebar + panes)
         mainSplitView = NSSplitView()
         mainSplitView.isVertical = true
         mainSplitView.dividerStyle = .thin
@@ -138,7 +148,6 @@ public class MainWindowController: NSWindowController {
         // Details Bar
         detailsBar = DetailsBar()
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
-        detailsBar.heightAnchor.constraint(equalToConstant: 120).isActive = true
 
         // Main container
         let mainContainer = NSView()
@@ -162,33 +171,42 @@ public class MainWindowController: NSWindowController {
             detailsBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             detailsBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
             detailsBar.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
+            detailsBar.heightAnchor.constraint(equalToConstant: 120),
         ])
 
         // Sidebar width
         sidebarView.widthAnchor.constraint(equalToConstant: 220).isActive = true
 
-        // Set initial pane sizes
+        // Pane holding priorities
         mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
         mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+
+        // Set initial active pane
+        updateActivePaneVisual()
     }
 
     private func setupBindings() {
-        // Left pane bindings
         leftPaneViewModel.$state
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                self?.updatePaneUI(side: .left, state: state)
-            }
+            .sink { [weak self] state in self?.updatePaneUI(side: .left, state: state) }
             .store(in: &cancellables)
 
-        // Right pane bindings
         rightPaneViewModel.$state
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                self?.updatePaneUI(side: .right, state: state)
-            }
+            .sink { [weak self] state in self?.updatePaneUI(side: .right, state: state) }
             .store(in: &cancellables)
     }
+
+    private func setupNotifications() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarDirectorySelected(_:)),
+            name: .sidebarDidSelectDirectory, object: nil
+        )
+    }
+
+    // MARK: - UI Updates
 
     private func updatePaneUI(side: PaneSide, state: PaneState) {
         let toolbar = side == .left ? leftPaneToolbar : rightPaneToolbar
@@ -197,37 +215,66 @@ public class MainWindowController: NSWindowController {
         toolbar?.setPath(state.path)
         toolbar?.setCanGoBack(state.historyIndex > 0)
         toolbar?.setCanGoForward(state.historyIndex < state.history.count - 1)
+        toolbar?.setViewMode(state.viewMode)
 
         fileListView?.viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
         fileListView?.reloadData()
     }
 
+    private func updateActivePaneVisual() {
+        leftPaneContainer.layer?.borderWidth = activePane == .left ? 2 : 0
+        leftPaneContainer.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        rightPaneContainer.layer?.borderWidth = activePane == .right ? 2 : 0
+        rightPaneContainer.layer?.borderColor = NSColor.controlAccentColor.cgColor
+    }
+
     private func loadInitialDirectories() {
-        // Load default directories
         let homePath = FileManager.default.homeDirectoryForCurrentUser.path
         let desktopPath = (homePath as NSString).appendingPathComponent("Desktop")
         let documentsPath = (homePath as NSString).appendingPathComponent("Documents")
 
-        leftPaneViewModel.navigate(to: desktopPath)
-        rightPaneViewModel.navigate(to: documentsPath)
+        leftPaneViewModel.state.path = desktopPath
+        leftPaneViewModel.state.history = [desktopPath]
+        leftPaneViewModel.state.historyIndex = 0
+
+        rightPaneViewModel.state.path = documentsPath
+        rightPaneViewModel.state.history = [documentsPath]
+        rightPaneViewModel.state.historyIndex = 0
+
+        leftPaneViewModel.refresh()
+        rightPaneViewModel.refresh()
     }
 
     // MARK: - Actions
 
     private func handleDoubleClick(_ entry: FileEntry, side: PaneSide) {
         if entry.isDirectory {
-            let viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
-            viewModel.navigate(to: entry.path)
+            let vm = side == .left ? leftPaneViewModel : rightPaneViewModel
+            vm.navigate(to: entry.path)
         } else {
             NSWorkspace.shared.openFile(entry.path)
         }
     }
 
-    private func activatePane(_ side: PaneSide) {
+    private func handleSelectionChanged(side: PaneSide, files: [FileEntry]) {
+        // 只有活跃面板的选择才更新 DetailsBar
+        guard side == activePane else { return }
+        if let first = files.first {
+            detailsBar.update(file: first, selectedCount: files.count)
+        } else {
+            detailsBar.update(file: nil, selectedCount: 0)
+        }
+    }
+
+    func activatePane(_ side: PaneSide) {
         activePane = side
-        // Update visual feedback
-        leftPaneView.layer?.borderColor = side == .left ? NSColor.controlAccentColor.cgColor : nil
-        rightPaneView.layer?.borderColor = side == .right ? NSColor.controlAccentColor.cgColor : nil
+        updateActivePaneVisual()
+    }
+
+    @objc private func handleSidebarDirectorySelected(_ notification: Notification) {
+        guard let entry = notification.object as? FileEntry else { return }
+        let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
+        vm.navigate(to: entry.path)
     }
 }
 
@@ -235,48 +282,48 @@ public class MainWindowController: NSWindowController {
 
 extension MainWindowController: PaneToolbarDelegate {
     func paneToolbarDidClickBack(_ toolbar: PaneToolbar) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        _ = viewModel.goBack()
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        _ = vm.goBack()
     }
 
     func paneToolbarDidClickForward(_ toolbar: PaneToolbar) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        _ = viewModel.goForward()
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        _ = vm.goForward()
     }
 
     func paneToolbarDidClickUp(_ toolbar: PaneToolbar) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        viewModel.goUp()
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        vm.goUp()
     }
 
     func paneToolbarDidClickRefresh(_ toolbar: PaneToolbar) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        viewModel.refresh()
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        vm.refresh()
     }
 
     func paneToolbar(_ toolbar: PaneToolbar, didChangeSearchQuery query: String) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        viewModel.setSearchQuery(query)
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        vm.setSearchQuery(query)
     }
 
-    func paneToolbar(_ toolbar: PaneToolbar, didChangeSortField field: String) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        viewModel.setSortField(field)
+    func paneToolbar(_ toolbar: PaneToolbar, didChangeSortField field: SortField, ascending: Bool) {
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        vm.setSortField(field, ascending: ascending)
     }
 
     func paneToolbar(_ toolbar: PaneToolbar, didChangeGroupBy groupBy: String) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        viewModel.setGroupBy(groupBy)
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        vm.setGroupBy(groupBy)
     }
 
-    func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: String) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        viewModel.setViewMode(mode)
+    func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: ViewMode) {
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        vm.setViewMode(mode)
     }
 
-    func paneToolbarDidClickPath(_ toolbar: PaneToolbar, path: String) {
-        let viewModel = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
-        viewModel.navigate(to: path)
+    func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String) {
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        vm.navigate(to: path)
     }
 }
 
