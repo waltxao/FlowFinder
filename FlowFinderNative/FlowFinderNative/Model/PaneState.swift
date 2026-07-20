@@ -1,6 +1,31 @@
 import Foundation
 import Combine
 
+// MARK: - SortField
+
+enum SortField: String, CaseIterable {
+    case name = "名称"
+    case modifiedAt = "修改日期"
+    case type = "类型"
+    case size = "大小"
+
+    var key: String {
+        switch self {
+        case .name: return "name"
+        case .modifiedAt: return "modifiedAt"
+        case .type: return "extension"
+        case .size: return "size"
+        }
+    }
+}
+
+// MARK: - ViewMode
+
+enum ViewMode: String, CaseIterable {
+    case list = "list"
+    case grid = "grid"
+}
+
 // MARK: - PaneState
 
 struct PaneState {
@@ -8,13 +33,13 @@ struct PaneState {
     var history: [String] = []
     var historyIndex: Int = 0
     var files: [FileEntry] = []
-    var selectedFiles: Set<String> = []
+    var selectedFiles: [FileEntry] = []  // 有序数组，支持 Shift/Cmd 选择
     var isLoading: Bool = false
     var error: String?
     var searchQuery: String = ""
-    var sortField: String = "name"
+    var sortField: SortField = .name
     var sortAscending: Bool = true
-    var viewMode: String = "list"
+    var viewMode: ViewMode = .list
     var groupBy: String = "none"
 }
 
@@ -22,13 +47,15 @@ struct PaneState {
 
 public class PaneViewModel: ObservableObject {
     @Published var state: PaneState = PaneState()
-    private var cancellables = Set<AnyCancellable>()
 
     var currentPath: String { state.path }
     var files: [FileEntry] { state.files }
-    var selectedFiles: Set<String> { state.selectedFiles }
+    var selectedFiles: [FileEntry] { state.selectedFiles }
     var isLoading: Bool { state.isLoading }
     var error: String? { state.error }
+
+    /// 选中条目（计算属性，用于 DetailsBar）
+    var selectedEntries: [FileEntry] { state.selectedFiles }
 
     init() {}
 
@@ -36,23 +63,21 @@ public class PaneViewModel: ObservableObject {
         state.path = path
         state.history = [path]
         state.historyIndex = 0
+        loadDirectory()
     }
 
     // MARK: - Navigation
 
     func navigate(to path: String) {
-        // Trim current history if we're not at the end
         if state.historyIndex < state.history.count - 1 {
             state.history = Array(state.history.prefix(state.historyIndex + 1))
         }
-
         state.history.append(path)
         state.historyIndex = state.history.count - 1
         state.path = path
         state.selectedFiles.removeAll()
         state.searchQuery = ""
         state.error = nil
-
         loadDirectory()
     }
 
@@ -89,25 +114,23 @@ public class PaneViewModel: ObservableObject {
         loadDirectory()
     }
 
-    // MARK: - Selection
+    // MARK: - Selection (有序数组)
 
     func selectFile(_ file: FileEntry, multi: Bool = false, shiftKey: Bool = false) {
-        if shiftKey, let lastSelected = state.selectedFiles.first {
-            // Range selection (simplified)
-            if let startIndex = state.files.firstIndex(where: { $0.path == lastSelected }),
+        if shiftKey, let lastSelected = state.selectedFiles.last {
+            if let startIndex = state.files.firstIndex(where: { $0.path == lastSelected.path }),
                let endIndex = state.files.firstIndex(where: { $0.path == file.path }) {
                 let range = min(startIndex, endIndex)...max(startIndex, endIndex)
-                let rangePaths = state.files[range].map(\.path)
-                state.selectedFiles = Set(rangePaths)
+                state.selectedFiles = Array(state.files[range])
             }
         } else if multi {
-            if state.selectedFiles.contains(file.path) {
-                state.selectedFiles.remove(file.path)
+            if let idx = state.selectedFiles.firstIndex(where: { $0.path == file.path }) {
+                state.selectedFiles.remove(at: idx)
             } else {
-                state.selectedFiles.insert(file.path)
+                state.selectedFiles.append(file)
             }
         } else {
-            state.selectedFiles = [file.path]
+            state.selectedFiles = [file]
         }
     }
 
@@ -116,14 +139,25 @@ public class PaneViewModel: ObservableObject {
     }
 
     func selectAll() {
-        state.selectedFiles = Set(state.files.map(\.path))
+        state.selectedFiles = state.files
+    }
+
+    /// 通过路径选择文件（用于 NSTableView 行选择回调）
+    func selectByPath(_ path: String, multi: Bool = false, shiftKey: Bool = false) {
+        guard let entry = state.files.first(where: { $0.path == path }) else { return }
+        selectFile(entry, multi: multi, shiftKey: shiftKey)
     }
 
     // MARK: - Sorting & Filtering
 
-    func setSortField(_ field: String, ascending: Bool = true) {
+    func setSortField(_ field: SortField, ascending: Bool? = nil) {
         state.sortField = field
-        state.sortAscending = ascending
+        if let asc = ascending { state.sortAscending = asc }
+        applySort()
+    }
+
+    func toggleSortDirection() {
+        state.sortAscending.toggle()
         applySort()
     }
 
@@ -141,20 +175,22 @@ public class PaneViewModel: ObservableObject {
         }
     }
 
-    func setViewMode(_ mode: String) {
+    func setViewMode(_ mode: ViewMode) {
         state.viewMode = mode
     }
 
     // MARK: - File Operations
 
     func deleteSelected() {
-        // TODO: Implement delete with confirmation
-        let pathsToDelete = Array(state.selectedFiles)
-        guard !pathsToDelete.isEmpty else { return }
-
+        let toDelete = state.selectedFiles
+        guard !toDelete.isEmpty else { return }
         do {
-            for path in pathsToDelete {
-                try CoreBridge.shared.deleteFile(path: path)
+            for entry in toDelete {
+                if entry.isDirectory {
+                    try CoreBridge.shared.deleteDirectory(path: entry.path)
+                } else {
+                    try CoreBridge.shared.deleteFile(path: entry.path)
+                }
             }
             state.selectedFiles.removeAll()
             loadDirectory()
@@ -166,7 +202,6 @@ public class PaneViewModel: ObservableObject {
     func renameFile(_ oldPath: String, to newName: String) {
         let dir = (oldPath as NSString).deletingLastPathComponent
         let newPath = (dir as NSString).appendingPathComponent(newName)
-
         do {
             try CoreBridge.shared.renameFile(src: oldPath, dst: newPath)
             loadDirectory()
@@ -178,7 +213,6 @@ public class PaneViewModel: ObservableObject {
     func createDirectory() {
         let newDirName = "未命名文件夹"
         let newDirPath = (state.path as NSString).appendingPathComponent(newDirName)
-
         do {
             try CoreBridge.shared.createDirectory(path: newDirPath)
             loadDirectory()
@@ -191,13 +225,11 @@ public class PaneViewModel: ObservableObject {
 
     private func loadDirectory() {
         guard !state.path.isEmpty else { return }
-
         state.isLoading = true
         state.error = nil
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-
             do {
                 let entries = try CoreBridge.shared.listDirectory(path: self.state.path)
                 DispatchQueue.main.async {
@@ -218,22 +250,20 @@ public class PaneViewModel: ObservableObject {
         let field = state.sortField
         let ascending = state.sortAscending
 
-        state.files.sort(by: { a, b in
+        state.files.sort { a, b in
             let comparison: Bool
             switch field {
-            case "name":
-                comparison = a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
-            case "modifiedAt":
+            case .name:
+                comparison = a.sortName.localizedCaseInsensitiveCompare(b.sortName) == .orderedAscending
+            case .modifiedAt:
                 comparison = a.modificationDate < b.modificationDate
-            case "size":
-                comparison = a.size < b.size
-            case "extension":
+            case .type:
                 comparison = a.fileExtension.localizedCaseInsensitiveCompare(b.fileExtension) == .orderedAscending
-            default:
-                comparison = a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            case .size:
+                comparison = a.size < b.size
             }
             return ascending ? comparison : !comparison
-        })
+        }
     }
 
     private func applyFilter() {
@@ -241,10 +271,7 @@ public class PaneViewModel: ObservableObject {
             loadDirectory()
             return
         }
-
         let query = state.searchQuery.lowercased()
-        state.files = state.files.filter { file in
-            file.name.lowercased().contains(query)
-        }
+        state.files = state.files.filter { $0.name.lowercased().contains(query) }
     }
 }
