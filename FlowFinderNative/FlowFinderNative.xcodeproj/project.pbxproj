@@ -16,6 +16,7 @@
 		FF0000090000000000000009 /* CoreBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000190000000000000019; };
 		FF00000A000000000000000A /* FFIFunctions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00001A000000000000001A; };
 		FF00000B000000000000000B /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = FF00001B000000000000001B; };
+		FF0000000000000000300002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000300001; };
 		FF0000000000000000200001 /* SMBBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200002; };
 		FF0000000000000000200003 /* SearchBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200004; };
 		FF0000000000000000200005 /* SpotlightBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200006; };
@@ -55,6 +56,7 @@
 		FF0000190000000000000019 /* CoreBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreBridge.swift; sourceTree = "<group>"; };
 		FF00001A000000000000001A /* FFIFunctions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFIFunctions.swift; sourceTree = "<group>"; };
 		FF00001B000000000000001B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FF0000000000000000300001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FF00001C000000000000001C /* FlowFinderNative-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "FlowFinderNative-Bridging-Header.h"; sourceTree = "<group>"; };
 		FF0000000000000000200002 /* SMBBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBBridge.swift; sourceTree = "<group>"; };
 		FF0000000000000000200004 /* SearchBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBridge.swift; sourceTree = "<group>"; };
@@ -110,6 +112,7 @@
 				FF0000430000000000000043 /* Model */,
 				FF0000440000000000000044 /* Bridge */,
 				FF0000450000000000000045 /* Resources */,
+				FF0000000000000000300001 /* Assets.xcassets */,
 			);
 			path = FlowFinderNative;
 			sourceTree = "<group>";
@@ -236,6 +239,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FF00000B000000000000000B /* Info.plist in Resources */,
+				FF0000000000000000300002 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
