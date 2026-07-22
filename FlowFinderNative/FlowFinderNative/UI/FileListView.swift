@@ -33,6 +33,7 @@ public class FileListView: NSView {
 
     public var onDoubleClick: ((FileEntry) -> Void)?
     public var onSelectionChanged: (([FileEntry]) -> Void)?
+    public var onActivatePane: (() -> Void)?
 
     // Reuse identifiers
     private let nameCellID = NSUserInterfaceItemIdentifier("NameCell")
@@ -86,7 +87,8 @@ public class FileListView: NSView {
         tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.rowHeight = 24
-        tableView.backgroundColor = NSColor.clear
+        // 半透明背景：既保持玻璃通透感，又确保选中高亮可见
+        tableView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.85)
         tableView.enclosingScrollView?.drawsBackground = false
         scrollView.drawsBackground = false
         scrollView.backgroundColor = NSColor.clear
@@ -466,14 +468,16 @@ extension FileListView: NSTableViewDelegate {
     }
 
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        guard let viewModel = viewModel, row < viewModel.files.count else { return false }
-        // 仅返回是否可选中，不做选择逻辑——在 selectionDidChange 中处理
         return true
     }
 
     // 选择变更时才执行选择逻辑（单击选中、Cmd+点击多选、Shift+范围选）
     public func tableViewSelectionDidChange(_ notification: Notification) {
         guard let viewModel = viewModel else { return }
+        // 确保 tableView 是 firstResponder，否则选中高亮会变成灰色（de-emphasized）
+        if let window = tableView.window, window.firstResponder !== tableView {
+            window.makeFirstResponder(tableView)
+        }
         let selectedRows = tableView.selectedRowIndexes
         let entries = selectedRows.compactMap { idx -> FileEntry? in
             guard idx >= 0, idx < viewModel.files.count else { return nil }
@@ -491,6 +495,12 @@ extension FileListView: NSTableViewDelegate {
 // MARK: - Keyboard Events
 
 extension FileListView {
+    /// 重写 mouseDown，先激活面板再传递事件给 tableView 处理选中
+    public override func mouseDown(with event: NSEvent) {
+        onActivatePane?()
+        super.mouseDown(with: event)
+    }
+
     /// 重写 keyDown，空格键触发 QuickLook 预览
     public override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags

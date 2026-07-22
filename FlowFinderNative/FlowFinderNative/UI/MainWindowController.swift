@@ -224,6 +224,9 @@ public class MainWindowController: NSWindowController {
         listView.onSelectionChanged = { [weak self] files in
             self?.handleSelectionChanged(side: side, files: files)
         }
+        listView.onActivatePane = { [weak self] in
+            self?.activatePane(side)
+        }
 
         // 网格视图（初始隐藏）
         let gridView = FileGridView()
@@ -290,19 +293,7 @@ public class MainWindowController: NSWindowController {
             rightDetailsBar = detailsBar
         }
 
-        // 添加点击手势识别器激活面板
-        let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(handlePaneClick(_:)))
-        container.identifier = NSUserInterfaceItemIdentifier(side == .left ? "left" : "right")
-        container.addGestureRecognizer(clickGesture)
-
         return container
-    }
-
-    @objc private func handlePaneClick(_ gesture: NSClickGestureRecognizer) {
-        guard let view = gesture.view,
-              let id = view.identifier?.rawValue else { return }
-        let side: PaneSide = id == "left" ? .left : .right
-        activatePane(side)
     }
 
     deinit {
