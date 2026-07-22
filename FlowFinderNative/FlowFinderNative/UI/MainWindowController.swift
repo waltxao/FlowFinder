@@ -16,8 +16,8 @@ public class MainWindowController: NSWindowController {
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
-    private var leftDetailsBar: DetailsBar!
-    private var rightDetailsBar: DetailsBar!
+    private var leftDetailsBar: ExpandableDetailsBar!
+    private var rightDetailsBar: ExpandableDetailsBar!
     private var taskProgressBar: TaskProgressBar!
     private var mainSplitView: NSSplitView!
     private var paneSplitView: NSSplitView!
@@ -237,8 +237,8 @@ public class MainWindowController: NSWindowController {
             self?.handleSelectionChanged(side: side, files: files)
         }
 
-        // DetailsBar（每面板一个）
-        let detailsBar = DetailsBar()
+        // DetailsBar（每面板一个，可展开/收起）
+        let detailsBar = ExpandableDetailsBar()
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 添加到容器
@@ -271,7 +271,7 @@ public class MainWindowController: NSWindowController {
             detailsBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             detailsBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             detailsBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            detailsBar.heightAnchor.constraint(equalToConstant: 120),
+            // 高度由 ExpandableDetailsBar 内部 heightConstraint 控制（收起 28 / 展开 120）
         ])
 
         // 保存引用
@@ -546,9 +546,11 @@ public class MainWindowController: NSWindowController {
     private func handleSelectionChanged(side: PaneSide, files: [FileEntry]) {
         guard let detailsBar = side == .left ? leftDetailsBar : rightDetailsBar else { return }
         if let first = files.first {
-            detailsBar.update(file: first, selectedCount: files.count)
+            detailsBar.update(with: first)
+            detailsBar.setSelectedCount(files.count)
         } else {
-            detailsBar.update(file: nil, selectedCount: 0)
+            detailsBar.update(with: nil)
+            detailsBar.setSelectedCount(0)
         }
     }
 
