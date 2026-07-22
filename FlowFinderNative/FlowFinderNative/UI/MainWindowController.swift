@@ -157,6 +157,13 @@ public class MainWindowController: NSWindowController {
         glassEffectView = glassView
         window.contentView = glassView
 
+        // 确保玻璃效果不被 ThemeManager 覆盖
+        // ThemeManager 在 AppDelegate 启动时设置 window.appearance，会破坏玻璃效果
+        // 延迟到下一个 runloop 确保在 ThemeManager 之后执行
+        DispatchQueue.main.async { [weak self] in
+            self?.window?.appearance = nil
+        }
+
         // Holding priorities
         mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
         mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)

@@ -59,8 +59,12 @@ public final class ThemeManager: ObservableObject {
             NSApp.appearance = NSAppearance(named: .darkAqua)
         }
 
-        // 通知所有窗口刷新
+        // 通知所有窗口刷新（跳过使用 NSGlassEffectView 的窗口，因为玻璃效果需要 appearance=nil）
         for window in NSApp.windows {
+            if #available(macOS 26.0, *), window.contentView is NSGlassEffectView {
+                window.appearance = nil
+                continue
+            }
             window.appearance = NSApp.appearance
         }
 
