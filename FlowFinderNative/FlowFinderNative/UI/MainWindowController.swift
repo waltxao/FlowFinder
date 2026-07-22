@@ -26,6 +26,8 @@ public class MainWindowController: NSWindowController {
 
     private var leftPaneToolbar: PaneToolbar!
     private var rightPaneToolbar: PaneToolbar!
+    private var leftBreadcrumbBar: BreadcrumbBar!
+    private var rightBreadcrumbBar: BreadcrumbBar!
     private var leftFileListView: FileListView!
     private var rightFileListView: FileListView!
     private var leftFileGridView: FileGridView!
@@ -202,6 +204,11 @@ public class MainWindowController: NSWindowController {
         container.layer?.cornerRadius = 8
         container.layer?.masksToBounds = true
 
+        // 面包屑导航栏
+        let breadcrumbBar = BreadcrumbBar()
+        breadcrumbBar.delegate = self
+        breadcrumbBar.translatesAutoresizingMaskIntoConstraints = false
+
         // 工具栏
         let toolbar = PaneToolbar()
         toolbar.delegate = self
@@ -235,13 +242,19 @@ public class MainWindowController: NSWindowController {
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 添加到容器
+        container.addSubview(breadcrumbBar)
         container.addSubview(toolbar)
         container.addSubview(listView)
         container.addSubview(gridView)
         container.addSubview(detailsBar)
 
         NSLayoutConstraint.activate([
-            toolbar.topAnchor.constraint(equalTo: container.topAnchor),
+            breadcrumbBar.topAnchor.constraint(equalTo: container.topAnchor),
+            breadcrumbBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            breadcrumbBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            breadcrumbBar.heightAnchor.constraint(equalToConstant: 24),
+
+            toolbar.topAnchor.constraint(equalTo: breadcrumbBar.bottomAnchor),
             toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
@@ -265,11 +278,13 @@ public class MainWindowController: NSWindowController {
         switch side {
         case .left:
             leftPaneToolbar = toolbar
+            leftBreadcrumbBar = breadcrumbBar
             leftFileListView = listView
             leftFileGridView = gridView
             leftDetailsBar = detailsBar
         case .right:
             rightPaneToolbar = toolbar
+            rightBreadcrumbBar = breadcrumbBar
             rightFileListView = listView
             rightFileGridView = gridView
             rightDetailsBar = detailsBar
@@ -456,9 +471,11 @@ public class MainWindowController: NSWindowController {
 
     private func updatePaneUI(side: PaneSide, state: PaneState) {
         let toolbar = side == .left ? leftPaneToolbar : rightPaneToolbar
+        let breadcrumbBar = side == .left ? leftBreadcrumbBar : rightBreadcrumbBar
         let fileListView = side == .left ? leftFileListView : rightFileListView
 
         toolbar?.setPath(state.path)
+        breadcrumbBar?.setPath(state.path)
         toolbar?.setCanGoBack(state.historyIndex > 0)
         toolbar?.setCanGoForward(state.historyIndex < state.history.count - 1)
         toolbar?.setViewMode(state.viewMode)
@@ -594,6 +611,18 @@ extension MainWindowController: PaneToolbarDelegate {
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String) {
         let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: path)
+    }
+}
+
+// MARK: - BreadcrumbBarDelegate
+
+extension MainWindowController: BreadcrumbBarDelegate {
+    func breadcrumbBar(_ bar: BreadcrumbBar, didSelectPath path: String) {
+        let vm = bar == leftBreadcrumbBar ? leftPaneViewModel : rightPaneViewModel
+        // BreadcrumbBar 按路径分隔符拆分后重组路径会丢失前导 "/"，
+        // 此处补回前导斜杠以确保绝对路径正确
+        let absolutePath = path.hasPrefix("/") ? path : "/" + path
+        vm.navigate(to: absolutePath)
     }
 }
 
