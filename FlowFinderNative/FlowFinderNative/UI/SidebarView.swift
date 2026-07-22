@@ -10,9 +10,13 @@ extension Notification.Name {
 // MARK: - SidebarView
 
 class SidebarView: NSView {
-    private var outlineView: NSOutlineView!
-    private var scrollView: NSScrollView!
-    private let dataSource = SidebarDataSource()
+    private var mainOutlineView: NSOutlineView!
+    private var deviceOutlineView: NSOutlineView!
+    private var mainScrollView: NSScrollView!
+    private var deviceScrollView: NSScrollView!
+    private let mainDataSource = MainSidebarDataSource()
+    private let deviceDataSource = DeviceSidebarDataSource()
+    private var deviceHeightConstraint: NSLayoutConstraint!
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -29,45 +33,43 @@ class SidebarView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-        scrollView.backgroundColor = .clear
-        // NSClipView 默认绘制 controlBackgroundColor（浅灰），必须显式清除
-        scrollView.contentView.drawsBackground = false
-        scrollView.contentView.backgroundColor = .clear
-
-        outlineView = NSOutlineView()
-        outlineView.allowsMultipleSelection = false
-        outlineView.dataSource = dataSource
-        outlineView.delegate = dataSource
-        outlineView.headerView = nil  // 无表头
-        outlineView.rowHeight = 24
-        outlineView.indentationPerLevel = 12
-        outlineView.backgroundColor = NSColor.clear
-
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarItem"))
-        column.width = 200
-        outlineView.addTableColumn(column)
-        outlineView.outlineTableColumn = column
-
-        // 右键菜单
+        // 上方：收藏夹 + 标签
+        mainScrollView = makeScrollView()
+        mainOutlineView = makeOutlineView()
+        mainOutlineView.dataSource = mainDataSource
+        mainOutlineView.delegate = mainDataSource
+        // 右键菜单（仅主列表需要「移除收藏」）
         let contextMenu = NSMenu()
         contextMenu.addItem(withTitle: "移除收藏", action: #selector(removeFavorite(_:)), keyEquivalent: "")
         contextMenu.items.forEach { $0.target = self }
-        outlineView.menu = contextMenu
+        mainOutlineView.menu = contextMenu
+        mainScrollView.documentView = mainOutlineView
+        addSubview(mainScrollView)
 
-        scrollView.documentView = outlineView
-        addSubview(scrollView)
+        // 下方：存储设备（独立区域，固定底部）
+        deviceScrollView = makeScrollView()
+        deviceOutlineView = makeOutlineView()
+        deviceOutlineView.dataSource = deviceDataSource
+        deviceOutlineView.delegate = deviceDataSource
+        deviceScrollView.documentView = deviceOutlineView
+        addSubview(deviceScrollView)
+
+        // 设备区高度根据设备数量动态调整（保留最小高度）
+        deviceHeightConstraint = deviceScrollView.heightAnchor.constraint(equalToConstant: 48)
+        deviceHeightConstraint.priority = .required
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // 主列表填充顶部剩余空间
+            mainScrollView.topAnchor.constraint(equalTo: topAnchor),
+            mainScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            mainScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            mainScrollView.bottomAnchor.constraint(equalTo: deviceScrollView.topAnchor),
+
+            // 设备列表固定底部
+            deviceScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            deviceScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            deviceScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            deviceHeightConstraint,
         ])
 
         // 监听卷挂载/卸载通知
@@ -77,18 +79,52 @@ class SidebarView: NSView {
         nc.addObserver(self, selector: #selector(handleVolumeUnmount(_:)),
                        name: NSWorkspace.didUnmountNotification, object: nil)
 
-        // 展开所有区域
+        // 展开各自区域
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            for section in SidebarSection.allCases {
-                self.outlineView.expandItem(section)
-            }
+            self.mainOutlineView.expandItem(SidebarSection.favorites)
+            self.mainOutlineView.expandItem(SidebarSection.tags)
+            self.deviceOutlineView.expandItem(SidebarSection.devices)
+            self.updateDeviceHeight()
         }
+    }
+
+    // MARK: - Helpers
+
+    private func makeScrollView() -> NSScrollView {
+        let sv = NSScrollView()
+        sv.translatesAutoresizingMaskIntoConstraints = false
+        sv.hasVerticalScroller = true
+        sv.hasHorizontalScroller = false
+        sv.autohidesScrollers = true
+        sv.drawsBackground = false
+        sv.backgroundColor = .clear
+        // NSClipView 默认绘制 controlBackgroundColor（浅灰），必须显式清除
+        sv.contentView.drawsBackground = false
+        sv.contentView.backgroundColor = .clear
+        return sv
+    }
+
+    private func makeOutlineView() -> NSOutlineView {
+        let ov = NSOutlineView()
+        ov.allowsMultipleSelection = false
+        ov.headerView = nil  // 无表头
+        ov.rowHeight = 24
+        ov.indentationPerLevel = 12
+        ov.backgroundColor = NSColor.clear
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarItem"))
+        column.width = 200
+        ov.addTableColumn(column)
+        ov.outlineTableColumn = column
+        return ov
     }
 
     deinit {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
+
+    // MARK: - Volume Events
 
     @objc private func handleVolumeMount(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
@@ -102,209 +138,50 @@ class SidebarView: NSView {
         }
     }
 
+    // MARK: - Context Menu
+
     @objc private func removeFavorite(_ sender: Any?) {
-        let row = outlineView.clickedRow
+        let row = mainOutlineView.clickedRow
         guard row >= 0 else { return }
-        let item = outlineView.item(atRow: row)
+        let item = mainOutlineView.item(atRow: row)
         if case .favorite(let fav) = item as? SidebarItem {
-            dataSource.removeFavorite(id: fav.id)
-            outlineView.reloadData()
+            mainDataSource.removeFavorite(id: fav.id)
+            mainOutlineView.reloadData()
         }
     }
 
+    // MARK: - Refresh
+
     func refreshDevices() {
-        dataSource.loadDevices()
-        outlineView.reloadData()
-        for section in SidebarSection.allCases {
-            outlineView.expandItem(section)
-        }
+        deviceDataSource.loadDevices()
+        deviceOutlineView.reloadData()
+        deviceOutlineView.expandItem(SidebarSection.devices)
+        updateDeviceHeight()
+    }
+
+    private func updateDeviceHeight() {
+        // section 标题行 + 设备行
+        let rows = 1 + deviceDataSource.deviceCount
+        let height = CGFloat(rows) * deviceOutlineView.rowHeight
+        deviceHeightConstraint.constant = max(height, 48)
     }
 }
 
-// MARK: - SidebarDataSource
+// MARK: - SidebarDataSourceBase
 
-private class SidebarDataSource: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
-    private var favorites: [FavoriteItem] = []
-    private var tags: [Tag] = []
-    private var devices: [DeviceItem] = []
-
-    private let favoritesKey = "SidebarFavorites"
-    private let tagsKey = "SidebarTags"
-
-    override init() {
-        super.init()
-        loadFavorites()
-        loadTags()
-        loadDevices()
-    }
-
-    // MARK: - Data Loading
-
-    private func loadFavorites() {
-        if let data = UserDefaults.standard.data(forKey: favoritesKey),
-           let decoded = try? JSONDecoder().decode([FavoriteItem].self, from: data) {
-            favorites = decoded
-        } else {
-            // 默认收藏夹
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
-            favorites = [
-                FavoriteItem(name: "桌面", path: (home as NSString).appendingPathComponent("Desktop")),
-                FavoriteItem(name: "文档", path: (home as NSString).appendingPathComponent("Documents")),
-                FavoriteItem(name: "下载", path: (home as NSString).appendingPathComponent("Downloads")),
-                FavoriteItem(name: "应用程序", path: "/Applications"),
-            ]
-            saveFavorites()
-        }
-    }
-
-    private func saveFavorites() {
-        if let data = try? JSONEncoder().encode(favorites) {
-            UserDefaults.standard.set(data, forKey: favoritesKey)
-        }
-    }
-
-    private func loadTags() {
-        if let data = UserDefaults.standard.data(forKey: tagsKey),
-           let decoded = try? JSONDecoder().decode([Tag].self, from: data) {
-            tags = decoded
-        } else {
-            tags = [
-                Tag(name: "重要", color: "#FF3B30"),
-                Tag(name: "工作", color: "#007AFF"),
-                Tag(name: "个人", color: "#34C759"),
-            ]
-            saveTags()
-        }
-    }
-
-    private func saveTags() {
-        if let data = try? JSONEncoder().encode(tags) {
-            UserDefaults.standard.set(data, forKey: tagsKey)
-        }
-    }
-
-    func loadDevices() {
-        let volumes = CoreBridge.shared.listVolumes()
-        devices = []
-
-        // 1. 始终添加主硬盘（根目录 /），即使 Rust 端过滤了它
-        // volumeNameKey 可能返回电脑名而非卷名，使用 volumeLocalizedNameKey 并提供回退
-        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-        let rootURL = URL(fileURLWithPath: "/")
-        var rootName = "Macintosh HD"
-        if let name = try? rootURL.resourceValues(forKeys: [.volumeLocalizedNameKey]).volumeLocalizedName,
-           !name.isEmpty, name != Host.current().localizedName {
-            rootName = name
-        }
-        devices.append(DeviceItem(
-            name: rootName,
-            path: "/",
-            isRemovable: false,
-            isNetwork: false,
-            totalSize: 0,
-            freeSize: 0
-        ))
-
-        // 2. 添加用户主目录（作为快捷设备入口）
-        let homeName = homePath.components(separatedBy: "/").last ?? "Home"
-        devices.append(DeviceItem(
-            name: homeName,
-            path: homePath,
-            isRemovable: false,
-            isNetwork: false,
-            totalSize: 0,
-            freeSize: 0
-        ))
-
-        // 3. 过滤并添加外部/网络卷
-        for vol in volumes {
-            // 只保留 /Volumes/ 下的挂载卷（U盘、外接硬盘、网络驱动器等）
-            guard vol.path.hasPrefix("/Volumes/") else { continue }
-
-            // 过滤系统隐藏卷（VM、Preboot、Update 等）
-            let volName = vol.name
-            let systemNames: Set<String> = [
-                "VM", "Preboot", "Update", "xarts", "iSCPreboot",
-                "Hardware", "Recovery", "SSV", "Data"
-            ]
-            if systemNames.contains(volName) { continue }
-
-            // 过滤 UUID 命名的快照卷
-            if volName.count == 36 && volName.contains("-") { continue }
-
-            let isNetwork = vol.fsType.lowercased().contains("smb")
-                || vol.fsType.lowercased().contains("nfs")
-                || vol.fsType.lowercased().contains("afp")
-
-            devices.append(DeviceItem(
-                name: volName,
-                path: vol.path,
-                isRemovable: vol.isRemovable,
-                isNetwork: isNetwork,
-                totalSize: vol.totalSize,
-                freeSize: vol.freeSize
-            ))
-        }
-    }
-
-    // MARK: - CRUD
-
-    func addFavorite(name: String, path: String) {
-        let fav = FavoriteItem(name: name, path: path)
-        favorites.append(fav)
-        saveFavorites()
-    }
-
-    func removeFavorite(id: String) {
-        favorites.removeAll(where: { $0.id == id })
-        saveFavorites()
-    }
-
-    func addTag(_ tag: Tag) {
-        tags.append(tag)
-        saveTags()
-    }
-
-    func removeTag(id: String) {
-        tags.removeAll(where: { $0.id == id })
-        saveTags()
-    }
-
-    // MARK: - NSOutlineViewDataSource
-
-    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        if item == nil {
-            return SidebarSection.allCases.count
-        }
-        if let section = item as? SidebarSection {
-            switch section {
-            case .favorites: return favorites.count
-            case .tags: return tags.count
-            case .devices: return devices.count
-            }
-        }
-        return 0
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        if item == nil {
-            return SidebarSection.allCases[index]
-        }
-        if let section = item as? SidebarSection {
-            switch section {
-            case .favorites: return SidebarItem.favorite(favorites[index])
-            case .tags: return SidebarItem.tag(tags[index])
-            case .devices: return SidebarItem.device(devices[index])
-            }
-        }
-        return ""
-    }
+private class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         return item is SidebarSection
     }
 
-    // MARK: - NSOutlineViewDelegate
+    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
+        // 区域标题不可选
+        if item is SidebarSection { return false }
+        return true
+    }
+
+    // MARK: - Shared Cell Rendering
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         let cellID = NSUserInterfaceItemIdentifier("SidebarCell")
@@ -386,11 +263,7 @@ private class SidebarDataSource: NSObject, NSOutlineViewDataSource, NSOutlineVie
         return cell
     }
 
-    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        // 区域标题不可选
-        if item is SidebarSection { return false }
-        return true
-    }
+    // MARK: - Selection
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard let outlineView = notification.object as? NSOutlineView else { return }
@@ -411,6 +284,224 @@ private class SidebarDataSource: NSObject, NSOutlineViewDataSource, NSOutlineVie
             // 标签点击可选不做导航（未来可筛选同名标签文件）
             break
         }
+    }
+}
+
+// MARK: - MainSidebarDataSource (收藏夹 + 标签)
+
+private class MainSidebarDataSource: SidebarDataSourceBase {
+    private var favorites: [FavoriteItem] = []
+    private var tags: [Tag] = []
+
+    private let favoritesKey = "SidebarFavorites"
+    private let tagsKey = "SidebarTags"
+
+    override init() {
+        super.init()
+        loadFavorites()
+        loadTags()
+    }
+
+    // MARK: - Data Loading
+
+    private func loadFavorites() {
+        if let data = UserDefaults.standard.data(forKey: favoritesKey),
+           let decoded = try? JSONDecoder().decode([FavoriteItem].self, from: data) {
+            favorites = decoded
+        } else {
+            // 默认收藏夹
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            favorites = [
+                FavoriteItem(name: "桌面", path: (home as NSString).appendingPathComponent("Desktop")),
+                FavoriteItem(name: "文档", path: (home as NSString).appendingPathComponent("Documents")),
+                FavoriteItem(name: "下载", path: (home as NSString).appendingPathComponent("Downloads")),
+                FavoriteItem(name: "应用程序", path: "/Applications"),
+            ]
+            saveFavorites()
+        }
+    }
+
+    private func saveFavorites() {
+        if let data = try? JSONEncoder().encode(favorites) {
+            UserDefaults.standard.set(data, forKey: favoritesKey)
+        }
+    }
+
+    private func loadTags() {
+        if let data = UserDefaults.standard.data(forKey: tagsKey),
+           let decoded = try? JSONDecoder().decode([Tag].self, from: data) {
+            tags = decoded
+        } else {
+            tags = [
+                Tag(name: "重要", color: "#FF3B30"),
+                Tag(name: "工作", color: "#007AFF"),
+                Tag(name: "个人", color: "#34C759"),
+            ]
+            saveTags()
+        }
+    }
+
+    private func saveTags() {
+        if let data = try? JSONEncoder().encode(tags) {
+            UserDefaults.standard.set(data, forKey: tagsKey)
+        }
+    }
+
+    // MARK: - CRUD
+
+    func addFavorite(name: String, path: String) {
+        let fav = FavoriteItem(name: name, path: path)
+        favorites.append(fav)
+        saveFavorites()
+    }
+
+    func removeFavorite(id: String) {
+        favorites.removeAll(where: { $0.id == id })
+        saveFavorites()
+    }
+
+    func addTag(_ tag: Tag) {
+        tags.append(tag)
+        saveTags()
+    }
+
+    func removeTag(id: String) {
+        tags.removeAll(where: { $0.id == id })
+        saveTags()
+    }
+
+    // MARK: - NSOutlineViewDataSource
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        if item == nil {
+            // 收藏夹 + 标签 两个 section
+            return 2
+        }
+        if let section = item as? SidebarSection {
+            switch section {
+            case .favorites: return favorites.count
+            case .tags: return tags.count
+            case .devices: return 0
+            }
+        }
+        return 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        if item == nil {
+            // 0 -> 收藏夹, 1 -> 标签
+            return index == 0 ? SidebarSection.favorites : SidebarSection.tags
+        }
+        if let section = item as? SidebarSection {
+            switch section {
+            case .favorites: return SidebarItem.favorite(favorites[index])
+            case .tags: return SidebarItem.tag(tags[index])
+            case .devices: return ""
+            }
+        }
+        return ""
+    }
+}
+
+// MARK: - DeviceSidebarDataSource (存储设备)
+
+private class DeviceSidebarDataSource: SidebarDataSourceBase {
+    private var devices: [DeviceItem] = []
+
+    var deviceCount: Int { devices.count }
+
+    override init() {
+        super.init()
+        loadDevices()
+    }
+
+    // MARK: - Data Loading
+
+    func loadDevices() {
+        let volumes = CoreBridge.shared.listVolumes()
+        devices = []
+
+        // 1. 始终添加主硬盘（根目录 /），即使 Rust 端过滤了它
+        // volumeNameKey 可能返回电脑名而非卷名，使用 volumeLocalizedNameKey 并提供回退
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+        let rootURL = URL(fileURLWithPath: "/")
+        var rootName = "Macintosh HD"
+        if let name = try? rootURL.resourceValues(forKeys: [.volumeLocalizedNameKey]).volumeLocalizedName,
+           !name.isEmpty, name != Host.current().localizedName {
+            rootName = name
+        }
+        devices.append(DeviceItem(
+            name: rootName,
+            path: "/",
+            isRemovable: false,
+            isNetwork: false,
+            totalSize: 0,
+            freeSize: 0
+        ))
+
+        // 2. 添加用户主目录（作为快捷设备入口）
+        let homeName = homePath.components(separatedBy: "/").last ?? "Home"
+        devices.append(DeviceItem(
+            name: homeName,
+            path: homePath,
+            isRemovable: false,
+            isNetwork: false,
+            totalSize: 0,
+            freeSize: 0
+        ))
+
+        // 3. 过滤并添加外部/网络卷
+        for vol in volumes {
+            // 只保留 /Volumes/ 下的挂载卷（U盘、外接硬盘、网络驱动器等）
+            guard vol.path.hasPrefix("/Volumes/") else { continue }
+
+            // 过滤系统隐藏卷（VM、Preboot、Update 等）
+            let volName = vol.name
+            let systemNames: Set<String> = [
+                "VM", "Preboot", "Update", "xarts", "iSCPreboot",
+                "Hardware", "Recovery", "SSV", "Data"
+            ]
+            if systemNames.contains(volName) { continue }
+
+            // 过滤 UUID 命名的快照卷
+            if volName.count == 36 && volName.contains("-") { continue }
+
+            let isNetwork = vol.fsType.lowercased().contains("smb")
+                || vol.fsType.lowercased().contains("nfs")
+                || vol.fsType.lowercased().contains("afp")
+
+            devices.append(DeviceItem(
+                name: volName,
+                path: vol.path,
+                isRemovable: vol.isRemovable,
+                isNetwork: isNetwork,
+                totalSize: vol.totalSize,
+                freeSize: vol.freeSize
+            ))
+        }
+    }
+
+    // MARK: - NSOutlineViewDataSource
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        if item == nil {
+            // 仅存储设备一个 section
+            return 1
+        }
+        if let section = item as? SidebarSection, section == .devices {
+            return devices.count
+        }
+        return 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        if item == nil {
+            return SidebarSection.devices
+        }
+        if let section = item as? SidebarSection, section == .devices {
+            return SidebarItem.device(devices[index])
+        }
+        return ""
     }
 }
 

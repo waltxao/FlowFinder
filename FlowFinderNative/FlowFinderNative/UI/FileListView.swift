@@ -414,8 +414,8 @@ extension FileListView: NSTableViewDelegate {
                 NSLayoutConstraint.activate([
                     iv.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
                     iv.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                    iv.widthAnchor.constraint(equalToConstant: 16),
-                    iv.heightAnchor.constraint(equalToConstant: 16),
+                    iv.widthAnchor.constraint(equalToConstant: 18),
+                    iv.heightAnchor.constraint(equalToConstant: 18),
                 ])
                 // 更新 textField 的 leading 约束到 imageView 之后
                 if let tf = cellView.textField {
@@ -426,11 +426,14 @@ extension FileListView: NSTableViewDelegate {
                     tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 4).isActive = true
                 }
             }
-            // 文件夹用固定图标，文件异步加载缩略图
-            if entry.isDirectory {
-                cellView.imageView?.image = folderIcon
-            } else {
-                cellView.imageView?.image = fileIcon
+            // 使用 NSWorkspace.shared.icon(forFile:) 获取真实文件图标（访达风格）
+            // 文件夹、应用、图片、文档等都会显示正确的系统图标
+            let workspaceIcon = NSWorkspace.shared.icon(forFile: entry.path)
+            workspaceIcon.size = NSSize(width: 18, height: 18)
+            cellView.imageView?.image = workspaceIcon
+
+            // 非目录文件额外异步加载 QuickLook 缩略图（图片、视频等预览）
+            if !entry.isDirectory {
                 let path = entry.path
                 ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 32, height: 32)) { [weak cellView] image in
                     guard let image = image else { return }

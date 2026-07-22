@@ -125,7 +125,8 @@ class PaneToolbar: NSView {
 
         sortDirectionButton = NSButton()
         sortDirectionButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "升序")
-        sortDirectionButton.bezelStyle = .texturedRounded
+        sortDirectionButton.bezelStyle = .accessoryBarAction
+        sortDirectionButton.controlSize = .small
         sortDirectionButton.target = self
         sortDirectionButton.action = #selector(sortDirectionToggled)
         sortDirectionButton.translatesAutoresizingMaskIntoConstraints = false
@@ -165,10 +166,12 @@ class PaneToolbar: NSView {
 
     // MARK: - Button Factory
 
+    /// 创建访达风格的圆形药丸按钮
     private func createNavButton(systemSymbol: String, action: Selector) -> NSButton {
         let button = NSButton()
         button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: nil)
-        button.bezelStyle = .texturedRounded
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
         button.imagePosition = .imageOnly
         button.target = self
         button.action = action
@@ -178,10 +181,12 @@ class PaneToolbar: NSView {
         return button
     }
 
+    /// 创建视图切换按钮（访达风格圆形药丸）
     private func createViewButton(systemSymbol: String, action: Selector) -> NSButton {
         let button = NSButton()
         button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: nil)
-        button.bezelStyle = .texturedRounded
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
         button.imagePosition = .imageOnly
         button.target = self
         button.action = action

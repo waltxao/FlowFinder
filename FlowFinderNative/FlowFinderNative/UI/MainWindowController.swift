@@ -144,11 +144,11 @@ public class MainWindowController: NSWindowController {
         ])
 
         // macOS 26+: NSGlassEffectView 作为窗口 contentView
-        // .regular 样式（默认）：标准玻璃效果，保证文字可读性
-        // .clear 样式过于透明，文字难以辨认
+        // .clear 样式：透明液态玻璃效果，模糊桌面壁纸
+        // .regular 样式会变成灰色不透明，失去玻璃效果
         // 窗口透明（isOpaque=false, backgroundColor=.clear）让玻璃模糊桌面壁纸
         let glassView = NSGlassEffectView()
-        glassView.style = .regular
+        glassView.style = .clear
         glassView.cornerRadius = 0
         if #available(macOS 27.0, *) {
             glassView.effectIsInteractive = true
