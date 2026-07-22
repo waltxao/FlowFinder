@@ -80,6 +80,8 @@ public class FileListView: NSView {
         tableView.allowsEmptySelection = true
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
+        // 使用系统默认蓝色高亮（确保单击选中可见）
+        tableView.selectionHighlightStyle = .regular
         // 使用 firstColumnOnlyAutoresizingStyle：名称列自动填充剩余空间，其他列保持固定宽度
         tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         tableView.usesAlternatingRowBackgroundColors = false

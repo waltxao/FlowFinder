@@ -276,9 +276,10 @@ private class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlin
         switch item as? SidebarItem {
         case .favorite(let fav):
             textField.stringValue = fav.name
-            imageView.image = NSImage(systemSymbolName: "star.fill", accessibilityDescription: "收藏")
-                ?? NSImage(named: NSImage.folderName)
-            imageView.contentTintColor = NSColor.systemYellow
+            // 使用 NSWorkspace 获取真实位置图标（桌面、文稿、下载等各有不同图标）
+            let workspaceIcon = NSWorkspace.shared.icon(forFile: fav.path)
+            workspaceIcon.size = NSSize(width: 16, height: 16)
+            imageView.image = workspaceIcon
 
         default:
             textField.stringValue = ""
