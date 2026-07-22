@@ -66,6 +66,14 @@ public class MainWindowController: NSWindowController {
         window.acceptsMouseMovedEvents = true
 
         setupUI()
+
+        // 窗口距顶部保留 8pt 间距
+        var frame = window.frame
+        let screenHeight = NSScreen.main?.frame.height ?? 900
+        let topGap: CGFloat = 8
+        frame.origin.y = screenHeight - frame.size.height - topGap
+        window.setFrame(frame, display: true)
+
         setupBindings()
         setupNotifications()
         loadInitialDirectories()
@@ -190,7 +198,7 @@ public class MainWindowController: NSWindowController {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.clear.cgColor
+        container.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.99).cgColor
         container.layer?.cornerRadius = 8
         container.layer?.masksToBounds = true
 
