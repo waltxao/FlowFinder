@@ -28,7 +28,7 @@ public final class TagBridge {
     /// 添加标签
     public func addTag(_ tag: Tag, path: String) -> Bool {
         var tags = getTags(path: path)
-        if tags.contains(where: { $0.id == tag.id }) { return true }
+        if tags.contains(where: { $0.name == tag.name }) { return true }
         tags.append(tag)
         return setTags(tags, path: path)
     }

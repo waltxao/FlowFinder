@@ -372,6 +372,7 @@ public class FileGridView: NSView {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var successCount = 0
             var totalTagsAdded = 0
+            var xattrFailCount = 0
             var firstError: String?
 
             for path in paths {
@@ -381,6 +382,8 @@ public class FileGridView: NSView {
                         let tag = Tag(name: genTag.name, color: genTag.color)
                         if TagBridge.shared.addTag(tag, path: path) {
                             totalTagsAdded += 1
+                        } else {
+                            xattrFailCount += 1
                         }
                     }
                     successCount += 1
@@ -392,7 +395,7 @@ public class FileGridView: NSView {
             }
 
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, let window = self.window else { return }
 
                 if successCount == 0 {
                     let alert = NSAlert()
@@ -400,23 +403,31 @@ public class FileGridView: NSView {
                     alert.informativeText = firstError ?? "未知错误"
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "关闭")
-                    alert.beginSheetModal(for: self.window!)
+                    alert.beginSheetModal(for: window)
                     return
                 }
 
                 let alert = NSAlert()
                 if successCount == totalCount {
                     alert.messageText = "已为 \(successCount) 个文件生成 AI 标签"
-                    alert.informativeText = totalTagsAdded > 0
-                        ? "共添加 \(totalTagsAdded) 个标签。"
-                        : "未识别到可分类的文件类型。"
+                    if totalTagsAdded > 0 {
+                        var info = "共添加 \(totalTagsAdded) 个标签。"
+                        if xattrFailCount > 0 {
+                            info += "\n\(xattrFailCount) 个标签写入失败（权限不足或不支持扩展属性）。"
+                        }
+                        alert.informativeText = info
+                    } else if xattrFailCount > 0 {
+                        alert.informativeText = "标签写入失败（权限不足或不支持扩展属性）。"
+                    } else {
+                        alert.informativeText = "未识别到可分类的文件类型。"
+                    }
                 } else {
                     alert.messageText = "部分文件标签生成失败"
                     alert.informativeText = "成功 \(successCount) / 总计 \(totalCount)。\n\(firstError ?? "")"
                 }
                 alert.alertStyle = totalTagsAdded > 0 ? .informational : .warning
                 alert.addButton(withTitle: "关闭")
-                alert.beginSheetModal(for: self.window!)
+                alert.beginSheetModal(for: window)
 
                 self.reloadData()
             }
