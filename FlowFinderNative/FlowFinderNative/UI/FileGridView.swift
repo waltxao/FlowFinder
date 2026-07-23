@@ -207,6 +207,7 @@ public class FileGridView: NSView {
         menu.addItem(withTitle: "新建文件夹", action: #selector(createDirectory(_:)), keyEquivalent: "n")
         menu.addItem(.separator())
         menu.addItem(withTitle: "添加到收藏夹", action: #selector(addToFavorites(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "AI 自动打标签", action: #selector(generateAITags(_:)), keyEquivalent: "")
 
         for item in menu.items where item.action != nil {
             item.target = self
@@ -351,6 +352,75 @@ public class FileGridView: NSView {
     @objc private func addToFavorites(_ sender: Any?) {
         guard let entry = clickedEntry else { return }
         NotificationCenter.default.post(name: .fileListDidAddFavorite, object: nil, userInfo: ["name": entry.name, "path": entry.path])
+    }
+
+    @objc private func generateAITags(_ sender: Any?) {
+        // 优先使用选中的文件列表，无选中时回退到右键点击的文件
+        var entries = viewModel?.selectedFiles ?? []
+        if entries.isEmpty {
+            if let entry = clickedEntry {
+                entries = [entry]
+            } else {
+                return
+            }
+        }
+
+        let paths = entries.map { $0.path }
+        let totalCount = paths.count
+
+        // 后台线程批量生成标签并写入 xattr
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var successCount = 0
+            var totalTagsAdded = 0
+            var firstError: String?
+
+            for path in paths {
+                do {
+                    let generatedTags = try CoreBridge.shared.generateAITags(path: path)
+                    for genTag in generatedTags {
+                        let tag = Tag(name: genTag.name, color: genTag.color)
+                        if TagBridge.shared.addTag(tag, path: path) {
+                            totalTagsAdded += 1
+                        }
+                    }
+                    successCount += 1
+                } catch {
+                    if firstError == nil {
+                        firstError = error.localizedDescription
+                    }
+                }
+            }
+
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+
+                if successCount == 0 {
+                    let alert = NSAlert()
+                    alert.messageText = "AI 标签生成失败"
+                    alert.informativeText = firstError ?? "未知错误"
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "关闭")
+                    alert.beginSheetModal(for: self.window!)
+                    return
+                }
+
+                let alert = NSAlert()
+                if successCount == totalCount {
+                    alert.messageText = "已为 \(successCount) 个文件生成 AI 标签"
+                    alert.informativeText = totalTagsAdded > 0
+                        ? "共添加 \(totalTagsAdded) 个标签。"
+                        : "未识别到可分类的文件类型。"
+                } else {
+                    alert.messageText = "部分文件标签生成失败"
+                    alert.informativeText = "成功 \(successCount) / 总计 \(totalCount)。\n\(firstError ?? "")"
+                }
+                alert.alertStyle = totalTagsAdded > 0 ? .informational : .warning
+                alert.addButton(withTitle: "关闭")
+                alert.beginSheetModal(for: self.window!)
+
+                self.reloadData()
+            }
+        }
     }
 
     public func reloadData() {

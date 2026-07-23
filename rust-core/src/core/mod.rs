@@ -11,6 +11,7 @@ pub mod scanner;
 pub mod search_engine;
 pub mod settings;
 pub mod sqlite_cache;
+pub mod tags;
 pub mod task_scheduler;
 pub mod thumbnails;
 pub mod utils;

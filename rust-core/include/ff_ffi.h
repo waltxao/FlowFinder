@@ -228,6 +228,13 @@ uint64_t ff_get_system_memory(void);
 /* ── Hashing API ───────────────────────────────────────────── */
 ff_error_t ff_hash_file(const char *path, char **out_hash);
 
+/* ── AI Tag Generation API ────────────────────────────────── */
+/* Generate classification tags for a file based on extension/size/type.
+ * Returns a heap-allocated JSON array string (e.g. [{"name":"图片","color":"#FF6B35","category":"image"}]).
+ * Returns NULL on error (null path, invalid UTF-8, or file not found);
+ * call ff_last_error() for details. Must be freed with ff_free_string(). */
+char *ff_generate_tags(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

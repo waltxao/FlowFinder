@@ -26,6 +26,20 @@ public enum CoreBridgeError: Error, LocalizedError {
     }
 }
 
+// MARK: - AI Generated Tag
+
+/// AI 生成的标签（由 Rust 规则分类引擎产出，JSON 解码得到）。
+/// 与 `Tag` 结构体不同，`GeneratedTag` 无 `id` 字段——在写入 xattr 时
+/// 由调用方生成 UUID。
+public struct GeneratedTag: Codable {
+    /// 标签显示名称（如 "图片"、"视频"）
+    public let name: String
+    /// 标签颜色（hex 格式，如 "#FF6B35"）
+    public let color: String
+    /// 分类标识符（如 "image"、"video"）
+    public let category: String
+}
+
 // MARK: - Thread-Safe Result Wrapper
 
 /// Thread-safe wrapper for FFI results
@@ -1637,6 +1651,57 @@ public final class CoreBridge {
         guard ffiResult == 0 else {
             let errorMessage = getLastError()
             throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    // MARK: - AI Tag Generation (Task 14)
+
+    /// 为指定文件生成 AI 分类标签。
+    ///
+    /// 调用 Rust 规则分类引擎，根据文件扩展名、大小、是否为目录等特征
+    /// 自动生成分类标签（如「图片」「视频」「大文件」「文件夹」）。
+    ///
+    /// - Parameter path: 文件或目录的绝对路径
+    /// - Returns: 生成的标签列表（可能为空，表示文件存在但无匹配规则）
+    /// - Throws: CoreBridgeError（文件不存在、路径无效、FFI 调用失败）
+    func generateAITags(path: String) throws -> [GeneratedTag] {
+        var resultString: String = ""
+        let semaphore = DispatchSemaphore(value: 0)
+        var didError = false
+        var errorMessage = ""
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+
+            let cString = path.withCString { cPath in
+                ff_generate_tags(cPath)
+            }
+
+            guard let cString = cString else {
+                errorMessage = self.captureLastErrorFFI()
+                didError = true
+                return
+            }
+
+            resultString = String(cString: cString)
+            ff_free_string(cString)
+        }
+
+        semaphore.wait()
+
+        if didError {
+            throw CoreBridgeError.ffiError(errorMessage.isEmpty ? "AI 标签生成失败" : errorMessage)
+        }
+
+        // 解码 JSON 数组 → [GeneratedTag]
+        guard let data = resultString.data(using: .utf8) else {
+            throw CoreBridgeError.stringConversionFailed
+        }
+
+        do {
+            return try JSONDecoder().decode([GeneratedTag].self, from: data)
+        } catch {
+            throw CoreBridgeError.ffiError("AI 标签 JSON 解码失败: \(error.localizedDescription)")
         }
     }
 

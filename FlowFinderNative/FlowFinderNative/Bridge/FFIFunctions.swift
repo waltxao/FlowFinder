@@ -629,3 +629,13 @@ public func ff_volume_eject(_ path: UnsafePointer<CChar>) -> Int32
 /// - Returns: 0 on success, non-zero error code on failure
 @_silgen_name("ff_volume_mount")
 public func ff_volume_mount(_ path: UnsafePointer<CChar>, _ options: UnsafePointer<CChar>?) -> Int32
+
+// MARK: - AI Tag Generation FFI Declaration
+
+/// Generate classification tags for a file based on extension/size/type.
+/// - Parameter path: File path (C string)
+/// - Returns: Pointer to JSON array string (e.g. `[{"name":"图片","color":"#FF6B35","category":"image"}]`).
+///   Returns nil on error (null path, invalid UTF-8, or file not found).
+///   Caller must free with ff_free_string.
+@_silgen_name("ff_generate_tags")
+public func ff_generate_tags(_ path: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?

@@ -47,7 +47,7 @@
 
 ## P2 - 架构完善（已实现但未接入）
 
-- [ ] Task 8: 接入 sqlite_cache 到 FFI
+- [x] Task 8: 接入 sqlite_cache 到 FFI
   - 修改 `ff_cache_get`/`ff_cache_put` 调用 `sqlite_cache::cache_get`/`cache_put`
   - 或新增 `ff_sqlite_cache_get`/`ff_sqlite_cache_put` FFI 函数
   - 保留 `dir_cache` 内存缓存作为一级缓存
@@ -59,29 +59,29 @@
   - 批量文件操作改用并行版本
   - 验证：批量复制 100 个文件使用 4 线程并行
 
-- [ ] Task 10: 清理 dedup_engine.rs MD5 注释残留
+- [x] Task 10: 清理 dedup_engine.rs MD5 注释残留
   - 将 4 处 MD5 注释更新为 blake3
   - 验证：代码搜索 "MD5" 在 rust-core 中仅返回历史提及
 
 ## P3 - 新功能开发
 
-- [ ] Task 11: 全局撤销/重做栈
+- [x] Task 11: 全局撤销/重做栈
   - 创建 UndoManager 集成
   - 文件操作（移动/复制/重命名/删除）注册撤销动作
   - Edit 菜单"撤销"/"重做"连接到 UndoManager
   - 验证：移动文件后 ⌘Z 撤销，文件回到原位
 
-- [ ] Task 12: 批量重命名 UI
+- [x] Task 12: 批量重命名 UI
   - 创建批量重命名面板（模式替换/序号添加/大小写转换）
   - 选中多个文件后通过菜单/快捷键触发
   - 预览重命名结果
   - 验证：选中 10 个文件，批量添加序号前缀
 
-- [ ] Task 13: Release 构建和 DMG 打包脚本
+- [x] Task 13: Release 构建和 DMG 打包脚本
   - 创建 `scripts/package.sh`：Release 编译 + .app bundle 组装 + codesign + DMG 打包
   - 验证：`scripts/package.sh` 产出可分发的 .dmg 文件
 
-- [ ] Task 14: AI 标签生成
+- [x] Task 14: AI 标签生成
   - Rust Core 添加标签分类引擎（基于文件名+扩展名的规则分类）
   - FFI 暴露 `ff_generate_tags` 函数
   - Swift 侧 UI：选中文件 -> 右键"AI 自动打标签" -> 调用分类引擎 -> 写入 xattr

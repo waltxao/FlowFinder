@@ -2238,6 +2238,53 @@ pub extern "C" fn ff_hash_file(
     }
 }
 
+// ── AI Tag Generation ──────────────────────────────────────────────
+
+/// Generate classification tags for a file based on its extension, size, and type.
+///
+/// Reads the file's metadata via `std::fs::metadata`, then applies rule-based
+/// classification (image/video/audio/document/code/archive/large_file/folder).
+/// The result is returned as a JSON array string.
+///
+/// # Arguments
+/// - `path` — NUL-terminated UTF-8 file path.
+///
+/// # Returns
+/// - Heap-allocated C string containing a JSON array, e.g.
+///   `[{"name":"图片","color":"#FF6B35","category":"image"}]`.
+///   Must be freed with `ff_free_string()`.
+/// - `null` if `path` is null, not valid UTF-8, or the file does not exist.
+///   In the error case, `ff_last_error()` returns a description.
+#[no_mangle]
+pub extern "C" fn ff_generate_tags(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        set_last_error("path is null".to_string());
+        return ptr::null_mut();
+    }
+
+    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_last_error("path is not valid UTF-8".to_string());
+            return ptr::null_mut();
+        }
+    };
+
+    let tags = crate::core::tags::generate_tags(path_str);
+
+    if tags.is_empty() {
+        // 文件不存在或无匹配规则时，检查是否因文件不存在
+        if std::fs::metadata(path_str).is_err() {
+            set_last_error(format!("cannot read file metadata: {}", path_str));
+            return ptr::null_mut();
+        }
+        // 文件存在但无匹配规则 → 返回空数组 "[]"（非错误）
+    }
+
+    let json = crate::core::tags::tags_to_json(&tags);
+    rust_string_to_c(json)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2962,6 +3009,90 @@ mod tests {
                 "destination content must match source for file {}",
                 i,
             );
+        }
+    }
+
+    // ── ff_generate_tags tests ────────────────────────────────────
+
+    #[test]
+    fn test_ff_generate_tags_null_path() {
+        let ptr = ff_generate_tags(ptr::null());
+        assert!(ptr.is_null(), "null path should return null");
+        let err = ff_last_error();
+        assert!(!err.is_null());
+        unsafe {
+            let msg = CStr::from_ptr(err).to_string_lossy().to_string();
+            ff_free_string(err);
+            assert!(msg.contains("null"), "error should mention null, got: {}", msg);
+        }
+    }
+
+    #[test]
+    fn test_ff_generate_tags_nonexistent_file() {
+        let path = CString::new("/nonexistent/path/file.jpg").unwrap();
+        let ptr = ff_generate_tags(path.as_ptr());
+        assert!(ptr.is_null(), "nonexistent file should return null");
+        let err = ff_last_error();
+        assert!(!err.is_null());
+        unsafe {
+            ff_free_string(err);
+        }
+    }
+
+    #[test]
+    fn test_ff_generate_tags_image_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ff_test_ffi_tags_photo.jpg");
+        std::fs::write(&path, b"fake image").unwrap();
+
+        let c_path = CString::new(path.to_str().unwrap()).unwrap();
+        let ptr = ff_generate_tags(c_path.as_ptr());
+        let _ = std::fs::remove_file(&path);
+
+        assert!(!ptr.is_null(), "image file should return JSON");
+        unsafe {
+            let json = CStr::from_ptr(ptr).to_string_lossy().to_string();
+            ff_free_string(ptr);
+            assert!(json.contains("图片"), "JSON should contain 图片, got: {}", json);
+            assert!(json.contains("image"), "JSON should contain image, got: {}", json);
+        }
+    }
+
+    #[test]
+    fn test_ff_generate_tags_unknown_type_returns_empty_array() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ff_test_ffi_tags_unknown.xyz123");
+        std::fs::write(&path, b"data").unwrap();
+
+        let c_path = CString::new(path.to_str().unwrap()).unwrap();
+        let ptr = ff_generate_tags(c_path.as_ptr());
+        let _ = std::fs::remove_file(&path);
+
+        // 文件存在但无匹配规则 → 返回 "[]"（非 null）
+        assert!(!ptr.is_null(), "existing file should return non-null even if no tags");
+        unsafe {
+            let json = CStr::from_ptr(ptr).to_string_lossy().to_string();
+            ff_free_string(ptr);
+            assert_eq!(json, "[]", "unknown type should return empty array");
+        }
+    }
+
+    #[test]
+    fn test_ff_generate_tags_directory() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ff_test_ffi_tags_dir");
+        std::fs::create_dir_all(&path).unwrap();
+
+        let c_path = CString::new(path.to_str().unwrap()).unwrap();
+        let ptr = ff_generate_tags(c_path.as_ptr());
+        let _ = std::fs::remove_dir_all(&path);
+
+        assert!(!ptr.is_null());
+        unsafe {
+            let json = CStr::from_ptr(ptr).to_string_lossy().to_string();
+            ff_free_string(ptr);
+            assert!(json.contains("文件夹"), "directory should get 文件夹 tag, got: {}", json);
+            assert!(json.contains("folder"), "JSON should contain folder category");
         }
     }
 }
