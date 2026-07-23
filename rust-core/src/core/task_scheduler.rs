@@ -384,62 +384,87 @@ pub type FFTaskProgressCallback = extern "C" fn(
 
 // ── Public FFI API ────────────────────────────────────────────────
 
-/// Submit a new task.
+/// 提交一个新任务。
 ///
 /// # Arguments
-/// - `task_type` — NUL-terminated UTF-8 task type string ("Copy", "Move", "Delete", "Scan", "Index").
-/// - `params_json` — NUL-terminated UTF-8 JSON string with task parameters.
+/// - `name` - NUL 结尾的 UTF-8 任务类型字符串（"Copy", "Move", "Delete", "Scan", "Index"）。
+/// - `description` - NUL 结尾的 UTF-8 任务描述字符串（可为 null）。
+/// - `priority` - 任务优先级（0=Low, 1=Normal, 2=High）。
+/// - `out_task_id` - 输出参数，成功时指向由 Rust 分配的任务 ID 字符串，
+///   调用方需使用 ff_free_string 释放。
 ///
 /// # Returns
-/// - Task ID (>= 1) on success.
-/// - `FF_ERR_INVALID_PATH` if inputs are invalid.
-/// - `FF_ERR_GENERIC` if task type is unknown.
+/// - `FF_OK` 成功。
+/// - `FF_ERR_INVALID_PATH` name 或 out_task_id 为 null。
+/// - `FF_ERR_GENERIC` 任务类型未知。
 #[no_mangle]
-pub extern "C" fn ff_task_submit(task_type: *const c_char, params_json: *const c_char) -> c_int {
-    if task_type.is_null() {
+pub extern "C" fn ff_task_submit(
+    name: *const c_char,
+    description: *const c_char,
+    priority: c_int,
+    out_task_id: *mut *mut c_char,
+) -> c_int {
+    if name.is_null() || out_task_id.is_null() {
         return FF_ERR_INVALID_PATH;
     }
 
-    let type_str = unsafe {
-        match CStr::from_ptr(task_type).to_str() {
+    let name_str = unsafe {
+        match CStr::from_ptr(name).to_str() {
             Ok(s) => s,
             Err(_) => return FF_ERR_INVALID_PATH,
         }
     };
 
-    let task_type = match TaskType::from_str(type_str) {
+    let task_type = match TaskType::from_str(name_str) {
         Some(t) => t,
         None => return FF_ERR_GENERIC,
     };
 
     let mut params = HashMap::new();
-    if !params_json.is_null() {
-        let params_str = unsafe {
-            match CStr::from_ptr(params_json).to_str() {
-                Ok(s) => s,
-                Err(_) => return FF_ERR_INVALID_PATH,
-            }
-        };
-        if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(params_str) {
-            params = parsed;
+    if !description.is_null() {
+        if let Ok(desc_str) = unsafe { CStr::from_ptr(description) }.to_str() {
+            params.insert("description".to_string(), desc_str.to_string());
         }
     }
 
-    let id = scheduler().submit(task_type, TaskPriority::Normal, params);
-    id as c_int
+    let task_priority = TaskPriority::from_i32(priority);
+    let id = scheduler().submit(task_type, task_priority, params);
+
+    let id_str = CString::new(id.to_string()).unwrap_or_default();
+    unsafe {
+        *out_task_id = id_str.into_raw();
+    }
+
+    FF_OK
 }
 
-/// Cancel a task by ID.
+/// 通过任务 ID 取消任务。
 ///
 /// # Arguments
-/// - `id` — Task ID to cancel.
+/// - `task_id` - NUL 结尾的 UTF-8 任务 ID 字符串。
 ///
 /// # Returns
-/// - `FF_OK` on success.
-/// - `FF_ERR_NOT_FOUND` if task not found.
+/// - `FF_OK` 成功。
+/// - `FF_ERR_INVALID_PATH` task_id 为 null 或无法解析。
+/// - `FF_ERR_NOT_FOUND` 任务未找到。
 #[no_mangle]
-pub extern "C" fn ff_task_cancel(id: c_int) -> c_int {
-    let id = id as u64;
+pub extern "C" fn ff_task_cancel(task_id: *const c_char) -> c_int {
+    if task_id.is_null() {
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let id_str = unsafe {
+        match CStr::from_ptr(task_id).to_str() {
+            Ok(s) => s,
+            Err(_) => return FF_ERR_INVALID_PATH,
+        }
+    };
+
+    let id = match id_str.parse::<u64>() {
+        Ok(id) => id,
+        Err(_) => return FF_ERR_INVALID_PATH,
+    };
+
     if scheduler().cancel(id) {
         FF_OK
     } else {

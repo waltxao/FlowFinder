@@ -427,22 +427,26 @@ public func ff_settings_set(_ key: UnsafePointer<CChar>, _ value: UnsafePointer<
 
 // MARK: - Task Scheduler (Sub-project 9) FFI Declarations
 
-/// Submit a new task
+/// 提交一个新任务
 /// - Parameters:
-///   - taskType: Task type (C string, e.g., "scan", "copy", "delete")
-///   - paramsJson: Task parameters as JSON string
+///   - name: 任务类型名称（C 字符串，如 "scan", "copy", "delete"）
+///   - description: 任务描述（C 字符串，可为 nil）
+///   - priority: 任务优先级（0=Low, 1=Normal, 2=High）
+///   - outTaskId: 输出参数，成功时指向由 Rust 分配的任务 ID 字符串（需用 ff_free_string 释放）
 /// - Returns: 0 on success, non-zero error code on failure
 @_silgen_name("ff_task_submit")
 public func ff_task_submit(
-    _ taskType: UnsafePointer<CChar>,
-    _ paramsJson: UnsafePointer<CChar>
+    _ name: UnsafePointer<CChar>,
+    _ description: UnsafePointer<CChar>?,
+    _ priority: Int32,
+    _ outTaskId: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
 ) -> Int32
 
-/// Cancel a task by ID
-/// - Parameter taskId: Task ID (integer)
+/// 通过任务 ID 取消任务
+/// - Parameter taskId: 任务 ID（C 字符串）
 /// - Returns: 0 on success, non-zero error code on failure
 @_silgen_name("ff_task_cancel")
-public func ff_task_cancel(_ taskId: Int32) -> Int32
+public func ff_task_cancel(_ taskId: UnsafePointer<CChar>) -> Int32
 
 /// List all tasks
 /// - Parameters:
@@ -526,17 +530,16 @@ public func ff_volume_list(
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32
 
-/// Get detailed information for a specific volume
+/// 获取指定卷的详细信息
 /// - Parameters:
-///   - path: Volume path (C string)
-///   - callback: Called with raw volume info pointer
-///   - userData: User data pointer passed to callback
+///   - path: 卷路径（C 字符串）
+///   - outInfo: 输出参数，指向调用方分配的 FFVolumeInfo 结构体。
+///     成功时各字符串字段由 Rust 分配，需用 ff_free_string 释放。
 /// - Returns: 0 on success, non-zero error code on failure
 @_silgen_name("ff_volume_info")
 public func ff_volume_info(
     _ path: UnsafePointer<CChar>,
-    _ callback: @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void,
-    _ userData: UnsafeMutableRawPointer?
+    _ outInfo: UnsafeMutablePointer<FFVolumeInfo>
 ) -> Int32
 
 /// Perform a health check on a volume

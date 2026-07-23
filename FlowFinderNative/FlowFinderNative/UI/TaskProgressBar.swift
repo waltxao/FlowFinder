@@ -10,7 +10,7 @@ public class TaskProgressBar: NSView {
     private var containerView: NSView!
 
     private var cancellables = Set<AnyCancellable>()
-    private var currentTaskId: Int32?
+    private var currentTaskId: String?
 
     /// 进度条高度
     public static let height: CGFloat = 28
@@ -113,7 +113,7 @@ public class TaskProgressBar: NSView {
         isHidden = false
         taskLabel.stringValue = "\(task.name) - \(task.statusDescription)"
         progressIndicator.doubleValue = task.progress * 100
-        currentTaskId = Int32(task.id) ?? nil
+        currentTaskId = task.id
     }
 
     /// 隐藏进度条

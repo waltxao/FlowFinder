@@ -88,6 +88,15 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     }
 }
 
+// MARK: - DraggingCollectionView
+
+/// 自定义 NSCollectionView 子类：覆盖拖拽源操作掩码，支持同卷移动/跨卷复制
+private class DraggingCollectionView: NSCollectionView {
+    override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        return [.copy, .move, .delete]
+    }
+}
+
 // MARK: - FileGridView
 
 /// NSCollectionView-based grid view with thumbnails
@@ -145,7 +154,7 @@ public class FileGridView: NSView {
         layout.minimumLineSpacing = 8
         layout.margins = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
 
-        collectionView = NSCollectionView()
+        collectionView = DraggingCollectionView()
         collectionView.collectionViewLayout = layout
         collectionView.backgroundColors = [NSColor.clear]
         collectionView.allowsMultipleSelection = true
@@ -166,6 +175,9 @@ public class FileGridView: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
+        // 注册为拖拽目标（接收拖入的文件 URL）
+        registerForDraggedTypes([.fileURL])
 
         setupContextMenu()
     }
@@ -189,6 +201,8 @@ public class FileGridView: NSView {
         menu.addItem(withTitle: "删除", action: #selector(deleteSelected(_:)), keyEquivalent: "\u{7F}")
         menu.addItem(.separator())
         menu.addItem(withTitle: "新建文件夹", action: #selector(createDirectory(_:)), keyEquivalent: "n")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "添加到收藏夹", action: #selector(addToFavorites(_:)), keyEquivalent: "")
 
         for item in menu.items where item.action != nil {
             item.target = self
@@ -213,6 +227,15 @@ public class FileGridView: NSView {
 
     private func getSide() -> String {
         return identifier?.rawValue ?? "left"
+    }
+
+    private func showError(error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "错误"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "好")
+        if let window = window { alert.beginSheetModal(for: window) { _ in } }
     }
 
     // MARK: - Context Menu Actions
@@ -321,6 +344,11 @@ public class FileGridView: NSView {
         }
     }
 
+    @objc private func addToFavorites(_ sender: Any?) {
+        guard let entry = clickedEntry else { return }
+        NotificationCenter.default.post(name: .fileListDidAddFavorite, object: nil, userInfo: ["name": entry.name, "path": entry.path])
+    }
+
     public func reloadData() {
         collectionView?.reloadData()
     }
@@ -372,5 +400,122 @@ extension FileGridView: NSCollectionViewDelegate {
     public func collectionView(_ collectionView: NSCollectionView, doubleClickItemAt indexPath: IndexPath) {
         guard let viewModel = viewModel, indexPath.item < viewModel.files.count else { return }
         onDoubleClick?(viewModel.files[indexPath.item])
+    }
+
+    // MARK: - Drag Source（拖出文件）
+
+    public func collectionView(_ collectionView: NSCollectionView, canDragItemsAt indexPaths: Set<IndexPath>, with event: NSEvent) -> Bool {
+        return true
+    }
+
+    /// 为每个被拖拽的 item 提供 pasteboard writer（文件 URL）
+    /// NSCollectionView 会对所有选中项调用此方法，从而发送选中文件的完整路径数组
+    public func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
+        guard let viewModel = viewModel, indexPath.item < viewModel.files.count else { return nil }
+        let entry = viewModel.files[indexPath.item]
+        return NSURL(fileURLWithPath: entry.path)
+    }
+
+    public func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forItemsAt indexPaths: Set<IndexPath>) {
+        // 拖拽即将开始（占位，便于后续扩展）
+    }
+
+    public func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, dragOperation: NSDragOperation) {
+        // 拖拽结束：若为移动/删除操作，源文件可能已被移走，需刷新当前目录
+        if dragOperation == .move || dragOperation == .delete {
+            viewModel?.refresh()
+        }
+    }
+}
+
+// MARK: - Drag and Drop（拖入目标）
+
+extension FileGridView {
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return isMoveOperation(sender) ? .move : .copy
+    }
+
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return isMoveOperation(sender) ? .move : .copy
+    }
+
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              !urls.isEmpty else {
+            return false
+        }
+
+        let destPath = viewModel?.currentPath ?? ""
+        guard !destPath.isEmpty else { return false }
+
+        let isMove = isMoveOperation(sender)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for url in urls {
+                let srcPath = url.path
+                let fileName = url.lastPathComponent
+                let dstPath = (destPath as NSString).appendingPathComponent(fileName)
+
+                do {
+                    if isMove {
+                        try CoreBridge.shared.moveFile(src: srcPath, dst: dstPath)
+                    } else {
+                        try CoreBridge.shared.copyFile(src: srcPath, dst: dstPath)
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self?.showError(error: error)
+                    }
+                    return
+                }
+            }
+
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+            }
+        }
+
+        return true
+    }
+
+    /// 判断是否为移动操作（同卷 + 未按 Cmd）
+    private func isMoveOperation(_ sender: NSDraggingInfo) -> Bool {
+        // Cmd 键切换为复制
+        if sender.draggingSourceOperationMask.contains(.copy) &&
+           !sender.draggingSourceOperationMask.contains(.move) {
+            return false
+        }
+
+        // 检查源和目标是否在同一卷
+        guard let destPath = viewModel?.currentPath else { return false }
+
+        if let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+           let srcPath = urls.first?.path {
+            return isSameVolume(srcPath: srcPath, destPath: destPath)
+        }
+
+        return false
+    }
+
+    /// 检查两个路径是否在同一卷（通过 statfs）
+    private func isSameVolume(srcPath: String, destPath: String) -> Bool {
+        var srcStat = statfs()
+        var dstStat = statfs()
+
+        let srcResult = srcPath.withCString { statfs($0, &srcStat) }
+        let dstResult = destPath.withCString { statfs($0, &dstStat) }
+
+        guard srcResult == 0 && dstResult == 0 else { return false }
+
+        // 比较设备 ID (使用 memcmp 比较 fsid_t 原始字节)
+        var srcFsid = srcStat.f_fsid
+        var dstFsid = dstStat.f_fsid
+        return withUnsafeBytes(of: &srcFsid) { srcBytes in
+            withUnsafeBytes(of: &dstFsid) { dstBytes in
+                srcBytes.elementsEqual(dstBytes)
+            }
+        }
     }
 }

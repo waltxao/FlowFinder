@@ -347,6 +347,11 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleQuickLookRequest(_:)),
             name: .fileListRequestQuickLook, object: nil
         )
+        // 订阅「添加到收藏夹」请求
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListAddFavorite(_:)),
+            name: .fileListDidAddFavorite, object: nil
+        )
     }
 
     @objc private func handleQuickLookRequest(_ notification: Notification) {
@@ -701,6 +706,12 @@ extension MainWindowController {
         guard let side = notification.userInfo?["side"] as? String else { return }
         activatePane(side == "left" ? .left : .right)
         menuPaste(self)
+    }
+
+    @objc private func handleFileListAddFavorite(_ notification: Notification) {
+        guard let name = notification.userInfo?["name"] as? String,
+              let path = notification.userInfo?["path"] as? String else { return }
+        sidebarView.addFavorite(name: name, path: path)
     }
 
     // MARK: - Cross-Pane Operations

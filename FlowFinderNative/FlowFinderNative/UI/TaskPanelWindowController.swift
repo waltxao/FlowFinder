@@ -167,8 +167,7 @@ public class TaskPanelWindowController: NSWindowController {
         guard tableView.selectedRow >= 0,
               tableView.selectedRow < TaskSchedulerManager.shared.allTasks.count else { return }
         let task = TaskSchedulerManager.shared.allTasks[tableView.selectedRow]
-        guard let taskId = Int32(task.id) else { return }
-        TaskSchedulerManager.shared.cancelTask(taskId: taskId)
+        TaskSchedulerManager.shared.cancelTask(taskId: task.id)
     }
 
     @objc private func clearClicked() {

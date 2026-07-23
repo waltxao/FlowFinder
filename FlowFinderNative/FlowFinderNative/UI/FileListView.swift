@@ -10,6 +10,13 @@ public class FileListView: NSView {
     private var cancellables = Set<AnyCancellable>()
     private var lastFilesCount: Int = -1
 
+    // 内联重命名状态
+    private var renamingRow: Int = -1
+    private var renamingOriginalName: String = ""
+    private var renamingPath: String = ""
+    private weak var renamingTextField: NSTextField?
+    private var renameCancelled: Bool = false
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
@@ -180,6 +187,8 @@ public class FileListView: NSView {
         menu.addItem(withTitle: "删除", action: #selector(deleteSelected(_:)), keyEquivalent: "\u{7F}")
         menu.addItem(.separator())
         menu.addItem(withTitle: "新建文件夹", action: #selector(createDirectory(_:)), keyEquivalent: "n")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "添加到收藏夹", action: #selector(addToFavorites(_:)), keyEquivalent: "")
 
         for item in menu.items where item.action != nil {
             item.target = self
@@ -274,6 +283,11 @@ public class FileListView: NSView {
                 self?.showError(error: error)
             }
         }
+    }
+
+    @objc private func addToFavorites(_ sender: Any?) {
+        guard let entry = clickedEntry else { return }
+        NotificationCenter.default.post(name: .fileListDidAddFavorite, object: nil, userInfo: ["name": entry.name, "path": entry.path])
     }
 
     // MARK: - Cross-Pane Actions
@@ -501,7 +515,7 @@ extension FileListView {
         super.mouseDown(with: event)
     }
 
-    /// 重写 keyDown，空格键触发 QuickLook 预览
+    /// 重写 keyDown，空格键触发 QuickLook 预览，Enter 触发内联重命名
     public override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
 
@@ -512,8 +526,131 @@ extension FileListView {
             return
         }
 
+        // Enter / Return：触发内联重命名（拦截事件，不再沿响应链传递到 MainWindowController 的打开逻辑）
+        if (event.keyCode == 36 || event.keyCode == 76) && modifiers.isEmpty {
+            beginInlineRename()
+            return
+        }
+
         // 其他键传给 nextResponder（沿响应链传递到 MainWindowController）
         super.keyDown(with: event)
+    }
+
+    // MARK: - Inline Rename（内联重命名）
+
+    /// 开始内联重命名：选中单个文件时按 Enter 触发
+    private func beginInlineRename() {
+        // 正在重命名时不重复触发
+        guard renamingRow < 0 else { return }
+        guard let viewModel = viewModel else { return }
+
+        // 仅单选时触发重命名
+        let selectedRows = tableView.selectedRowIndexes
+        guard selectedRows.count == 1, let row = selectedRows.first,
+              row >= 0, row < viewModel.files.count else { return }
+
+        let entry = viewModel.files[row]
+
+        // 获取名称列的 cell view
+        guard let cellView = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView,
+              let textField = cellView.textField else { return }
+
+        // 记录重命名上下文
+        renamingRow = row
+        renamingOriginalName = entry.name
+        renamingPath = entry.path
+        renamingTextField = textField
+        renameCancelled = false
+
+        // 进入编辑模式：将名称 textField 设为可编辑并获取焦点
+        textField.isEditable = true
+        textField.isSelectable = true
+        textField.delegate = self
+
+        guard window?.makeFirstResponder(textField) == true else {
+            // 无法进入编辑模式，清理状态
+            textField.isEditable = false
+            textField.delegate = nil
+            renamingRow = -1
+            renamingOriginalName = ""
+            renamingPath = ""
+            renamingTextField = nil
+            renameCancelled = false
+            return
+        }
+
+        // 选中文件名（不含扩展名），与访达行为一致
+        if let editor = textField.currentEditor() {
+            let name = entry.name as NSString
+            let extRange = name.range(of: ".", options: .backwards)
+            if entry.isDirectory || extRange.location == NSNotFound || extRange.location == 0 {
+                editor.selectAll(nil)
+            } else {
+                editor.selectedRange = NSRange(location: 0, length: extRange.location)
+            }
+        }
+    }
+
+    /// 结束内联重命名，根据取消标志决定是否提交
+    private func endInlineRename() {
+        guard renamingRow >= 0 else { return }
+        let textField = renamingTextField
+        let originalName = renamingOriginalName
+        let path = renamingPath
+        let cancelled = renameCancelled
+
+        // 清理状态
+        renamingRow = -1
+        renamingOriginalName = ""
+        renamingPath = ""
+        renamingTextField = nil
+        renameCancelled = false
+
+        // 恢复 textField 为非编辑状态
+        textField?.delegate = nil
+        if let tf = textField {
+            tf.isEditable = false
+            // 取消时恢复原名称显示
+            if cancelled {
+                tf.stringValue = originalName
+            }
+        }
+
+        // 取消则不重命名
+        guard !cancelled else { return }
+
+        // 提交重命名（复用 viewModel.renameFile，与右键菜单重命名一致）
+        guard let tf = textField else { return }
+        let newName = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty, newName != originalName else { return }
+        viewModel?.renameFile(path, to: newName)
+    }
+}
+
+// MARK: - NSTextFieldDelegate（内联重命名编辑事件）
+
+extension FileListView: NSTextFieldDelegate {
+    /// 处理编辑中的特殊按键（Enter 确认 / Esc 取消）
+    public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        switch commandSelector {
+        case #selector(NSResponder.cancelOperation(_:)):
+            // Esc：取消重命名
+            renameCancelled = true
+            window?.makeFirstResponder(tableView)
+            return true
+        case #selector(NSResponder.insertNewline(_:)):
+            // Enter/Return：确认重命名（交还焦点触发 controlTextDidEndEditing）
+            window?.makeFirstResponder(tableView)
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 编辑结束（Enter 确认 / 失焦自动确认 / Esc 取消）
+    public func controlTextDidEndEditing(_ obj: Notification) {
+        guard renamingRow >= 0 else { return }
+        endInlineRename()
     }
 }
 
@@ -625,4 +762,5 @@ extension Notification.Name {
     static let fileListDidMoveToOther = Notification.Name("fileListDidMoveToOther")
     static let fileListDidOpenInOther = Notification.Name("fileListDidOpenInOther")
     static let fileListRequestQuickLook = Notification.Name("fileListRequestQuickLook")
+    static let fileListDidAddFavorite = Notification.Name("fileListDidAddFavorite")
 }

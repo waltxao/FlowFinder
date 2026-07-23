@@ -10,16 +10,22 @@ extension Notification.Name {
 // MARK: - SidebarView
 
 class SidebarView: NSView {
-    private var mainOutlineView: NSOutlineView!
+    private var favoritesOutlineView: NSOutlineView!
+    private var tagsOutlineView: NSOutlineView!
     private var deviceOutlineView: NSOutlineView!
-    private var mainScrollView: NSScrollView!
+    private var favoritesScrollView: NSScrollView!
+    private var tagsScrollView: NSScrollView!
     private var deviceScrollView: NSScrollView!
-    /// 上方区域圆角遮罩（包裹收藏夹 + 标签）
-    private var mainMaskView: GlassSectionMaskView!
+    /// 收藏夹区域圆角遮罩
+    private var favoritesMaskView: GlassSectionMaskView!
+    /// 标签区域圆角遮罩
+    private var tagsMaskView: GlassSectionMaskView!
     /// 下方区域圆角遮罩（包裹存储设备）
     private var deviceMaskView: GlassSectionMaskView!
-    private let mainDataSource = MainSidebarDataSource()
+    private let favoritesDataSource = FavoritesSidebarDataSource()
+    private let tagsDataSource = TagsSidebarDataSource()
     private let deviceDataSource = DeviceSidebarDataSource()
+    private var favoritesHeightConstraint: NSLayoutConstraint!
     private var deviceHeightConstraint: NSLayoutConstraint!
 
     override init(frame frameRect: NSRect) {
@@ -37,29 +43,50 @@ class SidebarView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // 圆角遮罩区域：上方（收藏夹 + 标签）
-        mainMaskView = GlassSectionMaskView()
-        mainMaskView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(mainMaskView)
+        // 圆角遮罩区域：收藏夹（独立）
+        favoritesMaskView = GlassSectionMaskView()
+        favoritesMaskView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(favoritesMaskView)
+
+        // 圆角遮罩区域：标签（独立）
+        tagsMaskView = GlassSectionMaskView()
+        tagsMaskView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tagsMaskView)
 
         // 圆角遮罩区域：下方（存储设备）
         deviceMaskView = GlassSectionMaskView()
         deviceMaskView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(deviceMaskView)
 
-        // 上方：收藏夹 + 标签
-        mainScrollView = makeScrollView()
-        mainOutlineView = makeOutlineView()
-        mainOutlineView.dataSource = mainDataSource
-        mainOutlineView.delegate = mainDataSource
-        // 右键菜单（仅主列表需要「移除收藏」）
-        let contextMenu = NSMenu()
-        contextMenu.addItem(withTitle: "移除收藏", action: #selector(removeFavorite(_:)), keyEquivalent: "")
-        contextMenu.items.forEach { $0.target = self }
-        mainOutlineView.menu = contextMenu
-        mainScrollView.documentView = mainOutlineView
+        // 收藏夹区域
+        favoritesScrollView = makeScrollView()
+        favoritesOutlineView = makeOutlineView()
+        favoritesOutlineView.dataSource = favoritesDataSource
+        favoritesOutlineView.delegate = favoritesDataSource
+        // 右键菜单（动态：收藏夹显示「移除收藏」）
+        let favoritesMenu = NSMenu()
+        favoritesMenu.delegate = self
+        favoritesOutlineView.menu = favoritesMenu
+        favoritesScrollView.documentView = favoritesOutlineView
         // 放入遮罩容器，由 mask 提供圆角半透明背景
-        mainMaskView.addSubview(mainScrollView)
+        favoritesMaskView.addSubview(favoritesScrollView)
+
+        // 标签区域
+        tagsScrollView = makeScrollView()
+        tagsOutlineView = makeOutlineView()
+        tagsOutlineView.dataSource = tagsDataSource
+        tagsOutlineView.delegate = tagsDataSource
+        // 「添加标签」按钮回调
+        tagsDataSource.onCreateTagTapped = { [weak self] in
+            self?.showCreateTagDialog()
+        }
+        // 右键菜单（动态：标签显示「删除标签」）
+        let tagsMenu = NSMenu()
+        tagsMenu.delegate = self
+        tagsOutlineView.menu = tagsMenu
+        tagsScrollView.documentView = tagsOutlineView
+        // 放入遮罩容器
+        tagsMaskView.addSubview(tagsScrollView)
 
         // 下方：存储设备（独立区域，固定底部）
         deviceScrollView = makeScrollView()
@@ -70,6 +97,10 @@ class SidebarView: NSView {
         // 放入遮罩容器
         deviceMaskView.addSubview(deviceScrollView)
 
+        // 收藏夹区高度根据收藏数量动态调整（保留最小高度）
+        favoritesHeightConstraint = favoritesMaskView.heightAnchor.constraint(equalToConstant: 48)
+        favoritesHeightConstraint.priority = .required
+
         // 设备区高度根据设备数量动态调整（保留最小高度）
         // 高度约束作用于设备遮罩容器，scrollView 填满遮罩
         deviceHeightConstraint = deviceMaskView.heightAnchor.constraint(equalToConstant: 48)
@@ -78,11 +109,17 @@ class SidebarView: NSView {
         let padding: CGFloat = 12
 
         NSLayoutConstraint.activate([
-            // 主遮罩区域填充顶部剩余空间
-            mainMaskView.topAnchor.constraint(equalTo: topAnchor, constant: padding),
-            mainMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            mainMaskView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
-            mainMaskView.bottomAnchor.constraint(equalTo: deviceMaskView.topAnchor, constant: -padding),
+            // 收藏夹遮罩区域：顶部固定，高度随内容动态变化
+            favoritesMaskView.topAnchor.constraint(equalTo: topAnchor, constant: padding),
+            favoritesMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
+            favoritesMaskView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
+            favoritesHeightConstraint,
+
+            // 标签遮罩区域：填充收藏夹与存储设备之间的剩余空间
+            tagsMaskView.topAnchor.constraint(equalTo: favoritesMaskView.bottomAnchor, constant: padding),
+            tagsMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
+            tagsMaskView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
+            tagsMaskView.bottomAnchor.constraint(equalTo: deviceMaskView.topAnchor, constant: -padding),
 
             // 设备遮罩区域固定底部
             deviceMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
@@ -90,11 +127,17 @@ class SidebarView: NSView {
             deviceMaskView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding),
             deviceHeightConstraint,
 
-            // 主 scrollView 填满主遮罩（内边距 8pt，圆角由 mask 的 masksToBounds 裁剪）
-            mainScrollView.topAnchor.constraint(equalTo: mainMaskView.topAnchor, constant: 8),
-            mainScrollView.leadingAnchor.constraint(equalTo: mainMaskView.leadingAnchor, constant: 8),
-            mainScrollView.trailingAnchor.constraint(equalTo: mainMaskView.trailingAnchor, constant: -8),
-            mainScrollView.bottomAnchor.constraint(equalTo: mainMaskView.bottomAnchor, constant: -8),
+            // 收藏夹 scrollView 填满收藏夹遮罩（内边距 8pt，圆角由 mask 的 masksToBounds 裁剪）
+            favoritesScrollView.topAnchor.constraint(equalTo: favoritesMaskView.topAnchor, constant: 8),
+            favoritesScrollView.leadingAnchor.constraint(equalTo: favoritesMaskView.leadingAnchor, constant: 8),
+            favoritesScrollView.trailingAnchor.constraint(equalTo: favoritesMaskView.trailingAnchor, constant: -8),
+            favoritesScrollView.bottomAnchor.constraint(equalTo: favoritesMaskView.bottomAnchor, constant: -8),
+
+            // 标签 scrollView 填满标签遮罩（内边距 8pt）
+            tagsScrollView.topAnchor.constraint(equalTo: tagsMaskView.topAnchor, constant: 8),
+            tagsScrollView.leadingAnchor.constraint(equalTo: tagsMaskView.leadingAnchor, constant: 8),
+            tagsScrollView.trailingAnchor.constraint(equalTo: tagsMaskView.trailingAnchor, constant: -8),
+            tagsScrollView.bottomAnchor.constraint(equalTo: tagsMaskView.bottomAnchor, constant: -8),
 
             // 设备 scrollView 填满设备遮罩（内边距 8pt）
             deviceScrollView.topAnchor.constraint(equalTo: deviceMaskView.topAnchor, constant: 8),
@@ -113,9 +156,10 @@ class SidebarView: NSView {
         // 展开各自区域
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.mainOutlineView.expandItem(SidebarSection.favorites)
-            self.mainOutlineView.expandItem(SidebarSection.tags)
+            self.favoritesOutlineView.expandItem(SidebarSection.favorites)
+            self.tagsOutlineView.expandItem(SidebarSection.tags)
             self.deviceOutlineView.expandItem(SidebarSection.devices)
+            self.updateFavoritesHeight()
             self.updateDeviceHeight()
         }
     }
@@ -172,12 +216,83 @@ class SidebarView: NSView {
     // MARK: - Context Menu
 
     @objc private func removeFavorite(_ sender: Any?) {
-        let row = mainOutlineView.clickedRow
+        let row = favoritesOutlineView.clickedRow
         guard row >= 0 else { return }
-        let item = mainOutlineView.item(atRow: row)
+        let item = favoritesOutlineView.item(atRow: row)
         if case .favorite(let fav) = item as? SidebarItem {
-            mainDataSource.removeFavorite(id: fav.id)
-            mainOutlineView.reloadData()
+            favoritesDataSource.removeFavorite(id: fav.id)
+            favoritesOutlineView.reloadData()
+            updateFavoritesHeight()
+        }
+    }
+
+    @objc private func removeTag(_ sender: NSMenuItem?) {
+        guard let tagId = sender?.representedObject as? String else { return }
+        tagsDataSource.removeTag(id: tagId)
+        tagsOutlineView.reloadData()
+    }
+
+    /// 添加收藏夹（供外部调用）
+    func addFavorite(name: String, path: String) {
+        favoritesDataSource.addFavorite(name: name, path: path)
+        favoritesOutlineView.reloadData()
+        updateFavoritesHeight()
+    }
+
+    // MARK: - Create Tag Dialog
+
+    private func showCreateTagDialog() {
+        guard let window = self.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "新建标签"
+        alert.informativeText = "输入标签名称并选择颜色："
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "创建")
+        alert.addButton(withTitle: "取消")
+
+        let containerWidth: CGFloat = 300
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: containerWidth, height: 64))
+
+        // 名称输入框
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 36, width: containerWidth, height: 24))
+        nameField.placeholderString = "标签名称"
+        container.addSubview(nameField)
+
+        // 预设颜色圆点按钮
+        let presetColors: [String] = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#5856D6"]
+        let dotSize: CGFloat = 22
+        let spacing: CGFloat = 8
+        let totalDotsWidth = CGFloat(presetColors.count) * dotSize + CGFloat(presetColors.count - 1) * spacing
+        let startX = (containerWidth - totalDotsWidth) / 2
+
+        let colorHolder = TagColorHolder(colors: presetColors)
+
+        for (i, hex) in presetColors.enumerated() {
+            let x = startX + CGFloat(i) * (dotSize + spacing)
+            let btn = NSButton(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
+            btn.bezelStyle = .circular
+            btn.isBordered = false
+            btn.wantsLayer = true
+            btn.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
+            btn.layer?.cornerRadius = dotSize / 2
+            btn.layer?.borderColor = NSColor.labelColor.cgColor
+            btn.layer?.borderWidth = (i == 0) ? 2 : 0
+            btn.target = colorHolder
+            btn.action = #selector(TagColorHolder.selectColor(_:))
+            btn.tag = i
+            container.addSubview(btn)
+        }
+
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = nameField
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            let tag = Tag(name: name, color: colorHolder.selectedHex)
+            self?.tagsDataSource.addTag(tag)
+            self?.tagsOutlineView.reloadData()
         }
     }
 
@@ -197,11 +312,79 @@ class SidebarView: NSView {
         let height = sectionHeight + CGFloat(deviceDataSource.deviceCount) * deviceRowHeight
         deviceHeightConstraint.constant = max(height, 48)
     }
+
+    private func updateFavoritesHeight() {
+        // section 标题行（24pt）+ 收藏夹行（24pt）
+        let sectionHeight: CGFloat = 24
+        let rowHeight: CGFloat = 24
+        let height = sectionHeight + CGFloat(favoritesDataSource.favoriteCount) * rowHeight
+        favoritesHeightConstraint.constant = max(height, 48)
+    }
+}
+
+// MARK: - SidebarView + NSMenuDelegate
+
+extension SidebarView: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        if menu === favoritesOutlineView.menu {
+            // 收藏夹右键菜单
+            let row = favoritesOutlineView.clickedRow
+            guard row >= 0 else { return }
+            let item = favoritesOutlineView.item(atRow: row)
+            if case .favorite = item as? SidebarItem {
+                let mi = menu.addItem(withTitle: "移除收藏", action: #selector(removeFavorite(_:)), keyEquivalent: "")
+                mi.target = self
+            }
+        } else if menu === tagsOutlineView.menu {
+            // 标签右键菜单
+            let row = tagsOutlineView.clickedRow
+            guard row >= 0 else { return }
+            let item = tagsOutlineView.item(atRow: row)
+            if case .tag(let tag) = item as? SidebarItem {
+                let mi = menu.addItem(withTitle: "删除标签", action: #selector(removeTag(_:)), keyEquivalent: "")
+                mi.target = self
+                mi.representedObject = tag.id
+            }
+        }
+    }
+}
+
+// MARK: - TagColorHolder (颜色选择辅助类)
+
+private class TagColorHolder: NSObject {
+    private let colors: [String]
+    private(set) var selectedHex: String
+
+    init(colors: [String]) {
+        self.colors = colors
+        self.selectedHex = colors.first ?? "#007AFF"
+        super.init()
+    }
+
+    @objc func selectColor(_ sender: NSButton) {
+        let idx = sender.tag
+        guard idx >= 0, idx < colors.count else { return }
+        selectedHex = colors[idx]
+        // 更新按钮选中边框
+        if let container = sender.superview {
+            for case let btn as NSButton in container.subviews {
+                btn.layer?.borderWidth = btn === sender ? 2 : 0
+            }
+        }
+    }
 }
 
 // MARK: - SidebarDataSourceBase
 
 private class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
+
+    /// 点击「添加标签」按钮的回调
+    var onCreateTagTapped: (() -> Void)?
+
+    @objc func handleCreateTagButton() {
+        onCreateTagTapped?()
+    }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         // 收藏夹不可折叠（始终展开），标签和设备可折叠
@@ -264,7 +447,6 @@ private class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlin
             imageView.widthAnchor.constraint(equalToConstant: 16),
             imageView.heightAnchor.constraint(equalToConstant: 16),
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
-            textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
 
@@ -274,8 +456,36 @@ private class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlin
             textField.textColor = NSColor.secondaryLabelColor
             imageView.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
             imageView.isHidden = true
+
+            // 标签区域标题旁添加"+"按钮
+            if section == .tags {
+                let addButton = NSButton()
+                addButton.bezelStyle = .inline
+                addButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "添加标签")
+                addButton.imagePosition = .imageOnly
+                addButton.isBordered = false
+                addButton.contentTintColor = NSColor.secondaryLabelColor
+                addButton.target = self
+                addButton.action = #selector(handleCreateTagButton)
+                addButton.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(addButton)
+
+                NSLayoutConstraint.activate([
+                    addButton.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                    addButton.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    addButton.widthAnchor.constraint(equalToConstant: 16),
+                    addButton.heightAnchor.constraint(equalToConstant: 16),
+                    textField.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -4),
+                ])
+            } else {
+                textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6).isActive = true
+            }
+
             return cell
         }
+
+        // 非区域标题行（收藏夹项）：文本填充至右侧
+        textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6).isActive = true
 
         switch item as? SidebarItem {
         case .favorite(let fav):
@@ -465,19 +675,18 @@ private class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 }
 
-// MARK: - MainSidebarDataSource (收藏夹 + 标签)
+// MARK: - FavoritesSidebarDataSource (收藏夹)
 
-private class MainSidebarDataSource: SidebarDataSourceBase {
+private class FavoritesSidebarDataSource: SidebarDataSourceBase {
     private var favorites: [FavoriteItem] = []
-    private var tags: [Tag] = []
 
     private let favoritesKey = "SidebarFavorites"
-    private let tagsKey = "SidebarTags"
+
+    var favoriteCount: Int { favorites.count }
 
     override init() {
         super.init()
         loadFavorites()
-        loadTags()
     }
 
     // MARK: - Data Loading
@@ -505,6 +714,57 @@ private class MainSidebarDataSource: SidebarDataSourceBase {
         }
     }
 
+    // MARK: - CRUD
+
+    func addFavorite(name: String, path: String) {
+        let fav = FavoriteItem(name: name, path: path)
+        favorites.append(fav)
+        saveFavorites()
+    }
+
+    func removeFavorite(id: String) {
+        favorites.removeAll(where: { $0.id == id })
+        saveFavorites()
+    }
+
+    // MARK: - NSOutlineViewDataSource
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        if item == nil {
+            // 仅收藏夹一个 section
+            return 1
+        }
+        if let section = item as? SidebarSection, section == .favorites {
+            return favorites.count
+        }
+        return 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        if item == nil {
+            return SidebarSection.favorites
+        }
+        if let section = item as? SidebarSection, section == .favorites {
+            return SidebarItem.favorite(favorites[index])
+        }
+        return ""
+    }
+}
+
+// MARK: - TagsSidebarDataSource (标签)
+
+private class TagsSidebarDataSource: SidebarDataSourceBase {
+    private var tags: [Tag] = []
+
+    private let tagsKey = "SidebarTags"
+
+    override init() {
+        super.init()
+        loadTags()
+    }
+
+    // MARK: - Data Loading
+
     private func loadTags() {
         if let data = UserDefaults.standard.data(forKey: tagsKey),
            let decoded = try? JSONDecoder().decode([Tag].self, from: data) {
@@ -527,17 +787,6 @@ private class MainSidebarDataSource: SidebarDataSourceBase {
 
     // MARK: - CRUD
 
-    func addFavorite(name: String, path: String) {
-        let fav = FavoriteItem(name: name, path: path)
-        favorites.append(fav)
-        saveFavorites()
-    }
-
-    func removeFavorite(id: String) {
-        favorites.removeAll(where: { $0.id == id })
-        saveFavorites()
-    }
-
     func addTag(_ tag: Tag) {
         tags.append(tag)
         saveTags()
@@ -552,30 +801,21 @@ private class MainSidebarDataSource: SidebarDataSourceBase {
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         if item == nil {
-            // 收藏夹 + 标签 两个 section
-            return 2
+            // 仅标签一个 section
+            return 1
         }
-        if let section = item as? SidebarSection {
-            switch section {
-            case .favorites: return favorites.count
-            case .tags: return tags.count
-            case .devices: return 0
-            }
+        if let section = item as? SidebarSection, section == .tags {
+            return tags.count
         }
         return 0
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         if item == nil {
-            // 0 -> 收藏夹, 1 -> 标签
-            return index == 0 ? SidebarSection.favorites : SidebarSection.tags
+            return SidebarSection.tags
         }
-        if let section = item as? SidebarSection {
-            switch section {
-            case .favorites: return SidebarItem.favorite(favorites[index])
-            case .tags: return SidebarItem.tag(tags[index])
-            case .devices: return ""
-            }
+        if let section = item as? SidebarSection, section == .tags {
+            return SidebarItem.tag(tags[index])
         }
         return ""
     }

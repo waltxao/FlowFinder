@@ -2034,23 +2034,40 @@ mod tests {
 
     #[test]
     fn test_ff_task_submit() {
-        let task_type = CString::new("copy").unwrap();
-        let params = CString::new(r#"{\"source\":\"/test/src\",\"destination\":\"/test/dst\"}"#).unwrap();
-        
-        let result = crate::core::task_scheduler::ff_task_submit(task_type.as_ptr(), params.as_ptr());
-        assert!(result >= 0);
+        let name = CString::new("copy").unwrap();
+        let description = CString::new("test description").unwrap();
+        let mut out_task_id: *mut c_char = std::ptr::null_mut();
+
+        let result = crate::core::task_scheduler::ff_task_submit(
+            name.as_ptr(),
+            description.as_ptr(),
+            1,
+            &mut out_task_id,
+        );
+        assert_eq!(result, FF_OK);
+        assert!(!out_task_id.is_null());
+        unsafe {
+            let _ = CString::from_raw(out_task_id);
+        }
     }
 
     #[test]
     fn test_ff_task_submit_invalid_type() {
-        let task_type = CString::new("invalid").unwrap();
-        let result = crate::core::task_scheduler::ff_task_submit(task_type.as_ptr(), std::ptr::null());
+        let name = CString::new("invalid").unwrap();
+        let mut out_task_id: *mut c_char = std::ptr::null_mut();
+        let result = crate::core::task_scheduler::ff_task_submit(
+            name.as_ptr(),
+            std::ptr::null(),
+            1,
+            &mut out_task_id,
+        );
         assert_eq!(result, FF_ERR_GENERIC);
     }
 
     #[test]
     fn test_ff_task_cancel_not_found() {
-        let result = crate::core::task_scheduler::ff_task_cancel(99999);
+        let task_id = CString::new("99999").unwrap();
+        let result = crate::core::task_scheduler::ff_task_cancel(task_id.as_ptr());
         assert_eq!(result, FF_ERR_NOT_FOUND);
     }
 
@@ -2069,21 +2086,7 @@ mod tests {
 
     #[test]
     fn test_ff_volume_info_null() {
-        extern "C" fn info_callback(
-            _path: *const c_char,
-            _name: *const c_char,
-            _volume_type: *const c_char,
-            _total_capacity: u64,
-            _used_space: u64,
-            _free_space: u64,
-            _filesystem: *const c_char,
-            _is_removable: bool,
-            _is_ejectable: bool,
-            _is_network: bool,
-            _user_data: *mut c_void,
-        ) {}
-
-        let result = crate::core::volumes::ff_volume_info(std::ptr::null(), info_callback, std::ptr::null_mut());
+        let result = crate::core::volumes::ff_volume_info(std::ptr::null(), std::ptr::null_mut());
         assert_eq!(result, FF_ERR_INVALID_PATH);
     }
 
@@ -2110,7 +2113,7 @@ mod tests {
 
     #[test]
     fn test_ff_volume_mount_null() {
-        let result = crate::core::volumes::ff_volume_mount(std::ptr::null());
+        let result = crate::core::volumes::ff_volume_mount(std::ptr::null(), std::ptr::null());
         assert_eq!(result, FF_ERR_INVALID_PATH);
     }
 }

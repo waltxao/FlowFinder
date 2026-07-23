@@ -60,8 +60,8 @@ public final class TaskSchedulerManager: ObservableObject {
     // MARK: - Task Operations
 
     /// 取消指定任务
-    /// - Parameter taskId: 任务 ID
-    public func cancelTask(taskId: Int32) {
+    /// - Parameter taskId: 任务 ID 字符串
+    public func cancelTask(taskId: String) {
         do {
             try CoreBridge.shared.cancelTask(taskId: taskId)
             refreshTasks()

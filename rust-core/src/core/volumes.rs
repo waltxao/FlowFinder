@@ -395,24 +395,23 @@ pub extern "C" fn ff_volume_list(
     FF_OK
 }
 
-/// Get detailed information for a specific volume.
+/// 获取指定卷的详细信息。
 ///
 /// # Arguments
-/// - `path` — NUL-terminated UTF-8 path to the volume.
-/// - `callback` — Called with volume info.
-/// - `user_data` — Opaque pointer passed to callback.
+/// - `path` - NUL 结尾的 UTF-8 路径字符串。
+/// - `out_info` - 输出参数，指向调用方分配的 FFVolumeInfo 结构体。
+///   成功时各字符串字段由 Rust 侧分配，调用方需使用 ff_free_string 释放。
 ///
 /// # Returns
-/// - `FF_OK` on success.
-/// - `FF_ERR_INVALID_PATH` if path is null.
-/// - `FF_ERR_NOT_FOUND` if volume not found.
+/// - `FF_OK` 成功。
+/// - `FF_ERR_INVALID_PATH` path 或 out_info 为 null。
+/// - `FF_ERR_NOT_FOUND` 卷未找到。
 #[no_mangle]
 pub extern "C" fn ff_volume_info(
     path: *const c_char,
-    callback: FFVolumeInfoCallback,
-    user_data: *mut c_void,
+    out_info: *mut FFVolumeInfo,
 ) -> c_int {
-    if path.is_null() {
+    if path.is_null() || out_info.is_null() {
         return FF_ERR_INVALID_PATH;
     }
 
@@ -424,26 +423,25 @@ pub extern "C" fn ff_volume_info(
     };
 
     let manager = VolumeManager::new();
-    
-    if let Some(volume) = manager.get_volume_info(path_str) {
-        let path_c = CString::new(volume.path.clone()).unwrap_or_default();
-        let name_c = CString::new(volume.name.clone()).unwrap_or_default();
-        let type_c = CString::new(volume.volume_type.as_str()).unwrap_or_default();
-        let fs_c = CString::new(volume.filesystem.clone()).unwrap_or_default();
 
-        callback(
-            path_c.as_ptr(),
-            name_c.as_ptr(),
-            type_c.as_ptr(),
-            volume.total_capacity,
-            volume.used_space,
-            volume.free_space,
-            fs_c.as_ptr(),
-            volume.is_removable,
-            volume.is_ejectable,
-            volume.is_network,
-            user_data,
-        );
+    if let Some(volume) = manager.get_volume_info(path_str) {
+        let name_c = CString::new(volume.name.clone()).unwrap_or_default().into_raw();
+        let path_c = CString::new(volume.path.clone()).unwrap_or_default().into_raw();
+        let fs_c = CString::new(volume.filesystem.clone()).unwrap_or_default().into_raw();
+
+        unsafe {
+            *out_info = FFVolumeInfo {
+                name: name_c,
+                path: path_c,
+                fs_type: fs_c,
+                total_size: volume.total_capacity,
+                free_size: volume.free_space,
+                used_size: volume.used_space,
+                is_removable: volume.is_removable,
+                is_ejectable: volume.is_ejectable,
+                is_writable: !volume.is_network,
+            };
+        }
 
         FF_OK
     } else {
@@ -526,17 +524,18 @@ pub extern "C" fn ff_volume_eject(path: *const c_char) -> c_int {
     }
 }
 
-/// Mount a network volume.
+/// 挂载网络卷或外部卷。
 ///
 /// # Arguments
-/// - `path` — NUL-terminated UTF-8 path to the volume (e.g., smb://server/share).
+/// - `path` - NUL 结尾的 UTF-8 路径字符串（如 smb://server/share）。
+/// - `options` - NUL 结尾的 UTF-8 挂载选项字符串（当前未使用，仅接受并忽略）。
 ///
 /// # Returns
-/// - `FF_OK` on success.
-/// - `FF_ERR_INVALID_PATH` if path is null.
-/// - `FF_ERR_IO` if mount fails.
+/// - `FF_OK` 成功。
+/// - `FF_ERR_INVALID_PATH` path 为 null。
+/// - `FF_ERR_IO` 挂载失败。
 #[no_mangle]
-pub extern "C" fn ff_volume_mount(path: *const c_char) -> c_int {
+pub extern "C" fn ff_volume_mount(path: *const c_char, _options: *const c_char) -> c_int {
     if path.is_null() {
         return FF_ERR_INVALID_PATH;
     }

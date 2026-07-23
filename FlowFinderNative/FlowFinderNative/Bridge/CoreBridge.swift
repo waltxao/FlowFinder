@@ -62,13 +62,23 @@ private func entryCallback(
     context.pointee.entries.append(entry)
 }
 
-/// Callback for FSEvents notifications
+/// FSEvents 变更通知回调上下文：持有 changeHandler 闭包
+private final class FSEventsContext {
+    let changeHandler: (String) -> Void
+    init(changeHandler: @escaping (String) -> Void) {
+        self.changeHandler = changeHandler
+    }
+}
+
+/// FSEvents 变更通知回调：从 userData 恢复上下文并调用 changeHandler
 private func fseventsCallback(
     _ path: UnsafePointer<CChar>?,
     _ userData: UnsafeMutableRawPointer?
 ) {
-    // Handle FSEvents notification
-    // In production, this would notify the UI to refresh
+    guard let path = path, let userData = userData else { return }
+    let context = Unmanaged<FSEventsContext>.fromOpaque(userData).takeUnretainedValue()
+    let pathString = String(cString: path)
+    context.changeHandler(pathString)
 }
 
 /// Callback for thumbnail generation
@@ -245,6 +255,12 @@ public final class CoreBridge {
 
     /// Serial queue for FFI operations to ensure thread safety
     private let ffiQueue = DispatchQueue(label: "com.flowfinder.ffi", qos: .userInitiated)
+
+    /// FSEvents watcher 句柄（由 ff_fsevents_start 返回）
+    private var fseventsWatcherHandle: Int32 = 0
+
+    /// FSEvents 回调上下文（持有 changeHandler 闭包，防止被释放）
+    private var fseventsContext: FSEventsContext?
 
     // MARK: - Initialization
 
@@ -662,6 +678,11 @@ public final class CoreBridge {
             throw CoreBridgeError.invalidPath("Path is empty")
         }
 
+        // 创建上下文并保留引用，防止被释放
+        let context = FSEventsContext(changeHandler: changeHandler)
+        self.fseventsContext = context
+        let contextPtr = Unmanaged.passUnretained(context).toOpaque()
+
         var ffiResult: Int32 = -1
         let semaphore = DispatchSemaphore(value: 0)
 
@@ -669,7 +690,7 @@ public final class CoreBridge {
             defer { semaphore.signal() }
 
             let result = path.withCString { cPath in
-                ff_fsevents_start(cPath, fseventsCallback, nil)
+                ff_fsevents_start(cPath, fseventsCallback, contextPtr)
             }
             ffiResult = result
         }
@@ -677,23 +698,32 @@ public final class CoreBridge {
         semaphore.wait()
 
         guard ffiResult == 0 else {
+            self.fseventsContext = nil
             let errorMessage = getLastError()
             throw CoreBridgeError.ffiError(errorMessage)
         }
+
+        // 存储返回的 watcher 句柄
+        self.fseventsWatcherHandle = ffiResult
     }
 
     /// Stop the FSEvents watcher
     /// - Throws: CoreBridgeError if operation fails
     func stopFSEventsWatcher() throws {
+        let handle = self.fseventsWatcherHandle
         var ffiResult: Int32 = -1
         let semaphore = DispatchSemaphore(value: 0)
 
         ffiQueue.async {
             defer { semaphore.signal() }
-            ffiResult = ff_fsevents_stop(0)
+            ffiResult = ff_fsevents_stop(handle)
         }
 
         semaphore.wait()
+
+        // 清理上下文和句柄
+        self.fseventsContext = nil
+        self.fseventsWatcherHandle = 0
 
         guard ffiResult == 0 else {
             let errorMessage = getLastError()
@@ -1009,45 +1039,54 @@ public final class CoreBridge {
 
     // MARK: - Task Scheduler (Sub-project 9)
 
-    /// Submit a new task to the scheduler
+    /// 提交一个新任务到调度器
     /// - Parameters:
-    ///   - name: Task name
-    ///   - description: Task description
-    ///   - priority: Task priority (0=low, 1=normal, 2=high)
-    /// - Returns: Task ID string
+    ///   - name: 任务类型名称（如 "Copy", "Move", "Delete", "Scan", "Index"）
+    ///   - description: 任务描述
+    ///   - priority: 任务优先级（0=Low, 1=Normal, 2=High）
+    /// - Returns: 任务 ID 字符串
     /// - Throws: CoreBridgeError if operation fails
-    func submitTask(taskType: String, paramsJson: String) throws {
+    func submitTask(name: String, description: String, priority: Int32) throws -> String {
         let semaphore = DispatchSemaphore(value: 0)
         var ffiResult: Int32 = -1
+        var outTaskId: UnsafeMutablePointer<CChar>? = nil
 
         ffiQueue.async {
             defer { semaphore.signal() }
 
-            taskType.withCString { cType in
-                paramsJson.withCString { cParams in
-                    ffiResult = ff_task_submit(cType, cParams)
+            name.withCString { cName in
+                description.withCString { cDesc in
+                    withUnsafeMutablePointer(to: &outTaskId) { outPtr in
+                        ffiResult = ff_task_submit(cName, cDesc, priority, outPtr)
+                    }
                 }
             }
         }
 
         semaphore.wait()
 
-        guard ffiResult == 0 else {
+        guard ffiResult == 0, let taskIdPtr = outTaskId else {
             let errorMessage = getLastError()
             throw CoreBridgeError.ffiError(errorMessage)
         }
+
+        let taskId = String(cString: taskIdPtr)
+        ff_free_string(taskIdPtr)
+        return taskId
     }
 
-    /// Cancel a running or pending task
-    /// - Parameter taskId: Task ID to cancel
+    /// 取消正在运行或等待中的任务
+    /// - Parameter taskId: 任务 ID 字符串
     /// - Throws: CoreBridgeError if operation fails
-    func cancelTask(taskId: Int32) throws {
+    func cancelTask(taskId: String) throws {
         let semaphore = DispatchSemaphore(value: 0)
         var ffiResult: Int32 = -1
 
         ffiQueue.async {
             defer { semaphore.signal() }
-            ffiResult = ff_task_cancel(taskId)
+            taskId.withCString { cTaskId in
+                ffiResult = ff_task_cancel(cTaskId)
+            }
         }
 
         semaphore.wait()
@@ -1124,34 +1163,44 @@ public final class CoreBridge {
         return volumes
     }
 
-    /// Get detailed info for a specific volume
-    /// - Parameter path: Volume path
-    /// - Returns: VolumeInfo object
+    /// 获取指定卷的详细信息
+    /// - Parameter path: 卷路径
+    /// - Returns: VolumeInfo 对象
     /// - Throws: CoreBridgeError if operation fails
     func getVolumeInfo(path: String) throws -> VolumeInfo {
-        var volumeInfo: VolumeInfo?
+        var ffiVolumeInfo = FFVolumeInfo(
+            name: nil, path: nil, fs_type: nil,
+            total_size: 0, free_size: 0, used_size: 0,
+            is_removable: false, is_ejectable: false, is_writable: false
+        )
+        var ffiResult: Int32 = -1
         let semaphore = DispatchSemaphore(value: 0)
 
         ffiQueue.async {
             defer { semaphore.signal() }
 
-            let result = path.withCString { cPath in
-                ff_volume_info(cPath, volumeInfoCallback, &volumeInfo)
-            }
-
-            if result != 0 {
-                volumeInfo = nil
+            ffiResult = path.withCString { cPath in
+                withUnsafeMutablePointer(to: &ffiVolumeInfo) { outInfo in
+                    ff_volume_info(cPath, outInfo)
+                }
             }
         }
 
         semaphore.wait()
 
-        guard let info = volumeInfo else {
+        guard ffiResult == 0 else {
             let errorMessage = getLastError()
             throw CoreBridgeError.ffiError(errorMessage)
         }
 
-        return info
+        let volume = VolumeInfo(from: ffiVolumeInfo)
+
+        // 释放 Rust 分配的字符串
+        ff_free_string(ffiVolumeInfo.name)
+        ff_free_string(ffiVolumeInfo.path)
+        ff_free_string(ffiVolumeInfo.fs_type)
+
+        return volume
     }
 
     /// Perform health check on a volume
