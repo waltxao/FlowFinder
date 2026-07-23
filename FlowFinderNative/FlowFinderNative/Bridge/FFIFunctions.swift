@@ -280,6 +280,12 @@ public func ff_get_file_type(_ path: UnsafePointer<CChar>) -> UnsafeMutablePoint
 
 // MARK: - Directory Cache FFI Declarations
 
+/// Initialize the L2 persistent (SQLite) directory cache.
+/// - Parameter dbPath: Path to the SQLite database file (C string)
+/// - Returns: 0 on success (or if already initialized), non-zero error code on failure
+@_silgen_name("ff_cache_init")
+public func ff_cache_init(_ dbPath: UnsafePointer<CChar>) -> Int32
+
 /// Invalidate the directory cache for a specific path
 /// - Parameter path: Directory path (C string)
 /// - Returns: 0 on success, non-zero error code on failure

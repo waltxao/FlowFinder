@@ -620,6 +620,39 @@ public final class CoreBridge {
 
     // MARK: - Cache Operations
 
+    /// Initialize the L2 persistent (SQLite) directory cache.
+    ///
+    /// Must be called once at app startup with a writable filesystem path.
+    /// After this call succeeds, `ff_cache_get`/`ff_cache_put`/`ff_cache_invalidate`
+    /// additionally consult/persist to the SQLite database (best-effort).
+    /// Safe to call multiple times — subsequent calls are no-ops if already
+    /// initialized.
+    /// - Parameter dbPath: Filesystem path to the SQLite database file
+    /// - Throws: CoreBridgeError if initialization fails
+    func initCache(dbPath: String) throws {
+        guard !dbPath.isEmpty else {
+            throw CoreBridgeError.invalidPath("dbPath is empty")
+        }
+
+        var ffiResult: Int32 = -1
+        let semaphore = DispatchSemaphore(value: 0)
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+            let result = dbPath.withCString { cPath in
+                ff_cache_init(cPath)
+            }
+            ffiResult = result
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
     /// Invalidate the directory cache for a specific path
     /// - Parameter path: Directory path to invalidate
     /// - Throws: CoreBridgeError if operation fails

@@ -113,6 +113,7 @@ ff_error_t ff_get_preview_path(const char *path,
 char *ff_get_file_type(const char *path);
 
 /* ── Directory Cache API ───────────────────────────────────── */
+ff_error_t ff_cache_init(const char *db_path);
 ff_error_t ff_cache_invalidate(const char *path);
 ff_error_t ff_cache_get(const char *path, FFEntryCallback callback, void *user_data);
 ff_error_t ff_cache_put(const char *path, const FFEntryRef *entries, size_t entry_count);
