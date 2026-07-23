@@ -376,11 +376,19 @@ public class BatchRenameWindowController: NSWindowController {
             let num = start + index * step
             let prefix = prefixField.stringValue
             let suffix = suffixField.stringValue
-            let ext = entry.fileExtension.isEmpty ? "" : ".\(entry.fileExtension)"
+            // 保留原始扩展名大小写（fileExtension 已 lowercased，会破坏 .JPG 等）
+            let nsName = entry.name as NSString
+            let origExt = nsName.pathExtension
+            let ext = origExt.isEmpty ? "" : ".\(origExt)"
             return "\(prefix)\(num)\(suffix)\(ext)"
         case .caseChange:
             let option = casePopup.selectedItem?.title ?? ""
-            return applyCaseChange(entry.name, caseOption: option)
+            // 仅对文件名（不含扩展名）应用大小写转换，保留扩展名原样
+            let nsName = entry.name as NSString
+            let stem = nsName.deletingPathExtension
+            let origExt = nsName.pathExtension
+            let casedStem = applyCaseChange(stem, caseOption: option)
+            return origExt.isEmpty ? casedStem : "\(casedStem).\(origExt)"
         }
     }
 
@@ -503,8 +511,12 @@ public class BatchRenameWindowController: NSWindowController {
                     }
                     self.paneViewModel?.refresh()
                     self.registerUndoForBatchRename(items: items, reverseItems: reverseItems)
-                    self.close()
-                    _ = success
+                    if success < items.count {
+                        // 部分失败：提示用户但仍注册撤销（undo 用 try? 跳过失败项）
+                        self.showPartialFailure(success: success, total: items.count)
+                    } else {
+                        self.close()
+                    }
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -564,6 +576,19 @@ public class BatchRenameWindowController: NSWindowController {
         alert.alertStyle = .critical
         alert.addButton(withTitle: "好")
         if let window = window { alert.beginSheetModal(for: window) { _ in } }
+    }
+
+    private func showPartialFailure(success: Int, total: Int) {
+        let alert = NSAlert()
+        alert.messageText = "部分文件重命名失败"
+        alert.informativeText = "成功 \(success) / 总计 \(total)。失败项可能因权限不足或路径无效。可通过 ⌘Z 撤销已成功的重命名。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "关闭")
+        if let window = window {
+            alert.beginSheetModal(for: window) { [weak self] _ in
+                self?.close()
+            }
+        }
     }
 }
 
