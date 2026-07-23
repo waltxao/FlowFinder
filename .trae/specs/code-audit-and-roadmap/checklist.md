@@ -43,4 +43,4 @@
 - [x] `cargo check` 零错误（警告可接受）
 - [x] `xcodebuild build` 零错误
 - [x] `cargo test` 全部通过
-- [ ] 代码中无 TODO/FIXME 标记的阻塞性问题
+- [x] 代码中无 TODO/FIXME 标记的阻塞性问题
