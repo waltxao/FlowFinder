@@ -134,4 +134,36 @@ mod tests {
             assert!(!Path::new(p).exists());
         }
     }
+
+    #[test]
+    fn test_parallel_move_files() {
+        let src_dir = tempdir().unwrap();
+        let dst_dir = tempdir().unwrap();
+
+        let srcs: Vec<String> = (0..3).map(|i| {
+            let path = src_dir.path().join(format!("move{}.txt", i));
+            fs::write(&path, format!("content{}", i)).unwrap();
+            path.to_str().unwrap().to_string()
+        }).collect();
+
+        let progress_count = std::sync::atomic::AtomicUsize::new(0);
+        let results = parallel_move_files(&srcs, dst_dir.path().to_str().unwrap(), |_, _| {
+            progress_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|(_, r)| r.is_ok()));
+        assert_eq!(progress_count.load(std::sync::atomic::Ordering::Relaxed), 3);
+
+        // Files must exist in destination with original content …
+        for i in 0..3 {
+            let dst = dst_dir.path().join(format!("move{}.txt", i));
+            assert!(dst.exists(), "destination file {} should exist", i);
+            assert_eq!(fs::read_to_string(&dst).unwrap(), format!("content{}", i));
+        }
+        // … and be gone from the source.
+        for src in &srcs {
+            assert!(!Path::new(src).exists(), "source should be gone: {}", src);
+        }
+    }
 }

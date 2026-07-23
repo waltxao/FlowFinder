@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::io;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
@@ -61,6 +62,42 @@ fn clear_last_error() {
     LAST_ERROR.with(|e| {
         *e.lock().unwrap() = None;
     });
+}
+
+/// Build a summary error string for partial failures of a parallel batch
+/// operation (copy/move/delete).
+///
+/// Produces a string like `"3/5 failed: /path/a (Permission denied), /path/b
+/// (Not found)"`. To bound the string size, at most `max_entries` failed
+/// `(path, error)` pairs are listed; any extra failures are summarised as
+/// `", … and N more"`. The total/failed counts always reflect every result.
+fn summarize_parallel_failures(
+    results: &[(String, io::Result<()>)],
+    max_entries: usize,
+) -> String {
+    let total = results.len();
+    let failures: Vec<(&String, &io::Error)> = results
+        .iter()
+        .filter_map(|(p, r)| r.as_ref().err().map(|e| (p, e)))
+        .collect();
+    let failed = failures.len();
+    let detail: Vec<String> = failures
+        .iter()
+        .take(max_entries)
+        .map(|(p, e)| format!("{} ({})", p, e))
+        .collect();
+    let suffix = if failures.len() > max_entries {
+        format!(", … and {} more", failures.len() - max_entries)
+    } else {
+        String::new()
+    };
+    format!(
+        "{}/{} failed: {}{}",
+        failed,
+        total,
+        detail.join(", "),
+        suffix
+    )
 }
 
 // ── C-compatible directory entry ────────────────────────────────────
@@ -1035,10 +1072,12 @@ pub extern "C" fn ff_get_file_type(path: *const c_char) -> *mut c_char {
 /// succeeds, `ff_cache_get`/`ff_cache_put`/`ff_cache_invalidate` will
 /// additionally consult/persist to the SQLite database (best-effort).
 ///
-/// Subsequent calls are idempotent: if the path has already been set,
-/// this function returns `FF_OK` without re-initializing. Setting a
-/// different path after the first call has no effect (the original path
-/// is retained) — callers should call this exactly once at app startup.
+/// Subsequent calls re-assert the schema idempotently (`CREATE TABLE IF
+/// NOT EXISTS`) but do not change the stored database path — the path is
+/// set once via a `OnceLock` and retained for the lifetime of the process.
+/// Setting a different path after the first call has no effect (the
+/// original path is retained); callers should call this exactly once at
+/// app startup.
 ///
 /// # Arguments
 ///
@@ -1711,7 +1750,11 @@ pub extern "C" fn ff_parallel_copy(
         move |done, total| progress(done, total, ptr::null(), user_data_addr as *mut c_void),
     );
     let success = results.iter().filter(|(_, r)| r.is_ok()).count();
-    clear_last_error();
+    if success < results.len() {
+        set_last_error(summarize_parallel_failures(&results, 5));
+    } else {
+        clear_last_error();
+    }
     success as c_int
 }
 
@@ -1762,7 +1805,11 @@ pub extern "C" fn ff_parallel_move(
         move |done, total| progress(done, total, ptr::null(), user_data_addr as *mut c_void),
     );
     let success = results.iter().filter(|(_, r)| r.is_ok()).count();
-    clear_last_error();
+    if success < results.len() {
+        set_last_error(summarize_parallel_failures(&results, 5));
+    } else {
+        clear_last_error();
+    }
     success as c_int
 }
 
@@ -1810,7 +1857,11 @@ pub extern "C" fn ff_parallel_delete(
         move |done, total| progress(done, total, ptr::null(), user_data_addr as *mut c_void),
     );
     let success = results.iter().filter(|(_, r)| r.is_ok()).count();
-    clear_last_error();
+    if success < results.len() {
+        set_last_error(summarize_parallel_failures(&results, 5));
+    } else {
+        clear_last_error();
+    }
     success as c_int
 }
 
@@ -2705,6 +2756,56 @@ mod tests {
                 fs::read_to_string(&dst).unwrap(),
                 format!("content-{}", i),
                 "destination content must match source"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ff_parallel_move() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let src_dir = tempdir().unwrap();
+        let dst_dir = tempdir().unwrap();
+        let n: usize = 3;
+
+        let srcs: Vec<String> = (0..n)
+            .map(|i| {
+                let path = src_dir.path().join(format!("parallel_move_{}.txt", i));
+                fs::write(&path, format!("content-{}", i)).unwrap();
+                path.to_str().unwrap().to_string()
+            })
+            .collect();
+
+        let dst_dir_c = CString::new(dst_dir.path().to_str().unwrap()).unwrap();
+        let (_cstrings, ptrs) = build_c_string_array(&srcs);
+
+        let result = ff_parallel_move(
+            ptrs.as_ptr(),
+            ptrs.len(),
+            dst_dir_c.as_ptr(),
+            noop_batch_progress,
+            ptr::null_mut(),
+        );
+
+        assert_eq!(result as usize, n, "all {} files should move successfully", n);
+
+        // Files must exist in destination with correct content …
+        for i in 0..n {
+            let dst = dst_dir.path().join(format!("parallel_move_{}.txt", i));
+            assert!(dst.exists(), "destination file {} should exist", i);
+            assert_eq!(
+                fs::read_to_string(&dst).unwrap(),
+                format!("content-{}", i),
+                "destination content must match source"
+            );
+        }
+        // … and be gone from the source.
+        for src in &srcs {
+            assert!(
+                !std::path::Path::new(src).exists(),
+                "source should be gone after move: {}",
+                src
             );
         }
     }

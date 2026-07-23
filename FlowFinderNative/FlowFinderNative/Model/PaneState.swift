@@ -188,10 +188,20 @@ public class PaneViewModel: ObservableObject {
         do {
             // rayon-backed parallel delete; directories are removed recursively.
             let success = try CoreBridge.shared.parallelDelete(paths: paths)
-            state.selectedFiles.removeAll()
-            loadDirectory()
-            if success < paths.count {
-                state.error = "\(paths.count - success) 个项目删除失败"
+            if success == 0 {
+                // All deletes failed — preserve selection so the user can retry.
+                state.error = "\(paths.count) 个项目删除失败"
+            } else {
+                // At least one delete succeeded: clear selection and refresh.
+                // (parallelDelete only returns a count, so we cannot map it
+                // back to specific surviving items — clear all when any
+                // succeeded, matching the pre-parallel behavior of refreshing
+                // after at least one successful removal.)
+                state.selectedFiles.removeAll()
+                loadDirectory()
+                if success < paths.count {
+                    state.error = "\(paths.count - success) 个项目删除失败"
+                }
             }
         } catch {
             state.error = error.localizedDescription
