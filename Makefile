@@ -8,6 +8,9 @@ SCRIPT_DIR := scripts
 BUILD_SCRIPT := $(SCRIPT_DIR)/build-rust.sh
 SETUP_SCRIPT := $(SCRIPT_DIR)/setup.sh
 
+# macOS deployment target (minimum supported macOS version)
+export MACOSX_DEPLOYMENT_TARGET := 12.0
+
 # Default target
 .DEFAULT_GOAL := build
 

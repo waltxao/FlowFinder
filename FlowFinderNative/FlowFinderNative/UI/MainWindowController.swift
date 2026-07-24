@@ -166,15 +166,33 @@ public class MainWindowController: NSWindowController {
         // .clear 样式：透明液态玻璃效果，模糊桌面壁纸
         // .regular 样式会变成灰色不透明，失去玻璃效果
         // 窗口透明（isOpaque=false, backgroundColor=.clear）让玻璃模糊桌面壁纸
-        let glassView = NSGlassEffectView()
-        glassView.style = .clear
-        glassView.cornerRadius = 0
-        if #available(macOS 27.0, *) {
-            glassView.effectIsInteractive = true
+        if #available(macOS 26.0, *) {
+            let glassView = NSGlassEffectView()
+            glassView.style = .clear
+            glassView.cornerRadius = 0
+            if #available(macOS 27.0, *) {
+                glassView.effectIsInteractive = true
+            }
+            glassView.contentView = mainContainer
+            glassEffectView = glassView
+            window.contentView = glassView
+        } else {
+            // Fallback: macOS 12-25 使用 NSVisualEffectView
+            let visualEffectView = NSVisualEffectView()
+            visualEffectView.material = .underWindowBackground
+            visualEffectView.blendingMode = .behindWindow
+            visualEffectView.state = .active
+            visualEffectView.addSubview(mainContainer)
+            mainContainer.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
+                mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
+                mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
+                mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
+            ])
+            glassEffectView = nil
+            window.contentView = visualEffectView
         }
-        glassView.contentView = mainContainer
-        glassEffectView = glassView
-        window.contentView = glassView
 
         // 确保玻璃效果不被 ThemeManager 覆盖
         // ThemeManager 在 AppDelegate 启动时设置 window.appearance，会破坏玻璃效果
@@ -316,6 +334,8 @@ public class MainWindowController: NSWindowController {
     }
 
     deinit {
+        // Bug 6 修复：移除所有 NotificationCenter observer，防止悬空回调
+        NotificationCenter.default.removeObserver(self)
         TaskSchedulerManager.shared.stopPolling()
     }
 
@@ -403,15 +423,32 @@ public class MainWindowController: NSWindowController {
     public override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
 
+        // 仅 Cmd 修饰（不含 Shift/Option/Control）
+        let isPureCommand = modifiers.contains(.command)
+            && !modifiers.contains(.shift)
+            && !modifiers.contains(.option)
+            && !modifiers.contains(.control)
+
         // Space: QuickLook 预览
         if event.keyCode == 49 && modifiers.isEmpty {
             handleQuickLook()
             return
         }
 
-        // Enter: 打开/重命名
-        if event.keyCode == 36 && modifiers.isEmpty {
-            handleEnterKey()
+        // Bug 5 修复：移除 Enter 打开文件的行为。
+        // macOS Finder 风格：Enter=重命名（由 FileListView 内联处理），Cmd+O/Cmd+Down=打开。
+        // 此处不再处理 Enter，避免响应链回退时把 Enter 当作打开。
+
+        // Bug 5 修复：Cmd+Down (keyCode 125) / Cmd+O (keyCode 31) 打开选中项
+        // 兜底处理（FileListView 已自行处理，此处主要服务网格视图等无 keyDown 实现的场景）
+        if isPureCommand && (event.keyCode == 125 || event.keyCode == 31) {
+            handleOpenKey()
+            return
+        }
+
+        // Bug 5 修复：Cmd+Up (keyCode 126) 上级目录（Finder 风格）
+        if isPureCommand && event.keyCode == 126 {
+            activePaneViewModel.goUp()
             return
         }
 
@@ -455,9 +492,10 @@ public class MainWindowController: NSWindowController {
         QuickLookPreviewPanel.shared.togglePreview(files: paths, currentIndex: currentIndex)
     }
 
-    // MARK: - Enter Key
+    // MARK: - Open Key (Cmd+O / Cmd+Down)
 
-    private func handleEnterKey() {
+    /// Bug 5 修复：Cmd+O / Cmd+Down 打开选中项（替代原 Enter 打开行为，对齐 macOS Finder）
+    private func handleOpenKey() {
         guard let entry = activePaneViewModel.selectedFiles.first else { return }
         if entry.isDirectory {
             activePaneViewModel.navigate(to: entry.path)
@@ -1027,10 +1065,30 @@ extension MainWindowController {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(menuBatchRename(_:)) {
+        // Bug 8 修复：先 guard action 非 nil（separator 等无 action 项不会进入此回调，
+        // 但仍做防御性检查），避免后续比较中误访问
+        guard let action = item.action else { return false }
+
+        let hasSelection = !activePaneViewModel.selectedFiles.isEmpty
+
+        switch action {
+        case #selector(menuBatchRename(_:)):
             return activePaneViewModel.selectedFiles.count >= 2
+        // Bug 8 修复：对需要选中文本才能生效的菜单项做防御性校验，避免无选中时误触导致后续 nil 访问
+        case #selector(menuOpen(_:)),
+             #selector(menuMoveToTrash(_:)),
+             #selector(menuCopy(_:)),
+             #selector(menuCut(_:)),
+             #selector(menuRename(_:)),
+             #selector(menuCopyToOther(_:)),
+             #selector(menuMoveToOther(_:)):
+            return hasSelection
+        case #selector(menuOpenInOther(_:)):
+            // 仅当选中项为目录时可用
+            return activePaneViewModel.selectedFiles.first?.isDirectory ?? false
+        default:
+            return true
         }
-        return true
     }
 
     @objc func menuListView(_ sender: Any?) {

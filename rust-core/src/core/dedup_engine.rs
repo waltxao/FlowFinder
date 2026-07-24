@@ -20,7 +20,6 @@
 use std::collections::HashMap;
 use std::path::Path as StdPath;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use walkdir::WalkDir;
 
 /// 抽象事件发射器，解耦 core 层与上层 IPC。
@@ -165,10 +164,18 @@ fn build_file(path: &str, size: u64) -> DuplicateFile {
 /// stops at the next check point and returns whatever groups have been
 /// confirmed so far. This lets the frontend cancel a long-running scan
 /// without leaving the background task spinning.
+///
+/// The token is taken as a `&AtomicBool` (rather than `Arc<AtomicBool>`)
+/// so the FFI layer can share a single process-global flag —
+/// `DEDUP_CANCEL` in `ffi/mod.rs` — between `ff_cancel_scan()` (which
+/// sets it) and `ff_scan_duplicates()` (which passes it here). With an
+/// `Arc<AtomicBool>` the FFI would have to fabricate a fresh local flag
+/// per call, and `ff_cancel_scan()` would have no way to reach inside
+/// the running scan — making the cancel button a no-op.
 pub fn run_scan(
     paths: Vec<String>,
     on_event: &impl EventEmitter,
-    cancel_token: Arc<AtomicBool>,
+    cancel_token: &AtomicBool,
 ) -> Vec<DuplicateGroup> {
     let is_cancelled = || cancel_token.load(Ordering::Relaxed);
 
@@ -353,12 +360,12 @@ mod tests {
     fn run_scan_empty_dir_emits_done() {
         let dir = std::env::temp_dir();
         let emitter = MockEmitter::new();
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = AtomicBool::new(false);
 
         let groups = run_scan(
             vec![dir.to_string_lossy().to_string()],
             &emitter,
-            cancel,
+            &cancel,
         );
 
         // An empty-ish temp dir may still contain files, but the scan must
@@ -377,12 +384,12 @@ mod tests {
         let dir = std::env::temp_dir();
         let emitter = MockEmitter::new();
         // Pre-set the cancel flag so the scan bails out during collection.
-        let cancel = Arc::new(AtomicBool::new(true));
+        let cancel = AtomicBool::new(true);
 
         let groups = run_scan(
             vec![dir.to_string_lossy().to_string()],
             &emitter,
-            cancel,
+            &cancel,
         );
 
         // When cancelled during collection, the scan returns an empty Vec

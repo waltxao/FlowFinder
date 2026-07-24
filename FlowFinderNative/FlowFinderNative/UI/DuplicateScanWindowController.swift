@@ -205,6 +205,7 @@ public class DuplicateScanWindowController: NSWindowController {
         DuplicateScanBridge.shared.scanDuplicates(
             path: path,
             progressHandler: { [weak self] scanned, total in
+                // Bug 2 修复：所有 UI 更新必须在主线程（progressIndicator/statusLabel 是 UI 控件）
                 DispatchQueue.main.async {
                     let progress = total > 0 ? Double(scanned) / Double(total) * 100 : 0
                     self?.progressIndicator.doubleValue = progress
@@ -212,12 +213,16 @@ public class DuplicateScanWindowController: NSWindowController {
                 }
             },
             groupHandler: { [weak self] group in
-                self?.duplicateGroups.append(group)
+                // Bug 2 修复：duplicateGroups 数组被 UI 线程读取（outlineView 数据源），
+                // 必须在主线程修改，否则与主线程的读取形成数据竞争
                 DispatchQueue.main.async {
-                    self?.outlineView.reloadData()
+                    guard let self = self else { return }
+                    self.duplicateGroups.append(group)
+                    self.outlineView.reloadData()
                 }
             },
             completion: { [weak self] error in
+                // Bug 2 修复：completion 回调可能在后台线程，UI 更新需切回主线程
                 DispatchQueue.main.async {
                     self?.isScanning = false
                     self?.startButton.isEnabled = true

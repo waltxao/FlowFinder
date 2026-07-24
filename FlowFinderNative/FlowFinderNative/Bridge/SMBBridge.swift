@@ -25,9 +25,16 @@ public final class SMBBridge {
         completion: @escaping (Result<String, Error>) -> Void
     ) {
         let cfURL = URL(string: url) as CFURL?
-
         guard let cfURL = cfURL else {
             completion(.failure(SMBError.invalidURL))
+            return
+        }
+
+        // CFDictionaryCreateMutable 在 malloc 失败时可能返回 nil（极罕见），
+        // 避免强制解包导致崩溃；失败时直接回调错误。
+        guard let openOptions = CFDictionaryCreateMutable(nil, 0, nil, nil),
+              let mountOptions = CFDictionaryCreateMutable(nil, 0, nil, nil) else {
+            completion(.failure(SMBError.mountFailed(code: -1)))
             return
         }
 
@@ -39,17 +46,11 @@ public final class SMBBridge {
         //   CFMutableDictionaryRef openOptions,
         //   CFMutableDictionaryRef mountOptions,
         //   CFArrayRef *mountpoints)
+        //
+        // mountpoints 是 +1 retain 的输出参数（caller 必须释放）。
+        // 无论成功或失败都必须调用 takeRetainedValue() 平衡 retain count，
+        // 否则在错误路径上会泄漏 CFArray。
         var mountpoints: Unmanaged<CFArray>?
-
-        let openOptions: CFMutableDictionary = {
-            let dict = CFDictionaryCreateMutable(nil, 0, nil, nil)!
-            return dict
-        }()
-
-        let mountOptions: CFMutableDictionary = {
-            let dict = CFDictionaryCreateMutable(nil, 0, nil, nil)!
-            return dict
-        }()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = NetFSMountURLSync(
@@ -63,11 +64,15 @@ public final class SMBBridge {
             )
 
             DispatchQueue.main.async {
+                // 始终消费 mountpoints 以平衡 NetFSMountURLSync 的 +1 retain，
+                // 防止错误路径上泄漏 CFArray（防御性：即便 Rust 侧通常只在成功时设置）。
+                let mountpointsArray = mountpoints?.takeRetainedValue() as? [String]
+
                 if result == 0 {
                     // 获取挂载点路径
                     var mountedPath = mountPath
-                    if let mountpoints = mountpoints?.takeRetainedValue() as? [String] {
-                        mountedPath = mountpoints.first ?? mountPath
+                    if let mps = mountpointsArray {
+                        mountedPath = mps.first ?? mountPath
                     }
 
                     self?.refreshMountedVolumes()

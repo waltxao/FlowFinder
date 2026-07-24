@@ -223,7 +223,11 @@ public class FileGridView: NSView {
     // MARK: - Context Menu Helpers
 
     private var clickedEntry: FileEntry? {
-        let point = collectionView.convert(NSEvent.mouseLocation, from: nil)
+        // Bug 4 修复：NSEvent.mouseLocation 返回的是屏幕坐标（NSScreen 系），
+        // 而 convert(_:from:nil) 期望窗口坐标。坐标系不匹配会导致 indexPath 解析错误。
+        // 改用当前事件的 locationInWindow（窗口坐标），再转换到 collectionView 坐标系。
+        guard let event = NSApp.currentEvent else { return nil }
+        let point = collectionView.convert(event.locationInWindow, from: nil)
         guard let indexPath = collectionView.indexPathForItem(at: point),
               let viewModel = viewModel,
               indexPath.item < viewModel.files.count else { return nil }
@@ -460,12 +464,17 @@ extension FileGridView: NSCollectionViewDataSource {
 extension FileGridView: NSCollectionViewDelegate {
     public func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
         guard let viewModel = viewModel else { return }
+        // Bug 1 修复：使用 collectionView.selectionIndexPaths 获取所有当前选中项
+        // （indexPaths 参数仅包含本次新选中的项，不能代表完整选择状态）
+        // 同时同步更新 viewModel.state.selectedFiles，否则选中状态不生效
+        let selectedIndexPaths = collectionView.selectionIndexPaths
         var selected: [FileEntry] = []
-        for indexPath in indexPaths {
+        for indexPath in selectedIndexPaths {
             if indexPath.item < viewModel.files.count {
                 selected.append(viewModel.files[indexPath.item])
             }
         }
+        viewModel.state.selectedFiles = selected
         onSelectionChanged?(selected)
     }
 
@@ -479,6 +488,8 @@ extension FileGridView: NSCollectionViewDelegate {
                 selected.append(viewModel.files[indexPath.item])
             }
         }
+        // Bug 1 修复：同步更新 viewModel.state.selectedFiles
+        viewModel.state.selectedFiles = selected
         onSelectionChanged?(selected)
     }
 
@@ -571,6 +582,14 @@ extension FileGridView {
 
                 DispatchQueue.main.async {
                     self?.viewModel?.refresh()
+
+                    // Bug 3 修复：跨面板拖拽时，若源文件来自对侧面板的当前目录，需刷新对侧面板
+                    // （仅 move 操作会改变源目录；copy 不改变源，但为安全起见也刷新对侧）
+                    if let counterpartPath = self?.counterpartViewModel?.currentPath,
+                       !counterpartPath.isEmpty,
+                       srcs.contains(where: { ($0 as NSString).deletingLastPathComponent == counterpartPath }) {
+                        self?.counterpartViewModel?.refresh()
+                    }
 
                     // 注册撤销（通过 viewModel?.undoManager 访问 per-window UndoManager）
                     if success > 0, let vm = self?.viewModel, let undoManager = vm.undoManager {

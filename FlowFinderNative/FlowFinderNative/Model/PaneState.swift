@@ -51,6 +51,12 @@ public class PaneViewModel: ObservableObject {
     /// 由 MainWindowController 注入，用于注册撤销/重做（per-window UndoManager）
     weak var undoManager: UndoManager?
 
+    /// 线程安全策略：所有 `state` 的读写原则上在主线程进行（@Published 触发 UI 刷新
+    /// 也要求主线程）。后台异步任务（如 `loadDirectory`）必须在派发到后台队列前
+    /// 捕获所需字段的不可变快照，避免与主线程并发写入造成数据竞争。
+    /// 选中状态（selectedFiles）与排序过滤状态（sortField/sortAscending/searchQuery）
+    /// 仅由 UI 在主线程修改，后台线程不直接访问，从而避免竞争。
+
     var currentPath: String { state.path }
     var files: [FileEntry] { state.files }
     var selectedFiles: [FileEntry] { state.selectedFiles }
@@ -295,12 +301,18 @@ public class PaneViewModel: ObservableObject {
         state.isLoading = true
         state.error = nil
 
+        // 在派发到后台队列前捕获 state 的不可变快照，避免后台线程读取 `state`
+        // 与主线程并发写入（如用户在加载过程中导航/排序）造成数据竞争。
+        let path = state.path
+        let sortField = state.sortField
+        let sortAscending = state.sortAscending
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             do {
-                let entries = try CoreBridge.shared.listDirectory(path: self.state.path)
-                // 在后台线程完成排序，避免阻塞 UI
-                let sortedEntries = self.sortEntries(entries)
+                let entries = try CoreBridge.shared.listDirectory(path: path)
+                // 在后台线程完成排序，避免阻塞 UI；使用捕获的快照而非读取 self.state
+                let sortedEntries = self.sortEntries(entries, field: sortField, ascending: sortAscending)
                 DispatchQueue.main.async {
                     self.state.files = sortedEntries
                     self.state.isLoading = false
@@ -314,10 +326,9 @@ public class PaneViewModel: ObservableObject {
         }
     }
 
-    /// 在后台线程排序（不触发 @Published 变更）
-    private func sortEntries(_ entries: [FileEntry]) -> [FileEntry] {
-        let field = state.sortField
-        let ascending = state.sortAscending
+    /// 在后台线程排序（不触发 @Published 变更）。
+    /// 排序字段与方向通过参数传入（快照），避免读取 `state` 造成数据竞争。
+    private func sortEntries(_ entries: [FileEntry], field: SortField, ascending: Bool) -> [FileEntry] {
         return entries.sorted { a, b in
             let comparison: Bool
             switch field {
@@ -335,7 +346,7 @@ public class PaneViewModel: ObservableObject {
     }
 
     private func applySort() {
-        let sorted = sortEntries(state.files)
+        let sorted = sortEntries(state.files, field: state.sortField, ascending: state.sortAscending)
         // 仅在顺序实际变化时才更新（减少不必要的 reloadData）
         if sorted.map(\.path) != state.files.map(\.path) {
             state.files = sorted

@@ -26,11 +26,15 @@ SCHEME_NAME="FlowFinderNative"
 TARGET_NAME="FlowFinderNative"
 CONFIGURATION="Release"
 BUILD_DIR="$PROJECT_DIR/build"
-VERSION="0.6.01"
-BUILD_NUMBER="601"
+VERSION="0.6.02"
+BUILD_NUMBER="602"
 
 # Optional Developer ID signing (set via environment)
 DEVELOPER_ID="${DEVELOPER_ID:-}"
+
+# Entitlements file — applied at codesign time (Hardened Runtime requires it
+# to whitelist the self-built Rust dylib and unsigned-executable-memory usage).
+ENTITLEMENTS_PATH="$PROJECT_DIR/FlowFinderNative/FlowFinderNative/FlowFinderNative.entitlements"
 
 # Temp paths (populated later, declared here so trap can read them safely)
 TMP_DMG=""
@@ -95,6 +99,9 @@ if ! command -v hdiutil &> /dev/null; then
 fi
 if ! command -v codesign &> /dev/null; then
     die "codesign not found (macOS only)."
+fi
+if [ ! -f "$ENTITLEMENTS_PATH" ]; then
+    die "Entitlements file not found: $ENTITLEMENTS_PATH"
 fi
 
 # ---------------------------------------------------------------------------
@@ -217,10 +224,12 @@ echo "=== [3/4] 代码签名 ==="
 
 if [ -n "$DEVELOPER_ID" ]; then
     log_info "使用 Developer ID 签名 (Hardened Runtime): $DEVELOPER_ID"
-    codesign --sign "$DEVELOPER_ID" --force --deep --options runtime "$APP_PATH"
+    codesign --sign "$DEVELOPER_ID" --force --deep --options runtime \
+        --entitlements "$ENTITLEMENTS_PATH" "$APP_PATH"
 else
-    log_info "Ad-hoc 签名（本地分发，用户首次打开需右键 -> 打开）"
-    codesign --sign - --force --deep "$APP_PATH"
+    log_info "Ad-hoc 签名 (Hardened Runtime，本地分发，用户首次打开需右键 -> 打开)"
+    codesign --sign - --force --deep --options runtime \
+        --entitlements "$ENTITLEMENTS_PATH" "$APP_PATH"
 fi
 
 log_info "验证签名..."

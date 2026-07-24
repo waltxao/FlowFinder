@@ -118,15 +118,57 @@ impl VolumeManager {
         volumes
     }
 
-    /// Parse a single mount line
+    /// Parse a single mount line.
+    ///
+    /// macOS `mount` output has the format:
+    ///
+    /// ```text
+    /// <device> on <mount_point> (<fstype>, <option>, ...)
+    /// ```
+    ///
+    /// Examples:
+    /// - `/dev/disk1s1 on / (apfs, local, journaled)`
+    /// - `//user@server/share on /Volumes/share (smbfs, nodev, nosuid)`
+    /// - `host:/export on /mnt/nfs (nfs, nodev, nosuid, async)`
+    ///
+    /// The previous implementation split on whitespace and read
+    /// `parts[4]` as the filesystem type. That worked only when the mount
+    /// point contained no spaces *and* the option list started at exactly
+    /// `parts[4]` — for SMB/NFS mounts (and any mount whose mount point
+    /// contained a space) it picked up the wrong token (e.g. `nodev,`
+    /// `local,`), so `volume_type` was almost always `Unknown` and the
+    /// `is_network` heuristic silently broke. The parser below locates
+    /// the ` on ` and ` (` separators structurally instead of by index,
+    /// which is robust to spaces in the device or mount point.
     pub fn parse_mount_line(&self, line: &str) -> Option<VolumeInfo> {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 {
+        // Split "<device> on <rest>" at the first " on ".
+        let on_idx = line.find(" on ")?;
+        let _device = &line[..on_idx];
+        let rest = &line[on_idx + 4..];
+
+        // Split "<mount_point> (<options>)" at the first " (".
+        let paren_idx = rest.find(" (")?;
+        let mount_point = rest[..paren_idx].trim();
+        let options_str = &rest[paren_idx + 2..];
+
+        // Trim the trailing ")" (everything after the first ')' is
+        // discarded — there's nothing useful there for our purposes).
+        let close_idx = options_str.find(')')?;
+        let options_inner = &options_str[..close_idx];
+
+        // The first comma-separated entry inside the parens is the
+        // filesystem type (e.g. `apfs`, `smbfs`, `nfs`, `hfs`, `exfat`).
+        let filesystem = options_inner
+            .split(',')
+            .next()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Empty mount point is not a real entry.
+        if mount_point.is_empty() {
             return None;
         }
-
-        let device = parts[0];
-        let mount_point = parts[2];
 
         // Compute name early for filter checks
         let name = Path::new(mount_point)
@@ -150,18 +192,17 @@ impl VolumeManager {
             return None;
         }
 
-        let filesystem = if parts.len() > 4 {
-            parts[4].trim_start_matches("(")
-                     .trim_end_matches(")")
-                     .to_string()
-        } else {
-            "unknown".to_string()
-        };
-
         let volume_type = VolumeType::from_str(&filesystem);
 
         // Get volume size info
         let (total, used, free) = self.get_volume_size(mount_point);
+
+        let fs_lower = filesystem.to_lowercase();
+        let is_network = fs_lower.contains("smb")
+            || fs_lower.contains("cifs")
+            || fs_lower.contains("nfs")
+            || fs_lower.contains("afp")
+            || fs_lower.contains("webdav");
 
         Some(VolumeInfo {
             path: mount_point.to_string(),
@@ -172,7 +213,7 @@ impl VolumeManager {
             free_space: free,
             is_removable: mount_point.starts_with("/Volumes"),
             is_ejectable: mount_point.starts_with("/Volumes"),
-            is_network: filesystem.to_lowercase().contains("smb") || filesystem.to_lowercase().contains("nfs"),
+            is_network,
             mount_point: mount_point.to_string(),
             filesystem,
         })
@@ -462,10 +503,9 @@ pub extern "C" fn ff_volume_info(
 #[no_mangle]
 pub extern "C" fn ff_volume_health_check(
     path: *const c_char,
-    callback: FFHealthCallback,
-    user_data: *mut c_void,
+    out_result: *mut *mut c_char,
 ) -> c_int {
-    if path.is_null() {
+    if path.is_null() || out_result.is_null() {
         return FF_ERR_INVALID_PATH;
     }
 
@@ -479,20 +519,16 @@ pub extern "C" fn ff_volume_health_check(
     let manager = VolumeManager::new();
     let health = manager.check_health(path_str);
 
-    let path_c = CString::new(health.path.clone()).unwrap_or_default();
-    let status_c = CString::new(health.overall_status.clone()).unwrap_or_default();
-    let smart_c = CString::new(health.smart_status.unwrap_or_else(|| "N/A".to_string())).unwrap_or_default();
-
-    callback(
-        path_c.as_ptr(),
-        status_c.as_ptr(),
-        health.disk_usage_percent,
-        health.smart_available,
-        smart_c.as_ptr(),
-        user_data,
-    );
-
-    FF_OK
+    match serde_json::to_string(&health) {
+        Ok(json) => {
+            let c_str = CString::new(json).unwrap_or_default();
+            unsafe {
+                *out_result = c_str.into_raw();
+            }
+            FF_OK
+        }
+        Err(_) => FF_ERR_GENERIC,
+    }
 }
 
 /// Eject a removable volume.

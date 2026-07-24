@@ -267,12 +267,21 @@ impl TaskScheduler {
                     drop(queue);
 
                     self.active_count.fetch_add(1, Ordering::SeqCst);
-                    let scheduler = Arc::new(self.clone_ref());
-                    
+
+                    // Spawn a worker thread that operates on the *global*
+                    // scheduler singleton. Previously this used `clone_ref`,
+                    // which created an empty-shell scheduler (fresh empty
+                    // HashMap/VecDeque) — the worker could neither see the
+                    // task queue nor decrement the real `active_count`,
+                    // leaking tasks and breaking concurrency. By calling
+                    // `scheduler()` (a `&'static TaskScheduler`) inside the
+                    // thread, every worker shares the same queues and
+                    // counters as the caller.
                     thread::spawn(move || {
-                        scheduler.execute_task(task_clone);
-                        scheduler.active_count.fetch_sub(1, Ordering::SeqCst);
-                        scheduler.process_queue();
+                        let s = scheduler();
+                        s.execute_task(task_clone);
+                        s.active_count.fetch_sub(1, Ordering::SeqCst);
+                        s.process_queue();
                     });
                     return;
                 }
@@ -338,19 +347,6 @@ impl TaskScheduler {
     fn clear_history(&self) {
         let mut history = self.history.lock().unwrap();
         history.clear();
-    }
-
-    fn clone_ref(&self) -> Self {
-        TaskScheduler {
-            next_id: AtomicUsize::new(self.next_id.load(Ordering::SeqCst)),
-            tasks: Mutex::new(HashMap::new()),
-            queue: Mutex::new(VecDeque::new()),
-            max_concurrent: Mutex::new(*self.max_concurrent.lock().unwrap()),
-            active_count: AtomicUsize::new(self.active_count.load(Ordering::SeqCst)),
-            running: AtomicBool::new(self.running.load(Ordering::SeqCst)),
-            history: Mutex::new(Vec::new()),
-            history_limit: self.history_limit,
-        }
     }
 }
 
@@ -473,41 +469,7 @@ pub extern "C" fn ff_task_cancel(task_id: *const c_char) -> c_int {
 }
 
 // ff_task_list 已移至 ffi/mod.rs，使用 FFTaskInfo 结构体指针回调（与 ff_ffi.h 对齐）
-
-/// Get progress for a specific task.
-///
-/// # Arguments
-/// - `id` — Task ID.
-/// - `callback` — Called with progress updates.
-/// - `user_data` — Opaque pointer passed to callback.
-///
-/// # Returns
-/// - `FF_OK` on success.
-/// - `FF_ERR_NOT_FOUND` if task not found.
-#[no_mangle]
-pub extern "C" fn ff_task_progress(
-    id: c_int,
-    callback: FFTaskProgressCallback,
-    user_data: *mut c_void,
-) -> c_int {
-    let id = id as u64;
-    
-    if let Some(task_arc) = scheduler().get_task(id) {
-        let task = task_arc.lock().unwrap();
-        let status_c = CString::new(task.status.as_str()).unwrap_or_default();
-        
-        callback(
-            task.id,
-            task.progress,
-            status_c.as_ptr(),
-            user_data,
-        );
-        
-        FF_OK
-    } else {
-        FF_ERR_NOT_FOUND
-    }
-}
+// ff_task_progress 已移至 ffi/mod.rs，使用输出参数式 (task_id: *const c_char, out_progress: *mut f64)
 
 /// Get task history.
 ///

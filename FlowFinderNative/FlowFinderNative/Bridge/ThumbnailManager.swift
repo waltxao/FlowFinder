@@ -15,13 +15,19 @@ public final class ThumbnailManager {
 
     /// 磁盘缓存目录
     private let diskCacheURL: URL = {
-        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        // 安全解包：cachesDirectory 通常存在，但 first 在极端环境（沙盒配置异常）可能为 nil。
+        // 退化为 ~/Library/Caches，若仍不可用则使用 NSTemporaryDirectory。
+        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let cacheDir = cachesDir.appendingPathComponent("FlowFinderThumbnails", isDirectory: true)
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         return cacheDir
     }()
 
-    /// 活跃请求（用于取消）
+    /// 磁盘缓存上限（字节）。超过此上限时按最久未访问清理旧文件。
+    private let maxDiskCacheBytes: Int64 = 100 * 1024 * 1024  // 100 MB
+
+    /// 活跃请求（用于取消）。请求完成后必须移除，否则会泄漏 QLThumbnailGenerator.Request 对象。
     private var activeRequests: [String: QLThumbnailGenerator.Request] = [:]
     private let lock = NSLock()
 
@@ -71,6 +77,11 @@ public final class ThumbnailManager {
         lock.unlock()
 
         generator.generateBestRepresentation(for: request) { [weak self] thumbnail, error in
+            // 请求完成（无论成功/失败）都必须从 activeRequests 移除，避免泄漏 Request 对象。
+            self?.lock.lock()
+            self?.activeRequests.removeValue(forKey: path)
+            self?.lock.unlock()
+
             if let error = error {
                 print("ThumbnailManager: 生成缩略图失败: \(error.localizedDescription)")
                 DispatchQueue.main.async { completion(nil) }
@@ -164,13 +175,48 @@ public final class ThumbnailManager {
     private func saveToDiskCache(image: NSImage, path: String, cacheKey: String) {
         let url = diskCacheURL(for: path, cacheKey: cacheKey)
 
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             // 转为 PNG 数据保存
             if let tiffData = image.tiffRepresentation,
                let bitmap = NSBitmapImageRep(data: tiffData),
                let pngData = bitmap.representation(using: .png, properties: [:]) {
                 try? pngData.write(to: url, options: .atomic)
             }
+            // 写入后触发磁盘缓存清理，确保总大小不超过 maxDiskCacheBytes。
+            // cleanupDiskCache 是 best-effort，失败不影响主流程。
+            self?.cleanupDiskCacheIfNeeded()
+        }
+    }
+
+    /// 磁盘缓存清理：当总大小超过 maxDiskCacheBytes 时，按 contentModificationDate
+    /// 从旧到新删除文件，直到总大小降到上限以下。best-effort，错误被忽略。
+    private func cleanupDiskCacheIfNeeded() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: diskCacheURL,
+                                                      includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+                                                      options: [.skipsHiddenFiles]) else {
+            return
+        }
+
+        // 收集 (url, modificationDate, size)
+        var entries: [(url: URL, date: Date, size: Int64)] = []
+        var totalBytes: Int64 = 0
+        for fileURL in files {
+            let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            let date = values?.contentModificationDate ?? Date.distantPast
+            let size = Int64(values?.fileSize ?? 0)
+            entries.append((fileURL, date, size))
+            totalBytes += size
+        }
+
+        guard totalBytes > maxDiskCacheBytes else { return }
+
+        // 按修改时间从旧到新排序，优先删除最旧的文件
+        entries.sort { $0.date < $1.date }
+        for entry in entries {
+            if totalBytes <= maxDiskCacheBytes { break }
+            try? fm.removeItem(at: entry.url)
+            totalBytes -= entry.size
         }
     }
 }

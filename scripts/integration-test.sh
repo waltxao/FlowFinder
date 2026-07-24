@@ -47,10 +47,10 @@ test_rust_compiles() {
 
     if cargo build 2>&1; then
         log_success "Rust library compiled successfully"
-        ((PASS++))
+        PASS=$((PASS + 1))
     else
         log_fail "Rust library compilation failed"
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
         return 1
     fi
 
@@ -60,7 +60,7 @@ test_rust_compiles() {
         log_success "Dynamic library found: $DYLIB_PATH"
     else
         log_fail "Dynamic library not found at: $DYLIB_PATH"
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
         return 1
     fi
 }
@@ -115,10 +115,10 @@ EOF
     cd "$PROJECT_ROOT"
     if swift "$TEST_SWIFT" 2>&1; then
         log_success "Swift can load the Rust library"
-        ((PASS++))
+        PASS=$((PASS + 1))
     else
         log_fail "Swift failed to load the Rust library"
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
     fi
 
     rm -f "$TEST_SWIFT"
@@ -184,14 +184,14 @@ EOF
         export DYLD_LIBRARY_PATH="$RUST_DIR/target/debug:${DYLD_LIBRARY_PATH:-}"
         if ./.tmp_test_ff_list_dir 2>&1; then
             log_success "ff_list_dir returns valid data"
-            ((PASS++))
+            PASS=$((PASS + 1))
         else
             log_fail "ff_list_dir failed to return valid data"
-            ((FAIL++))
+            FAIL=$((FAIL + 1))
         fi
     else
         log_fail "Failed to compile test program"
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
     fi
 
     rm -f "$TEST_C" ".tmp_test_ff_list_dir"

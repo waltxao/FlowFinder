@@ -10,6 +10,9 @@ public class FileListView: NSView {
     private var cancellables = Set<AnyCancellable>()
     private var lastFilesCount: Int = -1
 
+    // Bug 9 修复：reload 期间标志位，防止 selectionDidChange → state 变更 → reload 形成循环
+    private var isReloading: Bool = false
+
     // 内联重命名状态
     private var renamingRow: Int = -1
     private var renamingOriginalName: String = ""
@@ -434,7 +437,15 @@ public class FileListView: NSView {
     }
 
     public func reloadData() {
+        // Bug 9 修复：reloadData 可能引起 selectionDidChange 回调（行被清空/重建），
+        // 若不抑制则会触发 viewModel.state.selectedFiles 变更 → @Published 发射 →
+        // 上游 sink 再次 reloadData，形成循环。设置标志位并在下一 runloop 复位，
+        // 既能覆盖同步触发的回调，也能覆盖同 runloop 内异步派发的回调。
+        isReloading = true
         tableView?.reloadData()
+        DispatchQueue.main.async { [weak self] in
+            self?.isReloading = false
+        }
     }
 
     // MARK: - Double Click
@@ -575,6 +586,10 @@ extension FileListView: NSTableViewDelegate {
 
     // 选择变更时才执行选择逻辑（单击选中、Cmd+点击多选、Shift+范围选）
     public func tableViewSelectionDidChange(_ notification: Notification) {
+        // Bug 9 修复：reloadData 期间触发的 selectionDidChange 应忽略，
+        // 避免与 reload 形成循环（reload → selectionDidChange → state 变更 → reload）
+        if isReloading { return }
+
         guard let viewModel = viewModel else { return }
         // 确保 tableView 是 firstResponder，否则选中高亮会变成灰色（de-emphasized）
         if let window = tableView.window, window.firstResponder !== tableView {
@@ -615,13 +630,37 @@ extension FileListView {
         }
 
         // Enter / Return：触发内联重命名（拦截事件，不再沿响应链传递到 MainWindowController 的打开逻辑）
+        // macOS Finder 风格：Enter=重命名，Cmd+O/Cmd+Down=打开
         if (event.keyCode == 36 || event.keyCode == 76) && modifiers.isEmpty {
             beginInlineRename()
             return
         }
 
+        // Bug 5 修复：Cmd+Down (keyCode 125) / Cmd+O (keyCode 31) 打开选中项（Finder 风格）
+        // 仅 Cmd 修饰，不含 Shift/Option/Control
+        let isPureCommand = modifiers.contains(.command)
+            && !modifiers.contains(.shift)
+            && !modifiers.contains(.option)
+            && !modifiers.contains(.control)
+        if isPureCommand && (event.keyCode == 125 || event.keyCode == 31) {
+            openSelectedEntry()
+            return
+        }
+
+        // Bug 5 修复：Cmd+Up (keyCode 126) 上级目录（Finder 风格）
+        if isPureCommand && event.keyCode == 126 {
+            viewModel?.goUp()
+            return
+        }
+
         // 其他键传给 nextResponder（沿响应链传递到 MainWindowController）
         super.keyDown(with: event)
+    }
+
+    /// 打开当前选中的条目（Cmd+O / Cmd+Down 触发，与双击行为一致）
+    private func openSelectedEntry() {
+        guard let entry = viewModel?.selectedFiles.first else { return }
+        onDoubleClick?(entry)
     }
 
     // MARK: - Inline Rename（内联重命名）
@@ -806,6 +845,14 @@ extension FileListView {
 
                 DispatchQueue.main.async {
                     self?.viewModel?.refresh()
+
+                    // Bug 3 修复：跨面板拖拽时，若源文件来自对侧面板的当前目录，需刷新对侧面板
+                    // （仅 move 操作会改变源目录；copy 不改变源，但为安全起见也刷新对侧）
+                    if let counterpartPath = self?.counterpartViewModel?.currentPath,
+                       !counterpartPath.isEmpty,
+                       srcs.contains(where: { ($0 as NSString).deletingLastPathComponent == counterpartPath }) {
+                        self?.counterpartViewModel?.refresh()
+                    }
 
                     // 注册撤销（通过 viewModel?.undoManager 访问 per-window UndoManager）
                     if success > 0, let vm = self?.viewModel, let undoManager = vm.undoManager {

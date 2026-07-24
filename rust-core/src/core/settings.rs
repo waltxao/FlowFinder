@@ -156,27 +156,37 @@ fn load_settings_from_plist() -> Result<Settings, Box<dyn std::error::Error>> {
         return Err("Settings file does not exist".into());
     }
 
-    let plist_data = std::fs::read_to_string(&path)?;
-    let settings: Settings = plist::from_bytes(plist_data.as_bytes())
-        .map_err(|e| format!("Failed to parse plist: {}", e))?;
-    
+    let data = std::fs::read_to_string(&path)?;
+    // The settings file is written by `save_settings_to_plist` as JSON
+    // (see below). Parsing it back with `plist::from_bytes` would fail
+    // because plist expects XML/binary plist, not JSON — the round-trip
+    // `save → load` was broken, silently falling back to defaults on
+    // every launch. Use `serde_json` for both directions so the format
+    // is consistent and the round-trip actually works.
+    let settings: Settings = serde_json::from_str(&data)
+        .map_err(|e| format!("Failed to parse settings JSON: {}", e))?;
+
     Ok(settings)
 }
 
 fn save_settings_to_plist(settings: &Settings) -> Result<(), Box<dyn std::error::Error>> {
     let path = plist_path();
-    
+
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Serialize to XML plist format
-    let json_str = serde_json::to_string(settings)
+    // Serialize as JSON. Despite the `.plist` filename, the file content
+    // is JSON — `load_settings_from_plist` parses it back as JSON, so the
+    // two functions must agree on a single format (previously the load
+    // path tried `plist::from_bytes` while the save path wrote JSON,
+    // making every reload fail and fall back to defaults).
+    let json_str = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-    
+
     std::fs::write(&path, json_str)?;
-    
+
     Ok(())
 }
 

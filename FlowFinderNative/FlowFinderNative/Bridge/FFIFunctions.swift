@@ -511,37 +511,24 @@ public func ff_task_cancel(_ taskId: UnsafePointer<CChar>) -> Int32
 
 /// List all tasks
 /// - Parameters:
-///   - callback: Called for each task with individual fields
+///   - callback: Called for each task with FFTaskInfo pointer
 ///   - userData: User data pointer passed to callback
 /// - Returns: 0 on success, non-zero error code on failure
 @_silgen_name("ff_task_list")
 public func ff_task_list(
-    _ callback: @convention(c) (
-        _ id: UInt64,
-        _ name: UnsafePointer<CChar>?,
-        _ description: UnsafePointer<CChar>?,
-        _ priority: Int32,
-        _ status: UnsafePointer<CChar>?,
-        _ progress: Double,
-        _ createdAt: Int64,
-        _ startedAt: Int64,
-        _ completedAt: Int64,
-        _ userData: UnsafeMutableRawPointer?
-    ) -> Void,
+    _ callback: @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void,
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32
 
 /// Get progress for a specific task
 /// - Parameters:
-///   - taskId: Task ID (integer)
-///   - callback: Called with task progress
-///   - userData: User data pointer passed to callback
+///   - taskId: Task ID (C string)
+///   - outProgress: Output pointer to receive progress value (0.0 to 1.0)
 /// - Returns: 0 on success, non-zero error code on failure
 @_silgen_name("ff_task_progress")
 public func ff_task_progress(
-    _ taskId: Int32,
-    _ callback: @convention(c) (Int32, Double, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void,
-    _ userData: UnsafeMutableRawPointer?
+    _ taskId: UnsafePointer<CChar>,
+    _ outProgress: UnsafeMutablePointer<Double>
 ) -> Int32
 
 // MARK: - Thumbnail Generation (Sub-project 7) FFI Declarations
@@ -606,14 +593,12 @@ public func ff_volume_info(
 /// Perform a health check on a volume
 /// - Parameters:
 ///   - path: Volume path (C string)
-///   - callback: Called with health check results
-///   - userData: User data pointer passed to callback
+///   - outResult: Output pointer to receive health check JSON string (caller must free with ff_free_string)
 /// - Returns: 0 on success, non-zero error code on failure
 @_silgen_name("ff_volume_health_check")
 public func ff_volume_health_check(
     _ path: UnsafePointer<CChar>,
-    _ callback: @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void,
-    _ userData: UnsafeMutableRawPointer?
+    _ outResult: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
 ) -> Int32
 
 /// Eject a removable volume

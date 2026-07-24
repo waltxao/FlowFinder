@@ -16,9 +16,11 @@ public struct VolumeInfo: Identifiable, Equatable, Hashable {
     /// Initialize from FFI reference
     /// - Parameter ref: FFVolumeInfo structure from Rust core
     public init(from ref: FFVolumeInfo) {
-        self.name = String(cString: ref.name!)
-        self.path = String(cString: ref.path!)
-        self.fsType = String(cString: ref.fs_type!)
+        // 安全解包：Rust 侧字符串指针可能为 nil（例如卷信息查询失败时），
+        // 强制解包会崩溃。退化为空字符串以保持结构体可构造性。
+        self.name = ref.name.map { String(cString: $0) } ?? ""
+        self.path = ref.path.map { String(cString: $0) } ?? ""
+        self.fsType = ref.fs_type.map { String(cString: $0) } ?? ""
         self.totalSize = ref.total_size
         self.freeSize = ref.free_size
         self.usedSize = ref.used_size

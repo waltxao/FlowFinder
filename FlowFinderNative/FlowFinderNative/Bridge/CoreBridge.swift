@@ -129,46 +129,15 @@ private func thumbnailsCallback(
 
 /// Callback for task list
 private func taskListCallback(
-    _ id: UInt64,
-    _ name: UnsafePointer<CChar>?,
-    _ description: UnsafePointer<CChar>?,
-    _ priority: Int32,
-    _ status: UnsafePointer<CChar>?,
-    _ progress: Double,
-    _ createdAt: Int64,
-    _ startedAt: Int64,
-    _ completedAt: Int64,
+    _ taskInfoPtr: UnsafeRawPointer?,
     _ userData: UnsafeMutableRawPointer?
 ) {
-    guard let userData = userData else { return }
+    guard let taskInfoPtr = taskInfoPtr,
+          let userData = userData else { return }
 
     let context = userData.assumingMemoryBound(to: TaskListContext.self)
-    let statusString: String = if let status = status {
-        String(cString: status)
-    } else {
-        "Pending"
-    }
-    
-    let taskStatus: TaskInfo.TaskStatus
-    switch statusString {
-    case "Completed": taskStatus = .completed
-    case "Running": taskStatus = .running
-    case "Failed": taskStatus = .failed
-    case "Cancelled": taskStatus = .cancelled
-    default: taskStatus = .pending
-    }
-    
-    let task = TaskInfo(
-        id: String(id),
-        name: name.map { String(cString: $0) } ?? "",
-        description: description.map { String(cString: $0) } ?? "",
-        priority: TaskInfo.TaskPriority(rawValue: priority) ?? .normal,
-        status: taskStatus,
-        progress: progress,
-        createdAt: Date(timeIntervalSince1970: TimeInterval(createdAt)),
-        startedAt: startedAt > 0 ? Date(timeIntervalSince1970: TimeInterval(startedAt)) : nil,
-        completedAt: completedAt > 0 ? Date(timeIntervalSince1970: TimeInterval(completedAt)) : nil
-    )
+    let taskInfo = taskInfoPtr.assumingMemoryBound(to: FFTaskInfo.self)
+    let task = TaskInfo(from: taskInfo.pointee)
     context.pointee.tasks.pointee.append(task)
 }
 
@@ -200,19 +169,6 @@ private func volumeInfoCallback(
     volumes.pointee.append(volume)
 }
 
-/// Callback for volume health check
-private func healthCheckCallback(
-    _ resultPtr: UnsafePointer<CChar>?,
-    _ userData: UnsafeMutableRawPointer?
-) {
-    guard let resultPtr = resultPtr,
-          let userData = userData else { return }
-
-    let resultString = String(cString: resultPtr)
-    let target = userData.bindMemory(to: String.self, capacity: 1)
-    target.pointee = resultString
-}
-
 // MARK: - Callback Contexts
 
 /// Context for collecting directory entries via callback
@@ -242,23 +198,6 @@ private struct TaskListContext {
 private final class ProgressBox {
     let handler: ((Int, Int) -> Void)?
     init(handler: ((Int, Int) -> Void)?) { self.handler = handler }
-}
-
-/// Context for task progress callback
-private struct TaskProgressContext {
-    let progress: UnsafeMutablePointer<Double>
-}
-
-/// Callback for task progress
-private func taskProgressCallback(
-    _ id: Int32,
-    _ progress: Double,
-    _ status: UnsafePointer<CChar>?,
-    _ userData: UnsafeMutableRawPointer?
-) {
-    guard let userData = userData else { return }
-    let context = userData.assumingMemoryBound(to: TaskProgressContext.self)
-    context.pointee.progress.pointee = progress
 }
 
 /// Context for volume list callback
@@ -1020,9 +959,19 @@ public final class CoreBridge {
             throw CoreBridgeError.invalidPath("Path is empty")
         }
 
+        // 防止重复启动：若已有 watcher 运行（context 或 handle 非空），先停止。
+        // 否则旧 context 会被下面 `self.fseventsContext = context` 覆盖并释放，
+        // 而 Rust 侧仍持有旧 context 的 userData 指针，导致 use-after-free。
+        if fseventsContext != nil || fseventsWatcherHandle != 0 {
+            try? stopFSEventsWatcher()
+        }
+
         // 创建上下文并保留引用，防止被释放
         let context = FSEventsContext(changeHandler: changeHandler)
         self.fseventsContext = context
+        // passUnretained：不增加 retain count，依赖 self.fseventsContext 的强引用保持存活。
+        // stopFSEventsWatcher 会先调用 ff_fsevents_stop（Rust 清理状态、停止回调），
+        // 再置空 self.fseventsContext，确保回调期间 context 不会被释放。
         let contextPtr = Unmanaged.passUnretained(context).toOpaque()
 
         var ffiResult: Int32 = -1
@@ -1039,13 +988,17 @@ public final class CoreBridge {
 
         semaphore.wait()
 
-        guard ffiResult == 0 else {
+        // 成功契约：ff_error_t 中负值表示错误（FF_ERR_INVALID_PATH = -2 等），
+        // 非负值（>= 0）表示成功。当前 Rust 实现返回 0，但若未来 Rust 改为
+        // 返回正数 handle，此处 >= 0 仍能正确接受并把返回值作为 handle 存储。
+        guard ffiResult >= 0 else {
             self.fseventsContext = nil
             let errorMessage = getLastError()
             throw CoreBridgeError.ffiError(errorMessage)
         }
 
-        // 存储返回的 watcher 句柄
+        // 存储 ff_fsevents_start 返回的真实 handle（当前实现为 0，未来可能为正数），
+        // stopFSEventsWatcher 会使用此 handle 调用 ff_fsevents_stop。
         self.fseventsWatcherHandle = ffiResult
     }
 
@@ -1058,12 +1011,15 @@ public final class CoreBridge {
 
         ffiQueue.async {
             defer { semaphore.signal() }
+            // 使用 startFSEventsWatcher 存储的真实 handle（而非硬编码 0），
+            // 确保 Rust 侧能正确识别要停止的 watcher。
             ffiResult = ff_fsevents_stop(handle)
         }
 
         semaphore.wait()
 
-        // 清理上下文和句柄
+        // 清理上下文和句柄：必须在 ff_fsevents_stop 返回之后（Rust 已停止回调），
+        // 否则并发回调可能访问已释放的 context。
         self.fseventsContext = nil
         self.fseventsWatcherHandle = 0
 
@@ -1090,10 +1046,20 @@ public final class CoreBridge {
 
         // Convert items to C-compatible format
         var cItems: [FFRenameItem] = []
+        var allocated: [(UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>)] = []
         for (original, newName) in items {
+            // strdup 在内存不足时可能返回 nil，避免强制解包导致崩溃。
             let originalPtr = strdup(original)
             let newNamePtr = strdup(newName)
-            cItems.append(FFRenameItem(originalPath: originalPtr!, newName: newNamePtr!))
+            guard let op = originalPtr, let np = newNamePtr else {
+                // 分配失败：释放本次已分配的单个字符串，以及之前累积的所有字符串。
+                if let opToFree = originalPtr { free(opToFree) }
+                if let npToFree = newNamePtr { free(npToFree) }
+                for (a, b) in allocated { free(a); free(b) }
+                throw CoreBridgeError.ffiError("内存分配失败：strdup 返回 nil")
+            }
+            allocated.append((op, np))
+            cItems.append(FFRenameItem(originalPath: op, newName: np))
         }
 
         ffiQueue.async {
@@ -1233,10 +1199,18 @@ public final class CoreBridge {
                 var context = ThumbnailsContext(paths: pathsPtr, completion: completion)
 
                 let cPaths = paths.map { strdup($0) }
-                let immutablePaths: [UnsafePointer<CChar>?] = cPaths.map { UnsafePointer($0!) }
+                // 安全解包 strdup 结果：OOM 时可能返回 nil。
+                // 保留 nil 项（FFI 侧应能容忍或返回错误），不强制解包避免崩溃。
+                let immutablePaths: [UnsafePointer<CChar>?] = cPaths.map {
+                    $0.map { UnsafePointer($0) }
+                }
                 let result = withUnsafeMutablePointer(to: &context) { contextPtr in
                     immutablePaths.withUnsafeBufferPointer { buffer in
-                        ff_generate_thumbnails(buffer.baseAddress!, paths.count, maxSize, thumbnailsCallback, contextPtr)
+                        guard let base = buffer.baseAddress else {
+                            // 理论上不可达（paths 已 guard 非空），但防御性处理。
+                            return Int32(-1)
+                        }
+                        return ff_generate_thumbnails(base, paths.count, maxSize, thumbnailsCallback, contextPtr)
                     }
                 }
 
@@ -1500,23 +1474,23 @@ public final class CoreBridge {
     /// Get task progress
     /// - Parameter taskId: Task ID
     /// - Returns: Progress value (0.0 to 1.0), or -1 if not found
-    func getTaskProgress(taskId: Int32) -> Double {
+    func getTaskProgress(taskId: String) -> Double {
         var progress: Double = -1.0
+        var ffiResult: Int32 = -1
         let semaphore = DispatchSemaphore(value: 0)
 
         ffiQueue.async {
             defer { semaphore.signal() }
 
-            withUnsafeMutablePointer(to: &progress) { progressPtr in
-                var context = TaskProgressContext(progress: progressPtr)
-                let _ = withUnsafeMutablePointer(to: &context) { contextPtr in
-                    ff_task_progress(taskId, taskProgressCallback, contextPtr)
+            ffiResult = taskId.withCString { cTaskId in
+                withUnsafeMutablePointer(to: &progress) { progressPtr in
+                    ff_task_progress(cTaskId, progressPtr)
                 }
             }
         }
 
         semaphore.wait()
-        return progress
+        return ffiResult == 0 ? progress : -1.0
     }
 
     // MARK: - Volume Management (Sub-project 10)
@@ -1584,27 +1558,32 @@ public final class CoreBridge {
 
     /// Perform health check on a volume
     /// - Parameter path: Volume path
-    /// - Returns: Health check result string
+    /// - Returns: Health check result JSON string
     /// - Throws: CoreBridgeError if operation fails
     func checkVolumeHealth(path: String) throws -> String {
-        var resultString: String = ""
+        var outResult: UnsafeMutablePointer<CChar>? = nil
+        var ffiResult: Int32 = -1
         let semaphore = DispatchSemaphore(value: 0)
 
         ffiQueue.async {
             defer { semaphore.signal() }
 
-            _ = path.withCString { cPath in
-                ff_volume_health_check(cPath, healthCheckCallback, &resultString)
+            ffiResult = path.withCString { cPath in
+                withUnsafeMutablePointer(to: &outResult) { outPtr in
+                    ff_volume_health_check(cPath, outPtr)
+                }
             }
         }
 
         semaphore.wait()
 
-        guard !resultString.isEmpty else {
+        guard ffiResult == 0, let resultPtr = outResult else {
             let errorMessage = getLastError()
             throw CoreBridgeError.ffiError(errorMessage)
         }
 
+        let resultString = String(cString: resultPtr)
+        ff_free_string(resultPtr)
         return resultString
     }
 

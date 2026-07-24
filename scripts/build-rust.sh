@@ -13,6 +13,10 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 RUST_DIR="$PROJECT_ROOT/rust-core"
 OUTPUT_DIR="$PROJECT_ROOT/FlowFinderNative/FlowFinderNative/Libraries"
 
+# macOS deployment target — unified minimum supported macOS version.
+# Overrides are allowed via the environment; defaults to 11.0 (Big Sur).
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,6 +48,23 @@ die() {
     log_error "$1"
     exit 1
 }
+
+# ---------------------------------------------------------------------------
+# Cleanup trap — remove any temp files on exit (success or failure)
+# ---------------------------------------------------------------------------
+
+# Defensive: tracks temp files created during the build so they are removed
+# even when the script aborts under `set -e`. Currently no temp files are
+# produced, but the mechanism is in place for future use.
+TMPFILE=""
+cleanup() {
+    local rc=$?
+    if [[ -n "$TMPFILE" && -f "$TMPFILE" ]]; then
+        rm -f "$TMPFILE"
+    fi
+    exit "$rc"
+}
+trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
 # Detect build mode
@@ -167,9 +188,11 @@ fi
 # Detect macOS deployment target & sysroot for the relink
 RELINK_ARCH="$ARCH"  # arm64 or x86_64
 RELINK_SYSROOT=""
+RELINK_SDK_VERSION=""
 RELINK_LD="ld"
 if command -v xcrun &> /dev/null; then
     RELINK_SYSROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+    RELINK_SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
     RELINK_LD="$(xcrun -find ld 2>/dev/null || echo ld)"
 fi
 if [[ -z "$RELINK_SYSROOT" ]]; then
@@ -180,7 +203,7 @@ log_info "Relinking dylib from static library using Xcode ld ($RELINK_LD)..."
 RELINK_LDFLAGS=(
     -arch "$RELINK_ARCH"
     -dylib
-    -platform_version macos 26.0 27.0
+    -platform_version macos "$MACOSX_DEPLOYMENT_TARGET" "${RELINK_SDK_VERSION:-26.0}"
     -install_name @rpath/libflowfinder_core.dylib
     -compatibility_version 0.0.0
     -current_version 0.0.0

@@ -15,11 +15,11 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.6.0-alpha</string>
+    <string>0.6.02</string>
     <key>CFBundleVersion</key>
-    <string>600</string>
+    <string>602</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>12.0</string>
     <key>NSMainStoryboardFile</key>
     <string></string>
     <key>LSApplicationCategoryType</key>

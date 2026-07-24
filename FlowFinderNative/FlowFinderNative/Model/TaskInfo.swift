@@ -31,9 +31,11 @@ public struct TaskInfo: Identifiable, Equatable, Hashable {
     /// Initialize from FFI reference
     /// - Parameter ref: FFTaskInfo structure from Rust core
     public init(from ref: FFTaskInfo) {
-        self.id = String(cString: ref.id!)
-        self.name = String(cString: ref.name!)
-        self.description = String(cString: ref.description!)
+        // 安全解包：Rust 侧可能因 OOM/异常返回 nil 字符串指针，强制解包会崩溃。
+        // 退化为空字符串以保持结构体可构造性；调用方可根据需要进一步判断。
+        self.id = ref.id.map { String(cString: $0) } ?? ""
+        self.name = ref.name.map { String(cString: $0) } ?? ""
+        self.description = ref.description.map { String(cString: $0) } ?? ""
         self.priority = TaskPriority(rawValue: ref.priority) ?? .normal
         self.status = TaskStatus(rawValue: ref.status) ?? .pending
         self.progress = ref.progress

@@ -2,12 +2,15 @@
 /target/
 rust-core/target/
 **/*.rs.bk
-Cargo.lock
+# Note: Cargo.lock IS tracked (binary application — reproducible builds).
+# Do NOT add Cargo.lock to .gitignore.
 
 # Swift / Xcode
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 *.xcworkspace/xcshareddata/
+xcuserdata/
+*.xcuserstate
 build/
 DerivedData/
 *.ipa
@@ -21,3 +24,4 @@ DerivedData/
 
 # Build artifacts
 .build/
+*.dmg
