@@ -434,7 +434,7 @@ public final class CoreBridge {
         // C strings we allocated are safe to free immediately after the call.
         let _ = path.withCString { cPath in
             refs.withUnsafeBufferPointer { buffer in
-                ff_cache_put(cPath, buffer.baseAddress, refs.count)
+                ff_cache_put(cPath, buffer.baseAddress!, refs.count)
             }
         }
 
@@ -669,13 +669,15 @@ public final class CoreBridge {
 
             let result = dstDir.withCString { cDstDir in
                 cStringPtrs.withUnsafeBufferPointer { buffer in
-                    ff_parallel_copy(
-                        buffer.baseAddress,
-                        cStringPtrs.count,
-                        cDstDir,
-                        progressBox.handler != nil ? progressCallback : CoreBridge.noopBatchProgress,
-                        Unmanaged.passUnretained(progressBox).toOpaque()
-                    )
+                    buffer.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
+                        ff_parallel_copy(
+                            reboundPtr,
+                            cStringPtrs.count,
+                            cDstDir,
+                            progressBox.handler != nil ? progressCallback : CoreBridge.noopBatchProgress,
+                            Unmanaged.passUnretained(progressBox).toOpaque()
+                        )
+                    }
                 }
             }
             ffiResult = result
@@ -728,13 +730,15 @@ public final class CoreBridge {
 
             let result = dstDir.withCString { cDstDir in
                 cStringPtrs.withUnsafeBufferPointer { buffer in
-                    ff_parallel_move(
-                        buffer.baseAddress,
-                        cStringPtrs.count,
-                        cDstDir,
-                        progressBox.handler != nil ? progressCallback : CoreBridge.noopBatchProgress,
-                        Unmanaged.passUnretained(progressBox).toOpaque()
-                    )
+                    buffer.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
+                        ff_parallel_move(
+                            reboundPtr,
+                            cStringPtrs.count,
+                            cDstDir,
+                            progressBox.handler != nil ? progressCallback : CoreBridge.noopBatchProgress,
+                            Unmanaged.passUnretained(progressBox).toOpaque()
+                        )
+                    }
                 }
             }
             ffiResult = result
@@ -787,12 +791,14 @@ public final class CoreBridge {
             defer { semaphore.signal() }
 
             let result = cStringPtrs.withUnsafeBufferPointer { buffer in
-                ff_parallel_delete(
-                    buffer.baseAddress,
-                    cStringPtrs.count,
-                    progressBox.handler != nil ? progressCallback : CoreBridge.noopBatchProgress,
-                    Unmanaged.passUnretained(progressBox).toOpaque()
-                )
+                buffer.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
+                    ff_parallel_delete(
+                        reboundPtr,
+                        cStringPtrs.count,
+                        progressBox.handler != nil ? progressCallback : CoreBridge.noopBatchProgress,
+                        Unmanaged.passUnretained(progressBox).toOpaque()
+                    )
+                }
             }
             ffiResult = result
             // I3: capture ff_last_error() on this FFI thread so callers on

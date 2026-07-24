@@ -13,9 +13,14 @@ public class MainWindowController: NSWindowController {
     private var activePane: PaneSide = .left
     private var cancellables = Set<AnyCancellable>()
 
-    /// 全局撤销/重做栈（per-window）。通过 override windowUndoManager 让 NSWindow 使用它，
+    /// 全局撤销/重做栈（per-window）。通过覆盖 undoManager 计算属性让响应链使用它，
     /// Edit 菜单的 undo:/redo: 通过响应链自动路由到此 UndoManager。
-    private let undoManager = UndoManager()
+    private let ffUndoManager = UndoManager()
+
+    /// 覆盖 NSResponder 的 undoManager，让响应链返回自定义的 UndoManager。
+    override public var undoManager: UndoManager? {
+        ffUndoManager
+    }
 
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
@@ -379,17 +384,12 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - Undo / Redo
 
-    /// 让 NSWindow 使用本控制器的 UndoManager（响应链自动路由 undo:/redo:）
-    override public var windowUndoManager: UndoManager? {
-        undoManager
-    }
-
     @objc func undo(_ sender: Any?) {
-        undoManager.undo()
+        ffUndoManager.undo()
     }
 
     @objc func redo(_ sender: Any?) {
-        undoManager.redo()
+        ffUndoManager.redo()
     }
 
     /// 刷新指定面板（用于 undo/redo 闭包执行后）
@@ -502,7 +502,7 @@ public class MainWindowController: NSWindowController {
                 if !copiedPairs.isEmpty {
                     let pairs = copiedPairs
                     let activeSide = self.activePane
-                    self.undoManager.registerUndo(withTarget: self) { ctrl in
+                    self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                         // undo: 删除复制的文件
                         for (_, dst) in pairs {
                             try? CoreBridge.shared.deleteFile(path: dst)
@@ -517,7 +517,7 @@ public class MainWindowController: NSWindowController {
                         ctrl.undoManager?.setActionName("复制 \(pairs.count) 个项目")
                         ctrl.refreshPane(activeSide)
                     }
-                    self.undoManager.setActionName("复制 \(pairs.count) 个项目")
+                    self.ffUndoManager.setActionName("复制 \(pairs.count) 个项目")
                 }
             }
         }
@@ -764,7 +764,7 @@ extension MainWindowController {
                     if success > 0 {
                         if isMove {
                             let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
-                            self.undoManager.registerUndo(withTarget: self) { ctrl in
+                            self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                                 // undo: 移回原位
                                 for (src, dst) in pairs {
                                     try? CoreBridge.shared.moveFile(src: dst, dst: src)
@@ -781,10 +781,10 @@ extension MainWindowController {
                                 ctrl.refreshPane(.left)
                                 ctrl.refreshPane(.right)
                             }
-                            self.undoManager.setActionName("移动 \(success) 个项目")
+                            self.ffUndoManager.setActionName("移动 \(success) 个项目")
                         } else {
                             let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
-                            self.undoManager.registerUndo(withTarget: self) { ctrl in
+                            self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                                 // undo: 删除复制项
                                 for (_, dst) in pairs {
                                     try? CoreBridge.shared.deleteFile(path: dst)
@@ -801,7 +801,7 @@ extension MainWindowController {
                                 ctrl.refreshPane(.left)
                                 ctrl.refreshPane(.right)
                             }
-                            self.undoManager.setActionName("复制 \(success) 个项目")
+                            self.ffUndoManager.setActionName("复制 \(success) 个项目")
                         }
                     }
 
@@ -928,7 +928,7 @@ extension MainWindowController {
                     let destSide: PaneSide = side == "left" ? .right : .left
                     let items = movedOrCopied
                     if isMove {
-                        self.undoManager.registerUndo(withTarget: self) { ctrl in
+                        self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                             // undo: 移回原位
                             for (src, dst) in items {
                                 try? CoreBridge.shared.moveFile(src: dst, dst: src)
@@ -945,9 +945,9 @@ extension MainWindowController {
                             ctrl.refreshPane(sourceSide)
                             ctrl.refreshPane(destSide)
                         }
-                        self.undoManager.setActionName("移动 \(items.count) 个项目")
+                        self.ffUndoManager.setActionName("移动 \(items.count) 个项目")
                     } else {
-                        self.undoManager.registerUndo(withTarget: self) { ctrl in
+                        self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                             // undo: 删除复制项
                             for (_, dst) in items {
                                 try? CoreBridge.shared.deleteFile(path: dst)
@@ -962,7 +962,7 @@ extension MainWindowController {
                             ctrl.undoManager?.setActionName("复制 \(items.count) 个项目")
                             ctrl.refreshPane(destSide)
                         }
-                        self.undoManager.setActionName("复制 \(items.count) 个项目")
+                        self.ffUndoManager.setActionName("复制 \(items.count) 个项目")
                     }
                 }
 

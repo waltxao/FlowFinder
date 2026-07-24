@@ -65,6 +65,17 @@ fi
 # Verify environment
 # ---------------------------------------------------------------------------
 
+# Cargo may not be in PATH when invoked from Xcode build phases (sanitized
+# environment). Fall back to common install locations.
+if ! command -v cargo &> /dev/null; then
+    for _candidate in /opt/homebrew/bin /usr/local/bin "$HOME/.cargo/bin"; do
+        if [[ -x "$_candidate/cargo" ]]; then
+            export PATH="$_candidate:$PATH"
+            break
+        fi
+    done
+fi
+
 if ! command -v cargo &> /dev/null; then
     die "Rust/Cargo not found. Please install Rust: https://rustup.rs"
 fi
@@ -138,20 +149,71 @@ log_info "Found library: $DYLIB_PATH"
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Copy dynamic library
-if cp "$DYLIB_PATH" "$OUTPUT_DIR/"; then
-    log_success "Copied $DYLIB_NAME to $OUTPUT_DIR"
-else
-    die "Failed to copy $DYLIB_NAME"
+# ---------------------------------------------------------------------------
+# Relink dylib from static library using Xcode ld
+# ---------------------------------------------------------------------------
+# Rust's default linker (rust-lld) produces dylibs with a mis-aligned LINKEDIT
+# string pool that Xcode 27 beta's ld rejects with "mis-aligned LINKEDIT string
+# pool" when linking the final .app. Using RUSTFLAGS to switch to Xcode ld
+# breaks proc-macro dylibs (dlopen rejects them). The workaround: build
+# normally with rust-lld (proc-macros work), then relink the final dylib from
+# the static library (.a) using Xcode ld, which produces properly-aligned
+# output. The static library contains all object files; -force_load ensures
+# every object is included so all ff_* FFI symbols are exported.
+if [[ ! -f "$STATICLIB_PATH" ]]; then
+    die "Static library not found for relink: $STATICLIB_PATH"
 fi
 
-# Copy static library if available (optional)
-if [[ -f "$STATICLIB_PATH" ]]; then
-    if cp "$STATICLIB_PATH" "$OUTPUT_DIR/"; then
-        log_success "Copied $STATICLIB_NAME to $OUTPUT_DIR"
-    else
-        log_warn "Failed to copy static library (non-fatal)"
+# Detect macOS deployment target & sysroot for the relink
+RELINK_ARCH="$ARCH"  # arm64 or x86_64
+RELINK_SYSROOT=""
+RELINK_LD="ld"
+if command -v xcrun &> /dev/null; then
+    RELINK_SYSROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+    RELINK_LD="$(xcrun -find ld 2>/dev/null || echo ld)"
+fi
+if [[ -z "$RELINK_SYSROOT" ]]; then
+    log_warn "Could not determine macOS sysroot; relink may fail"
+fi
+
+log_info "Relinking dylib from static library using Xcode ld ($RELINK_LD)..."
+RELINK_LDFLAGS=(
+    -arch "$RELINK_ARCH"
+    -dylib
+    -platform_version macos 26.0 27.0
+    -install_name @rpath/libflowfinder_core.dylib
+    -compatibility_version 0.0.0
+    -current_version 0.0.0
+    -force_load "$STATICLIB_PATH"
+    -liconv
+    -framework CoreFoundation
+    -lSystem
+)
+if [[ -n "$RELINK_SYSROOT" ]]; then
+    RELINK_LDFLAGS+=(-syslibroot "$RELINK_SYSROOT")
+fi
+
+# Relink: suppress "was built for newer macOS" warnings (harmless for our use
+# case); capture real errors. Fall back to the rust-lld dylib if relink fails.
+RELINK_OUTPUT=$("$RELINK_LD" "${RELINK_LDFLAGS[@]}" -o "$OUTPUT_DIR/$DYLIB_NAME" 2>&1 || true)
+if echo "$RELINK_OUTPUT" | grep -qiE "error|undefined symbol"; then
+    log_warn "Xcode ld relink had errors:"
+    echo "$RELINK_OUTPUT" | grep -iE "error|undefined" | head -10 >&2
+    log_warn "Falling back to copied dylib (may hit LINKEDIT alignment issues)"
+    if ! cp "$DYLIB_PATH" "$OUTPUT_DIR/"; then
+        die "Failed to copy $DYLIB_NAME (fallback)"
     fi
+elif [[ -f "$OUTPUT_DIR/$DYLIB_NAME" ]]; then
+    log_success "Relinked dylib from static library"
+else
+    die "Relink produced no output and no error was detected"
+fi
+
+# Copy static library (optional, useful for debugging)
+if cp "$STATICLIB_PATH" "$OUTPUT_DIR/" 2>/dev/null; then
+    log_success "Copied $STATICLIB_NAME to $OUTPUT_DIR"
+else
+    log_warn "Failed to copy static library (non-fatal)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -159,13 +221,6 @@ fi
 # ---------------------------------------------------------------------------
 
 chmod +x "$OUTPUT_DIR/$DYLIB_NAME"
-
-# Fix install_name for portability — use @rpath so the dylib can be embedded in .app/Frameworks/
-if command -v install_name_tool &> /dev/null; then
-    log_info "Fixing dylib install_name to @rpath..."
-    install_name_tool -id @rpath/libflowfinder_core.dylib "$OUTPUT_DIR/$DYLIB_NAME"
-    log_success "install_name set to @rpath/libflowfinder_core.dylib"
-fi
 
 if command -v codesign &> /dev/null; then
     log_info "Codesigning library..."
