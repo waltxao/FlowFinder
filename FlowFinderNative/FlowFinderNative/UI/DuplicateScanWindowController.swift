@@ -1,24 +1,56 @@
 import Cocoa
 import Combine
 
-/// 重复扫描窗口控制器：目录选择 + 进度 + 分组结果 + 批量删除
+// MARK: - DuplicateOpaqueContainerView
+
+/// 重写 isOpaque 返回 true 的 NSView 子类（与 MainWindowController 同架构）
+private class DuplicateOpaqueContainerView: NSView {
+    override var isOpaque: Bool { return true }
+}
+
+// MARK: - DuplicateScanWindowController
+
+/// 重复文件扫描窗口控制器：720x560，工具栏+选项条+分栏(左列表+右预览)+操作栏+任务栏
+/// 窗口级玻璃架构：OpaqueContainerView + NSGlassEffectView + mainContainer
 public class DuplicateScanWindowController: NSWindowController {
 
     public static let shared = DuplicateScanWindowController()
 
+    // MARK: - UI 引用
+
     private var pathControl: NSPathControl!
     private var browseButton: NSButton!
     private var startButton: NSButton!
-    private var cancelButton: NSButton!
-    private var deleteButton: NSButton!
+    private var stopButton: NSButton!
+    /// 选项条控件
+    private var matchContentToggle: NSButton!
+    private var includeSubdirsToggle: NSButton!
+    private var matchFileNameToggle: NSButton!
+    private var fileTypePopup: NSPopUpButton!
+    /// 结果列表区
+    private var resultsScrollView: NSScrollView!
+    private var resultsStack: NSStackView!
+    private var sectionHeader: NSTextField!
+    /// 预览面板
+    private var previewPanel: DuplicatePreviewPanel!
+    /// 操作栏
+    private var selectionCountLabel: NSTextField!
+    private var spaceLabel: NSTextField!
+    private var clearSelectionButton: NSButton!
+    private var confirmDeleteButton: NSButton!
+    /// 任务栏
     private var progressIndicator: NSProgressIndicator!
     private var statusLabel: NSTextField!
-    private var outlineView: NSOutlineView!
-    private var scrollView: NSScrollView!
+
+    // MARK: - 数据
 
     private var duplicateGroups: [FFDuplicateGroup] = []
+    private var groupViews: [DuplicateGroupView] = []
+    /// 所有待删除的文件路径（跨组汇总）
+    private var allDeleteFilePaths: Set<String> = []
+    /// 所有可释放空间
+    private var totalReleasableSpace: UInt64 = 0
     private var isScanning = false
-    private var selectedFiles: Set<String> = []  // 选中的文件路径
 
     private override init(window: NSWindow?) {
         super.init(window: window)
@@ -26,12 +58,14 @@ public class DuplicateScanWindowController: NSWindowController {
 
     private convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.title = "重复文件扫描"
+        window.title = "查重扫描"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         window.minSize = NSSize(width: 600, height: 400)
         window.center()
         window.setFrameAutosaveName("DuplicateScanWindow")
@@ -47,40 +81,333 @@ public class DuplicateScanWindowController: NSWindowController {
 
     private func setupUI() {
         guard let window = window else { return }
-        let contentView = window.contentView!
 
-        // 顶部工具栏
-        let toolbar = NSView()
+        // 窗口透明以支持玻璃效果
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+
+        // ===== 顶部工具栏（路径标签+输入框+浏览+开始/停止） =====
+        let toolbar = makeToolbar()
         toolbar.translatesAutoresizingMaskIntoConstraints = false
+
+        // ===== 选项条（按内容匹配/包含子目录/按文件名匹配 + 文件类型 popup） =====
+        let optionsStrip = makeOptionsStrip()
+        optionsStrip.translatesAutoresizingMaskIntoConstraints = false
+
+        // ===== 中部分栏内容（左列表+右预览） =====
+        // 左侧结果列表区
+        let resultsPane = NSView()
+        resultsPane.translatesAutoresizingMaskIntoConstraints = false
+        resultsPane.wantsLayer = true
+        resultsPane.layer?.backgroundColor = NSColor.clear.cgColor
+
+        sectionHeader = NSTextField(labelWithString: "就绪")
+        sectionHeader.font = NSFont.systemFont(ofSize: 11)
+        sectionHeader.textColor = NSColor.secondaryLabelColor
+        sectionHeader.translatesAutoresizingMaskIntoConstraints = false
+
+        let sectionHeaderContainer = FFGlassView(level: .component, cornerRadius: 0)
+        sectionHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
+        sectionHeaderContainer.addSubview(sectionHeader)
+
+        resultsScrollView = NSScrollView()
+        resultsScrollView.hasVerticalScroller = true
+        resultsScrollView.autohidesScrollers = true
+        resultsScrollView.drawsBackground = false
+        resultsScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        resultsStack = NSStackView()
+        resultsStack.orientation = .vertical
+        resultsStack.spacing = 8
+        resultsStack.detachesHiddenViews = false
+        resultsStack.translatesAutoresizingMaskIntoConstraints = false
+        resultsStack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        resultsScrollView.documentView = resultsStack
+
+        resultsPane.addSubview(sectionHeaderContainer)
+        resultsPane.addSubview(resultsScrollView)
+
+        // 右侧预览面板（240pt，FFGlassView .panel .headerView 包裹）
+        previewPanel = DuplicatePreviewPanel(frame: .zero)
+        previewPanel.translatesAutoresizingMaskIntoConstraints = false
+        let previewGlass = FFGlassView(level: .panel, cornerRadius: 10, material: .headerView)
+        previewGlass.translatesAutoresizingMaskIntoConstraints = false
+        previewGlass.addSubview(previewPanel)
+
+        // 主分栏视图
+        let splitView = NSSplitView()
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        splitView.wantsLayer = true
+        splitView.layer?.backgroundColor = NSColor.clear.cgColor
+        splitView.addArrangedSubview(resultsPane)
+        splitView.addArrangedSubview(previewGlass)
+
+        // ===== 底部操作栏 =====
+        let actionbar = makeActionbar()
+        actionbar.translatesAutoresizingMaskIntoConstraints = false
+
+        // ===== 任务栏（进度条+状态） =====
+        let taskbar = makeTaskbar()
+        taskbar.translatesAutoresizingMaskIntoConstraints = false
+
+        // 组装主容器
+        let mainContainer = NSView()
+        mainContainer.translatesAutoresizingMaskIntoConstraints = false
+        mainContainer.wantsLayer = true
+        mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
+        mainContainer.addSubview(toolbar)
+        mainContainer.addSubview(optionsStrip)
+        mainContainer.addSubview(splitView)
+        mainContainer.addSubview(actionbar)
+        mainContainer.addSubview(taskbar)
+        mainContainer.appearance = NSApp.effectiveAppearance
+
+        NSLayoutConstraint.activate([
+            // 顶部工具栏
+            toolbar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            toolbar.topAnchor.constraint(equalTo: mainContainer.topAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 44),
+
+            // 选项条
+            optionsStrip.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            optionsStrip.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            optionsStrip.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            optionsStrip.heightAnchor.constraint(equalToConstant: 32),
+
+            // 分栏内容
+            splitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            splitView.topAnchor.constraint(equalTo: optionsStrip.bottomAnchor),
+            splitView.bottomAnchor.constraint(equalTo: actionbar.topAnchor),
+
+            // 操作栏
+            actionbar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            actionbar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            actionbar.bottomAnchor.constraint(equalTo: taskbar.topAnchor),
+            actionbar.heightAnchor.constraint(equalToConstant: 40),
+
+            // 任务栏
+            taskbar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            taskbar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            taskbar.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
+            taskbar.heightAnchor.constraint(equalToConstant: 28),
+
+            // 预览面板宽度 240pt
+            previewGlass.widthAnchor.constraint(equalToConstant: 240),
+        ])
+
+        // 结果区内部约束
+        NSLayoutConstraint.activate([
+            sectionHeaderContainer.leadingAnchor.constraint(equalTo: resultsPane.leadingAnchor),
+            sectionHeaderContainer.trailingAnchor.constraint(equalTo: resultsPane.trailingAnchor),
+            sectionHeaderContainer.topAnchor.constraint(equalTo: resultsPane.topAnchor),
+            sectionHeaderContainer.heightAnchor.constraint(equalToConstant: 22),
+            sectionHeader.leadingAnchor.constraint(equalTo: sectionHeaderContainer.leadingAnchor, constant: 12),
+            sectionHeader.centerYAnchor.constraint(equalTo: sectionHeaderContainer.centerYAnchor),
+
+            resultsScrollView.leadingAnchor.constraint(equalTo: resultsPane.leadingAnchor),
+            resultsScrollView.trailingAnchor.constraint(equalTo: resultsPane.trailingAnchor),
+            resultsScrollView.topAnchor.constraint(equalTo: sectionHeaderContainer.bottomAnchor),
+            resultsScrollView.bottomAnchor.constraint(equalTo: resultsPane.bottomAnchor),
+
+            resultsStack.leadingAnchor.constraint(equalTo: resultsScrollView.contentView.leadingAnchor),
+            resultsStack.trailingAnchor.constraint(equalTo: resultsScrollView.contentView.trailingAnchor),
+            resultsStack.topAnchor.constraint(equalTo: resultsScrollView.contentView.topAnchor),
+            resultsStack.widthAnchor.constraint(equalTo: resultsScrollView.contentView.widthAnchor),
+
+            previewPanel.leadingAnchor.constraint(equalTo: previewGlass.leadingAnchor),
+            previewPanel.trailingAnchor.constraint(equalTo: previewGlass.trailingAnchor),
+            previewPanel.topAnchor.constraint(equalTo: previewGlass.topAnchor),
+            previewPanel.bottomAnchor.constraint(equalTo: previewGlass.bottomAnchor),
+        ])
+
+        splitView.setPosition(720 - 240, ofDividerAt: 0)
+        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+
+        // ===== 窗口级玻璃架构（参照 MainWindowController） =====
+        if #available(macOS 26.0, *) {
+            let containerView = DuplicateOpaqueContainerView()
+            containerView.wantsLayer = true
+            containerView.translatesAutoresizingMaskIntoConstraints = false
+
+            let glassView = NSGlassEffectView()
+            glassView.style = .clear
+            glassView.cornerRadius = 0
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+
+            containerView.addSubview(glassView)
+            containerView.addSubview(mainContainer)
+
+            NSLayoutConstraint.activate([
+                glassView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                glassView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                glassView.topAnchor.constraint(equalTo: containerView.topAnchor),
+                glassView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+                mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
+                mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            ])
+
+            window.contentView = containerView
+        } else {
+            // macOS 12-25 回退：NSVisualEffectView
+            let visualEffectView = NSVisualEffectView()
+            visualEffectView.material = .underWindowBackground
+            visualEffectView.blendingMode = .behindWindow
+            visualEffectView.state = .active
+            visualEffectView.addSubview(mainContainer)
+            NSLayoutConstraint.activate([
+                mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
+                mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
+                mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
+                mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
+            ])
+            window.contentView = visualEffectView
+        }
+    }
+
+    /// 构建顶部工具栏（FFGlassView .panel .headerView 玻璃背景）
+    private func makeToolbar() -> NSView {
+        let toolbar = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
+
+        let pathLabel = NSTextField(labelWithString: "扫描目录:")
+        pathLabel.font = NSFont.systemFont(ofSize: 12)
+        pathLabel.textColor = NSColor.labelColor
+        pathLabel.translatesAutoresizingMaskIntoConstraints = false
 
         pathControl = NSPathControl()
         pathControl.pathStyle = .popUp
         pathControl.url = FileManager.default.homeDirectoryForCurrentUser
         pathControl.translatesAutoresizingMaskIntoConstraints = false
 
-        browseButton = NSButton(title: "选择目录", target: self, action: #selector(browseClicked))
+        browseButton = NSButton(title: "浏览", target: self, action: #selector(browseClicked))
         browseButton.bezelStyle = .rounded
+        browseButton.controlSize = .small
         browseButton.translatesAutoresizingMaskIntoConstraints = false
 
         startButton = NSButton(title: "开始扫描", target: self, action: #selector(startScan))
         startButton.bezelStyle = .rounded
+        startButton.controlSize = .small
         startButton.translatesAutoresizingMaskIntoConstraints = false
 
-        cancelButton = NSButton(title: "取消", target: self, action: #selector(cancelScan))
-        cancelButton.bezelStyle = .rounded
-        cancelButton.isEnabled = false
-        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        stopButton = NSButton(title: "停止", target: self, action: #selector(cancelScan))
+        stopButton.bezelStyle = .rounded
+        stopButton.controlSize = .small
+        stopButton.isEnabled = false
+        stopButton.translatesAutoresizingMaskIntoConstraints = false
 
-        deleteButton = NSButton(title: "删除选中", target: self, action: #selector(deleteSelected))
-        deleteButton.bezelStyle = .rounded
-        deleteButton.isEnabled = false
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView(views: [pathLabel, pathControl, browseButton, NSView(), startButton, stopButton])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -12),
+            stack.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            pathControl.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
+        ])
+        return toolbar
+    }
+
+    /// 构建选项条（FFGlassView .component 玻璃背景）
+    private func makeOptionsStrip() -> NSView {
+        let strip = FFGlassView(level: .component, cornerRadius: 0)
+
+        matchContentToggle = NSButton(checkboxWithTitle: "按内容匹配", target: self, action: #selector(optionChanged))
+        matchContentToggle.controlSize = .small
+        matchContentToggle.state = .on
+        matchContentToggle.translatesAutoresizingMaskIntoConstraints = false
+
+        includeSubdirsToggle = NSButton(checkboxWithTitle: "包含子目录", target: self, action: #selector(optionChanged))
+        includeSubdirsToggle.controlSize = .small
+        includeSubdirsToggle.state = .on
+        includeSubdirsToggle.translatesAutoresizingMaskIntoConstraints = false
+
+        matchFileNameToggle = NSButton(checkboxWithTitle: "按文件名匹配", target: self, action: #selector(optionChanged))
+        matchFileNameToggle.controlSize = .small
+        matchFileNameToggle.translatesAutoresizingMaskIntoConstraints = false
+
+        fileTypePopup = NSPopUpButton()
+        fileTypePopup.addItems(withTitles: ["全部类型", "图片", "视频", "文档", "音频", "其他"])
+        fileTypePopup.controlSize = .small
+        fileTypePopup.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [matchContentToggle, includeSubdirsToggle, matchFileNameToggle, NSView(), fileTypePopup])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 16
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        strip.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: strip.trailingAnchor, constant: -12),
+            stack.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+        ])
+        return strip
+    }
+
+    /// 构建操作栏（FFGlassView .panel .headerView 玻璃背景）
+    private func makeActionbar() -> NSView {
+        let bar = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
+
+        selectionCountLabel = NSTextField(labelWithString: "已选择 0 个文件待删除")
+        selectionCountLabel.font = NSFont.systemFont(ofSize: 11)
+        selectionCountLabel.textColor = NSColor.labelColor
+        selectionCountLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        spaceLabel = NSTextField(labelWithString: "可释放 0 KB")
+        spaceLabel.font = NSFont.systemFont(ofSize: 11)
+        spaceLabel.textColor = NSColor.systemGreen
+        spaceLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        clearSelectionButton = NSButton(title: "取消选择", target: self, action: #selector(clearSelection))
+        clearSelectionButton.bezelStyle = .rounded
+        clearSelectionButton.controlSize = .small
+        clearSelectionButton.isEnabled = false
+        clearSelectionButton.translatesAutoresizingMaskIntoConstraints = false
+
+        confirmDeleteButton = NSButton(title: "确认删除", target: self, action: #selector(deleteSelected))
+        confirmDeleteButton.bezelStyle = .rounded
+        confirmDeleteButton.controlSize = .small
+        confirmDeleteButton.isEnabled = false
+        confirmDeleteButton.translatesAutoresizingMaskIntoConstraints = false
+        // 红色键样式
+        confirmDeleteButton.contentTintColor = NSColor.systemRed
+
+        let stack = NSStackView(views: [selectionCountLabel, spaceLabel, NSView(), clearSelectionButton, confirmDeleteButton])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
+            stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+        ])
+        return bar
+    }
+
+    /// 构建任务栏（FFGlassView .component 玻璃背景）
+    private func makeTaskbar() -> NSView {
+        let bar = FFGlassView(level: .component, cornerRadius: 0)
 
         progressIndicator = NSProgressIndicator()
         progressIndicator.style = .bar
         progressIndicator.isIndeterminate = false
         progressIndicator.minValue = 0
         progressIndicator.maxValue = 100
+        progressIndicator.controlSize = .small
         progressIndicator.translatesAutoresizingMaskIntoConstraints = false
 
         statusLabel = NSTextField(labelWithString: "就绪")
@@ -88,83 +415,20 @@ public class DuplicateScanWindowController: NSWindowController {
         statusLabel.textColor = NSColor.secondaryLabelColor
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        toolbar.addSubview(pathControl)
-        toolbar.addSubview(browseButton)
-        toolbar.addSubview(startButton)
-        toolbar.addSubview(cancelButton)
-        toolbar.addSubview(deleteButton)
-        toolbar.addSubview(progressIndicator)
-        toolbar.addSubview(statusLabel)
-
-        // 结果 OutlineView
-        scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        outlineView = NSOutlineView()
-        outlineView.allowsMultipleSelection = true
-        outlineView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        outlineView.usesAlternatingRowBackgroundColors = true
-        outlineView.rowHeight = 24
-
-        let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        nameCol.title = "名称"
-        nameCol.width = 300
-        outlineView.addTableColumn(nameCol)
-
-        let pathCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("path"))
-        pathCol.title = "路径"
-        pathCol.width = 400
-        outlineView.addTableColumn(pathCol)
-
-        let sizeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
-        sizeCol.title = "大小"
-        sizeCol.width = 100
-        outlineView.addTableColumn(sizeCol)
-
-        outlineView.dataSource = self
-        outlineView.delegate = self
-
-        scrollView.documentView = outlineView
-        contentView.addSubview(toolbar)
-        contentView.addSubview(scrollView)
+        let stack = NSStackView(views: [progressIndicator, statusLabel])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            toolbar.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            toolbar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            toolbar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            toolbar.heightAnchor.constraint(equalToConstant: 60),
-
-            pathControl.topAnchor.constraint(equalTo: toolbar.topAnchor),
-            pathControl.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
-            pathControl.widthAnchor.constraint(equalToConstant: 400),
-
-            browseButton.topAnchor.constraint(equalTo: toolbar.topAnchor),
-            browseButton.leadingAnchor.constraint(equalTo: pathControl.trailingAnchor, constant: 8),
-
-            startButton.topAnchor.constraint(equalTo: toolbar.topAnchor),
-            startButton.leadingAnchor.constraint(equalTo: browseButton.trailingAnchor, constant: 8),
-
-            cancelButton.topAnchor.constraint(equalTo: toolbar.topAnchor),
-            cancelButton.leadingAnchor.constraint(equalTo: startButton.trailingAnchor, constant: 8),
-
-            deleteButton.topAnchor.constraint(equalTo: toolbar.topAnchor),
-            deleteButton.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
-
-            progressIndicator.topAnchor.constraint(equalTo: pathControl.bottomAnchor, constant: 8),
-            progressIndicator.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
-            progressIndicator.trailingAnchor.constraint(equalTo: statusLabel.leadingAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
+            stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             progressIndicator.heightAnchor.constraint(equalToConstant: 10),
-
-            statusLabel.topAnchor.constraint(equalTo: pathControl.bottomAnchor, constant: 4),
-            statusLabel.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-
-            scrollView.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
+        return bar
     }
 
     // MARK: - Public API
@@ -175,6 +439,10 @@ public class DuplicateScanWindowController: NSWindowController {
     }
 
     // MARK: - Actions
+
+    @objc private func optionChanged() {
+        // 选项变更：当前仅记录，下次扫描生效
+    }
 
     @objc private func browseClicked() {
         let openPanel = NSOpenPanel()
@@ -194,18 +462,21 @@ public class DuplicateScanWindowController: NSWindowController {
 
         isScanning = true
         duplicateGroups = []
-        selectedFiles = []
+        allDeleteFilePaths = []
+        totalReleasableSpace = 0
+        groupViews.forEach { $0.removeFromSuperview() }
+        groupViews = []
         startButton.isEnabled = false
-        cancelButton.isEnabled = true
-        deleteButton.isEnabled = false
+        stopButton.isEnabled = true
+        confirmDeleteButton.isEnabled = false
+        clearSelectionButton.isEnabled = false
         progressIndicator.doubleValue = 0
         statusLabel.stringValue = "扫描中..."
-        outlineView.reloadData()
+        sectionHeader.stringValue = "扫描中..."
 
         DuplicateScanBridge.shared.scanDuplicates(
             path: path,
             progressHandler: { [weak self] scanned, total in
-                // Bug 2 修复：所有 UI 更新必须在主线程（progressIndicator/statusLabel 是 UI 控件）
                 DispatchQueue.main.async {
                     let progress = total > 0 ? Double(scanned) / Double(total) * 100 : 0
                     self?.progressIndicator.doubleValue = progress
@@ -213,21 +484,20 @@ public class DuplicateScanWindowController: NSWindowController {
                 }
             },
             groupHandler: { [weak self] group in
-                // Bug 2 修复：duplicateGroups 数组被 UI 线程读取（outlineView 数据源），
-                // 必须在主线程修改，否则与主线程的读取形成数据竞争
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.duplicateGroups.append(group)
-                    self.outlineView.reloadData()
+                    self.addGroupView(group)
+                    self.updateSectionHeader()
                 }
             },
             completion: { [weak self] error in
-                // Bug 2 修复：completion 回调可能在后台线程，UI 更新需切回主线程
                 DispatchQueue.main.async {
                     self?.isScanning = false
                     self?.startButton.isEnabled = true
-                    self?.cancelButton.isEnabled = false
-                    self?.deleteButton.isEnabled = !(self?.duplicateGroups.isEmpty ?? true)
+                    self?.stopButton.isEnabled = false
+                    self?.confirmDeleteButton.isEnabled = !(self?.allDeleteFilePaths.isEmpty ?? true)
+                    self?.clearSelectionButton.isEnabled = !(self?.allDeleteFilePaths.isEmpty ?? true)
 
                     if let error = error {
                         self?.statusLabel.stringValue = "错误: \(error.localizedDescription)"
@@ -235,6 +505,7 @@ public class DuplicateScanWindowController: NSWindowController {
                         let count = self?.duplicateGroups.count ?? 0
                         self?.statusLabel.stringValue = "完成，找到 \(count) 个重复组"
                     }
+                    self?.updateSectionHeader()
                 }
             }
         )
@@ -244,27 +515,51 @@ public class DuplicateScanWindowController: NSWindowController {
         DuplicateScanBridge.shared.cancelScan()
         isScanning = false
         startButton.isEnabled = true
-        cancelButton.isEnabled = false
+        stopButton.isEnabled = false
         statusLabel.stringValue = "已取消扫描"
     }
 
-    @objc private func deleteSelected() {
-        guard !selectedFiles.isEmpty else { return }
+    @objc private func clearSelection() {
+        allDeleteFilePaths = []
+        totalReleasableSpace = 0
+        // 重置所有组视图的选中状态（保留第一项）
+        for groupView in groupViews {
+            // 触发重置：通过重新构建组视图
+            let group = groupView.getGroup()
+            let index = groupViews.firstIndex(where: { $0 === groupView })
+            if let index = index {
+                groupView.removeFromSuperview()
+                let newView = DuplicateGroupView(group: group)
+                newView.delegate = self
+                groupViews[index] = newView
+                resultsStack.insertArrangedSubview(newView, at: index)
+                constrainGroupView(newView)
+                // 收集默认删除项
+                for file in group.files.dropFirst() {
+                    allDeleteFilePaths.insert(file.path)
+                    totalReleasableSpace += file.size
+                }
+            }
+        }
+        updateActionbar()
+    }
 
-        let alert = NSAlert()
-        alert.messageText = "删除 \(selectedFiles.count) 个重复文件？"
-        alert.informativeText = "此操作无法撤销。请确认选中的文件是要删除的副本。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
-        alert.beginSheetModal(for: window!) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
+    @objc private func deleteSelected() {
+        guard !allDeleteFilePaths.isEmpty else { return }
+
+        let dialog = DeleteConfirmDialog(fileCount: allDeleteFilePaths.count) { [weak self] in
             self?.performDelete()
+        }
+        if let window = window {
+            dialog.beginSheetModal(for: window)
+        } else {
+            // 无窗口回退（极少见），直接执行
+            performDelete()
         }
     }
 
     private func performDelete() {
-        let files = Array(selectedFiles)
+        let files = Array(allDeleteFilePaths)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var deletedCount = 0
@@ -280,111 +575,84 @@ public class DuplicateScanWindowController: NSWindowController {
             }
 
             DispatchQueue.main.async {
-                self?.selectedFiles.removeAll()
+                self?.allDeleteFilePaths = []
+                self?.totalReleasableSpace = 0
+                self?.updateActionbar()
                 // 重新扫描以刷新结果
                 self?.startScan()
             }
         }
     }
+
+    // MARK: - 组视图管理
+
+    private func addGroupView(_ group: FFDuplicateGroup) {
+        let groupView = DuplicateGroupView(group: group)
+        groupView.delegate = self
+        groupViews.append(groupView)
+        resultsStack.addArrangedSubview(groupView)
+        constrainGroupView(groupView)
+
+        // 默认收集删除项（除保留项外的所有文件）
+        for file in group.files.dropFirst() {
+            allDeleteFilePaths.insert(file.path)
+            totalReleasableSpace += file.size
+        }
+        updateActionbar()
+
+        // 选中第一个组时更新预览
+        if groupViews.count == 1 {
+            previewPanel.update(with: group)
+        }
+    }
+
+    private func constrainGroupView(_ view: DuplicateGroupView) {
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: resultsStack.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: resultsStack.trailingAnchor),
+        ])
+    }
+
+    private func updateSectionHeader() {
+        let groupCount = duplicateGroups.count
+        let fileCount = duplicateGroups.reduce(0) { $0 + $1.files.count }
+        sectionHeader.stringValue = "发现 \(groupCount) 组重复 · 共 \(fileCount) 个文件"
+    }
+
+    private func updateActionbar() {
+        selectionCountLabel.stringValue = "已选择 \(allDeleteFilePaths.count) 个文件待删除"
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        spaceLabel.stringValue = "可释放 \(formatter.string(fromByteCount: Int64(totalReleasableSpace)))"
+        confirmDeleteButton.isEnabled = !allDeleteFilePaths.isEmpty
+        clearSelectionButton.isEnabled = !allDeleteFilePaths.isEmpty
+    }
 }
 
-// MARK: - NSOutlineViewDataSource
+// MARK: - DuplicateGroupViewDelegate
 
-extension DuplicateScanWindowController: NSOutlineViewDataSource {
-    public func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        if item == nil {
-            return duplicateGroups.count
-        }
-        if let group = item as? FFDuplicateGroup {
-            return group.files.count
-        }
-        return 0
-    }
+extension DuplicateScanWindowController: DuplicateGroupViewDelegate {
 
-    public func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        if item == nil {
-            return duplicateGroups[index]
-        }
-        if let group = item as? FFDuplicateGroup {
-            return group.files[index]
-        }
-        return ""
-    }
-
-    public func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        if let group = item as? FFDuplicateGroup {
-            return group.files.count > 0
-        }
-        return false
-    }
-}
-
-// MARK: - NSOutlineViewDelegate
-
-extension DuplicateScanWindowController: NSOutlineViewDelegate {
-    public func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
-        let cellID = NSUserInterfaceItemIdentifier(tableColumn?.identifier.rawValue ?? "name")
-        let cellView = outlineView.makeView(withIdentifier: cellID, owner: self) as? NSTableCellView
-            ?? NSTableCellView()
-        cellView.identifier = cellID
-
-        if cellView.textField == nil {
-            let tf = NSTextField(labelWithString: "")
-            tf.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-            tf.lineBreakMode = .byTruncatingTail
-            cellView.addSubview(tf)
-            cellView.textField = tf
-            tf.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                tf.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                tf.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-                tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-            ])
-        }
-
-        switch item {
-        case let group as FFDuplicateGroup:
-            switch tableColumn?.identifier.rawValue {
-            case "name":
-                cellView.textField?.stringValue = "重复组（\(group.files.count) 个文件）"
-                cellView.textField?.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
-            case "path":
-                cellView.textField?.stringValue = "哈希: \(group.hash.prefix(16))..."
-            case "size":
-                let formatter = ByteCountFormatter()
-                formatter.countStyle = .file
-                cellView.textField?.stringValue = formatter.string(fromByteCount: Int64(group.size))
-            default:
-                break
+    func duplicateGroupView(_ view: DuplicateGroupView, didChangeSelectionInGroup groupId: String, keepFilePath: String, deleteFilePaths: [String]) {
+        // 更新汇总集合
+        // 先移除该组之前的所有删除项（通过组 id 过滤），再添加新的
+        // 简化实现：重新计算所有组的删除项
+        allDeleteFilePaths = []
+        totalReleasableSpace = 0
+        for groupView in groupViews {
+            let group = groupView.getGroup()
+            let groupDeletePaths = Set(groupView.deleteFilePaths)
+            for file in group.files {
+                if groupDeletePaths.contains(file.path) {
+                    allDeleteFilePaths.insert(file.path)
+                    totalReleasableSpace += file.size
+                }
             }
-        case let file as FFDuplicateFile:
-            switch tableColumn?.identifier.rawValue {
-            case "name":
-                cellView.textField?.stringValue = file.name
-            case "path":
-                cellView.textField?.stringValue = file.path
-            case "size":
-                let formatter = ByteCountFormatter()
-                formatter.countStyle = .file
-                cellView.textField?.stringValue = formatter.string(fromByteCount: Int64(file.size))
-            default:
-                break
-            }
-        default:
-            break
         }
-
-        return cellView
+        updateActionbar()
     }
 
-    public func outlineViewSelectionDidChange(_ notification: Notification) {
-        // 更新选中文件集合
-        selectedFiles.removeAll()
-        let selectedRows = outlineView.selectedRowIndexes
-        for row in selectedRows {
-            guard let item = outlineView.item(atRow: row) as? FFDuplicateFile else { continue }
-            selectedFiles.insert(item.path)
-        }
-        deleteButton.isEnabled = !selectedFiles.isEmpty
+    func duplicateGroupView(_ view: DuplicateGroupView, didSelectGroup group: FFDuplicateGroup) {
+        previewPanel.update(with: group)
     }
 }

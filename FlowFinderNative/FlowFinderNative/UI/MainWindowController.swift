@@ -2,6 +2,23 @@ import Cocoa
 import Combine
 import QuickLook
 
+// MARK: - OpaqueContainerView
+
+/// 重写 isOpaque 返回 true 的 NSView 子类。
+///
+/// 根因修复：当 window.isOpaque=false 且 backgroundColor=.clear 时，macOS 窗口服务器
+/// 使用逐像素 alpha 决定鼠标事件捕获。普通 NSView 的 isOpaque 默认返回 false，
+/// 且其 layer 背景为 clear（alpha=0），导致整个窗口对所有像素透明——鼠标事件全部穿透。
+///
+/// NSVisualEffectView 之所以能正常工作，是因为它重写了 isOpaque 返回 true。
+/// 此处对 containerView 做同样处理，让窗口服务器捕获鼠标事件，同时不影响玻璃视觉效果
+/// （玻璃效果由 NSGlassEffectView 子视图绘制，containerView 仅作为事件接收容器）。
+private class OpaqueContainerView: NSView {
+    override var isOpaque: Bool {
+        return true
+    }
+}
+
 // MARK: - MainWindowController
 
 public class MainWindowController: NSWindowController {
@@ -25,6 +42,9 @@ public class MainWindowController: NSWindowController {
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
+    /// 1.2 活动面板顶部 accent 色条（替代 borderWidth 方案）
+    private var leftAccentBar: NSView!
+    private var rightAccentBar: NSView!
     private var leftDetailsBar: ExpandableDetailsBar!
     private var rightDetailsBar: ExpandableDetailsBar!
     private var taskProgressBar: TaskProgressBar!
@@ -32,6 +52,10 @@ public class MainWindowController: NSWindowController {
     private var paneSplitView: NSSplitView!
     /// macOS 26+: NSGlassEffectView（液态玻璃）；旧版 macOS 回退到 NSVisualEffectView
     private var glassEffectView: NSView!
+    /// 主内容容器引用（ThemeManager 需设置 appearance 以确保选中高亮可见）
+    private var mainContainerView: NSView!
+    /// 诊断：鼠标事件监听器（必须强引用，否则会被立即释放）
+    private var mouseEventMonitor: Any?
 
     private var leftPaneToolbar: PaneToolbar!
     private var rightPaneToolbar: PaneToolbar!
@@ -91,22 +115,72 @@ public class MainWindowController: NSWindowController {
 
         // setupUI 完成后再显示窗口（此时透明设置已就绪）
         window.makeKeyAndOrderFront(nil)
+        FFDebug.log("Window state: isKey=\(window.isKeyWindow) isMain=\(window.isMainWindow) isVisible=\(window.isVisible) frame=\(window.frame) ignoresMouseEvents=\(window.ignoresMouseEvents)")
+        if let cv = window.contentView {
+            FFDebug.log("contentView: type=\(type(of: cv)) frame=\(cv.frame) subviews=\(cv.subviews.map { "\(type(of: $0))" })")
+        }
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // MARK: - NSWindowDelegate (窗口状态跟踪)
+
+    /// 窗口成为 key window（可接收键盘+鼠标事件）时触发。
+    /// 修复验证：此前日志显示 isKey=false，导致鼠标事件无法到达。
+    public func windowDidBecomeKey(_ notification: Notification) {
+        FFDebug.log("windowDidBecomeKey: window is now key window")
+    }
+
+    public func windowDidResignKey(_ notification: Notification) {
+        FFDebug.log("windowDidResignKey: window lost key status")
+    }
+
+    public func windowDidBecomeMain(_ notification: Notification) {
+        FFDebug.log("windowDidBecomeMain: window is now main window")
+    }
+
+    public func windowDidResignMain(_ notification: Notification) {
+        FFDebug.log("windowDidResignMain: window lost main status")
+    }
+
     // MARK: - UI Setup
 
     private func setupUI() {
-        guard let window = window else { return }
+        guard let window = window else {
+            FFDebug.log("setupUI: window is nil!")
+            return
+        }
+        FFDebug.log("setupUI: started, window=\(window.frame)")
 
         // 窗口必须透明，否则玻璃效果无法模糊窗口背后的内容
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = true
         window.titlebarAppearsTransparent = true
+
+        // 1.1 标题栏：16x16 应用图标 + FlowFinder 文本
+        // 使用 NSTitlebarAccessoryViewController 注入自定义标题视图到标题栏左侧
+        window.titleVisibility = .hidden
+        let titleStack = NSStackView()
+        titleStack.orientation = .horizontal
+        titleStack.alignment = .centerY
+        titleStack.spacing = 6
+        let titleIcon = NSImageView()
+        titleIcon.image = NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
+        titleIcon.imageScaling = .scaleProportionallyDown
+        titleIcon.translatesAutoresizingMaskIntoConstraints = false
+        titleIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        titleIcon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        let titleLabel = NSTextField(labelWithString: "FlowFinder")
+        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        titleStack.addArrangedSubview(titleIcon)
+        titleStack.addArrangedSubview(titleLabel)
+        let titlebarVC = NSTitlebarAccessoryViewController()
+        titlebarVC.view = titleStack
+        titlebarVC.layoutAttribute = .left
+        window.addTitlebarAccessoryViewController(titlebarVC)
 
         // Sidebar
         sidebarView = SidebarView()
@@ -162,20 +236,60 @@ public class MainWindowController: NSWindowController {
             taskProgressBar.heightAnchor.constraint(equalToConstant: TaskProgressBar.height),
         ])
 
-        // macOS 26+: NSGlassEffectView 作为窗口 contentView
-        // .clear 样式：透明液态玻璃效果，模糊桌面壁纸
-        // .regular 样式会变成灰色不透明，失去玻璃效果
-        // 窗口透明（isOpaque=false, backgroundColor=.clear）让玻璃模糊桌面壁纸
+        // macOS 26+: 背景玻璃架构
+        // 根因（systematic-debugging Phase 1 证据）：
+        //   - window.isOpaque=false + backgroundColor=.clear 时，窗口服务器用逐像素 alpha
+        //     决定鼠标事件捕获。普通 NSView 的 isOpaque 默认 false，layer 背景 clear(alpha=0)，
+        //     导致整个窗口对所有像素透明——鼠标事件全部穿透到背后窗口。
+        //   - 证据：debug log 显示 isKey=false 且零鼠标事件捕获（NSEvent monitor 已安装）。
+        //   - NSVisualEffectView 能工作是因为它重写 isOpaque 返回 true。
+        //
+        // 修复：containerView 使用 OpaqueContainerView（重写 isOpaque=true），
+        //   让窗口服务器捕获鼠标事件。玻璃视觉效果由 NSGlassEffectView 子视图绘制，
+        //   containerView 仅作为不透明事件接收容器，不影响玻璃渲染。
+        //
+        // 架构：
+        //   - containerView（OpaqueContainerView, isOpaque=true）作为 window.contentView
+        //   - glassView（NSGlassEffectView）作为 containerView 的背景子视图，仅视觉
+        //   - mainContainer 作为 containerView 的前景子视图，接收所有鼠标事件
         if #available(macOS 26.0, *) {
+            // 使用 OpaqueContainerView（重写 isOpaque=true）作为 contentView，
+            // 让窗口服务器捕获鼠标事件，避免事件穿透。
+            let containerView = OpaqueContainerView()
+            containerView.wantsLayer = true
+            containerView.translatesAutoresizingMaskIntoConstraints = false
+
             let glassView = NSGlassEffectView()
             glassView.style = .clear
             glassView.cornerRadius = 0
-            if #available(macOS 27.0, *) {
-                glassView.effectIsInteractive = true
-            }
-            glassView.contentView = mainContainer
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+
+            // 先加 glassView（底层），再加 mainContainer（顶层）
+            // AppKit hitTest 从顶层（subviews 末尾）向底层检查，
+            // mainContainer 后加入所以位于顶层，优先接收事件。
+            containerView.addSubview(glassView)
+            containerView.addSubview(mainContainer)
+            mainContainer.translatesAutoresizingMaskIntoConstraints = false
+
+            NSLayoutConstraint.activate([
+                glassView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                glassView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                glassView.topAnchor.constraint(equalTo: containerView.topAnchor),
+                glassView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+
+                mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
+                mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            ])
+
+            // mainContainer 显式设置 appearance 确保子视图能解析选中高亮色
+            // （selectedContentBackgroundColor）
+            mainContainer.appearance = NSApp.effectiveAppearance
+            mainContainerView = mainContainer
+            FFDebug.log("setupUI: using background-glass architecture (containerView + glassView + mainContainer)")
             glassEffectView = glassView
-            window.contentView = glassView
+            window.contentView = containerView
         } else {
             // Fallback: macOS 12-25 使用 NSVisualEffectView
             let visualEffectView = NSVisualEffectView()
@@ -191,6 +305,7 @@ public class MainWindowController: NSWindowController {
                 mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
             ])
             glassEffectView = nil
+            mainContainerView = mainContainer
             window.contentView = visualEffectView
         }
 
@@ -198,8 +313,23 @@ public class MainWindowController: NSWindowController {
         // ThemeManager 在 AppDelegate 启动时设置 window.appearance，会破坏玻璃效果
         // 延迟到下一个 runloop 确保在 ThemeManager 之后执行
         DispatchQueue.main.async { [weak self] in
-            self?.window?.appearance = nil
+            guard let self = self else { return }
+            self.window?.appearance = nil
+            // mainContainerView 显式设置 appearance 确保选中高亮可见
+            self.mainContainerView?.appearance = NSApp.effectiveAppearance
         }
+
+        // 诊断：监听所有鼠标按下事件，验证事件是否到达窗口
+        // 必须存储返回值，否则 monitor 会被立即释放
+        // 如果此日志出现但 FileListView.mouseDown 未出现，说明 hitTest 在中间层丢失
+        mouseEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            let winTitle = event.window?.title ?? "nil"
+            let loc = event.locationInWindow
+            let hitView = event.window?.contentView?.hitTest(loc).map { String(describing: type(of: $0)) } ?? "nil"
+            FFDebug.log("EVENT leftMouseDown window=\(winTitle) loc=\(loc) hitView=\(hitView)")
+            return event
+        }
+        FFDebug.log("NSEvent monitor installed: \(mouseEventMonitor != nil)")
 
         // Holding priorities
         mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
@@ -234,12 +364,21 @@ public class MainWindowController: NSWindowController {
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
     private func createPaneContainer(side: PaneSide) -> NSView {
+        FFDebug.log("createPaneContainer: side=\(side)")
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.99).cgColor
+        container.layer?.backgroundColor = NSColor.clear.cgColor
         container.layer?.cornerRadius = 12
         container.layer?.masksToBounds = true
+
+        // 1.2 活动面板顶部 accent 色条（2pt 高，初始隐藏，由 updateActivePaneVisual 切换）
+        let accentBar = NSView()
+        accentBar.wantsLayer = true
+        accentBar.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        accentBar.translatesAutoresizingMaskIntoConstraints = false
+        accentBar.isHidden = true  // 初始隐藏，仅活动面板显示
+        container.addSubview(accentBar)
 
         // 面包屑导航栏
         let breadcrumbBar = BreadcrumbBar()
@@ -276,6 +415,9 @@ public class MainWindowController: NSWindowController {
         gridView.onSelectionChanged = { [weak self] files in
             self?.handleSelectionChanged(side: side, files: files)
         }
+        gridView.onActivatePane = { [weak self] in
+            self?.activatePane(side)
+        }
 
         // DetailsBar（每面板一个，可展开/收起）
         let detailsBar = ExpandableDetailsBar()
@@ -289,6 +431,12 @@ public class MainWindowController: NSWindowController {
         container.addSubview(detailsBar)
 
         NSLayoutConstraint.activate([
+            // 1.2 accentBar 贴顶部（被 container 圆角裁剪，跟随圆角）
+            accentBar.topAnchor.constraint(equalTo: container.topAnchor),
+            accentBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            accentBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            accentBar.heightAnchor.constraint(equalToConstant: 2),
+
             breadcrumbBar.topAnchor.constraint(equalTo: container.topAnchor),
             breadcrumbBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             breadcrumbBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -322,12 +470,14 @@ public class MainWindowController: NSWindowController {
             leftFileListView = listView
             leftFileGridView = gridView
             leftDetailsBar = detailsBar
+            leftAccentBar = accentBar
         case .right:
             rightPaneToolbar = toolbar
             rightBreadcrumbBar = breadcrumbBar
             rightFileListView = listView
             rightFileGridView = gridView
             rightDetailsBar = detailsBar
+            rightAccentBar = accentBar
         }
 
         return container
@@ -391,6 +541,19 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleFileListAddFavorite(_:)),
             name: .fileListDidAddFavorite, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListAddTag(_:)),
+            name: NSNotification.Name("FileListAddTag"), object: nil
+        )
+    }
+
+    @objc private func handleFileListAddTag(_ notification: Notification) {
+        guard let path = notification.userInfo?["path"] as? String else { return }
+        let currentTags = TagBridge.shared.getTags(path: path)
+        let dialog = TagSelectorDialog(filePath: path, currentTags: currentTags)
+        if let window = window {
+            dialog.beginSheetModal(for: window)
+        }
     }
 
     @objc private func handleQuickLookRequest(_ notification: Notification) {
@@ -586,10 +749,10 @@ public class MainWindowController: NSWindowController {
     }
 
     private func updateActivePaneVisual() {
-        leftPaneContainer.layer?.borderWidth = activePane == .left ? 2 : 0
-        leftPaneContainer.layer?.borderColor = NSColor.controlAccentColor.cgColor
-        rightPaneContainer.layer?.borderWidth = activePane == .right ? 2 : 0
-        rightPaneContainer.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        // 1.2 新设计：顶部 2pt accent 色条（替代 borderWidth 方案）
+        // 注意：不覆盖 container 基础背景色（windowBackgroundColor），避免破坏面板底色
+        leftAccentBar?.isHidden = activePane != .left
+        rightAccentBar?.isHidden = activePane != .right
     }
 
     private func updateViewMode(side: PaneSide, mode: ViewMode) {
@@ -641,9 +804,13 @@ public class MainWindowController: NSWindowController {
         if let first = files.first {
             detailsBar.update(with: first)
             detailsBar.setSelectedCount(files.count)
+            // 选中文件时自动展开详情面板（用户偏好：选中即显示详情）
+            detailsBar.isExpanded = true
         } else {
             detailsBar.update(with: nil)
             detailsBar.setSelectedCount(0)
+            // 取消选中时自动收起
+            detailsBar.isExpanded = false
         }
     }
 
@@ -738,7 +905,35 @@ extension MainWindowController {
     }
 
     @objc func menuMoveToTrash(_ sender: Any?) {
-        activePaneViewModel.deleteSelected()
+        let selectedFiles = activePaneViewModel.selectedFiles
+        let disabled = UserDefaults.standard.bool(forKey: "delete_confirm_disabled")
+        if disabled || selectedFiles.isEmpty {
+            activePaneViewModel.deleteSelected()
+            return
+        }
+        let dialog = DeleteConfirmDialog(fileCount: selectedFiles.count) { [weak self] in
+            self?.activePaneViewModel.deleteSelected()
+        }
+        if let window = window {
+            dialog.beginSheetModal(for: window)
+        }
+    }
+
+    @objc func menuAddTag(_ sender: Any?) {
+        let selectedFiles = activePaneViewModel.selectedFiles
+        guard let firstFile = selectedFiles.first else { return }
+        // 获取当前文件的标签（allTags 留空，由 TagSelectorDialog 使用默认预设）
+        let currentTags = TagBridge.shared.getTags(path: firstFile.path)
+        let dialog = TagSelectorDialog(filePath: firstFile.path, currentTags: currentTags)
+        if let window = window {
+            dialog.beginSheetModal(for: window)
+        }
+    }
+
+    @objc func menuGetInfo(_ sender: Any?) {
+        // 显示简介：展开 DetailsBar（若已收起）
+        // 通过通知触发 ExpandableDetailsBar 展开
+        NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
     }
 
     @objc func menuCopy(_ sender: Any?) {
@@ -1141,29 +1336,26 @@ extension MainWindowController {
     }
 
     @objc func menuConnectServer(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = "连接服务器"
-        alert.informativeText = "输入服务器地址（如 smb://server/share）："
-        alert.addButton(withTitle: "连接")
-        alert.addButton(withTitle: "取消")
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        textField.placeholderString = "smb://server/share"
-        alert.accessoryView = textField
-        if let window = window {
-            alert.beginSheetModal(for: window) { response in
-                guard response == .alertFirstButtonReturn else { return }
-                let url = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !url.isEmpty else { return }
-                SMBBridge.shared.mount(url: url) { result in
-                    switch result {
+        guard let window = window else { return }
+        let dialog = ConnectServerDialog { result in
+            guard let url = result.smbURL() else { return }
+            SMBBridge.shared.mount(url: url.absoluteString) { mountResult in
+                DispatchQueue.main.async {
+                    switch mountResult {
                     case .success:
-                        print("SMB 挂载成功")
+                        break
                     case .failure(let error):
-                        print("SMB 挂载失败: \(error)")
+                        let alert = NSAlert()
+                        alert.messageText = "连接失败"
+                        alert.informativeText = error.localizedDescription
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "好")
+                        alert.runModal()
                     }
                 }
             }
         }
+        dialog.beginSheetModal(for: window)
     }
 
     @objc func menuSearch(_ sender: Any?) {

@@ -21,7 +21,8 @@ class ExpandableDetailsBar: NSView {
 
     // MARK: - Constants
 
-    private let collapsedHeight: CGFloat = 28
+    /// 1.6 收起态高度 28→36pt
+    private let collapsedHeight: CGFloat = 36
     private let expandedHeight: CGFloat = 120
 
     // MARK: - State
@@ -48,16 +49,19 @@ class ExpandableDetailsBar: NSView {
     // compact
     private let smallIconView = NSImageView()
     private let compactNameField = NSTextField(labelWithString: "")
+    /// 1.6 收起态副字段：12pt secondary，显示 "大小 · 类型"
+    private weak var compactSubField: NSTextField?
 
     // expanded
     private let bigIconView = NSImageView()
-    private let nameField = NSTextField(labelWithString: "")
+    // 1.6 字段顺序：种类 / 大小 / 位置 / 创建日期 / 修改日期 / 标签
+    // 移除"名称"（header 已显示）和"权限"字段；合并完整路径到"位置"字段
     private let typeField = NSTextField(labelWithString: "")
     private let sizeField = NSTextField(labelWithString: "")
+    private let locationField = NSTextField(labelWithString: "")
     private let createdField = NSTextField(labelWithString: "")
     private let modifiedField = NSTextField(labelWithString: "")
-    private let permField = NSTextField(labelWithString: "")
-    private let pathField = NSTextField(labelWithString: "")
+    private let tagsField = NSTextField(labelWithString: "")
     private let tagsContainer = NSStackView()
 
     /// 当前正在请求缩略图的路径（用于避免过期回调覆盖）
@@ -80,6 +84,12 @@ class ExpandableDetailsBar: NSView {
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+
+        // 1.6 玻璃背景：FFGlassView(.panel, .headerView, cornerRadius: 8)
+        // 与工具栏同材质，形成统一的"工具栏带"玻璃层次
+        let glassBackground = FFGlassView(level: .panel, cornerRadius: 8, material: .headerView)
+        glassBackground.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glassBackground)
 
         // chevron 按钮（共享，始终可见于右上角）
         chevronButton.bezelStyle = .texturedRounded
@@ -108,45 +118,48 @@ class ExpandableDetailsBar: NSView {
         compactView.addSubview(compactNameField)
         addSubview(compactView)
 
+        // 1.6 收起态副字段：12pt secondary，显示 "大小 · 类型"
+        let compactSubField = NSTextField(labelWithString: "")
+        compactSubField.font = NSFont.systemFont(ofSize: 12)
+        compactSubField.textColor = NSColor.secondaryLabelColor
+        compactSubField.lineBreakMode = .byTruncatingTail
+        compactSubField.maximumNumberOfLines = 1
+        compactSubField.cell?.truncatesLastVisibleLine = true
+        compactSubField.translatesAutoresizingMaskIntoConstraints = false
+        compactView.addSubview(compactSubField)
+        self.compactSubField = compactSubField
+
         // expanded 视图（展开态）
         expandedView.translatesAutoresizingMaskIntoConstraints = false
         bigIconView.imageScaling = .scaleProportionallyUpOrDown
         bigIconView.translatesAutoresizingMaskIntoConstraints = false
         expandedView.addSubview(bigIconView)
 
-        // 属性网格（2 列 x 3 行）
+        // 属性网格（2 列 x 3 行）：种类/大小/位置 | 创建/修改/标签
         let grid = NSView()
         grid.translatesAutoresizingMaskIntoConstraints = false
         expandedView.addSubview(grid)
 
-        let nameLabel = makeLabel("名称")
-        configureValue(nameField)
-        let typeLabel = makeLabel("类型")
+        let typeLabel = makeLabel("种类")
         configureValue(typeField)
         let sizeLabel = makeLabel("大小")
         configureValue(sizeField)
+        let locationLabel = makeLabel("位置")
+        configureValue(locationField)
+        locationField.lineBreakMode = .byTruncatingMiddle
         let createdLabel = makeLabel("创建")
         configureValue(createdField)
         let modifiedLabel = makeLabel("修改")
         configureValue(modifiedField)
-        let permLabel = makeLabel("权限")
-        configureValue(permField)
+        let tagsLabel = makeLabel("标签")
+        configureValue(tagsField)
 
-        for v in [nameLabel, nameField, typeLabel, typeField, sizeLabel, sizeField,
-                  createdLabel, createdField, modifiedLabel, modifiedField, permLabel, permField] {
+        for v in [typeLabel, typeField, sizeLabel, sizeField, locationLabel, locationField,
+                  createdLabel, createdField, modifiedLabel, modifiedField, tagsLabel, tagsField] {
             grid.addSubview(v)
         }
 
-        // 完整路径
-        pathField.font = NSFont.systemFont(ofSize: 10)
-        pathField.textColor = NSColor.secondaryLabelColor
-        pathField.lineBreakMode = .byTruncatingMiddle
-        pathField.maximumNumberOfLines = 1
-        pathField.cell?.truncatesLastVisibleLine = true
-        pathField.translatesAutoresizingMaskIntoConstraints = false
-        expandedView.addSubview(pathField)
-
-        // 标签容器（药丸）
+        // 标签容器（药丸，作为"标签"字段的视觉化补充，叠在网格下方）
         tagsContainer.orientation = .horizontal
         tagsContainer.spacing = 4
         tagsContainer.alignment = .leading
@@ -165,6 +178,12 @@ class ExpandableDetailsBar: NSView {
         heightConstraint.priority = .required
 
         NSLayoutConstraint.activate([
+            // 1.6 玻璃背景填满整个 bar
+            glassBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            glassBackground.topAnchor.constraint(equalTo: topAnchor),
+            glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             // 分隔线
             separator.topAnchor.constraint(equalTo: topAnchor),
             separator.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -182,14 +201,19 @@ class ExpandableDetailsBar: NSView {
             compactView.topAnchor.constraint(equalTo: topAnchor),
             compactView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
+            // 1.6 收起态图标 24→32pt
             smallIconView.leadingAnchor.constraint(equalTo: compactView.leadingAnchor),
             smallIconView.centerYAnchor.constraint(equalTo: compactView.centerYAnchor),
-            smallIconView.widthAnchor.constraint(equalToConstant: 24),
-            smallIconView.heightAnchor.constraint(equalToConstant: 24),
+            smallIconView.widthAnchor.constraint(equalToConstant: 32),
+            smallIconView.heightAnchor.constraint(equalToConstant: 32),
 
             compactNameField.leadingAnchor.constraint(equalTo: smallIconView.trailingAnchor, constant: 8),
-            compactNameField.centerYAnchor.constraint(equalTo: compactView.centerYAnchor),
-            compactNameField.trailingAnchor.constraint(equalTo: compactView.trailingAnchor, constant: -28),
+            compactNameField.topAnchor.constraint(equalTo: compactView.centerYAnchor, constant: -2),
+
+            // compact 副字段：位于主字段下方
+            compactSubField.leadingAnchor.constraint(equalTo: compactNameField.leadingAnchor),
+            compactSubField.topAnchor.constraint(equalTo: compactView.centerYAnchor, constant: 12),
+            compactSubField.trailingAnchor.constraint(equalTo: compactView.trailingAnchor, constant: -28),
 
             // expanded
             expandedView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -205,15 +229,9 @@ class ExpandableDetailsBar: NSView {
             grid.topAnchor.constraint(equalTo: expandedView.topAnchor),
             grid.trailingAnchor.constraint(equalTo: expandedView.trailingAnchor, constant: -28),
 
-            // 左列
-            nameLabel.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
-            nameLabel.topAnchor.constraint(equalTo: grid.topAnchor),
-            nameField.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 4),
-            nameField.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            nameField.trailingAnchor.constraint(equalTo: grid.centerXAnchor, constant: -8),
-
+            // 左列：种类 / 大小 / 位置
             typeLabel.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
-            typeLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
+            typeLabel.topAnchor.constraint(equalTo: grid.topAnchor),
             typeField.leadingAnchor.constraint(equalTo: typeLabel.trailingAnchor, constant: 4),
             typeField.centerYAnchor.constraint(equalTo: typeLabel.centerYAnchor),
             typeField.trailingAnchor.constraint(equalTo: grid.centerXAnchor, constant: -8),
@@ -223,9 +241,15 @@ class ExpandableDetailsBar: NSView {
             sizeField.leadingAnchor.constraint(equalTo: sizeLabel.trailingAnchor, constant: 4),
             sizeField.centerYAnchor.constraint(equalTo: sizeLabel.centerYAnchor),
             sizeField.trailingAnchor.constraint(equalTo: grid.centerXAnchor, constant: -8),
-            grid.bottomAnchor.constraint(greaterThanOrEqualTo: sizeLabel.bottomAnchor),
 
-            // 右列
+            locationLabel.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
+            locationLabel.topAnchor.constraint(equalTo: sizeLabel.bottomAnchor, constant: 4),
+            locationField.leadingAnchor.constraint(equalTo: locationLabel.trailingAnchor, constant: 4),
+            locationField.centerYAnchor.constraint(equalTo: locationLabel.centerYAnchor),
+            locationField.trailingAnchor.constraint(equalTo: grid.centerXAnchor, constant: -8),
+            grid.bottomAnchor.constraint(greaterThanOrEqualTo: locationLabel.bottomAnchor),
+
+            // 右列：创建 / 修改 / 标签
             createdLabel.leadingAnchor.constraint(equalTo: grid.centerXAnchor, constant: 8),
             createdLabel.topAnchor.constraint(equalTo: grid.topAnchor),
             createdField.leadingAnchor.constraint(equalTo: createdLabel.trailingAnchor, constant: 4),
@@ -238,19 +262,15 @@ class ExpandableDetailsBar: NSView {
             modifiedField.centerYAnchor.constraint(equalTo: modifiedLabel.centerYAnchor),
             modifiedField.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
 
-            permLabel.leadingAnchor.constraint(equalTo: grid.centerXAnchor, constant: 8),
-            permLabel.topAnchor.constraint(equalTo: modifiedLabel.bottomAnchor, constant: 4),
-            permField.leadingAnchor.constraint(equalTo: permLabel.trailingAnchor, constant: 4),
-            permField.centerYAnchor.constraint(equalTo: permLabel.centerYAnchor),
-            permField.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
+            tagsLabel.leadingAnchor.constraint(equalTo: grid.centerXAnchor, constant: 8),
+            tagsLabel.topAnchor.constraint(equalTo: modifiedLabel.bottomAnchor, constant: 4),
+            tagsField.leadingAnchor.constraint(equalTo: tagsLabel.trailingAnchor, constant: 4),
+            tagsField.centerYAnchor.constraint(equalTo: tagsLabel.centerYAnchor),
+            tagsField.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
 
-            // 路径 + 标签
-            pathField.leadingAnchor.constraint(equalTo: expandedView.leadingAnchor),
-            pathField.topAnchor.constraint(equalTo: bigIconView.bottomAnchor, constant: 6),
-            pathField.trailingAnchor.constraint(equalTo: expandedView.trailingAnchor),
-
+            // 标签药丸容器（展开态下方）
             tagsContainer.leadingAnchor.constraint(equalTo: expandedView.leadingAnchor),
-            tagsContainer.topAnchor.constraint(equalTo: pathField.bottomAnchor, constant: 4),
+            tagsContainer.topAnchor.constraint(equalTo: bigIconView.bottomAnchor, constant: 6),
             tagsContainer.trailingAnchor.constraint(lessThanOrEqualTo: expandedView.trailingAnchor),
             tagsContainer.heightAnchor.constraint(lessThanOrEqualToConstant: 20),
 
@@ -347,44 +367,48 @@ class ExpandableDetailsBar: NSView {
             bigIconView.image = nil
         }
 
-        // compact 行
+        // compact 行：13pt medium 名称 + 12pt secondary "大小 · 类型"
         if selectedCount > 1 {
             compactNameField.stringValue = "已选中 \(selectedCount) 项"
+            compactSubField?.stringValue = ""
             smallIconView.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
         } else if let entry = entry {
-            compactNameField.stringValue = "\(entry.name)  ·  \(entry.formattedSize)"
+            compactNameField.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+            compactNameField.stringValue = entry.name
+            compactSubField?.stringValue = "\(entry.formattedSize) · \(entry.kindDescription)"
             smallIconView.image = NSWorkspace.shared.icon(forFile: entry.path)
         } else {
             compactNameField.stringValue = "未选择文件"
+            compactSubField?.stringValue = ""
             smallIconView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
         }
 
-        // expanded 字段
+        // expanded 字段：种类 / 大小 / 位置 / 创建 / 修改 / 标签
         guard let entry = entry, selectedCount <= 1 else {
             let placeholder = selectedCount > 1 ? "已选中 \(selectedCount) 项" : "未选择文件"
-            nameField.stringValue = placeholder
-            typeField.stringValue = ""
+            typeField.stringValue = placeholder
             sizeField.stringValue = ""
+            locationField.stringValue = ""
             createdField.stringValue = ""
             modifiedField.stringValue = ""
-            permField.stringValue = ""
-            pathField.stringValue = ""
+            tagsField.stringValue = ""
             bigIconView.image = smallIconView.image
             clearTags()
             showNoTagsPlaceholder()
             return
         }
 
-        nameField.stringValue = entry.name
         typeField.stringValue = entry.kindDescription
         sizeField.stringValue = entry.formattedSize
+        locationField.stringValue = entry.path
         createdField.stringValue = entry.formattedCreationDate
         modifiedField.stringValue = entry.formattedModificationDate
-        permField.stringValue = permissionString(path: entry.path)
-        pathField.stringValue = entry.path
         bigIconView.image = NSWorkspace.shared.icon(forFile: entry.path)
 
         updateTags(path: entry.path)
+        // 标签字段文本（药丸容器在下方可视化展示，此处为文本兜底）
+        let tags = TagBridge.shared.getTags(path: entry.path)
+        tagsField.stringValue = tags.isEmpty ? "无" : tags.map { $0.name }.joined(separator: ", ")
 
         if isExpanded { loadThumbnail() }
     }
@@ -472,39 +496,5 @@ class ExpandableDetailsBar: NSView {
         return pill
     }
 
-    // MARK: - Permissions
-
-    /// 通过 FileManager 获取权限信息并格式化为 "drwxr-xr-x 755 owner:group"
-    private func permissionString(path: String) -> String {
-        do {
-            let attrs = try FileManager.default.attributesOfItem(atPath: path)
-            let perms = (attrs[.posixPermissions] as? NSNumber)?.int16Value ?? 0
-            let fileType = attrs[.type] as? FileAttributeType
-            let isDir = fileType == .typeDirectory
-            let rwx = rwxString(perms: perms, isDir: isDir)
-            let octal = String(format: "%o", perms & 0o777)
-            let owner = (attrs[.ownerAccountName] as? String) ?? ""
-            let group = (attrs[.groupOwnerAccountName] as? String) ?? ""
-            var result = "\(rwx)  \(octal)"
-            if !owner.isEmpty || !group.isEmpty {
-                result += "  \(owner):\(group)"
-            }
-            return result
-        } catch {
-            return "--"
-        }
-    }
-
-    private func rwxString(perms: Int16, isDir: Bool) -> String {
-        var s = isDir ? "d" : "-"
-        let owner = (perms >> 6) & 0o7
-        let group = (perms >> 3) & 0o7
-        let other = perms & 0o7
-        for v in [owner, group, other] {
-            s += (v & 4 != 0) ? "r" : "-"
-            s += (v & 2 != 0) ? "w" : "-"
-            s += (v & 1 != 0) ? "x" : "-"
-        }
-        return s
-    }
+    // MARK: - (权限字段已在 1.6 重设计中移除，如需恢复可参考 git 历史)
 }

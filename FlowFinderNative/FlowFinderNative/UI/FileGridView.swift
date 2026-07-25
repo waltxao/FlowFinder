@@ -81,9 +81,11 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
     override var isSelected: Bool {
         didSet {
+            // 1.8 选中背景 alpha 0.20→0.15，圆角 6pt
             view.layer?.backgroundColor = isSelected
-                ? NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+                ? NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
                 : NSColor.clear.cgColor
+            view.layer?.cornerRadius = isSelected ? 6 : 0
         }
     }
 }
@@ -105,6 +107,8 @@ public class FileGridView: NSView {
     private var scrollView: NSScrollView!
     private var cancellables = Set<AnyCancellable>()
 
+    private var lastFilesCount: Int = -1
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
@@ -113,7 +117,15 @@ public class FileGridView: NSView {
             collectionView.delegate = self
             viewModel?.$state
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in self?.reloadData() }
+                .sink { [weak self] state in
+                    // 仅在 files 数量变化时才 reloadData，
+                    // 避免 selectedFiles 变化触发 reload 清空选中
+                    guard let self = self else { return }
+                    if self.lastFilesCount != state.files.count {
+                        self.lastFilesCount = state.files.count
+                        self.reloadData()
+                    }
+                }
                 .store(in: &cancellables)
             reloadData()
         }
@@ -125,6 +137,8 @@ public class FileGridView: NSView {
 
     public var onDoubleClick: ((FileEntry) -> Void)?
     public var onSelectionChanged: (([FileEntry]) -> Void)?
+    /// 点击 item 时激活面板（与 FileListView 一致）
+    public var onActivatePane: (() -> Void)?
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -208,6 +222,9 @@ public class FileGridView: NSView {
         menu.addItem(.separator())
         menu.addItem(withTitle: "添加到收藏夹", action: #selector(addToFavorites(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "AI 自动打标签", action: #selector(generateAITags(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "添加标签...", action: #selector(addTagMenu(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "显示简介", action: #selector(showInfoMenu(_:)), keyEquivalent: "i")
 
         for item in menu.items where item.action != nil {
             item.target = self
@@ -438,6 +455,16 @@ public class FileGridView: NSView {
         }
     }
 
+    @objc private func addTagMenu(_ sender: Any?) {
+        guard let entry = clickedEntry else { return }
+        NotificationCenter.default.post(name: NSNotification.Name("FileListAddTag"), object: nil,
+                                        userInfo: ["path": entry.path])
+    }
+
+    @objc private func showInfoMenu(_ sender: Any?) {
+        NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
+    }
+
     public func reloadData() {
         collectionView?.reloadData()
     }
@@ -464,6 +491,8 @@ extension FileGridView: NSCollectionViewDataSource {
 extension FileGridView: NSCollectionViewDelegate {
     public func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
         guard let viewModel = viewModel else { return }
+        // 点击 item 时激活当前面板（与 FileListView 一致）
+        onActivatePane?()
         // Bug 1 修复：使用 collectionView.selectionIndexPaths 获取所有当前选中项
         // （indexPaths 参数仅包含本次新选中的项，不能代表完整选择状态）
         // 同时同步更新 viewModel.state.selectedFiles，否则选中状态不生效

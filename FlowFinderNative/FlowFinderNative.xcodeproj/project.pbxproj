@@ -30,8 +30,6 @@
 		FF0000000000000000200017 /* TaskInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200018; };
 		FF0000000000000000200019 /* VolumeInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020001A; };
 		FF000000000000000020001B /* AppearanceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020001C; };
-		FF000000000000000020001D /* DetailsBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020001E; };
-		FF000000000000000020001F /* DuplicateScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200020; };
 		FF0000000000000000200021 /* DuplicateScanWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200022; };
 		FF0000000000000000200023 /* FileGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200024; };
 		FF0000000000000000200025 /* MainMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200026; };
@@ -43,10 +41,20 @@
 		FF0000000000000000200031 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200032; };
 		FF0000000000000000200033 /* TaskPanelWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200034; };
 		FF0000000000000000200035 /* TaskProgressBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200036; };
-		FF0000000000000000200037 /* GlassSectionMaskView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200038; };
 		FF0000000000000000200039 /* BreadcrumbBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003A; };
 		FF000000000000000020003B /* ExpandableDetailsBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003C; };
 		FF000000000000000020003D /* BatchRenameWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003E; };
+		FF0000000000000000200041 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200042; };
+		FF0000000000000000200043 /* FFGlassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200044; };
+		FF0000000000000000200045 /* FFModalSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200046; };
+		FF0000000000000000200047 /* SettingsSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200048; };
+		FF0000000000000000200049 /* SearchFilterSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020004A; };
+		FF000000000000000020004B /* DuplicateGroupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020004C; };
+		FF000000000000000020004D /* DuplicatePreviewPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020004E; };
+		FF0000000000000000200051 /* TagSelectorDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200052; };
+		FF0000000000000000200053 /* DeleteConfirmDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200054; };
+		FF0000000000000000200055 /* ConnectServerDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200056; };
+		FF0000000000000000200057 /* ProgressDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200058; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -75,8 +83,6 @@
 		FF0000000000000000200018 /* TaskInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskInfo.swift; sourceTree = "<group>"; };
 		FF000000000000000020001A /* VolumeInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VolumeInfo.swift; sourceTree = "<group>"; };
 		FF000000000000000020001C /* AppearanceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettingsView.swift; sourceTree = "<group>"; };
-		FF000000000000000020001E /* DetailsBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailsBar.swift; sourceTree = "<group>"; };
-		FF0000000000000000200020 /* DuplicateScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicateScanView.swift; sourceTree = "<group>"; };
 		FF0000000000000000200022 /* DuplicateScanWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicateScanWindowController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200024 /* FileGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileGridView.swift; sourceTree = "<group>"; };
 		FF0000000000000000200026 /* MainMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenu.swift; sourceTree = "<group>"; };
@@ -88,10 +94,20 @@
 		FF0000000000000000200032 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200034 /* TaskPanelWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskPanelWindowController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200036 /* TaskProgressBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskProgressBar.swift; sourceTree = "<group>"; };
-		FF0000000000000000200038 /* GlassSectionMaskView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassSectionMaskView.swift; sourceTree = "<group>"; };
 		FF000000000000000020003A /* BreadcrumbBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BreadcrumbBar.swift; sourceTree = "<group>"; };
 		FF000000000000000020003C /* ExpandableDetailsBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpandableDetailsBar.swift; sourceTree = "<group>"; };
 		FF000000000000000020003E /* BatchRenameWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchRenameWindowController.swift; sourceTree = "<group>"; };
+		FF0000000000000000200042 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
+		FF0000000000000000200044 /* FFGlassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFGlassView.swift; sourceTree = "<group>"; };
+		FF0000000000000000200046 /* FFModalSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFModalSheet.swift; sourceTree = "<group>"; };
+		FF0000000000000000200048 /* SettingsSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSectionView.swift; sourceTree = "<group>"; };
+		FF000000000000000020004A /* SearchFilterSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchFilterSidebar.swift; sourceTree = "<group>"; };
+		FF000000000000000020004C /* DuplicateGroupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicateGroupView.swift; sourceTree = "<group>"; };
+		FF000000000000000020004E /* DuplicatePreviewPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicatePreviewPanel.swift; sourceTree = "<group>"; };
+		FF0000000000000000200052 /* TagSelectorDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagSelectorDialog.swift; sourceTree = "<group>"; };
+		FF0000000000000000200054 /* DeleteConfirmDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteConfirmDialog.swift; sourceTree = "<group>"; };
+		FF0000000000000000200056 /* ConnectServerDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectServerDialog.swift; sourceTree = "<group>"; };
+		FF0000000000000000200058 /* ProgressDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressDialog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,14 +155,11 @@
 			children = (
 				FF0000140000000000000014 /* FileListView.swift */,
 				FF0000150000000000000015 /* SidebarView.swift */,
-				FF0000000000000000200038 /* GlassSectionMaskView.swift */,
 				FF000000000000000020003A /* BreadcrumbBar.swift */,
 				FF000000000000000020003E /* BatchRenameWindowController.swift */,
 				FF0000160000000000000016 /* MainWindowController.swift */,
 							FF000000000000000020001C /* AppearanceSettingsView.swift */,
-				FF000000000000000020001E /* DetailsBar.swift */,
 				FF000000000000000020003C /* ExpandableDetailsBar.swift */,
-				FF0000000000000000200020 /* DuplicateScanView.swift */,
 				FF0000000000000000200022 /* DuplicateScanWindowController.swift */,
 				FF0000000000000000200024 /* FileGridView.swift */,
 				FF0000000000000000200026 /* MainMenu.swift */,
@@ -158,9 +171,20 @@
 				FF0000000000000000200032 /* SettingsWindowController.swift */,
 				FF0000000000000000200034 /* TaskPanelWindowController.swift */,
 				FF0000000000000000200036 /* TaskProgressBar.swift */,
-);
-			path = UI;
-			sourceTree = "<group>";
+				FF0000000000000000200042 /* DesignTokens.swift */,
+				FF0000000000000000200044 /* FFGlassView.swift */,
+				FF0000000000000000200046 /* FFModalSheet.swift */,
+				FF0000000000000000200048 /* SettingsSectionView.swift */,
+				FF000000000000000020004A /* SearchFilterSidebar.swift */,
+				FF000000000000000020004C /* DuplicateGroupView.swift */,
+				FF000000000000000020004E /* DuplicatePreviewPanel.swift */,
+				FF0000000000000000200052 /* TagSelectorDialog.swift */,
+				FF0000000000000000200054 /* DeleteConfirmDialog.swift */,
+				FF0000000000000000200056 /* ConnectServerDialog.swift */,
+				FF0000000000000000200058 /* ProgressDialog.swift */,
+		);
+		path = UI;
+		sourceTree = "<group>";
 		};
 		FF0000430000000000000043 /* Model */ = {
 			isa = PBXGroup;
@@ -327,8 +351,6 @@
 				FF0000000000000000200017 /* TaskInfo.swift in Sources */,
 				FF0000000000000000200019 /* VolumeInfo.swift in Sources */,
 				FF000000000000000020001B /* AppearanceSettingsView.swift in Sources */,
-				FF000000000000000020001D /* DetailsBar.swift in Sources */,
-				FF000000000000000020001F /* DuplicateScanView.swift in Sources */,
 				FF0000000000000000200021 /* DuplicateScanWindowController.swift in Sources */,
 				FF0000000000000000200023 /* FileGridView.swift in Sources */,
 				FF0000000000000000200025 /* MainMenu.swift in Sources */,
@@ -340,13 +362,23 @@
 				FF0000000000000000200031 /* SettingsWindowController.swift in Sources */,
 				FF0000000000000000200033 /* TaskPanelWindowController.swift in Sources */,
 				FF0000000000000000200035 /* TaskProgressBar.swift in Sources */,
-				FF0000000000000000200037 /* GlassSectionMaskView.swift in Sources */,
 				FF0000000000000000200039 /* BreadcrumbBar.swift in Sources */,
 				FF000000000000000020003B /* ExpandableDetailsBar.swift in Sources */,
 				FF000000000000000020003D /* BatchRenameWindowController.swift in Sources */,
-);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
+				FF0000000000000000200041 /* DesignTokens.swift in Sources */,
+				FF0000000000000000200043 /* FFGlassView.swift in Sources */,
+				FF0000000000000000200045 /* FFModalSheet.swift in Sources */,
+				FF0000000000000000200047 /* SettingsSectionView.swift in Sources */,
+				FF0000000000000000200049 /* SearchFilterSidebar.swift in Sources */,
+				FF000000000000000020004B /* DuplicateGroupView.swift in Sources */,
+				FF000000000000000020004D /* DuplicatePreviewPanel.swift in Sources */,
+				FF0000000000000000200051 /* TagSelectorDialog.swift in Sources */,
+				FF0000000000000000200053 /* DeleteConfirmDialog.swift in Sources */,
+				FF0000000000000000200055 /* ConnectServerDialog.swift in Sources */,
+				FF0000000000000000200057 /* ProgressDialog.swift in Sources */,
+		);
+		runOnlyForDeploymentPostprocessing = 0;
+	};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -476,7 +508,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 602;
+				CURRENT_PROJECT_VERSION = 620;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -500,7 +532,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.02;
+				MARKETING_VERSION = 0.6.2;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
@@ -521,7 +553,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 601;
+				CURRENT_PROJECT_VERSION = 620;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -545,7 +577,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.01;
+				MARKETING_VERSION = 0.6.2;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",

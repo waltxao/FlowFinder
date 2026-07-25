@@ -1,6 +1,70 @@
 import Cocoa
 import Combine
 
+// MARK: - FFDebug (file-based debug logger)
+
+/// 文件日志工具：写入 /tmp/ff-debug.log，不依赖系统日志
+enum FFDebug {
+    private static let logPath = "/tmp/ff-debug.log"
+    private static let queue = DispatchQueue(label: "ff.debug.log")
+    private static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    static func log(_ msg: String) {
+        queue.async {
+            let ts = formatter.string(from: Date())
+            let line = "[\(ts)] \(msg)\n"
+            if let data = line.data(using: .utf8) {
+                if FileManager.default.fileExists(atPath: logPath) {
+                    if let handle = FileHandle(forWritingAtPath: logPath) {
+                        handle.seekToEndOfFile()
+                        handle.write(data)
+                        handle.closeFile()
+                    }
+                } else {
+                    FileManager.default.createFile(atPath: logPath, contents: data)
+                }
+            }
+        }
+    }
+
+    static func clear() {
+        try? FileManager.default.removeItem(atPath: logPath)
+    }
+}
+
+// MARK: - FFTableCellView
+
+/// 自定义 NSTableCellView：layer-backed，背景保持透明（.clear）以让 NSTableRowView
+/// 的标准 drawSelection 选中绘制可见。选中高亮完全由 rowView 标准机制处理，
+/// cellView 不参与选中绘制。
+private class FFTableCellView: NSTableCellView {
+}
+
+// MARK: - FFTableRowView
+
+/// 自定义 NSTableRowView：诊断阶段 — 覆盖 drawSelection 绘制硬编码亮蓝色，
+/// 用于验证 rowView 的绘制输出是否可见。
+/// 若亮蓝色可见 → 标准选中色解析有问题（appearance/color resolution）
+/// 若亮蓝色不可见 → rowView 绘制被某层覆盖（glass/layer stacking）
+private class FFTableRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        FFDebug.log("FFTableRowView.drawSelection isSelected=\(isSelected) isEmphasized=\(isEmphasized)")
+        if isSelected {
+            // 硬编码亮蓝色，不依赖任何系统颜色解析
+            NSColor(srgbRed: 0.039, green: 0.518, blue: 1.0, alpha: 1.0).setFill()
+            dirtyRect.fill()
+        }
+    }
+
+    override var wantsUpdateLayer: Bool {
+        return false  // 强制走 drawRect/drawSelection 路径，不走 updateLayer
+    }
+}
+
 // MARK: - FileListView
 
 /// NSTableView-based file list view with 4 columns (名称/修改日期/类型/大小)
@@ -67,6 +131,7 @@ public class FileListView: NSView {
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        FFDebug.log("FileListView.init frame=\(frameRect)")
         setupUI()
         setupContextMenu()
     }
@@ -95,14 +160,24 @@ public class FileListView: NSView {
         tableView.allowsEmptySelection = true
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
-        // 使用系统默认蓝色高亮（确保单击选中可见）
-        tableView.selectionHighlightStyle = .regular
+        // 使用 NSTableView 标准选中绘制（.regular 默认值）。
+        // 根因（systematic-debugging）：
+        //   此前设置 selectionHighlightStyle = .none 禁用了标准绘制，转而用
+        //   updateSelectionHighlight 手动设置 layer.backgroundColor。但手动方案在
+        //   cellView 复用、layer 时序竞态、wantsLayer=true 等情况下失效。
+        //   恢复标准绘制后，NSTableRowView.drawSelection 自动根据 isSelected 状态
+        //   绘制选中色（key window + firstResponder 时为强调蓝色）。
+        //   cellView.layer.backgroundColor 已在 tableView(_:viewFor:row:) 中设为 .clear，
+        //   不会遮挡 rowView 的标准选中绘制。
+        // 不显式赋值，使用 NSTableView 默认 selectionHighlightStyle = .regular
         // 使用 firstColumnOnlyAutoresizingStyle：名称列自动填充剩余空间，其他列保持固定宽度
         tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.rowHeight = 24
-        // 半透明背景：既保持玻璃通透感，又确保选中高亮可见
-        tableView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.85)
+        // 透明背景：让 NSVisualEffectView/NSGlassEffectView 玻璃态透过 tableView 显示，
+        // 同时不遮挡 NSTableRowView.drawSelection 的标准选中绘制。
+        // 此前使用 textBackgroundColor.withAlphaComponent(0.85) 导致白色背景覆盖选中蓝色。
+        tableView.backgroundColor = .clear
         tableView.enclosingScrollView?.drawsBackground = false
         scrollView.drawsBackground = false
         scrollView.backgroundColor = NSColor.clear
@@ -197,6 +272,9 @@ public class FileListView: NSView {
         menu.addItem(.separator())
         menu.addItem(withTitle: "添加到收藏夹", action: #selector(addToFavorites(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "AI 自动打标签", action: #selector(generateAITags(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "添加标签...", action: #selector(addTagMenu(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "显示简介", action: #selector(showInfoMenu(_:)), keyEquivalent: "i")
 
         for item in menu.items where item.action != nil {
             item.target = self
@@ -296,6 +374,15 @@ public class FileListView: NSView {
     @objc private func addToFavorites(_ sender: Any?) {
         guard let entry = clickedEntry else { return }
         NotificationCenter.default.post(name: .fileListDidAddFavorite, object: nil, userInfo: ["name": entry.name, "path": entry.path])
+    }
+
+    @objc private func addTagMenu(_ sender: Any?) {
+        guard let entry = clickedEntry else { return }
+        NotificationCenter.default.post(name: NSNotification.Name("FileListAddTag"), object: nil, userInfo: ["path": entry.path])
+    }
+
+    @objc private func showInfoMenu(_ sender: Any?) {
+        NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
     }
 
     @objc private func generateAITags(_ sender: Any?) {
@@ -491,9 +578,13 @@ extension FileListView: NSTableViewDelegate {
         let entry = viewModel.files[row]
 
         let cellID = NSUserInterfaceItemIdentifier(tableColumn?.identifier.rawValue ?? "")
-        let cellView = tableView.makeView(withIdentifier: cellID, owner: self) as? NSTableCellView
-            ?? NSTableCellView()
+        // 使用 FFTableCellView：背景保持透明（.clear），让 NSTableRowView 的标准
+        // drawSelection 选中绘制可见。cellView 自身不参与选中绘制。
+        let cellView = tableView.makeView(withIdentifier: cellID, owner: self) as? FFTableCellView
+            ?? FFTableCellView()
         cellView.identifier = cellID
+        cellView.wantsLayer = true
+        cellView.layer?.backgroundColor = NSColor.clear.cgColor
 
         // Ensure text field exists (NSTableCellView handles layout)
         if cellView.textField == nil {
@@ -580,17 +671,29 @@ extension FileListView: NSTableViewDelegate {
         return 24
     }
 
+    /// 返回自定义 FFTableRowView。标准 NSTableRowView.drawSelection 已能正确绘制
+    /// 选中高亮（key window + firstResponder 时为强调蓝色），FFTableRowView 当前
+    /// 仅作为扩展点保留（如将来添加 hover 效果），不覆盖任何绘制方法。
+    public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        return FFTableRowView()
+    }
+
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        FFDebug.log("shouldSelectRow row=\(row) firstResponder=\(tableView.window?.firstResponder === tableView)")
         return true
     }
 
     // 选择变更时才执行选择逻辑（单击选中、Cmd+点击多选、Shift+范围选）
     public func tableViewSelectionDidChange(_ notification: Notification) {
+        FFDebug.log("selectionDidChange selectedRows=\(tableView.selectedRowIndexes) isReloading=\(isReloading) filesCount=\(viewModel?.files.count ?? -1)")
         // Bug 9 修复：reloadData 期间触发的 selectionDidChange 应忽略，
         // 避免与 reload 形成循环（reload → selectionDidChange → state 变更 → reload）
         if isReloading { return }
 
         guard let viewModel = viewModel else { return }
+        // 点击行时激活当前面板（tableView 作为子视图拦截了 mouseDown，
+        // FileListView.mouseDown 不会触发，需在此补充激活）
+        onActivatePane?()
         // 确保 tableView 是 firstResponder，否则选中高亮会变成灰色（de-emphasized）
         if let window = tableView.window, window.firstResponder !== tableView {
             window.makeFirstResponder(tableView)
@@ -602,6 +705,8 @@ extension FileListView: NSTableViewDelegate {
         }
         // 同步更新 viewModel 的选择状态
         viewModel.state.selectedFiles = entries
+        // 选中高亮由 NSTableRowView.drawSelection 标准机制绘制，
+        // 无需手动管理 layer.backgroundColor（详见 setupUI 注释）。
         // 异步触发回调，避免阻塞双击事件
         DispatchQueue.main.async { [weak self] in
             self?.onSelectionChanged?(entries)
@@ -614,6 +719,7 @@ extension FileListView: NSTableViewDelegate {
 extension FileListView {
     /// 重写 mouseDown，先激活面板再传递事件给 tableView 处理选中
     public override func mouseDown(with event: NSEvent) {
+        FFDebug.log("FileListView.mouseDown hit=\(hitTest(event.locationInWindow))")
         onActivatePane?()
         super.mouseDown(with: event)
     }

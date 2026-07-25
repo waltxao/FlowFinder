@@ -1,20 +1,22 @@
 import Cocoa
 import Combine
 
-/// SMB 管理面板：挂载 + 列表 + 卸载 + 自动重连
+// MARK: - SMBManagerPanel
+
+/// SMB 管理面板（重写版）：服务器列表行（状态圆点+名称+IP+状态标签+连接/断开按钮）+ 底部"添加服务器"按钮
+/// 每行用 FFGlassView(level: .component, cornerRadius: 6) 作为卡片背景
 public class SMBManagerPanel: NSView {
 
-    private var urlTextField: NSTextField!
-    private var mountButton: NSButton!
-    private var refreshButton: NSButton!
-    private var unmountButton: NSButton!
-    private var statusLabel: NSTextField!
+    private var serverStack: NSStackView!
     private var progressIndicator: NSProgressIndicator!
+    private var statusLabel: NSTextField!
+    private var addButton: NSButton!
+    private var refreshButton: NSButton!
 
-    private var tableView: NSTableView!
-    private var scrollView: NSScrollView!
-
+    /// 已挂载的共享列表
     private var volumes: [SMBVolume] = []
+
+    // MARK: - Init
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -33,148 +35,304 @@ public class SMBManagerPanel: NSView {
     private func setupUI() {
         // 标题
         let titleLabel = NSTextField(labelWithString: "SMB 网络共享")
-        titleLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 15)
+        titleLabel.textColor = .labelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // URL 输入
-        let urlLabel = NSTextField(labelWithString: "服务器地址：")
-        urlLabel.font = NSFont.systemFont(ofSize: 12)
-        urlLabel.translatesAutoresizingMaskIntoConstraints = false
+        // 副标题
+        let subtitleLabel = NSTextField(labelWithString: "连接到局域网或 VPN 内的 SMB/NAS 共享")
+        subtitleLabel.font = .systemFont(ofSize: 11)
+        subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        urlTextField = NSTextField()
-        urlTextField.placeholderString = "smb://user:pass@server/share"
-        urlTextField.translatesAutoresizingMaskIntoConstraints = false
+        // 状态行（进度指示器 + 状态标签 + 刷新按钮）
+        let statusRow = NSView()
+        statusRow.translatesAutoresizingMaskIntoConstraints = false
 
-        mountButton = NSButton(title: "连接", target: self, action: #selector(mountClicked))
-        mountButton.bezelStyle = .rounded
-        mountButton.translatesAutoresizingMaskIntoConstraints = false
-
-        // 进度指示器
         progressIndicator = NSProgressIndicator()
         progressIndicator.style = .spinning
         progressIndicator.controlSize = .small
         progressIndicator.isDisplayedWhenStopped = false
         progressIndicator.translatesAutoresizingMaskIntoConstraints = false
 
-        // 状态标签
         statusLabel = NSTextField(labelWithString: "就绪")
-        statusLabel.font = NSFont.systemFont(ofSize: 11)
-        statusLabel.textColor = NSColor.secondaryLabelColor
+        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.textColor = .secondaryLabelColor
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // 已挂载列表标签
-        let listLabel = NSTextField(labelWithString: "已挂载的共享：")
-        listLabel.font = NSFont.boldSystemFont(ofSize: 12)
-        listLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        // 刷新 / 卸载按钮
-        refreshButton = NSButton(title: "刷新", target: self, action: #selector(refreshClicked))
-        refreshButton.bezelStyle = .rounded
+        refreshButton = NSButton()
+        refreshButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "刷新")
+        refreshButton.contentTintColor = .secondaryLabelColor
+        refreshButton.isBordered = false
+        refreshButton.toolTip = "刷新列表"
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshClicked)
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
 
-        unmountButton = NSButton(title: "卸载", target: self, action: #selector(unmountClicked))
-        unmountButton.bezelStyle = .rounded
-        unmountButton.isEnabled = false
-        unmountButton.translatesAutoresizingMaskIntoConstraints = false
-
-        // 已挂载列表
-        scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        tableView = NSTableView()
-        tableView.allowsMultipleSelection = false
-        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        tableView.usesAlternatingRowBackgroundColors = true
-        tableView.rowHeight = 24
-        tableView.dataSource = self
-        tableView.delegate = self
-
-        let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        nameCol.title = "名称"
-        nameCol.width = 150
-        tableView.addTableColumn(nameCol)
-
-        let pathCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("path"))
-        pathCol.title = "挂载路径"
-        pathCol.width = 250
-        tableView.addTableColumn(pathCol)
-
-        let urlCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("url"))
-        urlCol.title = "服务器地址"
-        urlCol.width = 200
-        tableView.addTableColumn(urlCol)
-
-        scrollView.documentView = tableView
-
-        // 添加子视图
-        addSubview(titleLabel)
-        addSubview(urlLabel)
-        addSubview(urlTextField)
-        addSubview(mountButton)
-        addSubview(progressIndicator)
-        addSubview(statusLabel)
-        addSubview(listLabel)
-        addSubview(refreshButton)
-        addSubview(unmountButton)
-        addSubview(scrollView)
+        statusRow.addSubview(progressIndicator)
+        statusRow.addSubview(statusLabel)
+        statusRow.addSubview(refreshButton)
 
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 20),
+            progressIndicator.leadingAnchor.constraint(equalTo: statusRow.leadingAnchor),
+            progressIndicator.centerYAnchor.constraint(equalTo: statusRow.centerYAnchor),
+            progressIndicator.widthAnchor.constraint(equalToConstant: 14),
+            progressIndicator.heightAnchor.constraint(equalToConstant: 14),
+            statusLabel.leadingAnchor.constraint(equalTo: progressIndicator.trailingAnchor, constant: 6),
+            statusLabel.centerYAnchor.constraint(equalTo: statusRow.centerYAnchor),
+            refreshButton.trailingAnchor.constraint(equalTo: statusRow.trailingAnchor),
+            refreshButton.centerYAnchor.constraint(equalTo: statusRow.centerYAnchor),
+            refreshButton.widthAnchor.constraint(equalToConstant: 20),
+            refreshButton.heightAnchor.constraint(equalToConstant: 20),
+            statusRow.heightAnchor.constraint(equalToConstant: 20),
+        ])
+
+        // 服务器列表（卡片样式）
+        let listLabel = NSTextField(labelWithString: "已连接的服务器")
+        listLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        listLabel.textColor = .secondaryLabelColor
+        listLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        serverStack = NSStackView()
+        serverStack.orientation = .vertical
+        serverStack.spacing = 6
+        serverStack.detachesHiddenViews = false
+        serverStack.translatesAutoresizingMaskIntoConstraints = false
+        serverStack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        scrollView.documentView = serverStack
+
+        // 添加服务器按钮
+        addButton = NSButton(title: "+ 添加服务器...", target: self, action: #selector(addServerClicked))
+        addButton.bezelStyle = .rounded
+        addButton.controlSize = .regular
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+
+        // 组装
+        addSubview(titleLabel)
+        addSubview(subtitleLabel)
+        addSubview(statusRow)
+        addSubview(listLabel)
+        addSubview(scrollView)
+        addSubview(addButton)
+
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 16),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
 
-            urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
-            urlLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
+            subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
 
-            urlTextField.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 14),
-            urlTextField.leadingAnchor.constraint(equalTo: urlLabel.trailingAnchor, constant: 8),
-            urlTextField.widthAnchor.constraint(equalToConstant: 350),
+            statusRow.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 12),
+            statusRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            statusRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
 
-            mountButton.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
-            mountButton.leadingAnchor.constraint(equalTo: urlTextField.trailingAnchor, constant: 8),
-
-            progressIndicator.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 14),
-            progressIndicator.leadingAnchor.constraint(equalTo: mountButton.trailingAnchor, constant: 8),
-            progressIndicator.widthAnchor.constraint(equalToConstant: 16),
-            progressIndicator.heightAnchor.constraint(equalToConstant: 16),
-
-            statusLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
-            statusLabel.leadingAnchor.constraint(equalTo: progressIndicator.trailingAnchor, constant: 8),
-
-            listLabel.topAnchor.constraint(equalTo: urlTextField.bottomAnchor, constant: 20),
+            listLabel.topAnchor.constraint(equalTo: statusRow.bottomAnchor, constant: 12),
             listLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
 
-            refreshButton.topAnchor.constraint(equalTo: urlTextField.bottomAnchor, constant: 16),
-            refreshButton.leadingAnchor.constraint(equalTo: listLabel.trailingAnchor, constant: 16),
-
-            unmountButton.topAnchor.constraint(equalTo: urlTextField.bottomAnchor, constant: 16),
-            unmountButton.leadingAnchor.constraint(equalTo: refreshButton.trailingAnchor, constant: 8),
-
-            scrollView.topAnchor.constraint(equalTo: listLabel.bottomAnchor, constant: 8),
+            scrollView.topAnchor.constraint(equalTo: listLabel.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
+            scrollView.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -12),
+
+            addButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            addButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            addButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            addButton.heightAnchor.constraint(equalToConstant: 28),
+
+            serverStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            serverStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            serverStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            serverStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
         ])
+    }
+
+    // MARK: - 列表渲染
+
+    private func rebuildServerList() {
+        serverStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        if volumes.isEmpty {
+            let empty = makeEmptyState()
+            serverStack.addArrangedSubview(empty)
+            NSLayoutConstraint.activate([
+                empty.leadingAnchor.constraint(equalTo: serverStack.leadingAnchor),
+                empty.trailingAnchor.constraint(equalTo: serverStack.trailingAnchor),
+            ])
+            return
+        }
+
+        for volume in volumes {
+            let card = makeServerCard(volume: volume)
+            serverStack.addArrangedSubview(card)
+            NSLayoutConstraint.activate([
+                card.leadingAnchor.constraint(equalTo: serverStack.leadingAnchor),
+                card.trailingAnchor.constraint(equalTo: serverStack.trailingAnchor),
+            ])
+        }
+    }
+
+    /// 空状态视图
+    private func makeEmptyState() -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.3).cgColor
+        container.layer?.cornerRadius = 8
+
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: "network.slash", accessibilityDescription: nil)
+        icon.contentTintColor = .tertiaryLabelColor
+        icon.imageScaling = .scaleProportionallyDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: "暂无已连接的服务器")
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .tertiaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let hint = NSTextField(labelWithString: "点击下方「添加服务器」按钮连接到 SMB 共享")
+        hint.font = .systemFont(ofSize: 10)
+        hint.textColor = .tertiaryLabelColor
+        hint.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(icon)
+        container.addSubview(label)
+        container.addSubview(hint)
+
+        NSLayoutConstraint.activate([
+            icon.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+            icon.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 32),
+            icon.heightAnchor.constraint(equalToConstant: 32),
+
+            label.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 8),
+            label.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+
+            hint.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 4),
+            hint.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+
+            container.heightAnchor.constraint(equalToConstant: 110),
+        ])
+        return container
+    }
+
+    /// 创建服务器卡片（FFGlassView .component 背景）
+    private func makeServerCard(volume: SMBVolume) -> NSView {
+        let card = FFGlassView(level: .component, cornerRadius: 6)
+        card.translatesAutoresizingMaskIntoConstraints = false
+
+        // 状态圆点（8x8，绿=已连接）
+        let statusDot = NSView()
+        statusDot.wantsLayer = true
+        statusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
+        statusDot.layer?.cornerRadius = 4
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+
+        // 服务器图标
+        let serverIcon = NSImageView()
+        serverIcon.image = NSImage(systemSymbolName: "externaldrive.connected.to.line.below", accessibilityDescription: volume.name)
+        serverIcon.contentTintColor = .secondaryLabelColor
+        serverIcon.imageScaling = .scaleProportionallyDown
+        serverIcon.translatesAutoresizingMaskIntoConstraints = false
+
+        // 名称 + IP（双行）
+        let nameLabel = NSTextField(labelWithString: volume.name)
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.textColor = .labelColor
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.cell?.truncatesLastVisibleLine = true
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let ipLabel = NSTextField(labelWithString: volume.url)
+        ipLabel.font = .systemFont(ofSize: 10)
+        ipLabel.textColor = .tertiaryLabelColor
+        ipLabel.lineBreakMode = .byTruncatingTail
+        ipLabel.cell?.truncatesLastVisibleLine = true
+        ipLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        // 状态药丸（"已连接"）
+        let statusPill = NSTextField(labelWithString: "已连接")
+        statusPill.font = .systemFont(ofSize: 10, weight: .medium)
+        statusPill.textColor = NSColor.systemGreen
+        statusPill.alignment = .center
+        statusPill.wantsLayer = true
+        statusPill.layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.15).cgColor
+        statusPill.layer?.cornerRadius = 7
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        statusPill.heightAnchor.constraint(equalToConstant: 14).isActive = true
+
+        // 断开按钮
+        let disconnectButton = NSButton(title: "断开", target: self, action: #selector(disconnectClicked(_:)))
+        disconnectButton.bezelStyle = .rounded
+        disconnectButton.controlSize = .small
+        disconnectButton.font = .systemFont(ofSize: 11)
+        disconnectButton.contentTintColor = .systemRed
+        disconnectButton.translatesAutoresizingMaskIntoConstraints = false
+        disconnectButton.toolTip = volume.path
+
+        // 组装卡片
+        let infoStack = NSStackView(views: [nameLabel, ipLabel])
+        infoStack.orientation = .vertical
+        infoStack.alignment = .leading
+        infoStack.spacing = 1
+        infoStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let mainStack = NSStackView(views: [statusDot, serverIcon, infoStack, NSView(), statusPill, disconnectButton])
+        mainStack.orientation = .horizontal
+        mainStack.alignment = .centerY
+        mainStack.spacing = 8
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(mainStack)
+
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+            mainStack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            mainStack.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
+            mainStack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
+
+            statusDot.widthAnchor.constraint(equalToConstant: 8),
+            statusDot.heightAnchor.constraint(equalToConstant: 8),
+            serverIcon.widthAnchor.constraint(equalToConstant: 18),
+            serverIcon.heightAnchor.constraint(equalToConstant: 18),
+            card.heightAnchor.constraint(equalToConstant: 52),
+        ])
+        return card
     }
 
     // MARK: - Actions
 
-    @objc private func mountClicked() {
-        let url = urlTextField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !url.isEmpty else {
-            statusLabel.stringValue = "请输入服务器地址"
-            return
+    @objc private func addServerClicked() {
+        guard let parentWindow = self.window else { return }
+        let dialog = ConnectServerDialog { [weak self] result in
+            guard let self = self else { return }
+            guard let url = result.smbURL() else {
+                self.statusLabel.stringValue = "无效的服务器地址"
+                return
+            }
+            self.connectToServer(url: url, parentWindow: parentWindow)
         }
+        dialog.beginSheetModal(for: parentWindow)
+    }
 
+    /// 连接到服务器
+    private func connectToServer(url: URL, parentWindow: NSWindow) {
         progressIndicator.startAnimation(nil)
         statusLabel.stringValue = "正在连接..."
-        mountButton.isEnabled = false
+        addButton.isEnabled = false
 
-        SMBBridge.shared.mount(url: url) { [weak self] result in
+        SMBBridge.shared.mount(url: url.absoluteString) { [weak self] result in
             DispatchQueue.main.async {
                 self?.progressIndicator.stopAnimation(nil)
-                self?.mountButton.isEnabled = true
+                self?.addButton.isEnabled = true
 
                 switch result {
                 case .success(let path):
@@ -191,94 +349,37 @@ public class SMBManagerPanel: NSView {
         refreshList()
     }
 
-    @objc private func unmountClicked() {
-        guard tableView.selectedRow >= 0, tableView.selectedRow < volumes.count else { return }
-        let volume = volumes[tableView.selectedRow]
+    @objc private func disconnectClicked(_ sender: NSButton) {
+        let mountPoint = sender.toolTip ?? ""
+        guard !mountPoint.isEmpty else { return }
 
         progressIndicator.startAnimation(nil)
-        statusLabel.stringValue = "正在卸载..."
-        unmountButton.isEnabled = false
+        statusLabel.stringValue = "正在断开..."
+        sender.isEnabled = false
 
-        SMBBridge.shared.unmount(mountPoint: volume.path) { [weak self] result in
+        SMBBridge.shared.unmount(mountPoint: mountPoint) { [weak self] result in
             DispatchQueue.main.async {
                 self?.progressIndicator.stopAnimation(nil)
-
                 switch result {
                 case .success:
-                    self?.statusLabel.stringValue = "已卸载：\(volume.name)"
+                    self?.statusLabel.stringValue = "已断开"
                     self?.refreshList()
                 case .failure(let error):
-                    self?.statusLabel.stringValue = "卸载失败：\(error.localizedDescription)"
-                    self?.updateUnmountButton()
+                    self?.statusLabel.stringValue = "断开失败：\(error.localizedDescription)"
+                    sender.isEnabled = true
                 }
             }
         }
     }
 
-    // MARK: - Private
+    // MARK: - 列表刷新
 
     private func refreshList() {
         SMBBridge.shared.refreshMountedVolumes()
         volumes = SMBBridge.shared.listMounted()
-        tableView.reloadData()
-        updateUnmountButton()
-        statusLabel.stringValue = "共 \(volumes.count) 个已挂载共享"
-    }
-
-    private func updateUnmountButton() {
-        unmountButton.isEnabled = tableView.selectedRow >= 0
-    }
-}
-
-// MARK: - NSTableViewDataSource
-
-extension SMBManagerPanel: NSTableViewDataSource {
-    public func numberOfRows(in tableView: NSTableView) -> Int {
-        return volumes.count
-    }
-}
-
-// MARK: - NSTableViewDelegate
-
-extension SMBManagerPanel: NSTableViewDelegate {
-    public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row < volumes.count else { return nil }
-        let volume = volumes[row]
-
-        let cellID = NSUserInterfaceItemIdentifier(tableColumn?.identifier.rawValue ?? "")
-        let cellView = tableView.makeView(withIdentifier: cellID, owner: self) as? NSTableCellView
-            ?? NSTableCellView()
-        cellView.identifier = cellID
-
-        if cellView.textField == nil {
-            let tf = NSTextField(labelWithString: "")
-            tf.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-            tf.lineBreakMode = .byTruncatingTail
-            cellView.addSubview(tf)
-            cellView.textField = tf
-            tf.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                tf.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                tf.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-                tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-            ])
+        rebuildServerList()
+        if statusLabel.stringValue == "就绪" || statusLabel.stringValue.contains("已断开") || statusLabel.stringValue.contains("已连接") {
+            statusLabel.stringValue = "共 \(volumes.count) 个已连接服务器"
         }
-
-        switch tableColumn?.identifier.rawValue {
-        case "name":
-            cellView.textField?.stringValue = volume.name
-        case "path":
-            cellView.textField?.stringValue = volume.path
-        case "url":
-            cellView.textField?.stringValue = volume.url
-        default:
-            break
-        }
-
-        return cellView
-    }
-
-    public func tableViewSelectionDidChange(_ notification: Notification) {
-        updateUnmountButton()
     }
 }

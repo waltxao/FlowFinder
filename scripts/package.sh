@@ -26,8 +26,8 @@ SCHEME_NAME="FlowFinderNative"
 TARGET_NAME="FlowFinderNative"
 CONFIGURATION="Release"
 BUILD_DIR="$PROJECT_DIR/build"
-VERSION="0.6.02"
-BUILD_NUMBER="602"
+VERSION="0.6.2"
+BUILD_NUMBER="620"
 
 # Optional Developer ID signing (set via environment)
 DEVELOPER_ID="${DEVELOPER_ID:-}"

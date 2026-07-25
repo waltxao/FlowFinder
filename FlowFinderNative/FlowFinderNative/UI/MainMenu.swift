@@ -38,6 +38,9 @@ class MainMenu {
         fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "移动到废纸篓", action: #selector(MainWindowController.menuMoveToTrash(_:)), keyEquivalent: "\u{8}")
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(withTitle: "添加标签...", action: #selector(MainWindowController.menuAddTag(_:)), keyEquivalent: "")
+        fileMenu.addItem(withTitle: "显示简介", action: #selector(MainWindowController.menuGetInfo(_:)), keyEquivalent: "i")
 
         // Edit menu
         let editMenuItem = NSMenuItem()
