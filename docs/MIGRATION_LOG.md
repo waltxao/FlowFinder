@@ -369,6 +369,7 @@ rightPaneViewModel.refresh()  ← 刷新目标面板
 - [v0.6.5-F8] 缩略图加载链修复：取消旧请求 + 路径校验 + 日志
 - [v0.6.5-F9-A] FileGridView 综合修复：Enter 内联重命名 + 右键菜单 14 项 SF Symbol 图标 + 跨面板箭头方向（panelSide + menuNeedsUpdate）；同时为 FileListView/FileGridView 在 MainWindowController 注入 panelSide
 - [v0.6.5-F9-B] ExpandableDetailsBar 收起态字号统一：setupUI 初始 11pt 与 refresh() 单选分支 13pt medium 不一致，切换选中数量时字号跳变；统一为 13pt medium 在 setupUI 一次性设置，refresh() 三分支不再改 font，状态机完整
+- [v0.6.5-F9-E] 关于窗口版本号改为动态读取 Bundle：AboutWindowController 原硬编码 "0.6.5 (650)" 字面量，升级后版本号脱钩；改为从 Bundle.main.infoDictionary 读取 CFBundleShortVersionString / CFBundleVersion，与 SettingsWindowController 写法保持一致
 
 ---
 

@@ -31,7 +31,10 @@ class AboutWindowController: NSWindowController {
         nameLabel.alignment = .center
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let versionLabel = NSTextField(labelWithString: "版本 0.6.5 (650)")
+        // 动态读取 Bundle 版本号，与 SettingsWindowController 写法保持一致，避免升级后版本号脱钩
+        let shortVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let buildVersion = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        let versionLabel = NSTextField(labelWithString: "版本 \(shortVersion) (\(buildVersion))")
         versionLabel.font = NSFont.systemFont(ofSize: 11)
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.alignment = .center
