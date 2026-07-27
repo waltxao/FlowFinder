@@ -370,6 +370,7 @@ rightPaneViewModel.refresh()  ← 刷新目标面板
 - [v0.6.5-F9-A] FileGridView 综合修复：Enter 内联重命名 + 右键菜单 14 项 SF Symbol 图标 + 跨面板箭头方向（panelSide + menuNeedsUpdate）；同时为 FileListView/FileGridView 在 MainWindowController 注入 panelSide
 - [v0.6.5-F9-B] ExpandableDetailsBar 收起态字号统一：setupUI 初始 11pt 与 refresh() 单选分支 13pt medium 不一致，切换选中数量时字号跳变；统一为 13pt medium 在 setupUI 一次性设置，refresh() 三分支不再改 font，状态机完整
 - [v0.6.5-F9-E] 关于窗口版本号改为动态读取 Bundle：AboutWindowController 原硬编码 "0.6.5 (650)" 字面量，升级后版本号脱钩；改为从 Bundle.main.infoDictionary 读取 CFBundleShortVersionString / CFBundleVersion，与 SettingsWindowController 写法保持一致
+- [v0.6.5-F9-C] FileInfoWindow 接线为独立窗口（仿访达 Get Info）：FileInfoWindowController 整类原为死代码——文件未加入 Xcode target，且"显示简介"菜单/⌘I 仅发送无人监听的 "ExpandDetailsBar" 通知，独立 Info 窗口从未被实例化。修复：(1) 将 FileInfoWindowController.swift 加入 FlowFinderNative target；(2) 修复该文件中 formatFileSize 静态方法被实例调用的编译错误（此前因未编译而潜伏）；(3) FileListView/FileGridView 右键"显示简介"改为发 .fileListShowInfo 通知携带文件路径（优先右键点击项，回退选中首项，仿访达行为）；(4) MainWindowController 新增 handleFileListShowInfo 观察者与 showFileInfo(forPath:) 方法，复用同一 FileInfoWindowController 实例并切换路径；(5) ⌘I 菜单 menuGetInfo 改为调用 showFileInfo。DetailsBar 自动显示逻辑（handleSelectionChanged 选中即展开）保持不变，无功能丢失。
 
 ---
 

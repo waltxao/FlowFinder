@@ -430,7 +430,10 @@ public class FileListView: NSView {
     }
 
     @objc private func showInfoMenu(_ sender: Any?) {
-        NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
+        // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
+        // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
+        let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
+        NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
     }
 
     /// C13: 查重扫描 — 打开查重扫描窗口
@@ -1573,4 +1576,6 @@ extension Notification.Name {
     static let fileListDidAddFavorite = Notification.Name("fileListDidAddFavorite")
     /// C13: 标签变更通知（新建/切换标签后通知侧边栏刷新）
     static let fileListTagsChanged = Notification.Name("FileListTagsChanged")
+    /// F9-C: 请求显示"显示简介"独立窗口（仿访达 Get Info）
+    static let fileListShowInfo = Notification.Name("FileListShowInfo")
 }

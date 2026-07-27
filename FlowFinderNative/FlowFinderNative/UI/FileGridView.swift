@@ -664,7 +664,10 @@ public class FileGridView: NSView {
     }
 
     @objc private func showInfoMenu(_ sender: Any?) {
-        NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
+        // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
+        // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
+        let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
+        NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
     }
 
     public func reloadData() {

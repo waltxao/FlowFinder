@@ -131,6 +131,10 @@ public class MainWindowController: NSWindowController {
     private var clipboardItems: [String] = []
     private var clipboardOperation: ClipboardOperation?
 
+    /// F9-C: 「显示简介」独立窗口控制器（强引用，避免窗口被立即释放）。
+    /// 每次显示时复用同一控制器并切换文件路径（仿访达可切换内容的 Get Info 窗口）。
+    private var fileInfoWindowController: FileInfoWindowController?
+
     private enum ClipboardOperation {
         case copy
         case cut
@@ -563,6 +567,11 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleFileListAddTag(_:)),
             name: NSNotification.Name("FileListAddTag"), object: nil
         )
+        // F9-C: 订阅「显示简介」请求，弹出独立 FileInfoWindow
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListShowInfo(_:)),
+            name: .fileListShowInfo, object: nil
+        )
     }
 
     @objc private func handleFileListAddTag(_ notification: Notification) {
@@ -572,6 +581,17 @@ public class MainWindowController: NSWindowController {
         if let window = window {
             dialog.beginSheetModal(for: window)
         }
+    }
+
+    /// F9-C: 处理「显示简介」请求，弹出独立 FileInfoWindow（仿访达 Get Info）。
+    /// 若通知携带有效路径则显示该文件信息；否则回退到当前活动面板选中项的第一项。
+    @objc private func handleFileListShowInfo(_ notification: Notification) {
+        var path = (notification.userInfo?["path"] as? String) ?? ""
+        if path.isEmpty {
+            path = activePaneViewModel.selectedFiles.first?.path ?? ""
+        }
+        guard !path.isEmpty else { return }
+        showFileInfo(forPath: path)
     }
 
     @objc private func handleQuickLookRequest(_ notification: Notification) {
@@ -949,9 +969,23 @@ extension MainWindowController {
     }
 
     @objc func menuGetInfo(_ sender: Any?) {
-        // 显示简介：展开 DetailsBar（若已收起）
-        // 通过通知触发 ExpandableDetailsBar 展开
-        NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
+        // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
+        // 访达行为：显示选中项的第一个文件信息；无选中则不弹窗。
+        guard let path = activePaneViewModel.selectedFiles.first?.path else { return }
+        showFileInfo(forPath: path)
+    }
+
+    /// F9-C: 显示独立 FileInfoWindow（仿访达 Get Info）。
+    /// 复用已有控制器并切换文件路径；窗口关闭后由 ARC 释放。
+    /// - Parameter path: 文件绝对路径
+    private func showFileInfo(forPath path: String) {
+        if let controller = fileInfoWindowController, controller.window != nil {
+            controller.showInfoWindow(filePath: path)
+        } else {
+            let controller = FileInfoWindowController(filePath: path)
+            fileInfoWindowController = controller
+            controller.showWindow(nil)
+        }
     }
 
     @objc func menuCopy(_ sender: Any?) {

@@ -265,7 +265,7 @@ public class FileInfoWindowController: NSWindowController {
                 sizeValueLabel.stringValue = "计算中…"
                 calculateDirectorySizeAsync(at: filePath)
             } else if let size = attrs[.size] as? NSNumber {
-                sizeValueLabel.stringValue = formatFileSize(size.int64Value)
+                sizeValueLabel.stringValue = FileInfoWindowController.formatFileSize(size.int64Value)
             } else {
                 sizeValueLabel.stringValue = "—"
             }
