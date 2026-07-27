@@ -367,6 +367,7 @@ rightPaneViewModel.refresh()  ← 刷新目标面板
 - [v0.6.5-F6] 应用图标加 8pt 圆角矩形包裹
 - [v0.6.5-F7] 单击选中渲染修复：OpaqueContainerView + 半透明背景 + makeKey + appearance 同步
 - [v0.6.5-F8] 缩略图加载链修复：取消旧请求 + 路径校验 + 日志
+- [v0.6.5-F9-A] FileGridView 综合修复：Enter 内联重命名 + 右键菜单 14 项 SF Symbol 图标 + 跨面板箭头方向（panelSide + menuNeedsUpdate）；同时为 FileListView/FileGridView 在 MainWindowController 注入 panelSide
 
 ---
 

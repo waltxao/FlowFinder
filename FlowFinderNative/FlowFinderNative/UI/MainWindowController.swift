@@ -414,6 +414,7 @@ public class MainWindowController: NSWindowController {
         // 文件列表
         let listView = FileListView()
         listView.identifier = NSUserInterfaceItemIdentifier(side == .left ? "left" : "right")
+        listView.panelSide = side
         listView.translatesAutoresizingMaskIntoConstraints = false
         listView.onDoubleClick = { [weak self] entry in
             self?.handleDoubleClick(entry, side: side)
@@ -428,6 +429,7 @@ public class MainWindowController: NSWindowController {
         // 网格视图（初始隐藏）
         let gridView = FileGridView()
         gridView.identifier = NSUserInterfaceItemIdentifier(side == .left ? "left" : "right")
+        gridView.panelSide = side
         gridView.translatesAutoresizingMaskIntoConstraints = false
         gridView.isHidden = true
         gridView.onDoubleClick = { [weak self] entry in
