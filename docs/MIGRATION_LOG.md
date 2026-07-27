@@ -363,6 +363,7 @@ rightPaneViewModel.refresh()  ← 刷新目标面板
 - [v0.6.5-F2] 移除操作区圆角卡片，仿访达撑满
 - [v0.6.5-F3] 重构双行工具栏布局，BreadcrumbBar 嵌入 Row1 紧贴刷新按钮
 - [v0.6.5-F4] 收藏夹全面仿访达：蓝色模板图标 + sourceList 选中 + sidebar 材质
+- [v0.6.5-F5] 标签药丸裁切修复：硬约束 + 文件名截断 + 带色背景
 
 ---
 

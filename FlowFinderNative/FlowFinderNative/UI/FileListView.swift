@@ -604,12 +604,14 @@ public class FileListView: NSView {
             stack.alignment = .centerY
             stack.spacing = 4
             stack.translatesAutoresizingMaskIntoConstraints = false
-            // 让药丸容器优先占据所需宽度（horizontal hugging 高优先级）
-            stack.setHuggingPriority(.defaultHigh, for: .horizontal)
+            // 任务 F5: 降低 hugging 让药丸不被推向右边缘
+            stack.setHuggingPriority(.defaultLow, for: .horizontal)
+            stack.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             cellView.addSubview(stack)
             NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(greaterThanOrEqualTo: textField.trailingAnchor, constant: 8),
-                stack.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                // 任务 F5: 药丸紧贴文件名后 8pt（硬约束，避免被推向右边缘裁切）
+                stack.leadingAnchor.constraint(equalTo: textField.trailingAnchor, constant: 8),
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: -4),
                 stack.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
             ])
             pillContainer = stack
@@ -646,7 +648,9 @@ public class FileListView: NSView {
     private func makeTagPill(tag: Tag) -> NSView? {
         let pill = NSView()
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // 任务 F5: 药丸背景带标签色浅色，提高对比度
+        let tagColor = NSColor(hex: tag.color) ?? .systemBlue
+        pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
         pill.layer?.cornerRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
 
@@ -680,7 +684,12 @@ public class FileListView: NSView {
     private func makeCountPill(count: Int) -> NSView? {
         let pill = NSView()
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // 任务 F5: 计数药丸背景用次级填充色（macOS 14+），旧系统回退 controlBackgroundColor
+        if #available(macOS 14.0, *) {
+            pill.layer?.backgroundColor = NSColor.secondarySystemFill.cgColor
+        } else {
+            pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        }
         pill.layer?.cornerRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
 
@@ -766,6 +775,9 @@ extension FileListView: NSTableViewDelegate {
             let tf = NSTextField(labelWithString: "")
             tf.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
             tf.lineBreakMode = .byTruncatingTail
+            // 任务 F5: 文件名截断不换行，不挤压药丸
+            tf.cell?.truncatesLastVisibleLine = true
+            tf.cell?.wraps = false
             tf.translatesAutoresizingMaskIntoConstraints = false
             cellView.addSubview(tf)
             cellView.textField = tf
