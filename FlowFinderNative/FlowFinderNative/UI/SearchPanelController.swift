@@ -98,7 +98,7 @@ public class SearchPanelController: NSWindowController {
 
     // MARK: - 数据
 
-    /// scopePopup 选项索引
+    /// F9-D: scopePopup 选项索引（工具栏范围筛选 popup，与 typePopup/timePopup 配合缩小结果集）
     private enum ScopePopupIndex: Int {
         case all = 0              // 全部范围
         case currentLocation = 1  // 当前位置
@@ -543,7 +543,7 @@ public class SearchPanelController: NSWindowController {
 
     // MARK: - 筛选应用
 
-    /// 工具栏 popup 变更时触发重新筛选
+    /// F9-D: 工具栏 popup 变更时触发重新筛选（scopePopup 切到"指定位置..."时先弹路径选择器）
     @objc private func filterPopupChanged(_ sender: NSPopUpButton) {
         // "指定位置..." 选中时弹出路径选择器，让用户选择目标目录
         if sender === scopePopup,
@@ -554,7 +554,7 @@ public class SearchPanelController: NSWindowController {
         applyFiltersAndReload()
     }
 
-    /// 弹出 NSOpenPanel 让用户选择"指定位置"目录
+    /// F9-D: 弹出 NSOpenPanel 让用户选择"指定位置"目录，选定后存入 customScopePath 并重新筛选
     private func promptForCustomScopePath() {
         let openPanel = NSOpenPanel()
         openPanel.canChooseFiles = false
@@ -652,7 +652,7 @@ public class SearchPanelController: NSWindowController {
         }
     }
 
-    /// 规范化路径：去掉末尾的 "/"（根目录 "/" 除外），统一用于前缀比较
+    /// F9-D: 规范化路径：去掉末尾的 "/"（根目录 "/" 除外），统一用于前缀比较
     private func normalizePath(_ path: String) -> String {
         var p = path
         while p.count > 1 && p.hasSuffix("/") {
@@ -661,7 +661,7 @@ public class SearchPanelController: NSWindowController {
         return p
     }
 
-    /// 判断 childPath 是否位于 parentPath 之下（含 parentPath 自身）
+    /// F9-D: 判断 childPath 是否位于 parentPath 之下（含 parentPath 自身）
     /// 用前缀比较并确保边界是目录分隔符，避免 "/a/b" 误匹配 "/a/bc"
     private func isPath(_ childPath: String, under parentPath: String) -> Bool {
         let child = normalizePath(childPath)
