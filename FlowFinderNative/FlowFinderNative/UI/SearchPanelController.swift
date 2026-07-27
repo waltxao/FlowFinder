@@ -98,12 +98,21 @@ public class SearchPanelController: NSWindowController {
 
     // MARK: - 数据
 
+    /// scopePopup 选项索引
+    private enum ScopePopupIndex: Int {
+        case all = 0              // 全部范围
+        case currentLocation = 1  // 当前位置
+        case customLocation = 2   // 指定位置...
+    }
+
     private var results: [FFSearchResult] = []
     /// 过滤后的结果（应用筛选侧边栏配置）
     private var filteredResults: [FFSearchResult] = []
     private var currentMode: SearchMode = .local
     private var currentQuery: String = ""
     private var currentPath: String = ""
+    /// scopePopup 选中"指定位置..."时用户选择的路径（nil 表示未选择）
+    private var customScopePath: String? = nil
     private var searchStartTime: Date?
 
     /// 双击结果跳转回调
@@ -418,6 +427,9 @@ public class SearchPanelController: NSWindowController {
     ///   - searchPath: 搜索路径（本地模式使用）
     public func showPanel(initialQuery: String = "", searchPath: String = "") {
         currentPath = searchPath
+        // 每次打开面板重置范围选择：清空自定义路径并回到"全部范围"，避免上次选择残留误导
+        customScopePath = nil
+        scopePopup.selectItem(at: ScopePopupIndex.all.rawValue)
         if !initialQuery.isEmpty {
             searchField.stringValue = initialQuery
             currentQuery = initialQuery
@@ -533,19 +545,71 @@ public class SearchPanelController: NSWindowController {
 
     /// 工具栏 popup 变更时触发重新筛选
     @objc private func filterPopupChanged(_ sender: NSPopUpButton) {
+        // "指定位置..." 选中时弹出路径选择器，让用户选择目标目录
+        if sender === scopePopup,
+           ScopePopupIndex(rawValue: scopePopup.indexOfSelectedItem) == .customLocation {
+            promptForCustomScopePath()
+            return
+        }
         applyFiltersAndReload()
+    }
+
+    /// 弹出 NSOpenPanel 让用户选择"指定位置"目录
+    private func promptForCustomScopePath() {
+        let openPanel = NSOpenPanel()
+        openPanel.canChooseFiles = false
+        openPanel.canChooseDirectories = true
+        openPanel.allowsMultipleSelection = false
+        openPanel.canCreateDirectories = false
+        openPanel.prompt = "选择"
+        openPanel.title = "选择搜索范围目录"
+        // 起始目录优先用 currentPath
+        if !currentPath.isEmpty {
+            openPanel.directoryURL = URL(fileURLWithPath: currentPath)
+        }
+
+        openPanel.beginSheetModal(for: window!) { [weak self] response in
+            guard let self = self else { return }
+            if response == .OK, let url = openPanel.url {
+                self.customScopePath = url.path
+                self.applyFiltersAndReload()
+            } else {
+                // 用户取消：回退到"全部范围"并清空自定义路径，避免误导
+                self.customScopePath = nil
+                self.scopePopup.selectItem(at: ScopePopupIndex.all.rawValue)
+                self.applyFiltersAndReload()
+            }
+        }
     }
 
     /// 根据筛选侧边栏配置过滤结果并重载表格
     private func applyFiltersAndReload() {
         let config = filterSidebar.config
         // 读取工具栏 popup 状态
+        let scopeIndex = ScopePopupIndex(rawValue: scopePopup.indexOfSelectedItem) ?? .all
         let typeIndex = typePopup.indexOfSelectedItem
         let timeIndex = timePopup.indexOfSelectedItem
         let now = Date()
         let calendar = Calendar.current
 
+        // 计算 scope 过滤所需的前缀路径（nil 表示不限制路径）
+        let scopePrefixPath: String? = {
+            switch scopeIndex {
+            case .all:
+                return nil
+            case .currentLocation:
+                return currentPath.isEmpty ? nil : normalizePath(currentPath)
+            case .customLocation:
+                guard let custom = customScopePath, !custom.isEmpty else { return nil }
+                return normalizePath(custom)
+            }
+        }()
+
         filteredResults = results.filter { result in
+            // 范围筛选：只保留路径以指定前缀开头的结果
+            if let prefix = scopePrefixPath {
+                if !isPath(result.path, under: prefix) { return false }
+            }
             // 文件类型筛选（侧边栏）
             if !config.enabledTypes.isEmpty {
                 let matched = fileTypeOf(result)
@@ -586,6 +650,26 @@ public class SearchPanelController: NSWindowController {
         } else {
             resultsHeader.stringValue = "找到 \(filteredResults.count) 个结果"
         }
+    }
+
+    /// 规范化路径：去掉末尾的 "/"（根目录 "/" 除外），统一用于前缀比较
+    private func normalizePath(_ path: String) -> String {
+        var p = path
+        while p.count > 1 && p.hasSuffix("/") {
+            p = String(p.dropLast())
+        }
+        return p
+    }
+
+    /// 判断 childPath 是否位于 parentPath 之下（含 parentPath 自身）
+    /// 用前缀比较并确保边界是目录分隔符，避免 "/a/b" 误匹配 "/a/bc"
+    private func isPath(_ childPath: String, under parentPath: String) -> Bool {
+        let child = normalizePath(childPath)
+        let parent = normalizePath(parentPath)
+        if child == parent { return true }
+        // 父路径为根目录 "/" 时，所有路径都匹配
+        if parent == "/" { return true }
+        return child.hasPrefix(parent + "/")
     }
 
     /// 根据文件扩展名推断 FileTypeFilter
