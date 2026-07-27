@@ -4,6 +4,38 @@
 
 ---
 
+## v0.6.5（2026-07-27）仿访达 UI 重构
+
+本轮修复用户反馈的 8 个 UI 问题 + 全量 UI 巡检发现的 8 个 P0 问题，共 16 项修复。Debug + Release 双构建通过。
+
+### 第一层：布局结构重建（F2-F3）
+
+- **[F2]** 移除操作区圆角卡片，仿访达撑满 + 1px 发丝线分隔（问题3）
+- **[F3]** 重构双行工具栏布局，BreadcrumbBar 嵌入 Row1 紧贴刷新按钮，修复 Row2 不可见（问题4+5）
+
+### 第二层：组件级修复（F4-F8）
+
+- **[F4]** 收藏夹全面仿访达：蓝色模板图标 + sourceList 选中 + sidebar 材质（问题1）
+- **[F5]** 标签药丸裁切修复：硬约束 + 文件名截断 + 带色背景（问题2）
+- **[F6]** 应用图标加 8pt 圆角矩形包裹（问题7）
+- **[F7]** 单击选中渲染修复：OpaqueContainerView + 半透明背景 + makeKey + appearance 同步（问题6）
+- **[F8]** 缩略图加载链修复：取消旧请求 + 路径校验 + 日志（问题8）
+
+### 第三层：全量 UI 巡检 P0 修复（F9-A~F）
+
+- **[F9-A]** FileGridView 综合：Enter 重命名 + 菜单图标 + 跨面板方向箭头（P0#1#2#7）
+- **[F9-B]** 详情栏收起态字号统一为 13pt medium（P0#3）
+- **[F9-C]** FileInfoWindow 接线为独立窗口（仿访达 Get Info），加入 Xcode target 修复潜伏编译错误（P0#4）
+- **[F9-D]** 搜索面板 scopePopup 接线，范围切换生效，"指定位置"用 NSOpenPanel 选目录（P0#5）
+- **[F9-E]** 关于窗口版本号改为动态读取 Bundle（P0#6）
+- **[F9-F]** ProgressDialog 取消按钮接线到 cancelTask，FFModalSheet 新增 secondaryAction 闭包向后兼容（P0#8）
+
+### 巡检报告
+
+详见 `docs/superpowers/specs/2026-07-27-v0.6.5-ui-audit-report.md`（8 P0 / 26 P1 / 26 P2）。P0 全部修复，P1/P2 纳入下一轮。
+
+---
+
 ## 1. 重构背景
 
 ### 1.1 原版架构
@@ -355,6 +387,24 @@ rightPaneViewModel.refresh()  ← 刷新目标面板
 | 验证清单 | [VERIFICATION.md](VERIFICATION.md) | POC 验证结果 |
 | 变更日志 | [../CHANGELOG.md](../CHANGELOG.md) | 版本变更记录 |
 | 原版迁移说明 | [FlowFinder-T/MIGRATION.md](https://github.com/waltxao/FlowFinder-T/blob/main/MIGRATION.md) | 原版迁移引导 |
+
+---
+
+## 11. v0.6.5 仿访达 UI 重构
+
+- [v0.6.5-F2] 移除操作区圆角卡片，仿访达撑满
+- [v0.6.5-F3] 重构双行工具栏布局，BreadcrumbBar 嵌入 Row1 紧贴刷新按钮
+- [v0.6.5-F4] 收藏夹全面仿访达：蓝色模板图标 + sourceList 选中 + sidebar 材质
+- [v0.6.5-F5] 标签药丸裁切修复：硬约束 + 文件名截断 + 带色背景
+- [v0.6.5-F6] 应用图标加 8pt 圆角矩形包裹
+- [v0.6.5-F7] 单击选中渲染修复：OpaqueContainerView + 半透明背景 + makeKey + appearance 同步
+- [v0.6.5-F8] 缩略图加载链修复：取消旧请求 + 路径校验 + 日志
+- [v0.6.5-F9-A] FileGridView 综合修复：Enter 内联重命名 + 右键菜单 14 项 SF Symbol 图标 + 跨面板箭头方向（panelSide + menuNeedsUpdate）；同时为 FileListView/FileGridView 在 MainWindowController 注入 panelSide
+- [v0.6.5-F9-B] ExpandableDetailsBar 收起态字号统一：setupUI 初始 11pt 与 refresh() 单选分支 13pt medium 不一致，切换选中数量时字号跳变；统一为 13pt medium 在 setupUI 一次性设置，refresh() 三分支不再改 font，状态机完整
+- [v0.6.5-F9-E] 关于窗口版本号改为动态读取 Bundle：AboutWindowController 原硬编码 "0.6.5 (650)" 字面量，升级后版本号脱钩；改为从 Bundle.main.infoDictionary 读取 CFBundleShortVersionString / CFBundleVersion，与 SettingsWindowController 写法保持一致
+- [v0.6.5-F9-C] FileInfoWindow 接线为独立窗口（仿访达 Get Info）：FileInfoWindowController 整类原为死代码——文件未加入 Xcode target，且"显示简介"菜单/⌘I 仅发送无人监听的 "ExpandDetailsBar" 通知，独立 Info 窗口从未被实例化。修复：(1) 将 FileInfoWindowController.swift 加入 FlowFinderNative target；(2) 修复该文件中 formatFileSize 静态方法被实例调用的编译错误（此前因未编译而潜伏）；(3) FileListView/FileGridView 右键"显示简介"改为发 .fileListShowInfo 通知携带文件路径（优先右键点击项，回退选中首项，仿访达行为）；(4) MainWindowController 新增 handleFileListShowInfo 观察者与 showFileInfo(forPath:) 方法，复用同一 FileInfoWindowController 实例并切换路径；(5) ⌘I 菜单 menuGetInfo 改为调用 showFileInfo。DetailsBar 自动显示逻辑（handleSelectionChanged 选中即展开）保持不变，无功能丢失。
+- [v0.6.5-F9-D] SearchPanelController scopePopup 接线：搜索面板工具栏 scopePopup（全部范围/当前位置/指定位置）原为未接线控件--applyFiltersAndReload 只读取 typePopup/timePopup，scopePopup 选中值从未被引用，范围切换无任何实际作用。修复：(1) 新增 ScopePopupIndex 枚举明确选项索引；(2) applyFiltersAndReload 读取 scopePopup.indexOfSelectedItem 计算 scopePrefixPath，对结果做路径前缀过滤--全部范围(0)不限制、当前位置(1)以当前面板路径 currentPath 为前缀、指定位置(2)以用户选择路径为前缀；(3) 新增 normalizePath/isPath(_:under:) 辅助方法保证目录边界，避免 /a/b 误匹配 /a/bc；(4) 选中“指定位置”时弹出 NSOpenPanel 让用户选择目录（无路径输入控件，故用选择器替代），取消则回退到“全部范围”；(5) showPanel 每次打开重置范围选择避免残留。“当前位置”路径来源为 MainWindowController.menuSearch 传入的 activePaneViewModel.currentPath。
+- [v0.6.5-F9-F] ProgressDialog「取消」按钮接线到 cancelTask：进度对话框「取消」按钮原仅走 FFModalSheet.secondaryButtonClicked -> cancel() -> close()，只关闭窗口，未调用 TaskSchedulerManager.cancelTask，后台文件操作继续执行（P0#8）。修复方案 B（侵入最小）：FFModalSheet 新增可选 `secondaryAction` 闭包（默认 nil 保持向后兼容），secondaryButtonClicked 在 cancel() 前先执行该闭包，让子类接入任务语义而无需重写私有的 secondaryButtonClicked/cancel（两者均为 @objc private 不可被子类重写，方案 A 不可行）；方案 C windowWillClose 不可行--「后台运行」与「取消」都走 close()，无法区分关闭原因。ProgressDialog 新增 `taskId` 属性（String，与 TaskInfo.id / TaskSchedulerManager.cancelTask(taskId: String) 签名一致），init 增加可选 taskId 参数，并提供 setTaskId(_:) 供“先展示对话框、后拿到任务 ID”场景；secondaryAction 注入为 `TaskSchedulerManager.shared.cancelTask(taskId: taskId)`。验收：xcodebuild Debug ** BUILD SUCCEEDED **，改动文件无 error/warning。提示：ProgressDialog 当前无任何调用方实例化（P1 死代码），无法运行时验证取消功能，验收仅靠构建通过 + 逻辑审查。
 
 ---
 

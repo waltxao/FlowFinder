@@ -39,6 +39,13 @@ class FFModalSheet: NSWindow {
     let secondaryButtonTitle: String?
     let primaryAction: () -> Void
 
+    /// 次按钮（如「取消」）的自定义行为闭包。
+    ///
+    /// - 默认为 `nil`：次按钮点击仅调用 `cancel()` 关闭窗口（原行为，向后兼容）。
+    /// - 设为非空时：点击次按钮会先执行该闭包（例如真正取消后台任务），再 `cancel()` 关闭窗口。
+    /// 子类可在 `super.init` 之后注入该闭包以接入任务语义，无需重写私有的 `secondaryButtonClicked`。
+    var secondaryAction: (() -> Void)?
+
     // MARK: - UI 元素
 
     private var headerView: NSView!
@@ -305,6 +312,9 @@ class FFModalSheet: NSWindow {
     }
 
     @objc private func secondaryButtonClicked() {
+        // 先执行子类注入的次按钮语义（如真正取消后台任务），再关闭窗口。
+        // secondaryAction 为 nil 时退化为原行为（仅关闭窗口），保持向后兼容。
+        secondaryAction?()
         cancel()
     }
 

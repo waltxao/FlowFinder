@@ -33,12 +33,12 @@ class SidebarView: NSView {
     private var deviceOutlineView: NSOutlineView!
     private var favoritesScrollView: NSScrollView!
     private var deviceScrollView: NSScrollView!
-    /// 1.5 收藏夹区域玻璃背景（FFGlassView .panel 替代 GlassSectionMaskView）
-    private var favoritesMaskView: FFGlassView!
-    /// 1.5 标签区域玻璃背景
-    private var tagsMaskView: FFGlassView!
-    /// 1.5 下方区域玻璃背景（包裹存储设备，B8 改为浮动在侧边栏左下角）
-    private var deviceMaskView: FFGlassView!
+    /// 1.5 收藏夹区域背景（v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质，移除 FFGlassView 卡片）
+    private var favoritesMaskView: NSVisualEffectView!
+    /// 1.5 标签区域背景（v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质）
+    private var tagsMaskView: NSVisualEffectView!
+    /// 1.5 下方区域背景（包裹存储设备，B8 改为浮动在侧边栏左下角；v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质）
+    private var deviceMaskView: NSVisualEffectView!
     /// B10: 设备栏自定义头部（汇总信息 + 折叠箭头）
     private var deviceHeaderView: DeviceHeaderView!
     /// 标签 flow 视图（替代 outlineView，支持横向 wrap）
@@ -82,6 +82,11 @@ class SidebarView: NSView {
         brandIconView.image = NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
         brandIconView.imageScaling = .scaleProportionallyUpOrDown
         brandIconView.translatesAutoresizingMaskIntoConstraints = false
+        // 任务 F6: 应用图标 8pt 圆角矩形包裹（v0.6.5）
+        brandIconView.wantsLayer = true
+        brandIconView.layer?.cornerRadius = 8
+        brandIconView.layer?.masksToBounds = true
+        brandIconView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         brandView.addSubview(brandIconView)
 
         let appNameLabel = NSTextField(labelWithString: "FlowFinder")
@@ -110,17 +115,26 @@ class SidebarView: NSView {
             appNameLabel.centerYAnchor.constraint(equalTo: brandView.centerYAnchor),
         ])
 
-        // E18: 强磨砂玻璃 — material 使用 .sidebar（NSVisualEffectView.Material.sidebar）
-        // level=.panel, cornerRadius=10 保持不变
-        favoritesMaskView = FFGlassView(level: .panel, cornerRadius: 10, material: .sidebar)
+        // 任务 F4: 收藏夹仿访达 - 直接使用 NSVisualEffectView(.sidebar) 材质（v0.6.5）
+        // 移除 FFGlassView 圆角卡片包裹，改为访达侧边栏标准材质
+        favoritesMaskView = NSVisualEffectView()
+        favoritesMaskView.material = .sidebar
+        favoritesMaskView.blendingMode = .behindWindow
+        favoritesMaskView.state = .active
         favoritesMaskView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(favoritesMaskView)
 
-        tagsMaskView = FFGlassView(level: .panel, cornerRadius: 10, material: .sidebar)
+        tagsMaskView = NSVisualEffectView()
+        tagsMaskView.material = .sidebar
+        tagsMaskView.blendingMode = .behindWindow
+        tagsMaskView.state = .active
         tagsMaskView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tagsMaskView)
 
-        deviceMaskView = FFGlassView(level: .panel, cornerRadius: 10, material: .sidebar)
+        deviceMaskView = NSVisualEffectView()
+        deviceMaskView.material = .sidebar
+        deviceMaskView.blendingMode = .behindWindow
+        deviceMaskView.state = .active
         deviceMaskView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(deviceMaskView)
 
@@ -332,6 +346,8 @@ class SidebarView: NSView {
         ov.rowHeight = 24
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
+        // 任务 F4: 收藏夹仿访达 - sourceList 选中样式（半透明蓝高亮）
+        ov.selectionHighlightStyle = .sourceList
         ov.backgroundColor = NSColor.clear
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarItem"))
@@ -718,10 +734,13 @@ private class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlin
         switch item as? SidebarItem {
         case .favorite(let fav):
             textField.stringValue = fav.name
-            // 使用 NSWorkspace 获取真实位置图标（桌面、文稿、下载等各有不同图标）
-            let workspaceIcon = NSWorkspace.shared.icon(forFile: fav.path)
-            workspaceIcon.size = NSSize(width: 16, height: 16)
-            imageView.image = workspaceIcon
+            // 任务 F4: 收藏夹仿访达 - 蓝色模板图标（访达风格）
+            let symbolName = FavoritesSidebarDataSource.favoriteSymbolName(for: fav.path)
+            let icon = NSImage(systemSymbolName: symbolName, accessibilityDescription: fav.name)
+            icon?.isTemplate = true
+            icon?.size = NSSize(width: 16, height: 16)
+            imageView.image = icon
+            imageView.contentTintColor = NSColor.controlAccentColor  // 访达蓝色
 
         default:
             textField.stringValue = ""
@@ -831,6 +850,26 @@ private class FavoritesSidebarDataSource: SidebarDataSourceBase {
     var onFavoritesChanged: (() -> Void)?
 
     var favoriteCount: Int { favorites.count }
+
+    /// 根据收藏夹路径返回对应的 SF Symbol 名称（访达风格蓝色模板图标）
+    /// 任务 F4: 收藏夹仿访达 - 用模板 SF Symbol + controlAccentColor 替代 NSWorkspace 真实图标
+    static func favoriteSymbolName(for path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        switch path {
+        case (home as NSString).appendingPathComponent("Desktop"): return "desktopcomputer"
+        case (home as NSString).appendingPathComponent("Documents"): return "folder.fill"
+        case (home as NSString).appendingPathComponent("Downloads"): return "tray.and.arrow.down"
+        case "/Applications": return "app"
+        case home: return "house"
+        default:
+            // 用户自定义收藏：目录用 folder，文件用 doc
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+                return "folder"
+            }
+            return "doc"
+        }
+    }
 
     override init() {
         super.init()

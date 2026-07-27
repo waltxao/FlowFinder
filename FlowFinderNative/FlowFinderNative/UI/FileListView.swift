@@ -42,6 +42,11 @@ enum FFDebug {
 /// 的标准 drawSelection 选中绘制可见。选中高亮完全由 rowView 标准机制处理，
 /// cellView 不参与选中绘制。
 private class FFTableCellView: NSTableCellView {
+    /// 任务 F8：记录该 cell 当前显示文件的完整路径。
+    /// 用于缩略图异步回调时校验 cell 仍显示同一文件（避免旧请求覆盖新 cell）。
+    /// 注意：不能用 cellView.identifier 记录路径——identifier 用于 NSTableView
+    /// 的复用匹配（makeView(withIdentifier:owner:)），覆写会破坏 cell 复用机制。
+    var currentFilePath: String?
 }
 
 // MARK: - FFTableRowView
@@ -192,7 +197,9 @@ public class FileListView: NSView {
         // 透明背景：让 NSVisualEffectView/NSGlassEffectView 玻璃态透过 tableView 显示，
         // 同时不遮挡 NSTableRowView.drawSelection 的标准选中绘制。
         // 此前使用 textBackgroundColor.withAlphaComponent(0.85) 导致白色背景覆盖选中蓝色。
-        tableView.backgroundColor = .clear
+        // 任务 F7: 半透明背景给选中色提供底色衬托（v0.6.5）
+        // 完全透明时标准蓝色在玻璃背景上对比度不足
+        tableView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.6)
         tableView.enclosingScrollView?.drawsBackground = false
         scrollView.drawsBackground = false
         scrollView.backgroundColor = NSColor.clear
@@ -423,7 +430,10 @@ public class FileListView: NSView {
     }
 
     @objc private func showInfoMenu(_ sender: Any?) {
-        NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
+        // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
+        // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
+        let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
+        NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
     }
 
     /// C13: 查重扫描 — 打开查重扫描窗口
@@ -604,12 +614,14 @@ public class FileListView: NSView {
             stack.alignment = .centerY
             stack.spacing = 4
             stack.translatesAutoresizingMaskIntoConstraints = false
-            // 让药丸容器优先占据所需宽度（horizontal hugging 高优先级）
-            stack.setHuggingPriority(.defaultHigh, for: .horizontal)
+            // 任务 F5: 降低 hugging 让药丸不被推向右边缘
+            stack.setHuggingPriority(.defaultLow, for: .horizontal)
+            stack.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             cellView.addSubview(stack)
             NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(greaterThanOrEqualTo: textField.trailingAnchor, constant: 8),
-                stack.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                // 任务 F5: 药丸紧贴文件名后 8pt（硬约束，避免被推向右边缘裁切）
+                stack.leadingAnchor.constraint(equalTo: textField.trailingAnchor, constant: 8),
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: -4),
                 stack.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
             ])
             pillContainer = stack
@@ -646,7 +658,9 @@ public class FileListView: NSView {
     private func makeTagPill(tag: Tag) -> NSView? {
         let pill = NSView()
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // 任务 F5: 药丸背景带标签色浅色，提高对比度
+        let tagColor = NSColor(hex: tag.color) ?? .systemBlue
+        pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
         pill.layer?.cornerRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
 
@@ -680,7 +694,12 @@ public class FileListView: NSView {
     private func makeCountPill(count: Int) -> NSView? {
         let pill = NSView()
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // 任务 F5: 计数药丸背景用次级填充色（macOS 14+），旧系统回退 controlBackgroundColor
+        if #available(macOS 14.0, *) {
+            pill.layer?.backgroundColor = NSColor.secondarySystemFill.cgColor
+        } else {
+            pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        }
         pill.layer?.cornerRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
 
@@ -708,6 +727,21 @@ public class FileListView: NSView {
         DispatchQueue.main.async { [weak self] in
             self?.isReloading = false
         }
+    }
+
+    // MARK: - Layout
+
+    // 任务 F7: 显式同步 appearance，确保选中色解析正确（v0.6.5）
+    // FileListView 是 NSView（非 NSViewController），无 viewDidLayout；改用 layout()。
+    // layout() 在布局变更时被频繁调用，appearance 赋值是轻量指针赋值，开销可忽略。
+    public override func layout() {
+        super.layout()
+        tableView.appearance = NSApp.appearance
+    }
+
+    /// 任务 F7: 供外部（MainWindowController 主题监听）显式刷新 appearance（v0.6.5）
+    public func refreshAppearance() {
+        tableView.appearance = NSApp.appearance
     }
 
     // MARK: - Double Click
@@ -766,6 +800,9 @@ extension FileListView: NSTableViewDelegate {
             let tf = NSTextField(labelWithString: "")
             tf.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
             tf.lineBreakMode = .byTruncatingTail
+            // 任务 F5: 文件名截断不换行，不挤压药丸
+            tf.cell?.truncatesLastVisibleLine = true
+            tf.cell?.wraps = false
             tf.translatesAutoresizingMaskIntoConstraints = false
             cellView.addSubview(tf)
             cellView.textField = tf
@@ -815,15 +852,34 @@ extension FileListView: NSTableViewDelegate {
             workspaceIcon.size = NSSize(width: 18, height: 18)
             cellView.imageView?.image = workspaceIcon
 
-            // 非目录文件额外异步加载 QuickLook 缩略图（图片、视频等预览）
+            // 任务 F8: 缩略图加载层修复（v0.6.5）
+            // 1) 取消该 cell 上一次的缩略图请求（避免旧请求覆盖新 cell）
+            // 2) 回调校验改为完整路径（避免同名文件误覆盖）
+            // 3) 先显示文件类型图标作为占位，缩略图返回后再替换
+            // 注意：路径校验用 cellView.currentFilePath 而非 cellView.identifier，
+            // 因为 identifier 被 NSTableView 的复用机制依赖（见 makeView(withIdentifier:)）。
             if !entry.isDirectory {
                 let path = entry.path
+                // 取消旧请求（用 cell 的 currentFilePath 记录上一次路径）
+                if let oldPath = cellView.currentFilePath, oldPath != path {
+                    ThumbnailManager.shared.cancelGeneration(for: oldPath)
+                }
+                // 更新 cell 的当前路径标记
+                cellView.currentFilePath = path
+
+                // ThumbnailManager 的 completion 已在主线程回调，
+                // 此处无需再包 DispatchQueue.main.async。
                 ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 32, height: 32)) { [weak cellView] image in
                     guard let image = image else { return }
-                    if cellView?.textField?.stringValue == entry.name {
-                        cellView?.imageView?.image = image
-                    }
+                    // 校验 cell 仍显示同一文件（用完整路径而非文件名）
+                    guard let cell = cellView,
+                          cell.currentFilePath == path else { return }
+                    cell.imageView?.image = image
                 }
+            } else {
+                // 目录不加载缩略图：workspaceIcon 已在上方设置（文件夹图标），
+                // 此处仅清除路径标记，避免旧回调误覆盖目录图标。
+                cellView.currentFilePath = nil
             }
 
             // C12: 内联标签药丸容器（位于文件名右侧、cell 右侧）
@@ -873,9 +929,15 @@ extension FileListView: NSTableViewDelegate {
         // 点击行时激活当前面板（tableView 作为子视图拦截了 mouseDown，
         // FileListView.mouseDown 不会触发，需在此补充激活）
         onActivatePane?()
-        // 确保 tableView 是 firstResponder，否则选中高亮会变成灰色（de-emphasized）
-        if let window = tableView.window, window.firstResponder !== tableView {
-            window.makeFirstResponder(tableView)
+        // 任务 F7: 确保 window 为 key + tableView 为 firstResponder（v0.6.5）
+        // 透明窗口的 key 状态不稳定，需显式 makeKey + makeFirstResponder
+        if let window = tableView.window {
+            if !window.isKeyWindow {
+                window.makeKeyAndOrderFront(nil)
+            }
+            if window.firstResponder !== tableView {
+                window.makeFirstResponder(tableView)
+            }
         }
         let selectedRows = tableView.selectedRowIndexes
         let entries = selectedRows.compactMap { idx -> FileEntry? in
@@ -1514,4 +1576,6 @@ extension Notification.Name {
     static let fileListDidAddFavorite = Notification.Name("fileListDidAddFavorite")
     /// C13: 标签变更通知（新建/切换标签后通知侧边栏刷新）
     static let fileListTagsChanged = Notification.Name("FileListTagsChanged")
+    /// F9-C: 请求显示"显示简介"独立窗口（仿访达 Get Info）
+    static let fileListShowInfo = Notification.Name("FileListShowInfo")
 }

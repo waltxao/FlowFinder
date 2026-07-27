@@ -22,6 +22,10 @@ class ProgressDialog: FFModalSheet {
     /// 任务起始时间戳（用于基于实际耗时计算 ETA）
     private var startTime: Date?
 
+    /// 当前对话框绑定的后台任务 ID（用于「取消」按钮真正中止任务）。
+    /// 由调用方在展示对话框前通过 `setTaskId(_:)` 注入，或在 init 时传入。
+    private var taskId: String?
+
     /// 上次进度更新时间戳（用于计算瞬时速度）
     private var lastProgress: Double = 0
     private var lastProgressTime: Date?
@@ -29,9 +33,13 @@ class ProgressDialog: FFModalSheet {
     /// 初始化
     /// - Parameters:
     ///   - title: 标题（例: "正在复制文件"）
+    ///   - taskId: 关联的后台任务 ID；若非空，「取消」按钮会调用 `TaskSchedulerManager.shared.cancelTask(taskId:)` 真正中止任务
     ///   - onComplete: 操作完成回调
-    init(title: String = "正在处理文件", onComplete: (() -> Void)? = nil) {
+    init(title: String = "正在处理文件",
+         taskId: String? = nil,
+         onComplete: (() -> Void)? = nil) {
         self.onComplete = onComplete
+        self.taskId = taskId
 
         let bodyView = NSView()
         // 使用闭包持有盒延迟注入 self 依赖（Swift 6 严格模式禁止 super.init 前捕获 self）
@@ -48,12 +56,27 @@ class ProgressDialog: FFModalSheet {
             self?.close()
         }
 
+        // 接线「取消」按钮：在 FFModalSheet 关闭窗口前，先真正取消后台任务。
+        // 之前「取消」仅 close()，后台文件操作继续执行（P0#8）。
+        secondaryAction = { [weak self] in
+            guard let self = self, let taskId = self.taskId else { return }
+            TaskSchedulerManager.shared.cancelTask(taskId: taskId)
+        }
+
         setupBody(bodyView: bodyView)
         observeTaskProgress()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// 注入或更新任务 ID。
+    ///
+    /// 适用于调用方先展示对话框、再拿到任务 ID 的场景；若新 ID 与当前不同，则更新引用。
+    /// - Parameter taskId: 后台任务 ID（与 `TaskInfo.id` 一致，为 String）
+    func setTaskId(_ taskId: String) {
+        self.taskId = taskId
     }
 
     private func setupBody(bodyView: NSView) {

@@ -131,6 +131,10 @@ public class MainWindowController: NSWindowController {
     private var clipboardItems: [String] = []
     private var clipboardOperation: ClipboardOperation?
 
+    /// F9-C: 「显示简介」独立窗口控制器（强引用，避免窗口被立即释放）。
+    /// 每次显示时复用同一控制器并切换文件路径（仿访达可切换内容的 Get Info 窗口）。
+    private var fileInfoWindowController: FileInfoWindowController?
+
     private enum ClipboardOperation {
         case copy
         case cut
@@ -266,8 +270,9 @@ public class MainWindowController: NSWindowController {
         titlebarView.wantsLayer = true
         titlebarView.layer?.backgroundColor = NSColor.clear.cgColor
 
-        // Main container（透明背景以透出玻璃效果）
-        let mainContainer = NSView()
+        // 任务 F7: 使用 OpaqueContainerView 修复鼠标穿透与选中渲染（v0.6.5）
+        // mainContainer（透明背景以透出玻璃效果）
+        let mainContainer = OpaqueContainerView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
         mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
@@ -276,10 +281,8 @@ public class MainWindowController: NSWindowController {
         mainContainer.addSubview(taskProgressBar)
         taskProgressBar.isHidden = true
 
-        // 任务 R1: 三栏布局 — 侧边栏贴边框，左右操作区圆角8pt卡片，间距12pt
-        // 实现方式：mainSplitView 的 divider 提供间距（dividerStyle=.thin → 1pt）
-        // 额外通过 sidebarView 和 paneContainer 的内边距增加视觉间距
-        // 操作区圆角8pt 由 createPaneContainer 中的 container.layer.cornerRadius = 8 实现
+        // 任务 F2: 三栏布局 - 侧边栏贴边框，左右操作区撑满（仿访达），1pt 发丝线分隔（v0.6.5）
+        // mainSplitView 的 divider 提供 1pt 发丝线（dividerStyle=.thin）
         NSLayoutConstraint.activate([
             // titlebarView 顶部 28pt（仅红绿灯空间）
             titlebarView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
@@ -315,21 +318,23 @@ public class MainWindowController: NSWindowController {
         mainContainerView = mainContainer
         window.contentView = visualEffectView
 
-        // 任务 R4: 操作区背景色随主题切换
-        applyPaneBackgroundColor()
-
-        // 监听主题变更，刷新操作区背景色
-        ThemeManager.shared.onModeChanged = { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.applyPaneBackgroundColor()
-            }
-        }
-
         // 确保玻璃效果不被 ThemeManager 覆盖
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.window?.appearance = nil
             self.mainContainerView?.appearance = NSApp.effectiveAppearance
+        }
+
+        // 任务 F7: 监听主题变更，刷新所有 FileListView 的 appearance（v0.6.5）
+        // onModeChanged 是单回调，需保留前一个回调链，避免覆盖 AppearanceSettingsView 等已注册的监听
+        // FileListView 是 NSView（非 ViewController），无 viewDidLayout，故调用 refreshAppearance()
+        let previousCallback = ThemeManager.shared.onModeChanged
+        ThemeManager.shared.onModeChanged = { [weak self] mode in
+            previousCallback?(mode)
+            DispatchQueue.main.async {
+                self?.leftFileListView?.refreshAppearance()
+                self?.rightFileListView?.refreshAppearance()
+            }
         }
 
         // 诊断：监听所有鼠标按下事件
@@ -374,17 +379,17 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
-    /// 任务 R1: 操作区圆角8pt 卡片
-    /// 任务 R4: 操作区背景色（日间白0.15/夜间黑0.25）
+    /// 任务 F2: 操作区撑满（仿访达），无圆角，背景透明透出 NSVisualEffectView 材质（v0.6.5）
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
-        // 任务 R1: 操作区圆角 12pt 卡片
-        container.layer?.cornerRadius = 12
-        container.layer?.masksToBounds = true
+        // 任务 F2: 移除圆角卡片，仿访达撑满（v0.6.5）
+        // 操作区背景透明，让 NSVisualEffectView 的 .underWindowBackground 材质透出
+        container.layer?.cornerRadius = 0
+        container.layer?.masksToBounds = false
 
         // 1.2 活动面板顶部 accent 色条（2pt 高，初始隐藏，由 updateActivePaneVisual 切换）
         let accentBar = NSView()
@@ -394,19 +399,26 @@ public class MainWindowController: NSWindowController {
         accentBar.isHidden = true  // 初始隐藏，仅活动面板显示
         container.addSubview(accentBar)
 
-        // 面包屑导航栏
-        let breadcrumbBar = BreadcrumbBar()
-        breadcrumbBar.delegate = self
-        breadcrumbBar.translatesAutoresizingMaskIntoConstraints = false
+        // 任务 F3: 双行工具栏布局（v0.6.5）
+        // Row1（32pt）= 后退/前进/上一级/刷新 + BreadcrumbBar（紧贴刷新）
+        // Row2（32pt）= 搜索/排序/分组/视图/工具
+        // PaneToolbar 总高 72pt
 
-        // 工具栏
+        // 工具栏（内含双行 + BreadcrumbBar）
         let toolbar = PaneToolbar()
         toolbar.delegate = self
         toolbar.translatesAutoresizingMaskIntoConstraints = false
 
+        // 面包屑导航栏（嵌入 PaneToolbar Row1）
+        let breadcrumbBar = BreadcrumbBar()
+        breadcrumbBar.delegate = self
+        breadcrumbBar.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.setBreadcrumbBar(breadcrumbBar)
+
         // 文件列表
         let listView = FileListView()
         listView.identifier = NSUserInterfaceItemIdentifier(side == .left ? "left" : "right")
+        listView.panelSide = side
         listView.translatesAutoresizingMaskIntoConstraints = false
         listView.onDoubleClick = { [weak self] entry in
             self?.handleDoubleClick(entry, side: side)
@@ -421,6 +433,7 @@ public class MainWindowController: NSWindowController {
         // 网格视图（初始隐藏）
         let gridView = FileGridView()
         gridView.identifier = NSUserInterfaceItemIdentifier(side == .left ? "left" : "right")
+        gridView.panelSide = side
         gridView.translatesAutoresizingMaskIntoConstraints = false
         gridView.isHidden = true
         gridView.onDoubleClick = { [weak self] entry in
@@ -438,38 +451,22 @@ public class MainWindowController: NSWindowController {
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 添加到容器
-        container.addSubview(breadcrumbBar)
         container.addSubview(toolbar)
         container.addSubview(listView)
         container.addSubview(gridView)
         container.addSubview(detailsBar)
 
-        // 任务 B1: 路径栏与 PaneToolbar 同行分区布局
-        // PaneToolbar 占左侧 1/3，BreadcrumbBar 占右侧 2/3，中间 1pt 分隔线
-        // 通过显式宽度约束实现分区
-        let toolbarWidthConstraint = toolbar.widthAnchor.constraint(equalTo: container.widthAnchor, multiplier: 0.33)
-        let breadcrumbWidthConstraint = breadcrumbBar.widthAnchor.constraint(equalTo: container.widthAnchor, multiplier: 0.67)
-        toolbarWidthConstraint.priority = .defaultHigh
-        breadcrumbWidthConstraint.priority = .defaultHigh
-
         NSLayoutConstraint.activate([
-            // 1.2 accentBar 贴顶部（被 container 圆角裁剪，跟随圆角）
+            // accentBar 贴顶部（任务 F2：无圆角，不再裁剪）
             accentBar.topAnchor.constraint(equalTo: container.topAnchor),
             accentBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             accentBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             accentBar.heightAnchor.constraint(equalToConstant: 2),
 
-            // 任务 B1: toolbar 与 breadcrumbBar 同行（顶部 36pt）
+            // 任务 F3: toolbar 占顶部 72pt（双行）
             toolbar.topAnchor.constraint(equalTo: container.topAnchor),
             toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            toolbarWidthConstraint,
-            toolbar.heightAnchor.constraint(equalToConstant: 36),
-
-            breadcrumbBar.topAnchor.constraint(equalTo: container.topAnchor),
-            breadcrumbBar.leadingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-            breadcrumbBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            breadcrumbWidthConstraint,
-            breadcrumbBar.heightAnchor.constraint(equalToConstant: 36),
+            toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
             listView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             listView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -506,24 +503,6 @@ public class MainWindowController: NSWindowController {
         }
 
         return container
-    }
-
-    /// 任务 R4: 操作区背景色随主题切换
-    /// 日间：白色 0.15 透明度（极低透明度白色）
-    /// 夜间：黑色 0.25 透明度
-    private func applyPaneBackgroundColor() {
-        let isDark = ThemeManager.shared.currentMode == .dark
-        let bgColor: NSColor
-        if isDark {
-            bgColor = NSColor.black.withAlphaComponent(0.25)
-        } else {
-            bgColor = NSColor.white.withAlphaComponent(0.15)
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.leftPaneContainer?.layer?.backgroundColor = bgColor.cgColor
-            self.rightPaneContainer?.layer?.backgroundColor = bgColor.cgColor
-        }
     }
 
     deinit {
@@ -588,6 +567,11 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleFileListAddTag(_:)),
             name: NSNotification.Name("FileListAddTag"), object: nil
         )
+        // F9-C: 订阅「显示简介」请求，弹出独立 FileInfoWindow
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListShowInfo(_:)),
+            name: .fileListShowInfo, object: nil
+        )
     }
 
     @objc private func handleFileListAddTag(_ notification: Notification) {
@@ -597,6 +581,17 @@ public class MainWindowController: NSWindowController {
         if let window = window {
             dialog.beginSheetModal(for: window)
         }
+    }
+
+    /// F9-C: 处理「显示简介」请求，弹出独立 FileInfoWindow（仿访达 Get Info）。
+    /// 若通知携带有效路径则显示该文件信息；否则回退到当前活动面板选中项的第一项。
+    @objc private func handleFileListShowInfo(_ notification: Notification) {
+        var path = (notification.userInfo?["path"] as? String) ?? ""
+        if path.isEmpty {
+            path = activePaneViewModel.selectedFiles.first?.path ?? ""
+        }
+        guard !path.isEmpty else { return }
+        showFileInfo(forPath: path)
     }
 
     @objc private func handleQuickLookRequest(_ notification: Notification) {
@@ -974,9 +969,23 @@ extension MainWindowController {
     }
 
     @objc func menuGetInfo(_ sender: Any?) {
-        // 显示简介：展开 DetailsBar（若已收起）
-        // 通过通知触发 ExpandableDetailsBar 展开
-        NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
+        // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
+        // 访达行为：显示选中项的第一个文件信息；无选中则不弹窗。
+        guard let path = activePaneViewModel.selectedFiles.first?.path else { return }
+        showFileInfo(forPath: path)
+    }
+
+    /// F9-C: 显示独立 FileInfoWindow（仿访达 Get Info）。
+    /// 复用已有控制器并切换文件路径；窗口关闭后由 ARC 释放。
+    /// - Parameter path: 文件绝对路径
+    private func showFileInfo(forPath path: String) {
+        if let controller = fileInfoWindowController, controller.window != nil {
+            controller.showInfoWindow(filePath: path)
+        } else {
+            let controller = FileInfoWindowController(filePath: path)
+            fileInfoWindowController = controller
+            controller.showWindow(nil)
+        }
     }
 
     @objc func menuCopy(_ sender: Any?) {

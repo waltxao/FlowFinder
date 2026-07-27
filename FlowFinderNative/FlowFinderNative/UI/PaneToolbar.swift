@@ -48,6 +48,9 @@ class PaneToolbar: NSView {
     private var gridViewButton: NSButton!
     private var toolsButton: NSButton!  // 任务 D15: 工具菜单按钮
 
+    // 任务 F3: BreadcrumbBar 嵌入 Row1（刷新按钮后），紧贴刷新按钮
+    private var breadcrumbBar: BreadcrumbBar?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupUI()
@@ -105,6 +108,20 @@ class PaneToolbar: NSView {
             row1.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             row1.heightAnchor.constraint(equalToConstant: 32),
         ])
+    }
+
+    // MARK: - 任务 F3: BreadcrumbBar 嵌入
+
+    /// 接收外部 BreadcrumbBar 并嵌入 Row1（刷新按钮之后，紧贴刷新按钮 4pt）
+    /// 由 MainWindowController.createPaneContainer 调用
+    func setBreadcrumbBar(_ bar: BreadcrumbBar) {
+        breadcrumbBar = bar
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        // 插入到 row1 的 refreshButton 之后（index 4）
+        row1.insertArrangedSubview(bar, at: 4)
+        // 面包屑 flex 撑满 Row1 剩余空间
+        bar.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        bar.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
     // MARK: - Row 2: Search + Sort + Group + View
