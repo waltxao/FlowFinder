@@ -4,6 +4,38 @@
 
 ---
 
+## v0.6.5（2026-07-27）仿访达 UI 重构
+
+本轮修复用户反馈的 8 个 UI 问题 + 全量 UI 巡检发现的 8 个 P0 问题，共 16 项修复。Debug + Release 双构建通过。
+
+### 第一层：布局结构重建（F2-F3）
+
+- **[F2]** 移除操作区圆角卡片，仿访达撑满 + 1px 发丝线分隔（问题3）
+- **[F3]** 重构双行工具栏布局，BreadcrumbBar 嵌入 Row1 紧贴刷新按钮，修复 Row2 不可见（问题4+5）
+
+### 第二层：组件级修复（F4-F8）
+
+- **[F4]** 收藏夹全面仿访达：蓝色模板图标 + sourceList 选中 + sidebar 材质（问题1）
+- **[F5]** 标签药丸裁切修复：硬约束 + 文件名截断 + 带色背景（问题2）
+- **[F6]** 应用图标加 8pt 圆角矩形包裹（问题7）
+- **[F7]** 单击选中渲染修复：OpaqueContainerView + 半透明背景 + makeKey + appearance 同步（问题6）
+- **[F8]** 缩略图加载链修复：取消旧请求 + 路径校验 + 日志（问题8）
+
+### 第三层：全量 UI 巡检 P0 修复（F9-A~F）
+
+- **[F9-A]** FileGridView 综合：Enter 重命名 + 菜单图标 + 跨面板方向箭头（P0#1#2#7）
+- **[F9-B]** 详情栏收起态字号统一为 13pt medium（P0#3）
+- **[F9-C]** FileInfoWindow 接线为独立窗口（仿访达 Get Info），加入 Xcode target 修复潜伏编译错误（P0#4）
+- **[F9-D]** 搜索面板 scopePopup 接线，范围切换生效，"指定位置"用 NSOpenPanel 选目录（P0#5）
+- **[F9-E]** 关于窗口版本号改为动态读取 Bundle（P0#6）
+- **[F9-F]** ProgressDialog 取消按钮接线到 cancelTask，FFModalSheet 新增 secondaryAction 闭包向后兼容（P0#8）
+
+### 巡检报告
+
+详见 `docs/superpowers/specs/2026-07-27-v0.6.5-ui-audit-report.md`（8 P0 / 26 P1 / 26 P2）。P0 全部修复，P1/P2 纳入下一轮。
+
+---
+
 ## 1. 重构背景
 
 ### 1.1 原版架构
