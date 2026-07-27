@@ -382,15 +382,21 @@ public class MainWindowController: NSWindowController {
         accentBar.isHidden = true  // 初始隐藏，仅活动面板显示
         container.addSubview(accentBar)
 
-        // 面包屑导航栏
-        let breadcrumbBar = BreadcrumbBar()
-        breadcrumbBar.delegate = self
-        breadcrumbBar.translatesAutoresizingMaskIntoConstraints = false
+        // 任务 F3: 双行工具栏布局（v0.6.5）
+        // Row1（32pt）= 后退/前进/上一级/刷新 + BreadcrumbBar（紧贴刷新）
+        // Row2（32pt）= 搜索/排序/分组/视图/工具
+        // PaneToolbar 总高 72pt
 
-        // 工具栏
+        // 工具栏（内含双行 + BreadcrumbBar）
         let toolbar = PaneToolbar()
         toolbar.delegate = self
         toolbar.translatesAutoresizingMaskIntoConstraints = false
+
+        // 面包屑导航栏（嵌入 PaneToolbar Row1）
+        let breadcrumbBar = BreadcrumbBar()
+        breadcrumbBar.delegate = self
+        breadcrumbBar.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.setBreadcrumbBar(breadcrumbBar)
 
         // 文件列表
         let listView = FileListView()
@@ -426,38 +432,22 @@ public class MainWindowController: NSWindowController {
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 添加到容器
-        container.addSubview(breadcrumbBar)
         container.addSubview(toolbar)
         container.addSubview(listView)
         container.addSubview(gridView)
         container.addSubview(detailsBar)
 
-        // 任务 B1: 路径栏与 PaneToolbar 同行分区布局
-        // PaneToolbar 占左侧 1/3，BreadcrumbBar 占右侧 2/3，中间 1pt 分隔线
-        // 通过显式宽度约束实现分区
-        let toolbarWidthConstraint = toolbar.widthAnchor.constraint(equalTo: container.widthAnchor, multiplier: 0.33)
-        let breadcrumbWidthConstraint = breadcrumbBar.widthAnchor.constraint(equalTo: container.widthAnchor, multiplier: 0.67)
-        toolbarWidthConstraint.priority = .defaultHigh
-        breadcrumbWidthConstraint.priority = .defaultHigh
-
         NSLayoutConstraint.activate([
-            // 1.2 accentBar 贴顶部（被 container 圆角裁剪，跟随圆角）
+            // accentBar 贴顶部（任务 F2：无圆角，不再裁剪）
             accentBar.topAnchor.constraint(equalTo: container.topAnchor),
             accentBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             accentBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             accentBar.heightAnchor.constraint(equalToConstant: 2),
 
-            // 任务 B1: toolbar 与 breadcrumbBar 同行（顶部 36pt）
+            // 任务 F3: toolbar 占顶部 72pt（双行）
             toolbar.topAnchor.constraint(equalTo: container.topAnchor),
             toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            toolbarWidthConstraint,
-            toolbar.heightAnchor.constraint(equalToConstant: 36),
-
-            breadcrumbBar.topAnchor.constraint(equalTo: container.topAnchor),
-            breadcrumbBar.leadingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-            breadcrumbBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            breadcrumbWidthConstraint,
-            breadcrumbBar.heightAnchor.constraint(equalToConstant: 36),
+            toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
             listView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             listView.leadingAnchor.constraint(equalTo: container.leadingAnchor),

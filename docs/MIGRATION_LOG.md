@@ -361,6 +361,7 @@ rightPaneViewModel.refresh()  ← 刷新目标面板
 ## 10. v0.6.5 仿访达 UI 重构
 
 - [v0.6.5-F2] 移除操作区圆角卡片，仿访达撑满
+- [v0.6.5-F3] 重构双行工具栏布局，BreadcrumbBar 嵌入 Row1 紧贴刷新按钮
 
 ---
 
