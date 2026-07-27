@@ -6,7 +6,7 @@ import Cocoa
 ///
 /// 收起状态（高度 28pt）：
 ///   - 左侧：选中文件的高清预览图标（24x24，`NSWorkspace.shared.icon(forFile:)`）
-///   - 中间：文件名 + 大小（单行，11pt）
+///   - 中间：文件名 + 大小（单行，13pt medium）
 ///   - 右侧：展开按钮（chevron.up SF Symbol）
 ///
 /// 展开状态（高度 120pt）：
@@ -109,7 +109,8 @@ class ExpandableDetailsBar: NSView {
         smallIconView.translatesAutoresizingMaskIntoConstraints = false
         compactView.addSubview(smallIconView)
 
-        compactNameField.font = NSFont.systemFont(ofSize: 11)
+        // 1.6 收起态名称：13pt medium（与 refresh() 单选分支一致，避免选中数量切换时字号跳变）
+        compactNameField.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         compactNameField.textColor = NSColor.labelColor
         compactNameField.lineBreakMode = .byTruncatingTail
         compactNameField.maximumNumberOfLines = 1
@@ -368,13 +369,12 @@ class ExpandableDetailsBar: NSView {
             bigIconView.image = nil
         }
 
-        // compact 行：13pt medium 名称 + 12pt secondary "大小 · 类型"
+        // compact 行：名称字号在 setupUI 中统一为 13pt medium；副字段 12pt secondary "大小 · 类型"
         if selectedCount > 1 {
             compactNameField.stringValue = "已选中 \(selectedCount) 项"
             compactSubField?.stringValue = ""
             smallIconView.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
         } else if let entry = entry {
-            compactNameField.font = NSFont.systemFont(ofSize: 13, weight: .medium)
             compactNameField.stringValue = entry.name
             compactSubField?.stringValue = "\(entry.formattedSize) · \(entry.kindDescription)"
             smallIconView.image = NSWorkspace.shared.icon(forFile: entry.path)
