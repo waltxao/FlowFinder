@@ -18,15 +18,16 @@ public class DuplicateScanWindowController: NSWindowController {
 
     // MARK: - UI 引用
 
-    private var pathControl: NSPathControl!
+    private var pathField: NSTextField!
+    /// 当前选中的扫描路径 URL（与 pathField 显示同步）
+    private var selectedURL: URL?
     private var browseButton: NSButton!
     private var startButton: NSButton!
     private var stopButton: NSButton!
     /// 选项条控件
-    private var matchContentToggle: NSButton!
-    private var includeSubdirsToggle: NSButton!
-    private var matchFileNameToggle: NSButton!
+    private var scanModeSegmented: NSSegmentedControl!
     private var fileTypePopup: NSPopUpButton!
+    private var minSizePopup: NSPopUpButton!
     /// 结果列表区
     private var resultsScrollView: NSScrollView!
     private var resultsStack: NSStackView!
@@ -41,6 +42,7 @@ public class DuplicateScanWindowController: NSWindowController {
     /// 任务栏
     private var progressIndicator: NSProgressIndicator!
     private var statusLabel: NSTextField!
+    private var progressPercentLabel: NSTextField!
 
     // MARK: - 数据
 
@@ -170,7 +172,7 @@ public class DuplicateScanWindowController: NSWindowController {
             toolbar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
             toolbar.topAnchor.constraint(equalTo: mainContainer.topAnchor),
-            toolbar.heightAnchor.constraint(equalToConstant: 44),
+            toolbar.heightAnchor.constraint(equalToConstant: 36),
 
             // 选项条
             optionsStrip.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
@@ -188,7 +190,7 @@ public class DuplicateScanWindowController: NSWindowController {
             actionbar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             actionbar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
             actionbar.bottomAnchor.constraint(equalTo: taskbar.topAnchor),
-            actionbar.heightAnchor.constraint(equalToConstant: 40),
+            actionbar.heightAnchor.constraint(equalToConstant: 48),
 
             // 任务栏
             taskbar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
@@ -271,27 +273,35 @@ public class DuplicateScanWindowController: NSWindowController {
         }
     }
 
-    /// 构建顶部工具栏（FFGlassView .panel .headerView 玻璃背景）
+    /// 构建顶部工具栏（FFGlassView .panel .headerView 玻璃背景，36pt 高）
+    /// 布局：扫描路径: label + 等宽路径输入框（260px）+ 浏览... + spacer + 开始扫描（accent）+ 停止
     private func makeToolbar() -> NSView {
         let toolbar = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
 
-        let pathLabel = NSTextField(labelWithString: "扫描目录:")
+        let pathLabel = NSTextField(labelWithString: "扫描路径:")
         pathLabel.font = NSFont.systemFont(ofSize: 12)
-        pathLabel.textColor = NSColor.labelColor
+        pathLabel.textColor = NSColor.secondaryLabelColor
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        pathControl = NSPathControl()
-        pathControl.pathStyle = .popUp
-        pathControl.url = FileManager.default.homeDirectoryForCurrentUser
-        pathControl.translatesAutoresizingMaskIntoConstraints = false
+        // 路径文本框：等宽字体 11pt，260px 宽，只读显示
+        pathField = NSTextField(string: FileManager.default.homeDirectoryForCurrentUser.path)
+        pathField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        pathField.textColor = NSColor.labelColor
+        pathField.isBezeled = true
+        pathField.bezelStyle = .squareBezel
+        pathField.isEditable = false
+        pathField.translatesAutoresizingMaskIntoConstraints = false
+        selectedURL = FileManager.default.homeDirectoryForCurrentUser
 
-        browseButton = NSButton(title: "浏览", target: self, action: #selector(browseClicked))
+        browseButton = NSButton(title: "浏览...", target: self, action: #selector(browseClicked))
         browseButton.bezelStyle = .rounded
         browseButton.controlSize = .small
         browseButton.translatesAutoresizingMaskIntoConstraints = false
 
         startButton = NSButton(title: "开始扫描", target: self, action: #selector(startScan))
+        // 设为默认按钮（return 键等效），AppKit 自动渲染为强调色填充
         startButton.bezelStyle = .rounded
+        startButton.keyEquivalent = "\r"
         startButton.controlSize = .small
         startButton.translatesAutoresizingMaskIntoConstraints = false
 
@@ -301,7 +311,7 @@ public class DuplicateScanWindowController: NSWindowController {
         stopButton.isEnabled = false
         stopButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [pathLabel, pathControl, browseButton, NSView(), startButton, stopButton])
+        let stack = NSStackView(views: [pathLabel, pathField, browseButton, NSView(), startButton, stopButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 8
@@ -312,35 +322,47 @@ public class DuplicateScanWindowController: NSWindowController {
             stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 12),
             stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -12),
             stack.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            pathControl.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
+            pathField.widthAnchor.constraint(equalToConstant: 260),
         ])
         return toolbar
     }
 
-    /// 构建选项条（FFGlassView .component 玻璃背景）
+    /// 构建选项条（FFGlassView .component 玻璃背景，32pt 高）
+    /// 布局：扫描方式: segmented（按内容/按名称）+ 文件类型: popup + 最小大小: popup
     private func makeOptionsStrip() -> NSView {
         let strip = FFGlassView(level: .component, cornerRadius: 0)
 
-        matchContentToggle = NSButton(checkboxWithTitle: "按内容匹配", target: self, action: #selector(optionChanged))
-        matchContentToggle.controlSize = .small
-        matchContentToggle.state = .on
-        matchContentToggle.translatesAutoresizingMaskIntoConstraints = false
+        let modeLabel = NSTextField(labelWithString: "扫描方式:")
+        modeLabel.font = NSFont.systemFont(ofSize: 12)
+        modeLabel.textColor = NSColor.labelColor
+        modeLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        includeSubdirsToggle = NSButton(checkboxWithTitle: "包含子目录", target: self, action: #selector(optionChanged))
-        includeSubdirsToggle.controlSize = .small
-        includeSubdirsToggle.state = .on
-        includeSubdirsToggle.translatesAutoresizingMaskIntoConstraints = false
+        scanModeSegmented = NSSegmentedControl(labels: ["按内容", "按名称"], trackingMode: .selectOne, target: self, action: #selector(optionChanged))
+        scanModeSegmented.controlSize = .small
+        scanModeSegmented.selectedSegment = 0
+        scanModeSegmented.translatesAutoresizingMaskIntoConstraints = false
 
-        matchFileNameToggle = NSButton(checkboxWithTitle: "按文件名匹配", target: self, action: #selector(optionChanged))
-        matchFileNameToggle.controlSize = .small
-        matchFileNameToggle.translatesAutoresizingMaskIntoConstraints = false
+        let typeLabel = NSTextField(labelWithString: "文件类型:")
+        typeLabel.font = NSFont.systemFont(ofSize: 12)
+        typeLabel.textColor = NSColor.labelColor
+        typeLabel.translatesAutoresizingMaskIntoConstraints = false
 
         fileTypePopup = NSPopUpButton()
-        fileTypePopup.addItems(withTitles: ["全部类型", "图片", "视频", "文档", "音频", "其他"])
+        fileTypePopup.addItems(withTitles: ["全部", "图片", "视频", "文档", "音频"])
         fileTypePopup.controlSize = .small
         fileTypePopup.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [matchContentToggle, includeSubdirsToggle, matchFileNameToggle, NSView(), fileTypePopup])
+        let minSizeLabel = NSTextField(labelWithString: "最小大小:")
+        minSizeLabel.font = NSFont.systemFont(ofSize: 12)
+        minSizeLabel.textColor = NSColor.labelColor
+        minSizeLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        minSizePopup = NSPopUpButton()
+        minSizePopup.addItems(withTitles: ["任意", "1 KB", "100 KB", "1 MB", "10 MB"])
+        minSizePopup.controlSize = .small
+        minSizePopup.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [modeLabel, scanModeSegmented, typeLabel, fileTypePopup, minSizeLabel, minSizePopup, NSView()])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 16
@@ -355,17 +377,18 @@ public class DuplicateScanWindowController: NSWindowController {
         return strip
     }
 
-    /// 构建操作栏（FFGlassView .panel .headerView 玻璃背景）
+    /// 构建操作栏（FFGlassView .panel .headerView 玻璃背景，48pt 高）
+    /// 布局：已选择 N 个文件待删除 + spacer + 可释放 X MB + 取消选择 + 确认删除（红色 accent）
     private func makeActionbar() -> NSView {
         let bar = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
 
         selectionCountLabel = NSTextField(labelWithString: "已选择 0 个文件待删除")
-        selectionCountLabel.font = NSFont.systemFont(ofSize: 11)
-        selectionCountLabel.textColor = NSColor.labelColor
+        selectionCountLabel.font = NSFont.systemFont(ofSize: 12)
+        selectionCountLabel.textColor = NSColor.secondaryLabelColor
         selectionCountLabel.translatesAutoresizingMaskIntoConstraints = false
 
         spaceLabel = NSTextField(labelWithString: "可释放 0 KB")
-        spaceLabel.font = NSFont.systemFont(ofSize: 11)
+        spaceLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         spaceLabel.textColor = NSColor.systemGreen
         spaceLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -379,11 +402,11 @@ public class DuplicateScanWindowController: NSWindowController {
         confirmDeleteButton.bezelStyle = .rounded
         confirmDeleteButton.controlSize = .small
         confirmDeleteButton.isEnabled = false
+        // 红色危险按钮：systemRed bezelColor 填充
+        confirmDeleteButton.bezelColor = NSColor.systemRed
         confirmDeleteButton.translatesAutoresizingMaskIntoConstraints = false
-        // 红色键样式
-        confirmDeleteButton.contentTintColor = NSColor.systemRed
 
-        let stack = NSStackView(views: [selectionCountLabel, spaceLabel, NSView(), clearSelectionButton, confirmDeleteButton])
+        let stack = NSStackView(views: [selectionCountLabel, NSView(), spaceLabel, clearSelectionButton, confirmDeleteButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 12
@@ -391,14 +414,15 @@ public class DuplicateScanWindowController: NSWindowController {
         bar.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
+            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -16),
             stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
         ])
         return bar
     }
 
-    /// 构建任务栏（FFGlassView .component 玻璃背景）
+    /// 构建任务栏（FFGlassView .component 玻璃背景，28pt 高）
+    /// 布局：状态文字 + 进度条 + 百分比（等宽数字）
     private func makeTaskbar() -> NSView {
         let bar = FFGlassView(level: .component, cornerRadius: 0)
 
@@ -415,7 +439,13 @@ public class DuplicateScanWindowController: NSWindowController {
         statusLabel.textColor = NSColor.secondaryLabelColor
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [progressIndicator, statusLabel])
+        progressPercentLabel = NSTextField(labelWithString: "0%")
+        progressPercentLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        progressPercentLabel.textColor = NSColor.secondaryLabelColor
+        progressPercentLabel.alignment = .right
+        progressPercentLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [statusLabel, progressIndicator, progressPercentLabel])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 8
@@ -427,6 +457,7 @@ public class DuplicateScanWindowController: NSWindowController {
             stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
             stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             progressIndicator.heightAnchor.constraint(equalToConstant: 10),
+            progressPercentLabel.widthAnchor.constraint(equalToConstant: 36),
         ])
         return bar
     }
@@ -451,13 +482,14 @@ public class DuplicateScanWindowController: NSWindowController {
         openPanel.allowsMultipleSelection = false
         openPanel.beginSheetModal(for: window!) { [weak self] response in
             if response == .OK, let url = openPanel.url {
-                self?.pathControl.url = url
+                self?.selectedURL = url
+                self?.pathField.stringValue = url.path
             }
         }
     }
 
     @objc private func startScan() {
-        guard let url = pathControl.url else { return }
+        guard let url = selectedURL else { return }
         let path = url.path
 
         isScanning = true
@@ -471,6 +503,7 @@ public class DuplicateScanWindowController: NSWindowController {
         confirmDeleteButton.isEnabled = false
         clearSelectionButton.isEnabled = false
         progressIndicator.doubleValue = 0
+        progressPercentLabel.stringValue = "0%"
         statusLabel.stringValue = "扫描中..."
         sectionHeader.stringValue = "扫描中..."
 
@@ -480,6 +513,7 @@ public class DuplicateScanWindowController: NSWindowController {
                 DispatchQueue.main.async {
                     let progress = total > 0 ? Double(scanned) / Double(total) * 100 : 0
                     self?.progressIndicator.doubleValue = progress
+                    self?.progressPercentLabel.stringValue = "\(Int(progress))%"
                     self?.statusLabel.stringValue = "已扫描 \(scanned) / \(total) 个文件"
                 }
             },
@@ -504,6 +538,7 @@ public class DuplicateScanWindowController: NSWindowController {
                     } else {
                         let count = self?.duplicateGroups.count ?? 0
                         self?.statusLabel.stringValue = "完成，找到 \(count) 个重复组"
+                        self?.progressPercentLabel.stringValue = "100%"
                     }
                     self?.updateSectionHeader()
                 }
@@ -616,7 +651,7 @@ public class DuplicateScanWindowController: NSWindowController {
     private func updateSectionHeader() {
         let groupCount = duplicateGroups.count
         let fileCount = duplicateGroups.reduce(0) { $0 + $1.files.count }
-        sectionHeader.stringValue = "发现 \(groupCount) 组重复 · 共 \(fileCount) 个文件"
+        sectionHeader.stringValue = "发现 \(groupCount) 组重复文件 · 共 \(fileCount) 个文件"
     }
 
     private func updateActionbar() {

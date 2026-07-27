@@ -13,6 +13,16 @@ protocol PaneToolbarDelegate: AnyObject {
     func paneToolbar(_ toolbar: PaneToolbar, didChangeGroupBy groupBy: String)
     func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: ViewMode)
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String)
+    // 任务 D15: 工具菜单触发回调
+    func paneToolbarDidClickDedupScan(_ toolbar: PaneToolbar)
+    func paneToolbarDidClickBatchRename(_ toolbar: PaneToolbar)
+}
+
+// MARK: - 任务 D15: PaneToolbarDelegate 默认实现
+// 为新增方法提供默认空实现，保证现有实现类（如 MainWindowController）不破坏
+extension PaneToolbarDelegate {
+    func paneToolbarDidClickDedupScan(_ toolbar: PaneToolbar) {}
+    func paneToolbarDidClickBatchRename(_ toolbar: PaneToolbar) {}
 }
 
 // MARK: - PaneToolbar
@@ -28,12 +38,15 @@ class PaneToolbar: NSView {
     private var row1: NSStackView!
 
     // Row 2: Search + Sort + Group + View
-    private var searchField: NSSearchField!
+    /// 1.4 自定义搜索框（替代 NSSearchField）：图标 + 文本框，放入 FFGlassView 容器
+    private var searchContainer: FFGlassView!
+    private var searchTextField: NSTextField!
     private var sortPopup: NSPopUpButton!
     private var sortDirectionButton: NSButton!
     private var groupPopup: NSPopUpButton!
     private var listViewButton: NSButton!
     private var gridViewButton: NSButton!
+    private var toolsButton: NSButton!  // 任务 D15: 工具菜单按钮
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -49,6 +62,18 @@ class PaneToolbar: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.masksToBounds = true
+
+        // 1.9 工具栏玻璃背景：FFGlassView(.panel, .headerView, cornerRadius: 0)
+        // 与窗口玻璃形成层次感（工具栏玻璃比窗口背景略亮）
+        let glassBackground = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
+        glassBackground.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glassBackground)
+        NSLayoutConstraint.activate([
+            glassBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            glassBackground.topAnchor.constraint(equalTo: topAnchor),
+            glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         // 固定双行高度 72pt（每行 32 + 间距 4 + 边距 4）
         heightAnchor.constraint(equalToConstant: 72).isActive = true
@@ -85,13 +110,48 @@ class PaneToolbar: NSView {
     // MARK: - Row 2: Search + Sort + Group + View
 
     private func setupRow2() {
-        searchField = NSSearchField()
-        searchField.placeholderString = "搜索当前目录"
-        searchField.target = self
-        searchField.action = #selector(searchChanged)
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // 1.4 自定义搜索框：FFGlassView(.component) 容器 + 搜索图标 + 无边框文本框
+        searchContainer = FFGlassView(level: .component, cornerRadius: 4)
+        searchContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        let searchIcon = NSImageView()
+        searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")
+        searchIcon.contentTintColor = NSColor.secondaryLabelColor
+        searchIcon.imageScaling = .scaleProportionallyDown
+        searchIcon.translatesAutoresizingMaskIntoConstraints = false
+
+        searchTextField = NSTextField()
+        searchTextField.placeholderString = "搜索"
+        searchTextField.isBordered = false
+        searchTextField.isBezeled = false
+        searchTextField.drawsBackground = false
+        searchTextField.focusRingType = .none
+        searchTextField.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        searchTextField.target = self
+        searchTextField.action = #selector(searchChanged)
+        searchTextField.translatesAutoresizingMaskIntoConstraints = false
+        searchTextField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        searchTextField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let searchStack = NSStackView(views: [searchIcon, searchTextField])
+        searchStack.orientation = .horizontal
+        searchStack.alignment = .centerY
+        searchStack.spacing = 6
+        searchStack.detachesHiddenViews = false
+        searchStack.translatesAutoresizingMaskIntoConstraints = false
+        searchContainer.addSubview(searchStack)
+
+        NSLayoutConstraint.activate([
+            searchStack.leadingAnchor.constraint(equalTo: searchContainer.leadingAnchor, constant: 8),
+            searchStack.trailingAnchor.constraint(equalTo: searchContainer.trailingAnchor, constant: -8),
+            searchStack.topAnchor.constraint(equalTo: searchContainer.topAnchor, constant: 2),
+            searchStack.bottomAnchor.constraint(equalTo: searchContainer.bottomAnchor, constant: -2),
+            searchIcon.widthAnchor.constraint(equalToConstant: 13),
+            searchIcon.heightAnchor.constraint(equalToConstant: 13),
+            searchContainer.heightAnchor.constraint(equalToConstant: 24),
+        ])
+        searchContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        searchContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         sortPopup = NSPopUpButton()
         sortPopup.addItems(withTitles: SortField.allCases.map { $0.rawValue })
@@ -118,11 +178,22 @@ class PaneToolbar: NSView {
 
         updateViewModeHighlight(.list)
 
+        // 任务 D15: 工具按钮分隔符（竖线）
+        let toolsSeparator = NSBox()
+        toolsSeparator.boxType = .separator
+        toolsSeparator.translatesAutoresizingMaskIntoConstraints = false
+        toolsSeparator.heightAnchor.constraint(equalToConstant: 16).isActive = true
+
+        // 任务 D15: 工具按钮（点击弹出下拉菜单）
+        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showToolsMenu))
+
         let row2 = NSStackView(views: [
-            searchField,
+            searchContainer,
             sortPopup, sortDirectionButton,
             groupPopup,
             listViewButton, gridViewButton,
+            toolsSeparator,
+            toolsButton,
         ])
         row2.orientation = .horizontal
         row2.alignment = .centerY
@@ -194,7 +265,7 @@ class PaneToolbar: NSView {
     @objc private func upClicked() { delegate?.paneToolbarDidClickUp(self) }
     @objc private func refreshClicked() { delegate?.paneToolbarDidClickRefresh(self) }
     @objc private func searchChanged() {
-        delegate?.paneToolbar(self, didChangeSearchQuery: searchField.stringValue)
+        delegate?.paneToolbar(self, didChangeSearchQuery: searchTextField.stringValue)
     }
 
     @objc private func sortSelected(_ sender: NSPopUpButton) {
@@ -232,5 +303,52 @@ class PaneToolbar: NSView {
     @objc private func gridViewClicked() {
         updateViewModeHighlight(.grid)
         delegate?.paneToolbar(self, didChangeViewMode: .grid)
+    }
+
+    // MARK: - 任务 D15/D17: 工具菜单
+
+    /// 点击工具按钮弹出下拉菜单
+    @objc private func showToolsMenu() {
+        let menu = NSMenu()
+
+        // 查重扫描
+        let dedupItem = NSMenuItem(title: "查重扫描", action: #selector(dedupScanClicked), keyEquivalent: "")
+        dedupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
+        dedupItem.target = self
+        menu.addItem(dedupItem)
+
+        menu.addItem(.separator())
+
+        // AI 打标 Beta（任务 D17: 置灰不可点击）
+        let aiTagItem = NSMenuItem(title: "AI 打标 Beta", action: nil, keyEquivalent: "")
+        aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
+        aiTagItem.isEnabled = false
+        menu.addItem(aiTagItem)
+
+        // AI 整理 Beta（任务 D17: 置灰不可点击）
+        let aiOrganizeItem = NSMenuItem(title: "AI 整理 Beta", action: nil, keyEquivalent: "")
+        aiOrganizeItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)
+        aiOrganizeItem.isEnabled = false
+        menu.addItem(aiOrganizeItem)
+
+        menu.addItem(.separator())
+
+        // 批量重命名
+        let renameItem = NSMenuItem(title: "批量重命名", action: #selector(batchRenameClicked), keyEquivalent: "")
+        renameItem.image = NSImage(systemSymbolName: "pencil.and.list.rectangle", accessibilityDescription: "批量重命名")
+        renameItem.target = self
+        menu.addItem(renameItem)
+
+        // 在按钮下方弹出菜单（y 略大于按钮高度，菜单会自动向下展开）
+        let location = NSPoint(x: 0, y: toolsButton.bounds.height + 2)
+        menu.popUp(positioning: nil, at: location, in: toolsButton)
+    }
+
+    @objc private func dedupScanClicked() {
+        delegate?.paneToolbarDidClickDedupScan(self)
+    }
+
+    @objc private func batchRenameClicked() {
+        delegate?.paneToolbarDidClickBatchRename(self)
     }
 }

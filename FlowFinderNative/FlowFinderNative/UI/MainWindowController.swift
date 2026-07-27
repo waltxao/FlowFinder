@@ -2,6 +2,69 @@ import Cocoa
 import Combine
 import QuickLook
 
+/// 自定义 NSSplitView 子类：任务 R5 — divider 悬停高亮
+/// 悬停时左右卡片边缘显示 1pt accent 色边框，提示可拖动调整操作区横向大小
+private class FFSplitView: NSSplitView {
+    private var dividerTrackingArea: NSTrackingArea?
+    /// 悬停时是否高亮（由 mouseMoved 判断鼠标位置是否在 divider 附近 ±4pt）
+    private var isHoveringDivider = false {
+        didSet {
+            if isHoveringDivider != oldValue {
+                updateSubviewBorderHighlight()
+            }
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = dividerTrackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: self.bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        dividerTrackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let loc = convert(event.locationInWindow, from: nil)
+        let dividerX = subviews.count >= 2 ? subviews[0].frame.maxX : 0
+        isHoveringDivider = abs(loc.x - dividerX) <= 4
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        // 鼠标进入后，mouseMoved 会判断是否在 divider 附近
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        isHoveringDivider = false
+    }
+
+    /// 更新子视图边框高亮
+    private func updateSubviewBorderHighlight() {
+        if isHoveringDivider {
+            for subview in subviews {
+                subview.layer?.borderWidth = 1
+                subview.layer?.borderColor = NSColor.controlAccentColor.cgColor
+            }
+            // 鼠标变为双箭头调整光标
+            NSCursor.resizeLeftRight.set()
+        } else {
+            for subview in subviews {
+                subview.layer?.borderWidth = 0
+            }
+            NSCursor.arrow.set()
+        }
+    }
+}
+
 // MARK: - OpaqueContainerView
 
 /// 重写 isOpaque 返回 true 的 NSView 子类。
@@ -50,8 +113,6 @@ public class MainWindowController: NSWindowController {
     private var taskProgressBar: TaskProgressBar!
     private var mainSplitView: NSSplitView!
     private var paneSplitView: NSSplitView!
-    /// macOS 26+: NSGlassEffectView（液态玻璃）；旧版 macOS 回退到 NSVisualEffectView
-    private var glassEffectView: NSView!
     /// 主内容容器引用（ThemeManager 需设置 appearance 以确保选中高亮可见）
     private var mainContainerView: NSView!
     /// 诊断：鼠标事件监听器（必须强引用，否则会被立即释放）
@@ -159,40 +220,22 @@ public class MainWindowController: NSWindowController {
         window.backgroundColor = .clear
         window.hasShadow = true
         window.titlebarAppearsTransparent = true
-
-        // 1.1 标题栏：16x16 应用图标 + FlowFinder 文本
-        // 使用 NSTitlebarAccessoryViewController 注入自定义标题视图到标题栏左侧
         window.titleVisibility = .hidden
-        let titleStack = NSStackView()
-        titleStack.orientation = .horizontal
-        titleStack.alignment = .centerY
-        titleStack.spacing = 6
-        let titleIcon = NSImageView()
-        titleIcon.image = NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
-        titleIcon.imageScaling = .scaleProportionallyDown
-        titleIcon.translatesAutoresizingMaskIntoConstraints = false
-        titleIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
-        titleIcon.heightAnchor.constraint(equalToConstant: 16).isActive = true
-        let titleLabel = NSTextField(labelWithString: "FlowFinder")
-        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        titleStack.addArrangedSubview(titleIcon)
-        titleStack.addArrangedSubview(titleLabel)
-        let titlebarVC = NSTitlebarAccessoryViewController()
-        titlebarVC.view = titleStack
-        titlebarVC.layoutAttribute = .left
-        window.addTitlebarAccessoryViewController(titlebarVC)
+        window.title = "FlowFinder"
+
+        // 任务 R2: titlebar 仅保留红绿灯（系统提供），移除中间的应用图标+名称
+        // 应用图标+名称已移到侧边栏顶部（任务 R3，由 SidebarView 内部处理）
 
         // Sidebar
         sidebarView = SidebarView()
         sidebarView.translatesAutoresizingMaskIntoConstraints = false
 
-        // 左面板（工具栏 + 文件列表 + DetailsBar）
+        // 左面板（工具栏 + 文件列表 + DetailsBar）—— 任务 R4: 操作区背景色
         leftPaneContainer = createPaneContainer(side: .left)
-        // 右面板
         rightPaneContainer = createPaneContainer(side: .right)
 
-        // Pane Split View
-        paneSplitView = NSSplitView()
+        // Pane Split View（左右操作区）— 任务 R5: 使用 FFSplitView 实现 divider 悬停高亮
+        paneSplitView = FFSplitView()
         paneSplitView.isVertical = true
         paneSplitView.dividerStyle = .thin
         paneSplitView.translatesAutoresizingMaskIntoConstraints = false
@@ -202,7 +245,7 @@ public class MainWindowController: NSWindowController {
         paneSplitView.addArrangedSubview(leftPaneContainer)
         paneSplitView.addArrangedSubview(rightPaneContainer)
 
-        // Main Split View
+        // Main Split View（侧边栏 + 操作区）
         mainSplitView = NSSplitView()
         mainSplitView.isVertical = true
         mainSplitView.dividerStyle = .thin
@@ -217,111 +260,79 @@ public class MainWindowController: NSWindowController {
         taskProgressBar = TaskProgressBar()
         taskProgressBar.translatesAutoresizingMaskIntoConstraints = false
 
+        // 任务 R2: titlebar 仅保留红绿灯空间（28pt 高，透明背景）
+        let titlebarView = NSView()
+        titlebarView.translatesAutoresizingMaskIntoConstraints = false
+        titlebarView.wantsLayer = true
+        titlebarView.layer?.backgroundColor = NSColor.clear.cgColor
+
         // Main container（透明背景以透出玻璃效果）
         let mainContainer = NSView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
         mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
+        mainContainer.addSubview(titlebarView)
         mainContainer.addSubview(mainSplitView)
         mainContainer.addSubview(taskProgressBar)
+        taskProgressBar.isHidden = true
+
+        // 任务 R1: 三栏布局 — 侧边栏贴边框，左右操作区圆角8pt卡片，间距12pt
+        // 实现方式：mainSplitView 的 divider 提供间距（dividerStyle=.thin → 1pt）
+        // 额外通过 sidebarView 和 paneContainer 的内边距增加视觉间距
+        // 操作区圆角8pt 由 createPaneContainer 中的 container.layer.cornerRadius = 8 实现
         NSLayoutConstraint.activate([
-            mainSplitView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
+            // titlebarView 顶部 28pt（仅红绿灯空间）
+            titlebarView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
+            titlebarView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            titlebarView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            titlebarView.heightAnchor.constraint(equalToConstant: 28),
+
+            // mainSplitView 从 titlebar 下方开始，延伸到底部
+            mainSplitView.topAnchor.constraint(equalTo: titlebarView.bottomAnchor),
             mainSplitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             mainSplitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            mainSplitView.bottomAnchor.constraint(equalTo: taskProgressBar.topAnchor),
+            mainSplitView.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
 
             taskProgressBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             taskProgressBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
             taskProgressBar.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
-            taskProgressBar.heightAnchor.constraint(equalToConstant: TaskProgressBar.height),
+            taskProgressBar.heightAnchor.constraint(equalToConstant: 0),
         ])
 
-        // macOS 26+: 背景玻璃架构
-        // 根因（systematic-debugging Phase 1 证据）：
-        //   - window.isOpaque=false + backgroundColor=.clear 时，窗口服务器用逐像素 alpha
-        //     决定鼠标事件捕获。普通 NSView 的 isOpaque 默认 false，layer 背景 clear(alpha=0)，
-        //     导致整个窗口对所有像素透明——鼠标事件全部穿透到背后窗口。
-        //   - 证据：debug log 显示 isKey=false 且零鼠标事件捕获（NSEvent monitor 已安装）。
-        //   - NSVisualEffectView 能工作是因为它重写 isOpaque 返回 true。
-        //
-        // 修复：containerView 使用 OpaqueContainerView（重写 isOpaque=true），
-        //   让窗口服务器捕获鼠标事件。玻璃视觉效果由 NSGlassEffectView 子视图绘制，
-        //   containerView 仅作为不透明事件接收容器，不影响玻璃渲染。
-        //
-        // 架构：
-        //   - containerView（OpaqueContainerView, isOpaque=true）作为 window.contentView
-        //   - glassView（NSGlassEffectView）作为 containerView 的背景子视图，仅视觉
-        //   - mainContainer 作为 containerView 的前景子视图，接收所有鼠标事件
-        if #available(macOS 26.0, *) {
-            // 使用 OpaqueContainerView（重写 isOpaque=true）作为 contentView，
-            // 让窗口服务器捕获鼠标事件，避免事件穿透。
-            let containerView = OpaqueContainerView()
-            containerView.wantsLayer = true
-            containerView.translatesAutoresizingMaskIntoConstraints = false
+        // 统一使用 NSVisualEffectView 作为窗口背景玻璃
+        let visualEffectView = NSVisualEffectView()
+        visualEffectView.material = .underWindowBackground
+        visualEffectView.blendingMode = .behindWindow
+        visualEffectView.state = .active
+        visualEffectView.addSubview(mainContainer)
+        mainContainer.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
+            mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
+            mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
+            mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
+        ])
+        mainContainerView = mainContainer
+        window.contentView = visualEffectView
 
-            let glassView = NSGlassEffectView()
-            glassView.style = .clear
-            glassView.cornerRadius = 0
-            glassView.translatesAutoresizingMaskIntoConstraints = false
+        // 任务 R4: 操作区背景色随主题切换
+        applyPaneBackgroundColor()
 
-            // 先加 glassView（底层），再加 mainContainer（顶层）
-            // AppKit hitTest 从顶层（subviews 末尾）向底层检查，
-            // mainContainer 后加入所以位于顶层，优先接收事件。
-            containerView.addSubview(glassView)
-            containerView.addSubview(mainContainer)
-            mainContainer.translatesAutoresizingMaskIntoConstraints = false
-
-            NSLayoutConstraint.activate([
-                glassView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                glassView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                glassView.topAnchor.constraint(equalTo: containerView.topAnchor),
-                glassView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-
-                mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
-                mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            ])
-
-            // mainContainer 显式设置 appearance 确保子视图能解析选中高亮色
-            // （selectedContentBackgroundColor）
-            mainContainer.appearance = NSApp.effectiveAppearance
-            mainContainerView = mainContainer
-            FFDebug.log("setupUI: using background-glass architecture (containerView + glassView + mainContainer)")
-            glassEffectView = glassView
-            window.contentView = containerView
-        } else {
-            // Fallback: macOS 12-25 使用 NSVisualEffectView
-            let visualEffectView = NSVisualEffectView()
-            visualEffectView.material = .underWindowBackground
-            visualEffectView.blendingMode = .behindWindow
-            visualEffectView.state = .active
-            visualEffectView.addSubview(mainContainer)
-            mainContainer.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
-                mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
-                mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
-                mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
-            ])
-            glassEffectView = nil
-            mainContainerView = mainContainer
-            window.contentView = visualEffectView
+        // 监听主题变更，刷新操作区背景色
+        ThemeManager.shared.onModeChanged = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.applyPaneBackgroundColor()
+            }
         }
 
         // 确保玻璃效果不被 ThemeManager 覆盖
-        // ThemeManager 在 AppDelegate 启动时设置 window.appearance，会破坏玻璃效果
-        // 延迟到下一个 runloop 确保在 ThemeManager 之后执行
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.window?.appearance = nil
-            // mainContainerView 显式设置 appearance 确保选中高亮可见
             self.mainContainerView?.appearance = NSApp.effectiveAppearance
         }
 
-        // 诊断：监听所有鼠标按下事件，验证事件是否到达窗口
-        // 必须存储返回值，否则 monitor 会被立即释放
-        // 如果此日志出现但 FileListView.mouseDown 未出现，说明 hitTest 在中间层丢失
+        // 诊断：监听所有鼠标按下事件
         mouseEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             let winTitle = event.window?.title ?? "nil"
             let loc = event.locationInWindow
@@ -339,11 +350,11 @@ public class MainWindowController: NSWindowController {
 
         updateActivePaneVisual()
 
-        // 注入 UndoManager 到各 PaneViewModel，供 renameFile/deleteSelected 注册撤销
+        // 注入 UndoManager 到各 PaneViewModel
         leftPaneViewModel.undoManager = undoManager
         rightPaneViewModel.undoManager = undoManager
 
-        // I1: 注入对侧 ViewModel，使 FileListView/FileGridView 拖拽 undo 闭包能刷新双面板
+        // I1: 注入对侧 ViewModel
         leftFileListView.counterpartViewModel = rightPaneViewModel
         rightFileListView.counterpartViewModel = leftPaneViewModel
         leftFileGridView.counterpartViewModel = rightPaneViewModel
@@ -363,12 +374,15 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
+    /// 任务 R1: 操作区圆角8pt 卡片
+    /// 任务 R4: 操作区背景色（日间白0.15/夜间黑0.25）
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
+        // 任务 R1: 操作区圆角 12pt 卡片
         container.layer?.cornerRadius = 12
         container.layer?.masksToBounds = true
 
@@ -430,6 +444,14 @@ public class MainWindowController: NSWindowController {
         container.addSubview(gridView)
         container.addSubview(detailsBar)
 
+        // 任务 B1: 路径栏与 PaneToolbar 同行分区布局
+        // PaneToolbar 占左侧 1/3，BreadcrumbBar 占右侧 2/3，中间 1pt 分隔线
+        // 通过显式宽度约束实现分区
+        let toolbarWidthConstraint = toolbar.widthAnchor.constraint(equalTo: container.widthAnchor, multiplier: 0.33)
+        let breadcrumbWidthConstraint = breadcrumbBar.widthAnchor.constraint(equalTo: container.widthAnchor, multiplier: 0.67)
+        toolbarWidthConstraint.priority = .defaultHigh
+        breadcrumbWidthConstraint.priority = .defaultHigh
+
         NSLayoutConstraint.activate([
             // 1.2 accentBar 贴顶部（被 container 圆角裁剪，跟随圆角）
             accentBar.topAnchor.constraint(equalTo: container.topAnchor),
@@ -437,14 +459,17 @@ public class MainWindowController: NSWindowController {
             accentBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             accentBar.heightAnchor.constraint(equalToConstant: 2),
 
-            breadcrumbBar.topAnchor.constraint(equalTo: container.topAnchor),
-            breadcrumbBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            breadcrumbBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            breadcrumbBar.heightAnchor.constraint(equalToConstant: 24),
-
-            toolbar.topAnchor.constraint(equalTo: breadcrumbBar.bottomAnchor),
+            // 任务 B1: toolbar 与 breadcrumbBar 同行（顶部 36pt）
+            toolbar.topAnchor.constraint(equalTo: container.topAnchor),
             toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            toolbarWidthConstraint,
+            toolbar.heightAnchor.constraint(equalToConstant: 36),
+
+            breadcrumbBar.topAnchor.constraint(equalTo: container.topAnchor),
+            breadcrumbBar.leadingAnchor.constraint(equalTo: toolbar.trailingAnchor),
+            breadcrumbBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            breadcrumbWidthConstraint,
+            breadcrumbBar.heightAnchor.constraint(equalToConstant: 36),
 
             listView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             listView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -481,6 +506,24 @@ public class MainWindowController: NSWindowController {
         }
 
         return container
+    }
+
+    /// 任务 R4: 操作区背景色随主题切换
+    /// 日间：白色 0.15 透明度（极低透明度白色）
+    /// 夜间：黑色 0.25 透明度
+    private func applyPaneBackgroundColor() {
+        let isDark = ThemeManager.shared.currentMode == .dark
+        let bgColor: NSColor
+        if isDark {
+            bgColor = NSColor.black.withAlphaComponent(0.25)
+        } else {
+            bgColor = NSColor.white.withAlphaComponent(0.15)
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.leftPaneContainer?.layer?.backgroundColor = bgColor.cgColor
+            self.rightPaneContainer?.layer?.backgroundColor = bgColor.cgColor
+        }
     }
 
     deinit {

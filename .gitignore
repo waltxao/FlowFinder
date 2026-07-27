@@ -25,3 +25,19 @@ DerivedData/
 # Build artifacts
 .build/
 *.dmg
+dist/
+
+# Backup files
+*.bak
+*.orig
+
+# VS Code
+.vscode/
+
+# Trae IDE working files
+.trae/specs/*/task-*-brief.md
+.trae/specs/*/task-*-report.md
+
+# Workspace files
+*.code-workspace
+CONTINUE_DEV_PROMPT.md

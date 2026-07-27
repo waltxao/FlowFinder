@@ -1,13 +1,15 @@
 import Cocoa
 import Combine
 
-/// 底部固定进度条：显示当前任务进度 + 取消按钮
+/// 底部固定进度条：设计稿 ff-taskbar，28px 高
+/// 布局：[任务文字] [4px 细进度条 flex:1] [百分比文字]
 public class TaskProgressBar: NSView {
 
     private var progressIndicator: NSProgressIndicator!
     private var taskLabel: NSTextField!
-    private var cancelButton: NSButton!
-    private var containerView: NSView!
+    private var percentLabel: NSTextField!
+    /// 玻璃容器（FFGlassView .component 提供亚克力质感）
+    private var containerView: FFGlassView!
 
     private var cancellables = Set<AnyCancellable>()
     private var currentTaskId: String?
@@ -33,12 +35,19 @@ public class TaskProgressBar: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // 容器视图
-        containerView = NSView()
+        // 设计稿 ff-taskbar：28px 高，FFGlassView(.component) 提供亚克力磨砂质感
+        containerView = FFGlassView(level: .component, cornerRadius: 0)
         containerView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(containerView)
 
-        // 进度条
+        // 任务文字（左侧，11pt secondary）
+        taskLabel = NSTextField(labelWithString: "就绪")
+        taskLabel.font = NSFont.systemFont(ofSize: 11)
+        taskLabel.textColor = NSColor.secondaryLabelColor
+        taskLabel.lineBreakMode = .byTruncatingTail
+        taskLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        // 进度条（中间，flex:1，4px 高细条）
         progressIndicator = NSProgressIndicator()
         progressIndicator.style = .bar
         progressIndicator.isIndeterminate = false
@@ -48,22 +57,16 @@ public class TaskProgressBar: NSView {
         progressIndicator.controlSize = .small
         progressIndicator.translatesAutoresizingMaskIntoConstraints = false
 
-        // 任务标签
-        taskLabel = NSTextField(labelWithString: "")
-        taskLabel.font = NSFont.systemFont(ofSize: 11)
-        taskLabel.textColor = NSColor.secondaryLabelColor
-        taskLabel.lineBreakMode = .byTruncatingTail
-        taskLabel.translatesAutoresizingMaskIntoConstraints = false
+        // 百分比文字（右侧，11pt secondary）
+        percentLabel = NSTextField(labelWithString: "")
+        percentLabel.font = NSFont.systemFont(ofSize: 11)
+        percentLabel.textColor = NSColor.secondaryLabelColor
+        percentLabel.alignment = .right
+        percentLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // 取消按钮
-        cancelButton = NSButton(image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "取消")!, target: self, action: #selector(cancelClicked))
-        cancelButton.bezelStyle = .inline
-        cancelButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelButton.toolTip = "取消任务"
-
-        containerView.addSubview(progressIndicator)
         containerView.addSubview(taskLabel)
-        containerView.addSubview(cancelButton)
+        containerView.addSubview(progressIndicator)
+        containerView.addSubview(percentLabel)
 
         NSLayoutConstraint.activate([
             containerView.topAnchor.constraint(equalTo: topAnchor),
@@ -71,23 +74,25 @@ public class TaskProgressBar: NSView {
             containerView.trailingAnchor.constraint(equalTo: trailingAnchor),
             containerView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
+            // 任务文字：左侧 12px 内边距
             taskLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
             taskLabel.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
-            taskLabel.widthAnchor.constraint(equalToConstant: 200),
+            taskLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
 
+            // 进度条：flex:1，4px 高
             progressIndicator.leadingAnchor.constraint(equalTo: taskLabel.trailingAnchor, constant: 8),
             progressIndicator.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
-            progressIndicator.heightAnchor.constraint(equalToConstant: 10),
+            progressIndicator.heightAnchor.constraint(equalToConstant: 4),
 
-            cancelButton.leadingAnchor.constraint(equalTo: progressIndicator.trailingAnchor, constant: 8),
-            cancelButton.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
-            cancelButton.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
-            cancelButton.widthAnchor.constraint(equalToConstant: 20),
-            cancelButton.heightAnchor.constraint(equalToConstant: 20),
+            // 百分比：右侧 12px 内边距，固定宽度 40px
+            percentLabel.leadingAnchor.constraint(equalTo: progressIndicator.trailingAnchor, constant: 8),
+            percentLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
+            percentLabel.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
+            percentLabel.widthAnchor.constraint(equalToConstant: 40),
         ])
 
-        // 初始隐藏
-        isHidden = true
+        // 设计稿：TaskBar 常驻显示（即使无任务也显示空进度条）
+        isHidden = false
     }
 
     // MARK: - Bindings
@@ -113,21 +118,17 @@ public class TaskProgressBar: NSView {
         isHidden = false
         taskLabel.stringValue = "\(task.name) - \(task.statusDescription)"
         progressIndicator.doubleValue = task.progress * 100
+        percentLabel.stringValue = "\(Int(task.progress * 100))%"
         currentTaskId = task.id
     }
 
-    /// 隐藏进度条
+    /// 隐藏进度条（设计稿：不隐藏，重置为"就绪"状态）
     public func hide() {
-        isHidden = true
         progressIndicator.doubleValue = 0
-        taskLabel.stringValue = ""
+        taskLabel.stringValue = "就绪"
+        percentLabel.stringValue = ""
         currentTaskId = nil
     }
 
     // MARK: - Actions
-
-    @objc private func cancelClicked() {
-        guard let taskId = currentTaskId else { return }
-        TaskSchedulerManager.shared.cancelTask(taskId: taskId)
-    }
 }

@@ -195,25 +195,26 @@ class ExpandableDetailsBar: NSView {
             chevronButton.widthAnchor.constraint(equalToConstant: 20),
             chevronButton.heightAnchor.constraint(equalToConstant: 20),
 
-            // compact 填充整个 bar
-            compactView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            compactView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            // compact 填充整个 bar（设计稿：单行布局，36pt 高）
+            compactView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            compactView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             compactView.topAnchor.constraint(equalTo: topAnchor),
             compactView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // 1.6 收起态图标 24→32pt
+            // 收起态图标 32x32，垂直居中
             smallIconView.leadingAnchor.constraint(equalTo: compactView.leadingAnchor),
             smallIconView.centerYAnchor.constraint(equalTo: compactView.centerYAnchor),
             smallIconView.widthAnchor.constraint(equalToConstant: 32),
             smallIconView.heightAnchor.constraint(equalToConstant: 32),
 
-            compactNameField.leadingAnchor.constraint(equalTo: smallIconView.trailingAnchor, constant: 8),
-            compactNameField.topAnchor.constraint(equalTo: compactView.centerYAnchor, constant: -2),
+            // 名称：图标右侧 10px，垂直居中
+            compactNameField.leadingAnchor.constraint(equalTo: smallIconView.trailingAnchor, constant: 10),
+            compactNameField.centerYAnchor.constraint(equalTo: compactView.centerYAnchor),
 
-            // compact 副字段：位于主字段下方
-            compactSubField.leadingAnchor.constraint(equalTo: compactNameField.leadingAnchor),
-            compactSubField.topAnchor.constraint(equalTo: compactView.centerYAnchor, constant: 12),
-            compactSubField.trailingAnchor.constraint(equalTo: compactView.trailingAnchor, constant: -28),
+            // 副字段：名称右侧 10px，垂直居中（单行布局，设计稿 "2.4 MB · PDF 文档"）
+            compactSubField.leadingAnchor.constraint(equalTo: compactNameField.trailingAnchor, constant: 10),
+            compactSubField.centerYAnchor.constraint(equalTo: compactView.centerYAnchor),
+            compactSubField.trailingAnchor.constraint(lessThanOrEqualTo: compactView.trailingAnchor, constant: -32),
 
             // expanded
             expandedView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),

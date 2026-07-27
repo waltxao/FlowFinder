@@ -43,6 +43,8 @@
 		FF0000000000000000200035 /* TaskProgressBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200036; };
 		FF0000000000000000200039 /* BreadcrumbBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003A; };
 		FF000000000000000020003B /* ExpandableDetailsBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003C; };
+		FF0000000000000000200059 /* FFScroller.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020005A; };
+		FF000000000000000020005B /* AboutWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020005C; };
 		FF000000000000000020003D /* BatchRenameWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003E; };
 		FF0000000000000000200041 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200042; };
 		FF0000000000000000200043 /* FFGlassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200044; };
@@ -96,6 +98,8 @@
 		FF0000000000000000200036 /* TaskProgressBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskProgressBar.swift; sourceTree = "<group>"; };
 		FF000000000000000020003A /* BreadcrumbBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BreadcrumbBar.swift; sourceTree = "<group>"; };
 		FF000000000000000020003C /* ExpandableDetailsBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpandableDetailsBar.swift; sourceTree = "<group>"; };
+		FF000000000000000020005A /* FFScroller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFScroller.swift; sourceTree = "<group>"; };
+		FF000000000000000020005C /* AboutWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutWindowController.swift; sourceTree = "<group>"; };
 		FF000000000000000020003E /* BatchRenameWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchRenameWindowController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200042 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		FF0000000000000000200044 /* FFGlassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFGlassView.swift; sourceTree = "<group>"; };
@@ -156,6 +160,8 @@
 				FF0000140000000000000014 /* FileListView.swift */,
 				FF0000150000000000000015 /* SidebarView.swift */,
 				FF000000000000000020003A /* BreadcrumbBar.swift */,
+				FF000000000000000020005A /* FFScroller.swift */,
+				FF000000000000000020005C /* AboutWindowController.swift */,
 				FF000000000000000020003E /* BatchRenameWindowController.swift */,
 				FF0000160000000000000016 /* MainWindowController.swift */,
 							FF000000000000000020001C /* AppearanceSettingsView.swift */,
@@ -363,6 +369,8 @@
 				FF0000000000000000200033 /* TaskPanelWindowController.swift in Sources */,
 				FF0000000000000000200035 /* TaskProgressBar.swift in Sources */,
 				FF0000000000000000200039 /* BreadcrumbBar.swift in Sources */,
+				FF0000000000000000200059 /* FFScroller.swift in Sources */,
+				FF000000000000000020005B /* AboutWindowController.swift in Sources */,
 				FF000000000000000020003B /* ExpandableDetailsBar.swift in Sources */,
 				FF000000000000000020003D /* BatchRenameWindowController.swift in Sources */,
 				FF0000000000000000200041 /* DesignTokens.swift in Sources */,
@@ -508,7 +516,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 620;
+				CURRENT_PROJECT_VERSION = 640;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -532,7 +540,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.2;
+				MARKETING_VERSION = 0.6.4;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
@@ -553,7 +561,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 620;
+				CURRENT_PROJECT_VERSION = 640;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -577,7 +585,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.2;
+				MARKETING_VERSION = 0.6.4;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",

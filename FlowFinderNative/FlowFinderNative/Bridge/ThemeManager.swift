@@ -2,15 +2,13 @@ import Foundation
 import AppKit
 import Combine
 
-/// 外观模式枚举
+/// 外观模式枚举（任务 T2: 移除 system 自动跟随，仅 light/dark 二态）
 public enum AppearanceMode: Int, CaseIterable {
-    case system = 0  // 跟随系统
     case light = 1   // 浅色
     case dark = 2    // 深色
 
     public var title: String {
         switch self {
-        case .system: return "跟随系统"
         case .light: return "浅色"
         case .dark: return "深色"
         }
@@ -18,10 +16,14 @@ public enum AppearanceMode: Int, CaseIterable {
 
     public var iconName: String {
         switch self {
-        case .system: return "circle.lefthalf.filled.righthalf.stripes.horizontal"
         case .light: return "sun.max"
         case .dark: return "moon"
         }
+    }
+
+    /// 切换到另一态
+    public var toggled: AppearanceMode {
+        return self == .light ? .dark : .light
     }
 }
 
@@ -33,7 +35,7 @@ public final class ThemeManager: ObservableObject {
     /// 设置键名
     private let settingsKey = "appearance_mode"
 
-    @Published public private(set) var currentMode: AppearanceMode = .system
+    public private(set) var currentMode: AppearanceMode = .light
 
     /// 主题变更回调
     public var onModeChanged: ((AppearanceMode) -> Void)?
@@ -50,28 +52,70 @@ public final class ThemeManager: ObservableObject {
         currentMode = mode
         saveMode(mode)
 
+        // 任务 T2: 仅 light/dark 二态，无 system 自动跟随
         switch mode {
-        case .system:
-            NSApp.appearance = nil  // 跟随系统
         case .light:
             NSApp.appearance = NSAppearance(named: .aqua)
         case .dark:
             NSApp.appearance = NSAppearance(named: .darkAqua)
         }
 
-        // 通知所有窗口刷新（跳过使用 NSGlassEffectView 的窗口，因为玻璃效果需要 appearance=nil）
+        // 通知所有窗口刷新
+        // 背景玻璃架构：containerView（普通 NSView）作为 contentView，
+        // glassView（NSGlassEffectView）和 mainContainer 是其子视图。
+        // window.appearance = nil 以保持玻璃效果；
+        // mainContainer 显式设置 appearance 确保子视图能解析选中高亮色。
         for window in NSApp.windows {
-            if #available(macOS 26.0, *), window.contentView is NSGlassEffectView {
+            if #available(macOS 26.0, *), hasGlassEffect(in: window) {
                 window.appearance = nil
+                let effectiveApp = NSApp.appearance ?? NSApp.effectiveAppearance
+                if let mainContainer = findMainContainer(in: window) {
+                    mainContainer.appearance = effectiveApp
+                }
                 continue
             }
             window.appearance = NSApp.appearance
         }
 
+        // 刷新所有 FFGlassView 实例的玻璃令牌（噪声/高光/内阴影/tint）
+        FFGlassView.refreshAllInstances()
+
         onModeChanged?(mode)
     }
 
-    /// 开始监听系统主题变更（仅当 currentMode == .system 时生效）
+    /// 检查窗口是否使用了 NSGlassEffectView（兼容新旧两种架构）
+    private func hasGlassEffect(in window: NSWindow) -> Bool {
+        guard #available(macOS 26.0, *) else { return false }
+        guard let contentView = window.contentView else { return false }
+        // 新架构：containerView 包含 NSGlassEffectView 子视图
+        if contentView.subviews.contains(where: { $0 is NSGlassEffectView }) {
+            return true
+        }
+        // 旧架构：contentView 本身就是 NSGlassEffectView
+        return contentView is NSGlassEffectView
+    }
+
+    /// 查找窗口中的 mainContainer（兼容新旧两种玻璃架构）
+    private func findMainContainer(in window: NSWindow) -> NSView? {
+        guard let contentView = window.contentView else { return nil }
+        if #available(macOS 26.0, *) {
+            // 新架构：containerView → [glassView, mainContainer]
+            if contentView.subviews.contains(where: { $0 is NSGlassEffectView }) {
+                return contentView.subviews.first(where: { !($0 is NSGlassEffectView) })
+            }
+            // 旧架构：glassView 是 contentView，mainContainer 是其子视图
+            if contentView is NSGlassEffectView {
+                return contentView.subviews.first
+            }
+        }
+        // NSVisualEffectView 回退
+        if contentView is NSVisualEffectView {
+            return contentView.subviews.first
+        }
+        return nil
+    }
+
+    /// 开始监听系统主题变更（任务 T2: 仅用于刷新玻璃效果，不再自动切换模式）
     public func startObservingSystemChanges() {
         DistributedNotificationCenter.default.addObserver(
             self,
@@ -86,23 +130,25 @@ public final class ThemeManager: ObservableObject {
         DistributedNotificationCenter.default.removeObserver(self)
     }
 
-    /// 获取当前系统外观（用于 .system 模式判断）
+    /// 获取当前系统外观（任务 T2: 用于决定首次启动时的初始模式）
     public var systemIsDark: Bool {
-        guard let appearance = NSAppearance.current else { return false }
-        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let effective = NSApp.appearance ?? NSApp.effectiveAppearance
+        return effective.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 
     // MARK: - Private
 
     @objc private func systemAppearanceChanged() {
-        // 仅在跟随系统模式下触发刷新
-        if currentMode == .system {
-            NSApp.appearance = nil
-            for window in NSApp.windows {
-                window.appearance = nil
+        // 任务 T2: 不再自动跟随系统，仅刷新玻璃效果令牌
+        // 用户必须手动点击切换按钮才会改变 light/dark 模式
+        for window in NSApp.windows {
+            window.appearance = NSApp.appearance
+            if let mainContainer = findMainContainer(in: window) {
+                mainContainer.appearance = NSApp.appearance ?? NSApp.effectiveAppearance
             }
-            onModeChanged?(.system)
         }
+        FFGlassView.refreshAllInstances()
+        onModeChanged?(currentMode)
     }
 
     private func loadSavedMode() {
@@ -115,7 +161,8 @@ public final class ThemeManager: ObservableObject {
                   let mode = AppearanceMode(rawValue: savedValue) {
             currentMode = mode
         } else {
-            currentMode = .system
+            // 任务 T2: 首次启动根据系统当前外观决定初始模式
+            currentMode = systemIsDark ? .dark : .light
         }
     }
 

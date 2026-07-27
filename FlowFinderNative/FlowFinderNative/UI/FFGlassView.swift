@@ -113,43 +113,31 @@ class FFGlassView: NSView {
     }
 
     /// `.panel` 级：原生玻璃 + tint + 噪声 + 高光 + 内阴影
+    ///
+    /// 实现说明：曾尝试 macOS 26+ 用 NSGlassEffectView(style: .clear) 替代 NSVisualEffectView，
+    /// 但 .clear style 在液态玻璃中几乎完全透明（仅有微弱模糊），导致侧边栏/工具栏/详情栏等
+    /// panel 级组件肉眼看是"透明"的，无法辨识边界（与 MainWindowController 窗口级 .clear
+    /// 透明问题同源）。因此 panel 级统一走 NSVisualEffectView 路径，由调用方通过 material
+    /// 参数指定材质（.sidebar/.headerView/.sheet 等），在所有 macOS 版本上稳定可见。
+    /// 液态玻璃增强（噪声/高光/内阴影/tint）仍由下方 CALayer 叠加层提供，保留设计语言。
     private func setupPanelGlass() {
-        // 1. 原生玻璃子视图
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            // 映射 GlassStyle → NSGlassEffectView.Style
-            switch glassStyle {
-            case .clear:    glass.style = .clear
-            }
-            glass.cornerRadius = 0  // 由外层 layer.cornerRadius 统一控制
-            glass.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(glass)
-            NSLayoutConstraint.activate([
-                glass.leadingAnchor.constraint(equalTo: leadingAnchor),
-                glass.trailingAnchor.constraint(equalTo: trailingAnchor),
-                glass.topAnchor.constraint(equalTo: topAnchor),
-                glass.bottomAnchor.constraint(equalTo: bottomAnchor),
-            ])
-            nativeGlassView = glass
-        } else {
-            let visualEffect = NSVisualEffectView()
-            visualEffect.material = material ?? .headerView
-            visualEffect.blendingMode = .behindWindow
-            visualEffect.state = .active
-            // NSVisualEffectView 无 cornerRadius 属性，圆角由外层 layer.cornerRadius 控制
-            visualEffect.wantsLayer = true
-            visualEffect.layer?.cornerRadius = 0
-            visualEffect.layer?.masksToBounds = true
-            visualEffect.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(visualEffect)
-            NSLayoutConstraint.activate([
-                visualEffect.leadingAnchor.constraint(equalTo: leadingAnchor),
-                visualEffect.trailingAnchor.constraint(equalTo: trailingAnchor),
-                visualEffect.topAnchor.constraint(equalTo: topAnchor),
-                visualEffect.bottomAnchor.constraint(equalTo: bottomAnchor),
-            ])
-            nativeGlassView = visualEffect
-        }
+        let visualEffect = NSVisualEffectView()
+        visualEffect.material = material ?? .headerView
+        visualEffect.blendingMode = .behindWindow
+        visualEffect.state = .active
+        // NSVisualEffectView 无 cornerRadius 属性，圆角由外层 layer.cornerRadius 控制
+        visualEffect.wantsLayer = true
+        visualEffect.layer?.cornerRadius = 0
+        visualEffect.layer?.masksToBounds = true
+        visualEffect.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(visualEffect)
+        NSLayoutConstraint.activate([
+            visualEffect.leadingAnchor.constraint(equalTo: leadingAnchor),
+            visualEffect.trailingAnchor.constraint(equalTo: trailingAnchor),
+            visualEffect.topAnchor.constraint(equalTo: topAnchor),
+            visualEffect.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        nativeGlassView = visualEffect
 
         // 2. CALayer 叠加层（顺序：tint → 噪声 → 高光 → 内阴影）
         let tint = CALayer()

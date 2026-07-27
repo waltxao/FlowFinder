@@ -46,28 +46,21 @@ private class FFTableCellView: NSTableCellView {
 
 // MARK: - FFTableRowView
 
-/// 自定义 NSTableRowView：诊断阶段 — 覆盖 drawSelection 绘制硬编码亮蓝色，
-/// 用于验证 rowView 的绘制输出是否可见。
-/// 若亮蓝色可见 → 标准选中色解析有问题（appearance/color resolution）
-/// 若亮蓝色不可见 → rowView 绘制被某层覆盖（glass/layer stacking）
+/// 自定义 NSTableRowView：不覆盖任何绘制方法，完全使用 NSTableView 标准选中绘制。
+///
+/// 设计决策（A3 修复）：此前覆盖 drawSelection 硬编码亮蓝色 RGB(0.039, 0.518, 1.0)
+/// 用于诊断选中不可见问题。诊断完成后应恢复标准行为：
+/// - 窗口处于 key 状态时：选中行为强调色（systemBlue）+ 白色文字
+/// - 窗口失焦时：选中为灰色（de-emphasized）+ 黑色文字
+/// 这正是访达的标准行为，无需任何自定义。
 private class FFTableRowView: NSTableRowView {
-    override func drawSelection(in dirtyRect: NSRect) {
-        FFDebug.log("FFTableRowView.drawSelection isSelected=\(isSelected) isEmphasized=\(isEmphasized)")
-        if isSelected {
-            // 硬编码亮蓝色，不依赖任何系统颜色解析
-            NSColor(srgbRed: 0.039, green: 0.518, blue: 1.0, alpha: 1.0).setFill()
-            dirtyRect.fill()
-        }
-    }
-
-    override var wantsUpdateLayer: Bool {
-        return false  // 强制走 drawRect/drawSelection 路径，不走 updateLayer
-    }
+    // 空实现：仅作为扩展点保留（如将来添加 hover 效果）
 }
 
 // MARK: - FileListView
 
 /// NSTableView-based file list view with 4 columns (名称/修改日期/类型/大小)
+/// 标签以药丸形式内联显示在名称列的文件名之后
 public class FileListView: NSView {
     private var tableView: NSTableView!
     private var scrollView: NSScrollView!
@@ -119,6 +112,23 @@ public class FileListView: NSView {
     private let typeCellID = NSUserInterfaceItemIdentifier("TypeCell")
     private let sizeCellID = NSUserInterfaceItemIdentifier("SizeCell")
 
+    /// 面板方向（由 MainWindowController 注入），用于右键菜单"移动/复制到另一面板"的箭头方向
+    /// 注：PaneSide 为 internal 类型，故此属性为 internal（同模块内可访问）
+    var panelSide: PaneSide?
+
+    /// 当前面板方向（优先使用 panelSide，否则根据 identifier 推断）
+    private var effectiveSide: PaneSide {
+        if let panelSide = panelSide { return panelSide }
+        return identifier?.rawValue == "right" ? .right : .left
+    }
+
+    /// 标签二级菜单（动态构建：每次显示前由 NSMenuDelegate 重建内容）
+    private lazy var tagsSubmenu: NSMenu = {
+        let menu = NSMenu()
+        menu.delegate = self
+        return menu
+    }()
+
     // Icons
     private lazy var folderIcon: NSImage? = {
         NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
@@ -154,6 +164,10 @@ public class FileListView: NSView {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
+        // 任务 S1: 强制使用自定义细滚动条
+        scrollView.verticalScroller = FFScroller()
+        scrollView.horizontalScroller = FFScroller()
+        scrollView.scrollerStyle = .overlay
 
         tableView = NSTableView()
         tableView.allowsMultipleSelection = true
@@ -170,10 +184,11 @@ public class FileListView: NSView {
         //   cellView.layer.backgroundColor 已在 tableView(_:viewFor:row:) 中设为 .clear，
         //   不会遮挡 rowView 的标准选中绘制。
         // 不显式赋值，使用 NSTableView 默认 selectionHighlightStyle = .regular
-        // 使用 firstColumnOnlyAutoresizingStyle：名称列自动填充剩余空间，其他列保持固定宽度
-        tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        // 注意：不设置 columnAutoresizingStyle（macOS 27 SDK 已移除 .noColumnResizing 成员）。
+        // 默认值即不自动调整列宽；配合下方各列的 width/minWidth/userResizingMask，
+        // 并移除 sizeToFit() 调用，确保第 5 列（标签）可见且用户可手动拖宽列分隔条。
         tableView.usesAlternatingRowBackgroundColors = false
-        tableView.rowHeight = 24
+        tableView.rowHeight = 26
         // 透明背景：让 NSVisualEffectView/NSGlassEffectView 玻璃态透过 tableView 显示，
         // 同时不遮挡 NSTableRowView.drawSelection 的标准选中绘制。
         // 此前使用 textBackgroundColor.withAlphaComponent(0.85) 导致白色背景覆盖选中蓝色。
@@ -188,17 +203,17 @@ public class FileListView: NSView {
         tableView.delegate = self
 
         // 列顺序：名称 → 修改日期 → 类型 → 大小（匹配 macOS Finder）
-        // 名称列（带图标）— 自动调整宽度
+        // 名称列（带图标）— 用户可手动拖宽
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         nameCol.title = "名称"
-        nameCol.width = 200
+        nameCol.width = 240
         nameCol.minWidth = 80
-        nameCol.maxWidth = 1000
-        nameCol.resizingMask = [.userResizingMask, .autoresizingMask]
+        nameCol.maxWidth = 2000
+        nameCol.resizingMask = [.userResizingMask]
         nameCol.sortDescriptorPrototype = NSSortDescriptor(key: "name", ascending: true)
         tableView.addTableColumn(nameCol)
 
-        // 修改日期列
+        // 修改日期列（设计稿 130px）
         let modifiedCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("modifiedAt"))
         modifiedCol.title = "修改日期"
         modifiedCol.width = 130
@@ -207,16 +222,16 @@ public class FileListView: NSView {
         modifiedCol.sortDescriptorPrototype = NSSortDescriptor(key: "modifiedAt", ascending: true)
         tableView.addTableColumn(modifiedCol)
 
-        // 类型列
+        // 类型列（设计稿 100px）
         let typeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("type"))
         typeCol.title = "类型"
-        typeCol.width = 80
+        typeCol.width = 100
         typeCol.minWidth = 50
         typeCol.resizingMask = [.userResizingMask]
         typeCol.sortDescriptorPrototype = NSSortDescriptor(key: "type", ascending: true)
         tableView.addTableColumn(typeCol)
 
-        // 大小列
+        // 大小列（设计稿 70px，右对齐）
         let sizeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
         sizeCol.title = "大小"
         sizeCol.width = 70
@@ -224,6 +239,8 @@ public class FileListView: NSView {
         sizeCol.resizingMask = [.userResizingMask]
         sizeCol.sortDescriptorPrototype = NSSortDescriptor(key: "size", ascending: true)
         tableView.addTableColumn(sizeCol)
+
+        // C12: 标签列已移除，改为在名称列内联显示标签药丸
 
         // Double-click
         tableView.target = self
@@ -240,8 +257,9 @@ public class FileListView: NSView {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // 强制重新计算列宽
-        tableView.sizeToFit()
+        // 注意：不调用 sizeToFit()，避免它压缩列宽导致第 5 列不可见。
+        // columnAutoresizingStyle = .none 时，各列保持 width 设定的固定宽度，
+        // 用户可通过列分隔条手动拖宽（userResizingMask 已启用）。
 
         // 注册为拖拽目标
         registerForDraggedTypes([.fileURL])
@@ -254,27 +272,50 @@ public class FileListView: NSView {
 
     private func setupContextMenu() {
         let menu = NSMenu()
+        // 启用动态菜单：右键菜单显示前由 menuNeedsUpdate 更新图标/可见性/标签二级子菜单
+        menu.delegate = self
 
+        // 1. 打开（图标由 menuNeedsUpdate 根据选中项是文件夹还是文件动态设置：folder / doc）
         menu.addItem(withTitle: "打开", action: #selector(openSelected(_:)), keyEquivalent: "")
+        // 3. 显示简介 — info.circle
+        let infoItem = menu.addItem(withTitle: "显示简介", action: #selector(showInfoMenu(_:)), keyEquivalent: "i")
+        infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "显示简介")
+        // 4. 分隔线
         menu.addItem(.separator())
-        menu.addItem(withTitle: "复制", action: #selector(copySelected(_:)), keyEquivalent: "c")
-        menu.addItem(withTitle: "剪切", action: #selector(cutSelected(_:)), keyEquivalent: "x")
-        menu.addItem(withTitle: "粘贴", action: #selector(pasteSelected(_:)), keyEquivalent: "v")
+        // 5. 复制 — doc.on.doc
+        let copyItem = menu.addItem(withTitle: "复制", action: #selector(copySelected(_:)), keyEquivalent: "c")
+        copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制")
+        // 6. 粘贴 — doc.on.clipboard
+        let pasteItem = menu.addItem(withTitle: "粘贴", action: #selector(pasteSelected(_:)), keyEquivalent: "v")
+        pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "粘贴")
+        // 7. 分隔线
         menu.addItem(.separator())
-        menu.addItem(withTitle: "复制到另一面板", action: #selector(copyToOtherPane(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "移动到另一面板", action: #selector(moveToOtherPane(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "在对侧面板打开", action: #selector(openInOtherPane(_:)), keyEquivalent: "")
+        // 8. 移动到另一面板（图标根据当前面板方向：左面板→arrow.right，右面板→arrow.left）
+        let moveItem = menu.addItem(withTitle: "移动到另一面板", action: #selector(moveToOtherPane(_:)), keyEquivalent: "")
+        moveItem.image = NSImage(systemSymbolName: effectiveSide == .left ? "arrow.right" : "arrow.left",
+                                 accessibilityDescription: "移动到另一面板")
+        // 9. 复制到另一面板（图标根据当前面板方向：左面板→arrow.right.square，右面板→arrow.left.square）
+        let copyOtherItem = menu.addItem(withTitle: "复制到另一面板", action: #selector(copyToOtherPane(_:)), keyEquivalent: "")
+        copyOtherItem.image = NSImage(systemSymbolName: effectiveSide == .left ? "arrow.right.square" : "arrow.left.square",
+                                      accessibilityDescription: "复制到另一面板")
+        // 10. 分隔线
         menu.addItem(.separator())
-        menu.addItem(withTitle: "重命名", action: #selector(renameSelected(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "删除", action: #selector(deleteSelected(_:)), keyEquivalent: "\u{7F}")
+        // 11. 重命名 — pencil
+        let renameItem = menu.addItem(withTitle: "重命名", action: #selector(renameSelected(_:)), keyEquivalent: "")
+        renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "重命名")
+        // 12. 标签（二级菜单） — tag
+        //     仅当选中单个文件时显示（多选时由 menuNeedsUpdate 隐藏）
+        let tagsItem = menu.addItem(withTitle: "标签", action: nil, keyEquivalent: "")
+        tagsItem.image = NSImage(systemSymbolName: "tag", accessibilityDescription: "标签")
+        tagsItem.submenu = tagsSubmenu
+        // 13. 查重扫描 — rectangle.dashed
+        let dupItem = menu.addItem(withTitle: "查重扫描", action: #selector(duplicateScan(_:)), keyEquivalent: "")
+        dupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
+        // 14. 分隔线
         menu.addItem(.separator())
-        menu.addItem(withTitle: "新建文件夹", action: #selector(createDirectory(_:)), keyEquivalent: "n")
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "添加到收藏夹", action: #selector(addToFavorites(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "AI 自动打标签", action: #selector(generateAITags(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "添加标签...", action: #selector(addTagMenu(_:)), keyEquivalent: "")
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "显示简介", action: #selector(showInfoMenu(_:)), keyEquivalent: "i")
+        // 15. 移到废纸篓 — trash
+        let trashItem = menu.addItem(withTitle: "移到废纸篓", action: #selector(deleteSelected(_:)), keyEquivalent: "\u{7F}")
+        trashItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "移到废纸篓")
 
         for item in menu.items where item.action != nil {
             item.target = self
@@ -383,6 +424,11 @@ public class FileListView: NSView {
 
     @objc private func showInfoMenu(_ sender: Any?) {
         NotificationCenter.default.post(name: NSNotification.Name("ExpandDetailsBar"), object: nil)
+    }
+
+    /// C13: 查重扫描 — 打开查重扫描窗口
+    @objc private func duplicateScan(_ sender: Any?) {
+        DuplicateScanWindowController.shared.showWindow()
     }
 
     @objc private func generateAITags(_ sender: Any?) {
@@ -523,6 +569,135 @@ public class FileListView: NSView {
         if let window = window { alert.beginSheetModal(for: window) { _ in } }
     }
 
+    // MARK: - C12: Inline Tag Pills（名称列内联标签药丸）
+
+    /// 名称列 cell 内联标签药丸配置：
+    /// - 名称列 cell 结构：[文件图标] [文件名] [标签药丸容器]
+    /// - 药丸容器使用 NSStackView 横向排列，最多 3 个药丸 + "+N"
+    /// - 文件名设置 defaultLow 水平压缩阻力，让药丸有空间
+    /// - 药丸容器 trailing 对齐 cell trailing
+    private func configureInlineTagPills(in cellView: NSTableCellView, entry: FileEntry) {
+        guard let textField = cellView.textField else { return }
+        let containerID = "inlineTagPillContainer"
+        // 复用已存在的容器（cell 复用时避免重复创建）
+        var pillContainer: NSStackView? = nil
+        for sv in cellView.subviews {
+            if let stack = sv as? NSStackView, stack.identifier?.rawValue == containerID {
+                pillContainer = stack
+                break
+            }
+        }
+        if pillContainer == nil {
+            // 首次创建：
+            // 1) 移除 textField 的 trailing 约束（初始共享 setup 添加的）
+            // 2) 让 textField 可被压缩，给药丸留空间
+            // 3) 创建药丸容器，trailing 对齐 cell trailing
+            cellView.removeConstraints(cellView.constraints.filter {
+                ($0.firstItem === textField && $0.firstAttribute == .trailing)
+                    || ($0.secondItem === textField && $0.secondAttribute == .trailing)
+            })
+            textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+            let stack = NSStackView()
+            stack.identifier = NSUserInterfaceItemIdentifier(containerID)
+            stack.orientation = .horizontal
+            stack.alignment = .centerY
+            stack.spacing = 4
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            // 让药丸容器优先占据所需宽度（horizontal hugging 高优先级）
+            stack.setHuggingPriority(.defaultHigh, for: .horizontal)
+            cellView.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(greaterThanOrEqualTo: textField.trailingAnchor, constant: 8),
+                stack.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                stack.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+            ])
+            pillContainer = stack
+        }
+
+        // 清除旧药丸
+        pillContainer?.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        // 获取文件标签并填充药丸
+        let tags = TagBridge.shared.getTags(path: entry.path)
+        if tags.isEmpty {
+            pillContainer?.isHidden = true
+        } else {
+            pillContainer?.isHidden = false
+            // 最多显示 3 个药丸，超出显示 "+N"
+            for tag in tags.prefix(3) {
+                if let pill = makeTagPill(tag: tag) {
+                    pillContainer?.addArrangedSubview(pill)
+                }
+            }
+            if tags.count > 3 {
+                if let countPill = makeCountPill(count: tags.count - 3) {
+                    pillContainer?.addArrangedSubview(countPill)
+                }
+            }
+        }
+    }
+
+    /// 创建单个标签药丸（参考设计稿 ff-pill-tag）
+    /// - 高度 18pt，圆角 9（胶囊形）
+    /// - 8x8 圆点（颜色来自 tag.color）
+    /// - 文字 11pt
+    /// - 左右内边距 8pt，圆点与文字间距 4pt
+    private func makeTagPill(tag: Tag) -> NSView? {
+        let pill = NSView()
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        pill.layer?.cornerRadius = 9
+        pill.translatesAutoresizingMaskIntoConstraints = false
+
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = (NSColor(hex: tag.color) ?? .systemBlue).cgColor
+        dot.layer?.cornerRadius = 4
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(dot)
+
+        let label = NSTextField(labelWithString: tag.name)
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            pill.heightAnchor.constraint(equalToConstant: 18),
+            dot.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 8),
+            dot.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+        ])
+        return pill
+    }
+
+    /// 创建 "+N" 计数药丸（无圆点，仅文字）
+    private func makeCountPill(count: Int) -> NSView? {
+        let pill = NSView()
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        pill.layer?.cornerRadius = 9
+        pill.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: "+\(count)")
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            pill.heightAnchor.constraint(equalToConstant: 18),
+            label.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+        ])
+        return pill
+    }
+
     public func reloadData() {
         // Bug 9 修复：reloadData 可能引起 selectionDidChange 回调（行被清空/重建），
         // 若不抑制则会触发 viewModel.state.selectedFiles 变更 → @Published 发射 →
@@ -651,6 +826,10 @@ extension FileListView: NSTableViewDelegate {
                 }
             }
 
+            // C12: 内联标签药丸容器（位于文件名右侧、cell 右侧）
+            // 名称列 cell 结构：[文件图标] [文件名] [标签药丸容器]
+            configureInlineTagPills(in: cellView, entry: entry)
+
         case "modifiedAt":
             cellView.textField?.stringValue = entry.formattedModificationDate
 
@@ -668,7 +847,7 @@ extension FileListView: NSTableViewDelegate {
     }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        return 24
+        return 26
     }
 
     /// 返回自定义 FFTableRowView。标准 NSTableRowView.drawSelection 已能正确绘制
@@ -705,8 +884,12 @@ extension FileListView: NSTableViewDelegate {
         }
         // 同步更新 viewModel 的选择状态
         viewModel.state.selectedFiles = entries
-        // 选中高亮由 NSTableRowView.drawSelection 标准机制绘制，
-        // 无需手动管理 layer.backgroundColor（详见 setupUI 注释）。
+
+        // 任务 L1: 移除自定义文字色切换，恢复 NSTableView 标准选中绘制
+        // 标准行为：选中行背景为 systemBlue（window key 状态）+ 白色文字（由 NSTableRowView.drawSelection 自动处理）
+        // 失焦时：选中为灰色（de-emphasized）+ 黑色文字
+        // 这正是 Finder 的标准行为，无需任何自定义
+
         // 异步触发回调，避免阻塞双击事件
         DispatchQueue.main.async { [weak self] in
             self?.onSelectionChanged?(entries)
@@ -1065,6 +1248,259 @@ extension FileListView {
     }
 }
 
+// MARK: - C13: NSMenuDelegate（动态构建右键菜单 + 标签二级子菜单）
+
+extension FileListView: NSMenuDelegate {
+
+    /// 菜单即将显示时更新：
+    /// - 主菜单："打开"项图标根据选中项是文件夹还是文件动态切换（folder / doc）
+    ///           "标签"项仅当选中单个文件时显示（多选时隐藏）
+    /// - 标签子菜单：每次显示前重建（列出所有标签 + ✓标记当前文件已有 + "新建标签..."）
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === tableView.menu {
+            updateMainMenu(menu)
+        } else if menu === tagsSubmenu {
+            rebuildTagsSubmenu(menu)
+        }
+    }
+
+    /// 更新主右键菜单的动态项
+    private func updateMainMenu(_ menu: NSMenu) {
+        // "打开"项图标：文件夹用 folder，文件用 doc
+        if let openItem = menu.items.first(where: { $0.title == "打开" }) {
+            let isOpenFolder = clickedEntry?.isDirectory == true
+            openItem.image = NSImage(systemSymbolName: isOpenFolder ? "folder" : "doc",
+                                     accessibilityDescription: "打开")
+        }
+
+        // "标签"项：仅当选中单个文件时显示
+        if let tagsItem = menu.items.first(where: { $0.title == "标签" }) {
+            let selectedCount = tableView.selectedRowIndexes.count
+            // 单选或无选中但有右键点击行时显示（右键点击单个文件可操作）
+            let singleSelected = selectedCount == 1
+            let hasClickedSingle = selectedCount == 0 && tableView.clickedRow >= 0
+            tagsItem.isHidden = !(singleSelected || hasClickedSingle)
+        }
+
+        // "移动/复制到另一面板"箭头方向：panelSide 可能在 init 后才被设置，每次显示菜单时同步
+        let isLeftPane = effectiveSide == .left
+        if let moveItem = menu.items.first(where: { $0.title == "移动到另一面板" }) {
+            moveItem.image = NSImage(systemSymbolName: isLeftPane ? "arrow.right" : "arrow.left",
+                                     accessibilityDescription: "移动到另一面板")
+        }
+        if let copyOtherItem = menu.items.first(where: { $0.title == "复制到另一面板" }) {
+            copyOtherItem.image = NSImage(systemSymbolName: isLeftPane ? "arrow.right.square" : "arrow.left.square",
+                                          accessibilityDescription: "复制到另一面板")
+        }
+    }
+
+    /// 重建标签二级子菜单
+    /// - 顶部：列出现有所有标签（彩色圆点 + 名称，当前文件已有的显示 ✓）
+    /// - 分隔线
+    /// - "新建标签..." 项
+    private func rebuildTagsSubmenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        // 目标文件路径：优先右键点击的文件，其次单选的文件
+        let targetEntry = clickedEntry ?? viewModel?.selectedFiles.first
+        guard let entry = targetEntry else {
+            // 无目标文件：仅显示"新建标签..."
+            let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
+            createItem.target = self
+            createItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
+            menu.addItem(createItem)
+            return
+        }
+
+        // 获取当前文件已有的标签
+        let currentTags = TagBridge.shared.getTags(path: entry.path)
+        let currentTagIds = Set(currentTags.map { $0.id })
+        let currentTagNames = Set(currentTags.map { $0.name })
+
+        // 列出所有现有标签
+        let allTags = loadAllSidebarTags()
+        for tag in allTags {
+            let item = NSMenuItem(title: tag.name, action: #selector(toggleTagOnFile(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["tagId": tag.id, "tagName": tag.name, "tagColor": tag.color, "path": entry.path]
+            // 彩色圆点图标
+            item.image = makeDotImage(colorHex: tag.color)
+            // 当前文件已有此标签则显示 ✓（使用 onStateImage）
+            if currentTagIds.contains(tag.id) || currentTagNames.contains(tag.name) {
+                item.state = .on
+            }
+            menu.addItem(item)
+        }
+
+        if !allTags.isEmpty {
+            menu.addItem(.separator())
+        }
+
+        // "新建标签..."
+        let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
+        createItem.target = self
+        createItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
+        menu.addItem(createItem)
+    }
+
+    /// 创建带颜色的圆点 NSImage（用于标签子菜单项图标）
+    private func makeDotImage(colorHex: String) -> NSImage {
+        let size = NSSize(width: 12, height: 12)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let color = NSColor(hex: colorHex) ?? .systemBlue
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 8, height: 8)).fill()
+        image.unlockFocus()
+        return image
+    }
+}
+
+// MARK: - C13: Tag Helpers（标签数据读写 + 对话框）
+
+extension FileListView {
+
+    /// 读取所有现有标签（从 UserDefaults "SidebarTags" 读取，与 SidebarView.TagsSidebarDataSource 共享存储）
+    /// 注：TagBridge 无 getAllTags API，此处直接读 UserDefaults 以满足"不修改其他文件"约束
+    private func loadAllSidebarTags() -> [Tag] {
+        guard let data = UserDefaults.standard.data(forKey: "SidebarTags"),
+              let tags = try? JSONDecoder().decode([Tag].self, from: data) else {
+            return []
+        }
+        return tags
+    }
+
+    /// 写回所有标签到 UserDefaults（新建标签后同步给侧边栏）
+    private func saveAllSidebarTags(_ tags: [Tag]) {
+        if let data = try? JSONEncoder().encode(tags) {
+            UserDefaults.standard.set(data, forKey: "SidebarTags")
+        }
+    }
+
+    /// 切换文件标签：已有则移除，没有则添加
+    @objc private func toggleTagOnFile(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let tagId = info["tagId"],
+              let tagName = info["tagName"],
+              let path = info["path"] else { return }
+        let tagColor = info["tagColor"] ?? "#007AFF"
+
+        let currentTags = TagBridge.shared.getTags(path: path)
+        if currentTags.contains(where: { $0.id == tagId || $0.name == tagName }) {
+            // 已有 → 移除
+            _ = TagBridge.shared.removeTag(tagId, path: path)
+        } else {
+            // 没有 → 添加
+            let tag = Tag(id: tagId, name: tagName, color: tagColor)
+            _ = TagBridge.shared.addTag(tag, path: path)
+        }
+
+        // 刷新列表以更新名称列内联药丸
+        reloadData()
+    }
+
+    /// 新建标签对话框（参考 SidebarView.showCreateTagDialog 实现）
+    /// 创建后同时添加到当前右键目标文件
+    @objc private func showCreateTagDialog(_ sender: Any?) {
+        guard let window = self.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "新建标签"
+        alert.informativeText = "输入标签名称并选择颜色："
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "创建")
+        alert.addButton(withTitle: "取消")
+
+        let containerWidth: CGFloat = 300
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: containerWidth, height: 64))
+
+        // 名称输入框
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 36, width: containerWidth, height: 24))
+        nameField.placeholderString = "标签名称"
+        container.addSubview(nameField)
+
+        // 预设颜色圆点按钮
+        let presetColors: [String] = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#5856D6"]
+        let dotSize: CGFloat = 22
+        let spacing: CGFloat = 8
+        let totalDotsWidth = CGFloat(presetColors.count) * dotSize + CGFloat(presetColors.count - 1) * spacing
+        let startX = (containerWidth - totalDotsWidth) / 2
+
+        let colorHolder = FFCreateTagColorHolder(colors: presetColors)
+
+        for (i, hex) in presetColors.enumerated() {
+            let x = startX + CGFloat(i) * (dotSize + spacing)
+            let btn = NSButton(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
+            btn.bezelStyle = .circular
+            btn.isBordered = false
+            btn.wantsLayer = true
+            btn.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
+            btn.layer?.cornerRadius = dotSize / 2
+            btn.layer?.borderColor = NSColor.labelColor.cgColor
+            btn.layer?.borderWidth = (i == 0) ? 2 : 0
+            btn.target = colorHolder
+            btn.action = #selector(FFCreateTagColorHolder.selectColor(_:))
+            btn.tag = i
+            container.addSubview(btn)
+        }
+
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = nameField
+
+        // 目标文件路径（创建后同时添加到该文件）
+        let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            let tag = Tag(name: name, color: colorHolder.selectedHex)
+
+            // 1) 写入全局标签库（UserDefaults，与侧边栏共享）
+            var allTags = self?.loadAllSidebarTags() ?? []
+            if !allTags.contains(where: { $0.name == tag.name }) {
+                allTags.append(tag)
+                self?.saveAllSidebarTags(allTags)
+            }
+
+            // 2) 同时添加到当前文件
+            if let path = targetPath {
+                _ = TagBridge.shared.addTag(tag, path: path)
+                self?.reloadData()
+            }
+
+            // 3) 通知侧边栏刷新标签显示
+            NotificationCenter.default.post(name: NSNotification.Name("FileListTagsChanged"), object: nil)
+        }
+    }
+}
+
+// MARK: - FFCreateTagColorHolder（新建标签对话框颜色选择辅助类）
+
+/// 颜色选择 holder：与 SidebarView.TagColorHolder 同结构，但 FileListView 不能引用 private 类，
+/// 故在此单独定义（仅在 FileListView 内部使用）
+private final class FFCreateTagColorHolder: NSObject {
+    private let colors: [String]
+    private(set) var selectedHex: String
+
+    init(colors: [String]) {
+        self.colors = colors
+        self.selectedHex = colors.first ?? "#007AFF"
+        super.init()
+    }
+
+    @objc func selectColor(_ sender: NSButton) {
+        let idx = sender.tag
+        guard idx >= 0, idx < colors.count else { return }
+        selectedHex = colors[idx]
+        // 更新按钮选中边框
+        if let container = sender.superview {
+            for case let btn as NSButton in container.subviews {
+                btn.layer?.borderWidth = btn === sender ? 2 : 0
+            }
+        }
+    }
+}
+
 // MARK: - Notification Names
 
 extension Notification.Name {
@@ -1076,4 +1512,6 @@ extension Notification.Name {
     static let fileListDidOpenInOther = Notification.Name("fileListDidOpenInOther")
     static let fileListRequestQuickLook = Notification.Name("fileListRequestQuickLook")
     static let fileListDidAddFavorite = Notification.Name("fileListDidAddFavorite")
+    /// C13: 标签变更通知（新建/切换标签后通知侧边栏刷新）
+    static let fileListTagsChanged = Notification.Name("FileListTagsChanged")
 }

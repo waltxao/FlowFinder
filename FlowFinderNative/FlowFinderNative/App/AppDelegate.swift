@@ -4,8 +4,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var mainWindowController: MainWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        FFDebug.clear()
+        FFDebug.log("AppDelegate: applicationDidFinishLaunching")
+
+        // 任务 S1: 滚动条样式已改为自定义 FFScroller 子类，不再依赖 UserDefaults
         // 激活应用，确保窗口显示在前台
-        NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
 
         // 应用保存的主题
         ThemeManager.shared.startObservingSystemChanges()
@@ -27,7 +35,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 确保窗口可见并置前
         if let window = controller.window {
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            // macOS 14+: 使用新的 activate() API（旧的 ignoringOtherApps 已废弃且在 macOS 27 上不可靠）
+            if #available(macOS 14.0, *) {
+                NSApp.activate()
+            } else {
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 

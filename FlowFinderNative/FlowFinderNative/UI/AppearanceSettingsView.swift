@@ -1,17 +1,16 @@
 import Cocoa
-import Combine
 
-/// 外观设置视图：主题切换（浅色/深色/跟随系统）
+/// 外观设置视图：主题切换（浅色/深色二态）
+/// 任务 T2: 移除 system 自动跟随，仅保留 light/dark 二态
 public class AppearanceSettingsView: NSView {
 
     private var titleLabel: NSTextField!
     private var buttonContainer: NSView!
-    private var systemButton: NSButton!
     private var lightButton: NSButton!
     private var darkButton: NSButton!
     private var descriptionLabel: NSTextField!
 
-    private var cancellables = Set<AnyCancellable>()
+    private var onModeChangedToken: ((AppearanceMode) -> Void)?
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -25,6 +24,14 @@ public class AppearanceSettingsView: NSView {
         setupBindings()
     }
 
+    deinit {
+        // 解绑 ThemeManager 回调
+        if let token = ThemeManager.shared.onModeChanged, let myToken = onModeChangedToken {
+            _ = myToken  // 防止 unused warning
+            _ = token
+        }
+    }
+
     // MARK: - UI Setup
 
     private func setupUI() {
@@ -36,13 +43,6 @@ public class AppearanceSettingsView: NSView {
         // 按钮容器
         buttonContainer = NSView()
         buttonContainer.translatesAutoresizingMaskIntoConstraints = false
-
-        // 系统跟随按钮
-        systemButton = createThemeButton(
-            title: AppearanceMode.system.title,
-            icon: AppearanceMode.system.iconName,
-            mode: .system
-        )
 
         // 浅色按钮
         lightButton = createThemeButton(
@@ -58,7 +58,6 @@ public class AppearanceSettingsView: NSView {
             mode: .dark
         )
 
-        buttonContainer.addSubview(systemButton)
         buttonContainer.addSubview(lightButton)
         buttonContainer.addSubview(darkButton)
 
@@ -81,13 +80,8 @@ public class AppearanceSettingsView: NSView {
             buttonContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
             buttonContainer.heightAnchor.constraint(equalToConstant: 100),
 
-            systemButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
-            systemButton.leadingAnchor.constraint(equalTo: buttonContainer.leadingAnchor),
-            systemButton.widthAnchor.constraint(equalToConstant: 100),
-            systemButton.heightAnchor.constraint(equalToConstant: 100),
-
             lightButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
-            lightButton.leadingAnchor.constraint(equalTo: systemButton.trailingAnchor, constant: 16),
+            lightButton.leadingAnchor.constraint(equalTo: buttonContainer.leadingAnchor),
             lightButton.widthAnchor.constraint(equalToConstant: 100),
             lightButton.heightAnchor.constraint(equalToConstant: 100),
 
@@ -129,24 +123,27 @@ public class AppearanceSettingsView: NSView {
     // MARK: - Bindings
 
     private func setupBindings() {
-        ThemeManager.shared.$currentMode
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
+        // 任务 T2: 移除 @Published，改用 onModeChanged 回调
+        // 注意：onModeChanged 是单回调，需保留前一个回调链
+        let previousCallback = ThemeManager.shared.onModeChanged
+        onModeChangedToken = { [weak self] mode in
+            DispatchQueue.main.async {
                 self?.updateSelection()
             }
-            .store(in: &cancellables)
+        }
+        ThemeManager.shared.onModeChanged = { [weak self] mode in
+            previousCallback?(mode)
+            self?.onModeChangedToken?(mode)
+        }
     }
 
     private func updateSelection() {
         let currentMode = ThemeManager.shared.currentMode
 
-        systemButton.state = currentMode == .system ? .on : .off
         lightButton.state = currentMode == .light ? .on : .off
         darkButton.state = currentMode == .dark ? .on : .off
 
         switch currentMode {
-        case .system:
-            descriptionLabel.stringValue = "应用将跟随系统的外观设置自动切换。"
         case .light:
             descriptionLabel.stringValue = "应用始终使用浅色外观，不受系统设置影响。"
         case .dark:
