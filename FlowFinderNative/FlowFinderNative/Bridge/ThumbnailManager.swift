@@ -60,6 +60,9 @@ public final class ThumbnailManager {
             return
         }
 
+        // 任务 F8: 调试日志（v0.6.5）
+        print("[Thumb] 请求生成: \(path) size=\(size)")
+
         // 3. 异步生成
         let scale = NSScreen.main?.backingScaleFactor ?? 2.0
         let request = QLThumbnailGenerator.Request(
@@ -83,7 +86,7 @@ public final class ThumbnailManager {
             self?.lock.unlock()
 
             if let error = error {
-                print("ThumbnailManager: 生成缩略图失败: \(error.localizedDescription)")
+                print("[Thumb] 生成失败: \(path) - \(error.localizedDescription)")
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
@@ -97,6 +100,7 @@ public final class ThumbnailManager {
                 cgImage: thumbnail.cgImage,
                 size: CGSize(width: thumbnail.cgImage.width, height: thumbnail.cgImage.height)
             )
+            print("[Thumb] 生成成功: \(path) \(thumbnail.cgImage.width)x\(thumbnail.cgImage.height)")
 
             // 写入缓存
             self?.memoryCache.setObject(image, forKey: cacheKey)

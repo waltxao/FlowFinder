@@ -366,6 +366,7 @@ rightPaneViewModel.refresh()  ← 刷新目标面板
 - [v0.6.5-F5] 标签药丸裁切修复：硬约束 + 文件名截断 + 带色背景
 - [v0.6.5-F6] 应用图标加 8pt 圆角矩形包裹
 - [v0.6.5-F7] 单击选中渲染修复：OpaqueContainerView + 半透明背景 + makeKey + appearance 同步
+- [v0.6.5-F8] 缩略图加载链修复：取消旧请求 + 路径校验 + 日志
 
 ---
 

@@ -42,6 +42,11 @@ enum FFDebug {
 /// 的标准 drawSelection 选中绘制可见。选中高亮完全由 rowView 标准机制处理，
 /// cellView 不参与选中绘制。
 private class FFTableCellView: NSTableCellView {
+    /// 任务 F8：记录该 cell 当前显示文件的完整路径。
+    /// 用于缩略图异步回调时校验 cell 仍显示同一文件（避免旧请求覆盖新 cell）。
+    /// 注意：不能用 cellView.identifier 记录路径——identifier 用于 NSTableView
+    /// 的复用匹配（makeView(withIdentifier:owner:)），覆写会破坏 cell 复用机制。
+    var currentFilePath: String?
 }
 
 // MARK: - FFTableRowView
@@ -844,15 +849,34 @@ extension FileListView: NSTableViewDelegate {
             workspaceIcon.size = NSSize(width: 18, height: 18)
             cellView.imageView?.image = workspaceIcon
 
-            // 非目录文件额外异步加载 QuickLook 缩略图（图片、视频等预览）
+            // 任务 F8: 缩略图加载层修复（v0.6.5）
+            // 1) 取消该 cell 上一次的缩略图请求（避免旧请求覆盖新 cell）
+            // 2) 回调校验改为完整路径（避免同名文件误覆盖）
+            // 3) 先显示文件类型图标作为占位，缩略图返回后再替换
+            // 注意：路径校验用 cellView.currentFilePath 而非 cellView.identifier，
+            // 因为 identifier 被 NSTableView 的复用机制依赖（见 makeView(withIdentifier:)）。
             if !entry.isDirectory {
                 let path = entry.path
+                // 取消旧请求（用 cell 的 currentFilePath 记录上一次路径）
+                if let oldPath = cellView.currentFilePath, oldPath != path {
+                    ThumbnailManager.shared.cancelGeneration(for: oldPath)
+                }
+                // 更新 cell 的当前路径标记
+                cellView.currentFilePath = path
+
+                // ThumbnailManager 的 completion 已在主线程回调，
+                // 此处无需再包 DispatchQueue.main.async。
                 ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 32, height: 32)) { [weak cellView] image in
                     guard let image = image else { return }
-                    if cellView?.textField?.stringValue == entry.name {
-                        cellView?.imageView?.image = image
-                    }
+                    // 校验 cell 仍显示同一文件（用完整路径而非文件名）
+                    guard let cell = cellView,
+                          cell.currentFilePath == path else { return }
+                    cell.imageView?.image = image
                 }
+            } else {
+                // 目录不加载缩略图：workspaceIcon 已在上方设置（文件夹图标），
+                // 此处仅清除路径标记，避免旧回调误覆盖目录图标。
+                cellView.currentFilePath = nil
             }
 
             // C12: 内联标签药丸容器（位于文件名右侧、cell 右侧）
