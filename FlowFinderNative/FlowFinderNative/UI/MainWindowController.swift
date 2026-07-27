@@ -266,8 +266,9 @@ public class MainWindowController: NSWindowController {
         titlebarView.wantsLayer = true
         titlebarView.layer?.backgroundColor = NSColor.clear.cgColor
 
-        // Main container（透明背景以透出玻璃效果）
-        let mainContainer = NSView()
+        // 任务 F7: 使用 OpaqueContainerView 修复鼠标穿透与选中渲染（v0.6.5）
+        // mainContainer（透明背景以透出玻璃效果）
+        let mainContainer = OpaqueContainerView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
         mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
@@ -318,6 +319,18 @@ public class MainWindowController: NSWindowController {
             guard let self = self else { return }
             self.window?.appearance = nil
             self.mainContainerView?.appearance = NSApp.effectiveAppearance
+        }
+
+        // 任务 F7: 监听主题变更，刷新所有 FileListView 的 appearance（v0.6.5）
+        // onModeChanged 是单回调，需保留前一个回调链，避免覆盖 AppearanceSettingsView 等已注册的监听
+        // FileListView 是 NSView（非 ViewController），无 viewDidLayout，故调用 refreshAppearance()
+        let previousCallback = ThemeManager.shared.onModeChanged
+        ThemeManager.shared.onModeChanged = { [weak self] mode in
+            previousCallback?(mode)
+            DispatchQueue.main.async {
+                self?.leftFileListView?.refreshAppearance()
+                self?.rightFileListView?.refreshAppearance()
+            }
         }
 
         // 诊断：监听所有鼠标按下事件

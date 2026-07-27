@@ -192,7 +192,9 @@ public class FileListView: NSView {
         // 透明背景：让 NSVisualEffectView/NSGlassEffectView 玻璃态透过 tableView 显示，
         // 同时不遮挡 NSTableRowView.drawSelection 的标准选中绘制。
         // 此前使用 textBackgroundColor.withAlphaComponent(0.85) 导致白色背景覆盖选中蓝色。
-        tableView.backgroundColor = .clear
+        // 任务 F7: 半透明背景给选中色提供底色衬托（v0.6.5）
+        // 完全透明时标准蓝色在玻璃背景上对比度不足
+        tableView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.6)
         tableView.enclosingScrollView?.drawsBackground = false
         scrollView.drawsBackground = false
         scrollView.backgroundColor = NSColor.clear
@@ -719,6 +721,21 @@ public class FileListView: NSView {
         }
     }
 
+    // MARK: - Layout
+
+    // 任务 F7: 显式同步 appearance，确保选中色解析正确（v0.6.5）
+    // FileListView 是 NSView（非 NSViewController），无 viewDidLayout；改用 layout()。
+    // layout() 在布局变更时被频繁调用，appearance 赋值是轻量指针赋值，开销可忽略。
+    public override func layout() {
+        super.layout()
+        tableView.appearance = NSApp.appearance
+    }
+
+    /// 任务 F7: 供外部（MainWindowController 主题监听）显式刷新 appearance（v0.6.5）
+    public func refreshAppearance() {
+        tableView.appearance = NSApp.appearance
+    }
+
     // MARK: - Double Click
 
     @objc private func handleDoubleClick() {
@@ -885,9 +902,15 @@ extension FileListView: NSTableViewDelegate {
         // 点击行时激活当前面板（tableView 作为子视图拦截了 mouseDown，
         // FileListView.mouseDown 不会触发，需在此补充激活）
         onActivatePane?()
-        // 确保 tableView 是 firstResponder，否则选中高亮会变成灰色（de-emphasized）
-        if let window = tableView.window, window.firstResponder !== tableView {
-            window.makeFirstResponder(tableView)
+        // 任务 F7: 确保 window 为 key + tableView 为 firstResponder（v0.6.5）
+        // 透明窗口的 key 状态不稳定，需显式 makeKey + makeFirstResponder
+        if let window = tableView.window {
+            if !window.isKeyWindow {
+                window.makeKeyAndOrderFront(nil)
+            }
+            if window.firstResponder !== tableView {
+                window.makeFirstResponder(tableView)
+            }
         }
         let selectedRows = tableView.selectedRowIndexes
         let entries = selectedRows.compactMap { idx -> FileEntry? in
