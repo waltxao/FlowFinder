@@ -358,4 +358,10 @@ rightPaneViewModel.refresh()  ← 刷新目标面板
 
 ---
 
+## 10. v0.6.5 仿访达 UI 重构
+
+- [v0.6.5-F2] 移除操作区圆角卡片，仿访达撑满
+
+---
+
 *本文档记录了 FlowFinder 从 Tauri + React 到 Swift & AppKit 的完整重构历程。如有疑问，请提交 [Issue](https://github.com/waltxao/FlowFinder/issues)。*

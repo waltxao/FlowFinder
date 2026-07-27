@@ -276,10 +276,8 @@ public class MainWindowController: NSWindowController {
         mainContainer.addSubview(taskProgressBar)
         taskProgressBar.isHidden = true
 
-        // 任务 R1: 三栏布局 — 侧边栏贴边框，左右操作区圆角8pt卡片，间距12pt
-        // 实现方式：mainSplitView 的 divider 提供间距（dividerStyle=.thin → 1pt）
-        // 额外通过 sidebarView 和 paneContainer 的内边距增加视觉间距
-        // 操作区圆角8pt 由 createPaneContainer 中的 container.layer.cornerRadius = 8 实现
+        // 任务 F2: 三栏布局 - 侧边栏贴边框，左右操作区撑满（仿访达），1pt 发丝线分隔（v0.6.5）
+        // mainSplitView 的 divider 提供 1pt 发丝线（dividerStyle=.thin）
         NSLayoutConstraint.activate([
             // titlebarView 顶部 28pt（仅红绿灯空间）
             titlebarView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
@@ -314,16 +312,6 @@ public class MainWindowController: NSWindowController {
         ])
         mainContainerView = mainContainer
         window.contentView = visualEffectView
-
-        // 任务 R4: 操作区背景色随主题切换
-        applyPaneBackgroundColor()
-
-        // 监听主题变更，刷新操作区背景色
-        ThemeManager.shared.onModeChanged = { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.applyPaneBackgroundColor()
-            }
-        }
 
         // 确保玻璃效果不被 ThemeManager 覆盖
         DispatchQueue.main.async { [weak self] in
@@ -374,17 +362,17 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
-    /// 任务 R1: 操作区圆角8pt 卡片
-    /// 任务 R4: 操作区背景色（日间白0.15/夜间黑0.25）
+    /// 任务 F2: 操作区撑满（仿访达），无圆角，背景透明透出 NSVisualEffectView 材质（v0.6.5）
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
-        // 任务 R1: 操作区圆角 12pt 卡片
-        container.layer?.cornerRadius = 12
-        container.layer?.masksToBounds = true
+        // 任务 F2: 移除圆角卡片，仿访达撑满（v0.6.5）
+        // 操作区背景透明，让 NSVisualEffectView 的 .underWindowBackground 材质透出
+        container.layer?.cornerRadius = 0
+        container.layer?.masksToBounds = false
 
         // 1.2 活动面板顶部 accent 色条（2pt 高，初始隐藏，由 updateActivePaneVisual 切换）
         let accentBar = NSView()
@@ -506,24 +494,6 @@ public class MainWindowController: NSWindowController {
         }
 
         return container
-    }
-
-    /// 任务 R4: 操作区背景色随主题切换
-    /// 日间：白色 0.15 透明度（极低透明度白色）
-    /// 夜间：黑色 0.25 透明度
-    private func applyPaneBackgroundColor() {
-        let isDark = ThemeManager.shared.currentMode == .dark
-        let bgColor: NSColor
-        if isDark {
-            bgColor = NSColor.black.withAlphaComponent(0.25)
-        } else {
-            bgColor = NSColor.white.withAlphaComponent(0.15)
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.leftPaneContainer?.layer?.backgroundColor = bgColor.cgColor
-            self.rightPaneContainer?.layer?.backgroundColor = bgColor.cgColor
-        }
     }
 
     deinit {
