@@ -196,10 +196,10 @@ public class FileListView: NSView {
         tableView.rowHeight = 26
         // 透明背景：让 NSVisualEffectView/NSGlassEffectView 玻璃态透过 tableView 显示，
         // 同时不遮挡 NSTableRowView.drawSelection 的标准选中绘制。
-        // 此前使用 textBackgroundColor.withAlphaComponent(0.85) 导致白色背景覆盖选中蓝色。
-        // 任务 F7: 半透明背景给选中色提供底色衬托（v0.6.5）
-        // 完全透明时标准蓝色在玻璃背景上对比度不足
-        tableView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.6)
+        // 任务 F10-2: 修正 F7 错误 - tableView 背景改回 .clear（v0.6.6）
+        // F7 的 0.6 alpha 背景恰恰遮挡了 NSTableRowView.drawSelection 的选中色（问题14根因）
+        // 选中色由 NSVisualEffectView 玻璃材质衬托，无需 tableView 自身底色
+        tableView.backgroundColor = .clear
         tableView.enclosingScrollView?.drawsBackground = false
         scrollView.drawsBackground = false
         scrollView.backgroundColor = NSColor.clear
