@@ -42,7 +42,6 @@ class PaneToolbar: NSView {
     private var searchContainer: FFGlassView!
     private var searchTextField: NSTextField!
     private var sortPopup: NSPopUpButton!
-    private var sortDirectionButton: NSButton!
     private var groupPopup: NSPopUpButton!
     private var listViewButton: NSButton!
     private var gridViewButton: NSButton!
@@ -176,14 +175,6 @@ class PaneToolbar: NSView {
         sortPopup.action = #selector(sortSelected(_:))
         sortPopup.translatesAutoresizingMaskIntoConstraints = false
 
-        sortDirectionButton = NSButton()
-        sortDirectionButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "升序")
-        sortDirectionButton.bezelStyle = .accessoryBarAction
-        sortDirectionButton.controlSize = .small
-        sortDirectionButton.target = self
-        sortDirectionButton.action = #selector(sortDirectionToggled)
-        sortDirectionButton.translatesAutoresizingMaskIntoConstraints = false
-
         groupPopup = NSPopUpButton()
         groupPopup.addItems(withTitles: ["无分组", "按种类", "按日期", "按大小"])
         groupPopup.target = self
@@ -206,7 +197,7 @@ class PaneToolbar: NSView {
 
         let row2 = NSStackView(views: [
             searchContainer,
-            sortPopup, sortDirectionButton,
+            sortPopup,
             groupPopup,
             listViewButton, gridViewButton,
             toolsSeparator,
@@ -288,16 +279,9 @@ class PaneToolbar: NSView {
     @objc private func sortSelected(_ sender: NSPopUpButton) {
         guard let title = sender.titleOfSelectedItem,
               let field = SortField(rawValue: title) else { return }
-        let isAscending = sortDirectionButton.image == NSImage(systemSymbolName: "chevron.up", accessibilityDescription: nil)
-        delegate?.paneToolbar(self, didChangeSortField: field, ascending: isAscending)
-    }
-
-    @objc private func sortDirectionToggled() {
-        let isAscending = sortDirectionButton.image == NSImage(systemSymbolName: "chevron.up", accessibilityDescription: nil)
-        sortDirectionButton.image = NSImage(systemSymbolName: isAscending ? "chevron.down" : "chevron.up", accessibilityDescription: isAscending ? "降序" : "升序")
-        guard let title = sortPopup.titleOfSelectedItem,
-              let field = SortField(rawValue: title) else { return }
-        delegate?.paneToolbar(self, didChangeSortField: field, ascending: !isAscending)
+        // 任务 F10-7: 排序方向改由列头点击控制（移除 sortDirectionButton 后）
+        // 切换排序字段时默认升序；用户可点击列头切换升降序
+        delegate?.paneToolbar(self, didChangeSortField: field, ascending: true)
     }
 
     @objc private func groupSelected(_ sender: NSPopUpButton) {

@@ -36,6 +36,130 @@ enum FFDebug {
     }
 }
 
+// MARK: - FFPillHeaderCell
+
+/// 任务 F10-7: 访达风格药丸列头（圆角背景 + 文字 + 排序箭头）
+///
+/// 自定义 NSTableHeaderCell：
+/// - 列头文字绘制在圆角药丸背景内（半透明次级填充色），仿访达列头视觉
+/// - 当前排序列在右侧绘制升降序箭头（chevron.up / chevron.down）
+/// - 点击列头切换排序的逻辑由 NSTableView 标准机制处理（sortDescriptorPrototype +
+///   tableView(_:sortDescriptorsDidChange:)），本类仅负责绘制
+private final class FFPillHeaderCell: NSTableHeaderCell {
+
+    /// 药丸内边距（左右）
+    private let horizontalPadding: CGFloat = 10
+    /// 文字与箭头间距
+    private let arrowGap: CGFloat = 4
+    /// 箭头尺寸
+    private let arrowSize: CGFloat = 10
+
+    /// 绘制列头：圆角药丸背景 + 居中文字 + （排序列）排序箭头
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // 任务 F10-7: 圆角药丸背景（次级填充色，仿访达列头）
+        // 上下各留 3pt 边距，使药丸在列头条内垂直居中
+        let pillInsetY: CGFloat = 3
+        let pillRect = NSRect(x: cellFrame.origin.x + 2,
+                              y: cellFrame.origin.y + pillInsetY,
+                              width: cellFrame.width - 4,
+                              height: cellFrame.height - pillInsetY * 2)
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            // 药丸背景：次级填充色（浅灰，在玻璃材质上有层次感）
+            // macOS 14+ 用 secondarySystemFill，旧系统回退 controlBackgroundColor
+            if #available(macOS 14.0, *) {
+                NSColor.secondarySystemFill.setFill()
+            } else {
+                NSColor.controlBackgroundColor.setFill()
+            }
+            let path = NSBezierPath(roundedRect: pillRect, xRadius: 6, yRadius: 6)
+            path.fill()
+            context.restoreGState()
+        }
+
+        // 文字颜色：标签色
+        let titleAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let title = self.title as NSString
+
+        // 检查本列是否为当前排序列，并取得升降序方向
+        // 通过 controlView（NSTableHeaderView）-> tableView -> sortDescriptors 反查
+        let ascending = self.sortAscendingForCurrentColumn(controlView: controlView)
+        let hasSortIndicator = ascending != nil
+
+        // 文字区域：药丸内左右各留 horizontalPadding；排序列右侧为箭头预留空间
+        var textRect = pillRect
+        textRect.origin.x += horizontalPadding
+        textRect.size.width -= horizontalPadding * 2
+        if hasSortIndicator {
+            textRect.size.width -= (arrowSize + arrowGap)
+        }
+
+        // 文字垂直居中
+        let titleHeight = title.size(withAttributes: titleAttr).height
+        textRect.origin.y = pillRect.origin.y + (pillRect.height - titleHeight) / 2
+        textRect.size.height = titleHeight
+
+        title.draw(in: textRect, withAttributes: titleAttr)
+
+        // 绘制排序箭头（仅排序列）
+        if let ascending = ascending {
+            self.drawSortIndicator(withFrame: cellFrame, in: controlView, ascending: ascending, priority: 0)
+        }
+    }
+
+    /// 绘制排序指示器（升降序箭头）
+    /// 仅当本列为当前排序列时，NSTableView 才会调用此方法
+    override func drawSortIndicator(withFrame cellFrame: NSRect, in controlView: NSView, ascending: Bool, priority: Int) {
+        // 仅绘制主排序（priority == 0）
+        guard priority == 0 else { return }
+        let arrowRect = self.sortIndicatorRect(forBounds: cellFrame)
+        let symbolName = ascending ? "chevron.up" : "chevron.down"
+        if let arrow = NSImage(systemSymbolName: symbolName, accessibilityDescription: ascending ? "升序" : "降序") {
+            // 配置符号权重与大小
+            let config = NSImage.SymbolConfiguration(pointSize: arrowSize, weight: .regular)
+            let configured = arrow.withSymbolConfiguration(config) ?? arrow
+            // 次级标签色（与文字协调）
+            NSColor.secondaryLabelColor.set()
+            configured.draw(in: arrowRect)
+        }
+    }
+
+    /// 排序指示器位置：列头右侧，垂直居中
+    override func sortIndicatorRect(forBounds rect: NSRect) -> NSRect {
+        return NSRect(x: rect.maxX - horizontalPadding - arrowSize,
+                      y: rect.origin.y + (rect.height - arrowSize) / 2,
+                      width: arrowSize,
+                      height: arrowSize)
+    }
+
+    /// 反查当前列是否为排序列，返回升降序方向（nil 表示非排序列）
+    /// 通过 controlView（NSTableHeaderView）-> tableView -> sortDescriptors 反查
+    private func sortAscendingForCurrentColumn(controlView: NSView?) -> Bool? {
+        guard let headerView = controlView as? NSTableHeaderView,
+              let tableView = headerView.tableView else { return nil }
+        // 找到本 cell 所属列
+        guard let column = tableView.tableColumns.first(where: { ($0.headerCell as AnyObject) === self }) else {
+            return nil
+        }
+        guard let descriptor = tableView.sortDescriptors.first,
+              let key = descriptor.key else { return nil }
+        // 列 identifier 与 sortDescriptor key 对应关系
+        let identifier = column.identifier.rawValue
+        let matched: Bool
+        switch key {
+        case "name": matched = identifier == "name"
+        case "modifiedAt": matched = identifier == "modifiedAt"
+        case "type": matched = identifier == "type"
+        case "size": matched = identifier == "size"
+        default: matched = false
+        }
+        return matched ? descriptor.ascending : nil
+    }
+}
+
 // MARK: - FFTableCellView
 
 /// 自定义 NSTableCellView：layer-backed，背景保持透明（.clear）以让 NSTableRowView
@@ -88,11 +212,15 @@ public class FileListView: NSView {
             cancellables.removeAll()
             tableView.dataSource = self
             tableView.delegate = self
+            // 任务 F10-7: 初始同步排序描述符，使列头箭头显示在当前排序列上
+            applySortDescriptorsFromViewModel()
             viewModel?.$state
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] state in
-                    // 仅在 files 数量变化时才 reloadData（避免 isLoading/error 等变化触发不必要的刷新）
                     guard let self = self else { return }
+                    // 任务 F10-7: 排序字段/方向变化时同步列头排序描述符与箭头
+                    self.applySortDescriptorsFromViewModel()
+                    // 仅在 files 数量变化时才 reloadData（避免 isLoading/error 等变化触发不必要的刷新）
                     if self.lastFilesCount != state.files.count {
                         self.lastFilesCount = state.files.count
                         self.reloadData()
@@ -100,6 +228,37 @@ public class FileListView: NSView {
                 }
                 .store(in: &cancellables)
             reloadData()
+        }
+    }
+
+    /// 任务 F10-7: 将 viewModel 的排序状态同步到 tableView.sortDescriptors
+    ///
+    /// NSTableView 依据 sortDescriptors 在对应列头绘制排序箭头（通过 indicatorImage）。
+    /// 当外部（PaneToolbar 排序下拉框）或内部变更排序时，需同步 sortDescriptors，
+    /// 否则列头箭头不会更新。本方法用 viewModel 的 sortField/sortAscending 构造描述符，
+    /// 并匹配到对应列的 sortDescriptorPrototype 的 key。
+    /// 注意：避免无限循环——仅当描述符确实不同时才 set，且 set 会触发
+    /// tableView(_:sortDescriptorsDidChange:)，但该回调会调用 viewModel.setSortField，
+    /// 此时 viewModel 状态与本方法构造的一致，applySort 不会触发 @Published 重新发射，
+    /// 故不形成循环。
+    private func applySortDescriptorsFromViewModel() {
+        guard let vm = viewModel else { return }
+        // 任务 F10-7: 使用与列 sortDescriptorPrototype 一致的 key
+        // （列 prototype key：name/modifiedAt/type/size，与列 identifier 相同）
+        // 注意：不能用 SortField.key（.type 返回 "extension"），否则与列 prototype 不匹配，
+        // NSTableView 无法识别排序列，箭头不会显示。
+        let key: String
+        switch vm.state.sortField {
+        case .name: key = "name"
+        case .modifiedAt: key = "modifiedAt"
+        case .type: key = "type"
+        case .size: key = "size"
+        }
+        let ascending = vm.state.sortAscending
+        let current = tableView.sortDescriptors
+        // 仅在变化时更新，避免重复 set 触发不必要的回调
+        if current.first?.key != key || current.first?.ascending != ascending {
+            tableView.sortDescriptors = [NSSortDescriptor(key: key, ascending: ascending)]
         }
     }
 
@@ -177,7 +336,8 @@ public class FileListView: NSView {
         tableView = NSTableView()
         tableView.allowsMultipleSelection = true
         tableView.allowsEmptySelection = true
-        tableView.allowsColumnReordering = false
+        // 任务 F10-7: 启用列拖动重排（访达风格，用户可拖动列头调整列顺序）
+        tableView.allowsColumnReordering = true
         tableView.allowsColumnResizing = true
         // 使用 NSTableView 标准选中绘制（.regular 默认值）。
         // 根因（systematic-debugging）：
@@ -217,6 +377,8 @@ public class FileListView: NSView {
         // 名称列（带图标）— 用户可手动拖宽
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         nameCol.title = "名称"
+        nameCol.headerCell = FFPillHeaderCell()
+        nameCol.headerCell.stringValue = "名称"
         nameCol.width = 240
         nameCol.minWidth = 80
         nameCol.maxWidth = 2000
@@ -227,6 +389,8 @@ public class FileListView: NSView {
         // 修改日期列（设计稿 130px）
         let modifiedCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("modifiedAt"))
         modifiedCol.title = "修改日期"
+        modifiedCol.headerCell = FFPillHeaderCell()
+        modifiedCol.headerCell.stringValue = "修改日期"
         modifiedCol.width = 130
         modifiedCol.minWidth = 80
         modifiedCol.resizingMask = [.userResizingMask, .autoresizingMask]
@@ -236,6 +400,8 @@ public class FileListView: NSView {
         // 类型列（设计稿 100px）
         let typeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("type"))
         typeCol.title = "类型"
+        typeCol.headerCell = FFPillHeaderCell()
+        typeCol.headerCell.stringValue = "类型"
         typeCol.width = 100
         typeCol.minWidth = 50
         typeCol.resizingMask = [.userResizingMask, .autoresizingMask]
@@ -245,6 +411,8 @@ public class FileListView: NSView {
         // 大小列（设计稿 70px，右对齐）
         let sizeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
         sizeCol.title = "大小"
+        sizeCol.headerCell = FFPillHeaderCell()
+        sizeCol.headerCell.stringValue = "大小"
         sizeCol.width = 70
         sizeCol.minWidth = 40
         sizeCol.resizingMask = [.userResizingMask, .autoresizingMask]
