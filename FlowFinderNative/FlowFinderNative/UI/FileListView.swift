@@ -209,6 +209,10 @@ public class FileListView: NSView {
         tableView.dataSource = self
         tableView.delegate = self
 
+        // 任务 F10-6: 列宽自动调整占满操作区（v0.6.6）
+        // 最后一列自动填充剩余宽度，调整操作区 divider 时列宽自动响应
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+
         // 列顺序：名称 → 修改日期 → 类型 → 大小（匹配 macOS Finder）
         // 名称列（带图标）— 用户可手动拖宽
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
@@ -216,7 +220,7 @@ public class FileListView: NSView {
         nameCol.width = 240
         nameCol.minWidth = 80
         nameCol.maxWidth = 2000
-        nameCol.resizingMask = [.userResizingMask]
+        nameCol.resizingMask = [.userResizingMask, .autoresizingMask]
         nameCol.sortDescriptorPrototype = NSSortDescriptor(key: "name", ascending: true)
         tableView.addTableColumn(nameCol)
 
@@ -225,7 +229,7 @@ public class FileListView: NSView {
         modifiedCol.title = "修改日期"
         modifiedCol.width = 130
         modifiedCol.minWidth = 80
-        modifiedCol.resizingMask = [.userResizingMask]
+        modifiedCol.resizingMask = [.userResizingMask, .autoresizingMask]
         modifiedCol.sortDescriptorPrototype = NSSortDescriptor(key: "modifiedAt", ascending: true)
         tableView.addTableColumn(modifiedCol)
 
@@ -234,7 +238,7 @@ public class FileListView: NSView {
         typeCol.title = "类型"
         typeCol.width = 100
         typeCol.minWidth = 50
-        typeCol.resizingMask = [.userResizingMask]
+        typeCol.resizingMask = [.userResizingMask, .autoresizingMask]
         typeCol.sortDescriptorPrototype = NSSortDescriptor(key: "type", ascending: true)
         tableView.addTableColumn(typeCol)
 
@@ -243,7 +247,7 @@ public class FileListView: NSView {
         sizeCol.title = "大小"
         sizeCol.width = 70
         sizeCol.minWidth = 40
-        sizeCol.resizingMask = [.userResizingMask]
+        sizeCol.resizingMask = [.userResizingMask, .autoresizingMask]
         sizeCol.sortDescriptorPrototype = NSSortDescriptor(key: "size", ascending: true)
         tableView.addTableColumn(sizeCol)
 
