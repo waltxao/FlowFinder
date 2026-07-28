@@ -175,6 +175,121 @@ public class PaneViewModel: ObservableObject {
         applySort()
     }
 
+    // MARK: - 任务 F10-8: 分组聚合（v0.6.6 仿访达）
+
+    /// 分组后的文件列表（按种类/日期/大小聚合）。
+    /// - groupBy == "none" 时返回单个分组 "全部"，包含所有文件
+    /// - 其余维度返回有序分组，组内顺序与 state.files 一致（state.files 已由 applySort 排序），
+    ///   因此"排序在分组内生效"：先排序再分组的实现保证组内顺序正确，
+    ///   但组的整体顺序由本方法决定（仿访达：种类/日期/大小各有固定顺序）
+    ///
+    /// 注意：返回值使用元组 (key, entries)，元组在 Swift 中无法直接作为 @Published
+    /// 触发 UI 刷新，UI 层应通过监听 $state 变化后调用此计算属性获取最新分组。
+    var groupedFiles: [(key: String, entries: [FileEntry])] {
+        guard state.groupBy != "none" else {
+            return [(key: "全部", entries: state.files)]
+        }
+        switch state.groupBy {
+        case "kind": return groupByKind()
+        case "date": return groupByDate()
+        case "size": return groupBySize()
+        default: return [(key: "全部", entries: state.files)]
+        }
+    }
+
+    /// 按种类分组（仿访达）。
+    /// 分组顺序：文件夹 → 图片 → 文档 → 视频 → 音频 → 其他
+    /// 组内顺序保持 state.files 原序（已排序）。
+    private func groupByKind() -> [(key: String, entries: [FileEntry])] {
+        // 预定义分组顺序与键名
+        let order: [(key: String, test: (FileEntry) -> Bool)] = [
+            ("文件夹", { $0.isDirectory }),
+            ("图片", { FileEntryKind.imageExtensions.contains($0.fileExtension) }),
+            ("文档", { FileEntryKind.documentExtensions.contains($0.fileExtension) }),
+            ("视频", { FileEntryKind.videoExtensions.contains($0.fileExtension) }),
+            ("音频", { FileEntryKind.audioExtensions.contains($0.fileExtension) }),
+            ("其他", { _ in true }),
+        ]
+        // 按 state.files 原序遍历，分桶到首个匹配组（保持组内已排序顺序）
+        var buckets: [String: [FileEntry]] = [:]
+        for entry in state.files {
+            for (key, test) in order {
+                if test(entry) {
+                    buckets[key, default: []].append(entry)
+                    break
+                }
+            }
+        }
+        // 按 order 顺序输出非空分组
+        return order.compactMap { (key, _) in
+            buckets[key].map { (key, $0) }
+        }
+    }
+
+    /// 按修改日期分组（仿访达）。
+    /// 分组顺序：今天 → 昨天 → 本周 → 本月 → 更早
+    /// 本周/本月的起始按 Calendar.current 的自然周/月计算（本周从本周日开始或区域设置默认起始日）。
+    private func groupByDate() -> [(key: String, entries: [FileEntry])] {
+        let calendar = Calendar.current
+        let now = Date()
+        let startOfToday = calendar.startOfDay(for: now)
+        let startOfYesterday = calendar.date(byAdding: .day, value: -1, to: startOfToday) ?? startOfToday
+        let weekInterval = calendar.dateInterval(of: .weekOfYear, for: now)
+        let monthInterval = calendar.dateInterval(of: .month, for: now)
+        let startOfWeek = weekInterval?.start ?? startOfToday
+        let startOfMonth = monthInterval?.start ?? startOfToday
+
+        let order: [(key: String, test: (Date) -> Bool)] = [
+            ("今天", { $0 >= startOfToday }),
+            ("昨天", { $0 >= startOfYesterday && $0 < startOfToday }),
+            ("本周", { $0 >= startOfWeek && $0 < startOfYesterday }),
+            ("本月", { $0 >= startOfMonth && $0 < startOfWeek }),
+            ("更早", { _ in true }),
+        ]
+        var buckets: [String: [FileEntry]] = [:]
+        for entry in state.files {
+            for (key, test) in order {
+                if test(entry.modificationDate) {
+                    buckets[key, default: []].append(entry)
+                    break
+                }
+            }
+        }
+        return order.compactMap { (key, _) in
+            buckets[key].map { (key, $0) }
+        }
+    }
+
+    /// 按大小分组（仿访达，仅对文件分桶，文件夹归入"更小"）。
+    /// 分组顺序：>1GB → >100MB → >10MB → >1MB → 更小
+    /// ">100MB" 表示 100MB ~ 1GB 区间，依此类推（按顺序首个匹配）。
+    private func groupBySize() -> [(key: String, entries: [FileEntry])] {
+        let _1MB: UInt64 = 1_048_576
+        let _10MB: UInt64 = 10 * _1MB
+        let _100MB: UInt64 = 100 * _1MB
+        let _1GB: UInt64 = 1024 * _1MB
+
+        let order: [(key: String, test: (FileEntry) -> Bool)] = [
+            (">1GB", { !$0.isDirectory && $0.size >= _1GB }),
+            (">100MB", { !$0.isDirectory && $0.size >= _100MB }),
+            (">10MB", { !$0.isDirectory && $0.size >= _10MB }),
+            (">1MB", { !$0.isDirectory && $0.size >= _1MB }),
+            ("更小", { _ in true }),
+        ]
+        var buckets: [String: [FileEntry]] = [:]
+        for entry in state.files {
+            for (key, test) in order {
+                if test(entry) {
+                    buckets[key, default: []].append(entry)
+                    break
+                }
+            }
+        }
+        return order.compactMap { (key, _) in
+            buckets[key].map { (key, $0) }
+        }
+    }
+
     func setSearchQuery(_ query: String) {
         state.searchQuery = query
         if query.isEmpty {
@@ -361,4 +476,34 @@ public class PaneViewModel: ObservableObject {
         let query = state.searchQuery.lowercased()
         state.files = state.files.filter { $0.name.lowercased().contains(query) }
     }
+}
+
+// MARK: - FileEntryKind（任务 F10-8 分组辅助）
+
+/// 文件种类分组用的扩展名集合（小写）。
+/// 与 FileEntry.kindDescription 的分类保持视觉一致，但聚合到分组维度。
+enum FileEntryKind {
+    /// 图片扩展名
+    static let imageExtensions: Set<String> = [
+        "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp",
+        "heic", "heif", "svg", "raw", "cr2", "nef", "arw", "psd", "ico",
+    ]
+    /// 文档扩展名（文本/办公文档/PDF/代码等可读文档）
+    static let documentExtensions: Set<String> = [
+        "pdf", "txt", "md", "rtf", "doc", "docx", "xls", "xlsx",
+        "ppt", "pptx", "pages", "numbers", "key", "html", "htm",
+        "css", "js", "ts", "json", "xml", "yaml", "yml", "csv",
+        "py", "rb", "go", "rs", "java", "c", "cpp", "h", "hpp",
+        "swift", "sh", "sql", "log", "epub",
+    ]
+    /// 视频扩展名
+    static let videoExtensions: Set<String> = [
+        "mp4", "mov", "avi", "mkv", "m4v", "wmv", "flv", "webm",
+        "mpeg", "mpg", "3gp", "mts", "m2ts", "vob",
+    ]
+    /// 音频扩展名
+    static let audioExtensions: Set<String> = [
+        "mp3", "wav", "aac", "m4a", "flac", "ogg", "wma", "aiff",
+        "aif", "alac", "opus", "amr",
+    ]
 }

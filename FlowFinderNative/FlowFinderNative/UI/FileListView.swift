@@ -186,7 +186,49 @@ private class FFTableRowView: NSTableRowView {
     // 空实现：仅作为扩展点保留（如将来添加 hover 效果）
 }
 
+/// 任务 F10-8: 分组标题行的 rowView。
+/// 仿访达列表视图分组：浅灰背景、小字号标题，不参与选中绘制（标题行不可选）。
+private final class FFSectionHeaderRowView: NSTableRowView {
+    /// 分组名（用于绘制）
+    var sectionTitle: String = ""
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 浅灰背景（次级填充色，仿访达 section header）
+        if #available(macOS 14.0, *) {
+            NSColor.tertiarySystemFill.setFill()
+        } else {
+            NSColor.controlBackgroundColor.withAlphaComponent(0.6).setFill()
+        }
+        dirtyRect.fill()
+
+        // 标题文字：小字号、次级标签色，左对齐留 12pt 边距
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let textRect = NSRect(x: 12, y: 3, width: bounds.width - 24, height: bounds.height - 6)
+        let title = sectionTitle as NSString
+        title.draw(in: textRect, withAttributes: attrs)
+    }
+
+    // 标题行不绘制选中高亮
+    override func drawSelection(in dirtyRect: NSRect) {
+        // 空实现：标题行不可选，不绘制选中
+    }
+}
+
 // MARK: - FileListView
+
+/// 任务 F10-8: 分组渲染用的单行映射条目。
+/// - isHeader == true 时该行为分组标题，key 为分组名（如"图片"），fileIndex 为 nil
+/// - isHeader == false 时该行为文件行，fileIndex 为该文件在 viewModel.files 中的下标
+private struct FFDisplayRow {
+    let isHeader: Bool
+    let key: String
+    let fileIndex: Int
+}
 
 /// NSTableView-based file list view with 4 columns (名称/修改日期/类型/大小)
 /// 标签以药丸形式内联显示在名称列的文件名之后
@@ -196,7 +238,13 @@ public class FileListView: NSView {
     private var cancellables = Set<AnyCancellable>()
     private var lastFilesCount: Int = -1
 
-    // Bug 9 修复：reload 期间标志位，防止 selectionDidChange → state 变更 → reload 形成循环
+    // 任务 F10-8: 显示行映射缓存。
+    // 将"分组渲染"的显示行号映射为 (是否分组标题行, 文件在 viewModel.files 中的下标)。
+    // groupBy == "none" 时仅含文件行（fileIndex 与行号一一对应），保持原有行为。
+    // 每次 reloadData / state.files 变更时重建。
+    private var displayRows: [FFDisplayRow] = []
+
+    // Bug 9 修复：reload 期间标志位，防止 selectionDidChange -> state 变更 -> reload 形成循环
     private var isReloading: Bool = false
 
     // 内联重命名状态
@@ -214,21 +262,64 @@ public class FileListView: NSView {
             tableView.delegate = self
             // 任务 F10-7: 初始同步排序描述符，使列头箭头显示在当前排序列上
             applySortDescriptorsFromViewModel()
+            // 任务 F10-8: 初始构建 displayRows（分组渲染映射）
+            rebuildDisplayRows()
             viewModel?.$state
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] state in
                     guard let self = self else { return }
                     // 任务 F10-7: 排序字段/方向变化时同步列头排序描述符与箭头
                     self.applySortDescriptorsFromViewModel()
-                    // 仅在 files 数量变化时才 reloadData（避免 isLoading/error 等变化触发不必要的刷新）
-                    if self.lastFilesCount != state.files.count {
+                    // 任务 F10-8: files 数量变化 或 分组维度变化 或 排序变化（顺序变化）时刷新
+                    // - lastFilesCount 检测数量变化（导航/删除/新增）
+                    // - 分组维度变化需刷新（displayRows 结构改变）
+                    // - 排序变化虽数量不变但顺序变了，需刷新（applySort 仅在顺序变化时改 state.files，
+                    //   但我们无法直接对比顺序，故 sortField/sortAscending 变化也触发刷新）
+                    let needReload = self.lastFilesCount != state.files.count
+                        || self.currentGroupBy != state.groupBy
+                        || self.currentSortField != state.sortField
+                        || self.currentSortAscending != state.sortAscending
+                    if needReload {
                         self.lastFilesCount = state.files.count
+                        self.currentGroupBy = state.groupBy
+                        self.currentSortField = state.sortField
+                        self.currentSortAscending = state.sortAscending
                         self.reloadData()
                     }
                 }
                 .store(in: &cancellables)
             reloadData()
         }
+    }
+
+    // 任务 F10-8: 上次刷新时记录的分组/排序状态，用于检测变化决定是否刷新
+    private var currentGroupBy: String = "none"
+    private var currentSortField: SortField = .name
+    private var currentSortAscending: Bool = true
+
+    /// 任务 F10-8: 根据 viewModel.groupedFiles 重建 displayRows 映射。
+    /// groupBy == "none" 时返回纯文件行（与原有行为一致，fileIndex 与行号一一对应）。
+    private func rebuildDisplayRows() {
+        guard let viewModel = viewModel else {
+            displayRows = []
+            return
+        }
+        var rows: [FFDisplayRow] = []
+        let groups = viewModel.groupedFiles
+        for group in groups {
+            // 分组标题行（仅当不止一个分组时才显示标题；"全部" 单分组且 groupBy==none 时不显示）
+            let showHeader = !(groups.count == 1 && viewModel.state.groupBy == "none")
+            if showHeader {
+                rows.append(FFDisplayRow(isHeader: true, key: group.key, fileIndex: -1))
+            }
+            // 组内文件行（fileIndex 指向 viewModel.files 中的下标）
+            for entry in group.entries {
+                if let idx = viewModel.state.files.firstIndex(where: { $0.path == entry.path }) {
+                    rows.append(FFDisplayRow(isHeader: false, key: group.key, fileIndex: idx))
+                }
+            }
+        }
+        displayRows = rows
     }
 
     /// 任务 F10-7: 将 viewModel 的排序状态同步到 tableView.sortDescriptors
@@ -275,6 +366,8 @@ public class FileListView: NSView {
     private let modifiedCellID = NSUserInterfaceItemIdentifier("ModifiedCell")
     private let typeCellID = NSUserInterfaceItemIdentifier("TypeCell")
     private let sizeCellID = NSUserInterfaceItemIdentifier("SizeCell")
+    // 任务 F10-8: 分组标题行复用标识符
+    private let sectionHeaderCellID = NSUserInterfaceItemIdentifier("SectionHeaderCell")
 
     /// 面板方向（由 MainWindowController 注入），用于右键菜单"移动/复制到另一面板"的箭头方向
     /// 注：PaneSide 为 internal 类型，故此属性为 internal（同模块内可访问）
@@ -715,11 +808,14 @@ public class FileListView: NSView {
 
     /// 开始拖拽（在 tableView 的 mouseDown 中触发）
     @objc private func handleTableDrag() {
+        // 任务 F10-8: 通过 displayRows 映射 selectedRow -> viewModel.files 下标
         guard let viewModel = viewModel,
               let selectedRow = tableView.selectedRow as Int?,
-              selectedRow >= 0, selectedRow < viewModel.files.count else { return }
+              selectedRow >= 0, selectedRow < displayRows.count else { return }
+        let displayRow = displayRows[selectedRow]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return }
 
-        let entry = viewModel.files[selectedRow]
+        let entry = viewModel.files[displayRow.fileIndex]
         let url = URL(fileURLWithPath: entry.path)
 
         let draggingItem = NSDraggingItem(pasteboardWriter: url as NSURL)
@@ -731,10 +827,13 @@ public class FileListView: NSView {
     // MARK: - Helpers
 
     private var clickedEntry: FileEntry? {
+        // 任务 F10-8: 通过 displayRows 映射 clickedRow -> viewModel.files 下标
         guard let viewModel = viewModel,
               let row = tableView.clickedRow as Int?,
-              row >= 0, row < viewModel.files.count else { return nil }
-        return viewModel.files[row]
+              row >= 0, row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return nil }
+        return viewModel.files[displayRow.fileIndex]
     }
 
     private func getSide() -> String {
@@ -889,15 +988,75 @@ public class FileListView: NSView {
         return pill
     }
 
+    /// 任务 F10-8: 创建分组标题行的 cell。
+    /// 标题文字由 FFSectionHeaderRowView 整行绘制，cell 本身保持透明，
+    /// 仅作为 NSTableView 列填充的占位（避免列错位）。
+    /// 名称列额外显示分组名 + 数量，作为辅助信息（在玻璃态下 rowView 背景更清晰）。
+    private func makeSectionHeaderCell(tableView: NSTableView, tableColumn: NSTableColumn?, key: String) -> NSView? {
+        let cellView = tableView.makeView(withIdentifier: sectionHeaderCellID, owner: self) as? NSTableCellView
+            ?? NSTableCellView()
+        cellView.identifier = sectionHeaderCellID
+        cellView.wantsLayer = true
+        cellView.layer?.backgroundColor = NSColor.clear.cgColor
+
+        // 计算分组内文件数量（用于名称列显示 "图片 (12)"）
+        let count = viewModel?.groupedFiles.first(where: { $0.key == key })?.entries.count ?? 0
+
+        // 仅名称列显示标题文本，其他列返回空 cell
+        let columnID = tableColumn?.identifier.rawValue ?? ""
+        if columnID == "name" {
+            if cellView.textField == nil {
+                let tf = NSTextField(labelWithString: "")
+                tf.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+                tf.translatesAutoresizingMaskIntoConstraints = false
+                cellView.addSubview(tf)
+                cellView.textField = tf
+                NSLayoutConstraint.activate([
+                    tf.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 12),
+                    tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                ])
+            }
+            cellView.textField?.stringValue = "\(key)  (\(count))"
+            cellView.textField?.textColor = NSColor.secondaryLabelColor
+        } else {
+            cellView.textField?.stringValue = ""
+        }
+        return cellView
+    }
+
     public func reloadData() {
+        // 任务 F10-8: 重建分组显示行映射后再 reload tableView
+        rebuildDisplayRows()
         // Bug 9 修复：reloadData 可能引起 selectionDidChange 回调（行被清空/重建），
-        // 若不抑制则会触发 viewModel.state.selectedFiles 变更 → @Published 发射 →
+        // 若不抑制则会触发 viewModel.state.selectedFiles 变更 -> @Published 发射 ->
         // 上游 sink 再次 reloadData，形成循环。设置标志位并在下一 runloop 复位，
         // 既能覆盖同步触发的回调，也能覆盖同 runloop 内异步派发的回调。
         isReloading = true
         tableView?.reloadData()
+        // 任务 F10-8: 分组渲染后恢复选中行的显示（基于 viewModel.state.selectedFiles 的路径）
+        restoreSelectionFromViewModel()
         DispatchQueue.main.async { [weak self] in
             self?.isReloading = false
+        }
+    }
+
+    /// 任务 F10-8: 根据 viewModel.state.selectedFiles 恢复 tableView 的选中行。
+    /// 分组渲染后行号与 viewModel.files 下标不再一一对应，reload 会清空选中，
+    /// 需通过路径匹配找到对应的显示行号并重新选中。
+    private func restoreSelectionFromViewModel() {
+        guard let viewModel = viewModel else { return }
+        let selectedPaths = Set(viewModel.state.selectedFiles.map { $0.path })
+        guard !selectedPaths.isEmpty else { return }
+        var indices: [Int] = []
+        for (rowNum, row) in displayRows.enumerated() where !row.isHeader {
+            if row.fileIndex < viewModel.state.files.count,
+               selectedPaths.contains(viewModel.state.files[row.fileIndex].path) {
+                indices.append(rowNum)
+            }
+        }
+        if !indices.isEmpty {
+            // 使用 IndexSet 选中多行（不触发 selectionDidChange 循环：isReloading 仍为 true）
+            tableView?.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
         }
     }
 
@@ -919,10 +1078,13 @@ public class FileListView: NSView {
     // MARK: - Double Click
 
     @objc private func handleDoubleClick() {
+        // 任务 F10-8: 通过 displayRows 映射 clickedRow -> viewModel.files 下标
         guard let viewModel = viewModel,
               let row = tableView.clickedRow as Int?,
-              row >= 0, row < viewModel.files.count else { return }
-        let entry = viewModel.files[row]
+              row >= 0, row < displayRows.count else { return }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return }
+        let entry = viewModel.files[displayRow.fileIndex]
         onDoubleClick?(entry)
     }
 }
@@ -931,7 +1093,8 @@ public class FileListView: NSView {
 
 extension FileListView: NSTableViewDataSource {
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        return viewModel?.files.count ?? 0
+        // 任务 F10-8: 返回显示行数（含分组标题行）
+        return displayRows.count
     }
 
     public func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
@@ -955,8 +1118,18 @@ extension FileListView: NSTableViewDataSource {
 
 extension FileListView: NSTableViewDelegate {
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let viewModel = viewModel, row < viewModel.files.count else { return nil }
-        let entry = viewModel.files[row]
+        // 任务 F10-8: 分组标题行单独渲染
+        guard row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+
+        if displayRow.isHeader {
+            // 分组标题行：仅名称列渲染标题文本（跨列视觉效果由 rowView 背景实现）
+            // 其他列返回空 cell，保持列对齐
+            return makeSectionHeaderCell(tableView: tableView, tableColumn: tableColumn, key: displayRow.key)
+        }
+
+        guard let viewModel = viewModel, displayRow.fileIndex < viewModel.files.count else { return nil }
+        let entry = viewModel.files[displayRow.fileIndex]
 
         let cellID = NSUserInterfaceItemIdentifier(tableColumn?.identifier.rawValue ?? "")
         // 使用 FFTableCellView：背景保持透明（.clear），让 NSTableRowView 的标准
@@ -1075,19 +1248,30 @@ extension FileListView: NSTableViewDelegate {
     }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        return 26
+        // 任务 F10-8: 分组标题行高度 22，文件行高度 26
+        guard row < displayRows.count else { return 26 }
+        return displayRows[row].isHeader ? 22 : 26
     }
 
     /// 返回自定义 FFTableRowView。标准 NSTableRowView.drawSelection 已能正确绘制
     /// 选中高亮（key window + firstResponder 时为强调蓝色），FFTableRowView 当前
     /// 仅作为扩展点保留（如将来添加 hover 效果），不覆盖任何绘制方法。
+    /// 任务 F10-8: 分组标题行返回 FFSectionHeaderRowView（绘制浅灰背景 + 标题）。
     public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        guard row < displayRows.count else { return FFTableRowView() }
+        if displayRows[row].isHeader {
+            let hv = FFSectionHeaderRowView()
+            hv.sectionTitle = displayRows[row].key
+            return hv
+        }
         return FFTableRowView()
     }
 
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
         FFDebug.log("shouldSelectRow row=\(row) firstResponder=\(tableView.window?.firstResponder === tableView)")
-        return true
+        // 任务 F10-8: 分组标题行不可选
+        guard row < displayRows.count else { return true }
+        return !displayRows[row].isHeader
     }
 
     // 选择变更时才执行选择逻辑（单击选中、Cmd+点击多选、Shift+范围选）
@@ -1112,9 +1296,12 @@ extension FileListView: NSTableViewDelegate {
             }
         }
         let selectedRows = tableView.selectedRowIndexes
-        let entries = selectedRows.compactMap { idx -> FileEntry? in
-            guard idx >= 0, idx < viewModel.files.count else { return nil }
-            return viewModel.files[idx]
+        // 任务 F10-8: 通过 displayRows 映射显示行号 -> viewModel.files 下标
+        let entries = selectedRows.compactMap { rowNum -> FileEntry? in
+            guard rowNum >= 0, rowNum < displayRows.count else { return nil }
+            let displayRow = displayRows[rowNum]
+            guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return nil }
+            return viewModel.files[displayRow.fileIndex]
         }
         // 同步更新 viewModel 的选择状态
         viewModel.state.selectedFiles = entries
@@ -1197,9 +1384,12 @@ extension FileListView {
         // 仅单选时触发重命名
         let selectedRows = tableView.selectedRowIndexes
         guard selectedRows.count == 1, let row = selectedRows.first,
-              row >= 0, row < viewModel.files.count else { return }
+              row >= 0, row < displayRows.count else { return }
+        // 任务 F10-8: 通过 displayRows 映射行号 -> viewModel.files 下标
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return }
 
-        let entry = viewModel.files[row]
+        let entry = viewModel.files[displayRow.fileIndex]
 
         // 获取名称列的 cell view
         guard let cellView = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView,
