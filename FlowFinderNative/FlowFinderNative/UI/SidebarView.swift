@@ -10,7 +10,8 @@ extension Notification.Name {
 // MARK: - DeviceExtendedInfo (设备扩展信息，用于悬停气泡)
 
 /// 设备扩展信息：存储文件系统类型、挂载点等，供 tooltip 显示
-private struct DeviceExtendedInfo {
+/// 任务 F10-3: 改为 internal 可见性，供 MainWindowController 设备浮层复用（v0.6.6）
+struct DeviceExtendedInfo {
     let fileSystemType: String
     let mountPoint: String
     let totalSize: UInt64
@@ -24,39 +25,24 @@ class SidebarView: NSView {
     private var brandView: NSView!
     /// 任务 R3: 应用图标视图（用于点击弹出关于对话框）
     private var brandIconView: NSImageView!
-    /// 任务 T1: 工具栏行（夜间切换 + 设置 + 工具），位于设备上方
+    /// 任务 T1: 工具栏行（夜间切换 + 设置 + 工具）
+    /// 任务 F10-3: 设备区域已移出侧边栏（浮动在窗口左下角），toolBarRow 现位于标签下方
     private var toolBarRow: NSStackView!
     /// 任务 T1: 主题切换按钮（用于切换图标）
     private var themeToggleBtn: NSButton!
 
     private var favoritesOutlineView: NSOutlineView!
-    private var deviceOutlineView: NSOutlineView!
     private var favoritesScrollView: NSScrollView!
-    private var deviceScrollView: NSScrollView!
     /// 1.5 收藏夹区域背景（v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质，移除 FFGlassView 卡片）
     private var favoritesMaskView: NSVisualEffectView!
     /// 1.5 标签区域背景（v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质）
     private var tagsMaskView: NSVisualEffectView!
-    /// 1.5 下方区域背景（包裹存储设备，B8 改为浮动在侧边栏左下角；v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质）
-    private var deviceMaskView: NSVisualEffectView!
-    /// B10: 设备栏自定义头部（汇总信息 + 折叠箭头）
-    private var deviceHeaderView: DeviceHeaderView!
     /// 标签 flow 视图（替代 outlineView，支持横向 wrap）
     private var tagFlowView: TagFlowView!
     private let favoritesDataSource = FavoritesSidebarDataSource()
     private let tagsDataSource = TagsSidebarDataSource()
-    private let deviceDataSource = DeviceSidebarDataSource()
     private var favoritesHeightConstraint: NSLayoutConstraint!
     private var tagsHeightConstraint: NSLayoutConstraint!
-    private var deviceHeightConstraint: NSLayoutConstraint!
-
-    /// B10: 设备栏折叠状态（默认折叠）
-    private var isDeviceCollapsed = true
-
-    /// B8: 设备栏折叠态高度（头部 32pt + 上下 padding 8pt = 48pt）
-    private let deviceCollapsedHeight: CGFloat = 48
-    /// B9: 设备行单行高度
-    private let deviceRowHeight: CGFloat = 28
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -131,14 +117,10 @@ class SidebarView: NSView {
         tagsMaskView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tagsMaskView)
 
-        deviceMaskView = NSVisualEffectView()
-        deviceMaskView.material = .sidebar
-        deviceMaskView.blendingMode = .behindWindow
-        deviceMaskView.state = .active
-        deviceMaskView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(deviceMaskView)
+        // 任务 F10-3: 设备区域已移出侧边栏，改为 MainWindowController 的浮动浮层（v0.6.6）
+        // 故 deviceMaskView 不再在此创建
 
-        // 任务 T1: 工具栏行（夜间切换 + 设置 + 工具），位于设备上方
+        // 任务 T1: 工具栏行（夜间切换 + 设置 + 工具），位于标签下方
         toolBarRow = NSStackView()
         toolBarRow.orientation = .horizontal
         toolBarRow.spacing = 8
@@ -205,22 +187,8 @@ class SidebarView: NSView {
         }
         tagsMaskView.addSubview(tagFlowView)
 
-        // B10: 设备栏头部（汇总 + 折叠箭头）
-        deviceHeaderView = DeviceHeaderView()
-        deviceHeaderView.translatesAutoresizingMaskIntoConstraints = false
-        // 点击头部切换折叠/展开
-        let headerClick = NSClickGestureRecognizer(target: self, action: #selector(toggleDeviceExpanded))
-        deviceHeaderView.addGestureRecognizer(headerClick)
-        deviceMaskView.addSubview(deviceHeaderView)
-
-        // 下方：存储设备（B10: 不再显示 section header，直接显示设备列表）
-        deviceScrollView = makeScrollView()
-        deviceOutlineView = makeOutlineView()
-        deviceOutlineView.dataSource = deviceDataSource
-        deviceOutlineView.delegate = deviceDataSource
-        deviceScrollView.documentView = deviceOutlineView
-        // 放入遮罩容器
-        deviceMaskView.addSubview(deviceScrollView)
+        // 任务 F10-3: 设备区域相关视图（deviceHeaderView/deviceScrollView/deviceOutlineView）
+        // 已迁移至 MainWindowController 的 createDevicePanel 浮层，此处不再创建
 
         // A1: 拖拽添加收藏夹后的回调（重新加载 + 更新高度）
         favoritesDataSource.onFavoritesChanged = { [weak self] in
@@ -236,44 +204,33 @@ class SidebarView: NSView {
         favoritesHeightConstraint = favoritesMaskView.heightAnchor.constraint(equalToConstant: 48)
         favoritesHeightConstraint.priority = .required
 
-        // B10: 设备区高度根据折叠状态动态调整
-        deviceHeightConstraint = deviceMaskView.heightAnchor.constraint(equalToConstant: deviceCollapsedHeight)
-        deviceHeightConstraint.priority = .required
-
         // 标签区高度根据 wrap 行数动态调整
         tagsHeightConstraint = tagsMaskView.heightAnchor.constraint(equalToConstant: 80)
         tagsHeightConstraint.priority = .required
 
+        // 任务 F10-3: deviceHeightConstraint 已随设备区域迁移至 MainWindowController 浮层（v0.6.6）
+
         let padding: CGFloat = 12
 
         NSLayoutConstraint.activate([
-            // 任务 R3: 收藏夹遮罩区域 — 从 brandView 下方开始
+            // 任务 R3: 收藏夹遮罩区域 - 从 brandView 下方开始
             favoritesMaskView.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: padding),
             favoritesMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             favoritesMaskView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             favoritesHeightConstraint,
 
-            // B8: 标签遮罩区域 — 紧跟收藏夹下方，高度由 tagsHeightConstraint 控制
+            // B8: 标签遮罩区域 - 紧跟收藏夹下方，高度由 tagsHeightConstraint 控制
             tagsMaskView.topAnchor.constraint(equalTo: favoritesMaskView.bottomAnchor, constant: padding),
             tagsMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             tagsMaskView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             tagsHeightConstraint,
 
-            // B8: 设备遮罩区域 — 浮动在侧边栏左下角（脱离垂直 stack）
-            // 不再约束 top 到 tagsMaskView.bottom，而是固定到 sidebar 底部
-            deviceMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            deviceMaskView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
-            deviceMaskView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding),
-            deviceHeightConstraint,
-
-            // 任务 T1: 工具栏行 — 位于设备上方，水平占满
+            // 任务 T1: 工具栏行 - 位于标签下方，水平占满
+            // 任务 F10-3: 设备区域已移出，toolBarRow 改为锚定 tagsMaskView 底部（v0.6.6）
+            toolBarRow.topAnchor.constraint(equalTo: tagsMaskView.bottomAnchor, constant: 8),
             toolBarRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             toolBarRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
-            toolBarRow.bottomAnchor.constraint(equalTo: deviceMaskView.topAnchor, constant: -8),
             toolBarRow.heightAnchor.constraint(equalToConstant: 28),
-
-            // 任务 T1: 确保 tags 不会被 toolBarRow 遮挡（tags 底部 + 间距 <= toolBarRow 顶部）
-            tagsMaskView.bottomAnchor.constraint(lessThanOrEqualTo: toolBarRow.topAnchor, constant: -padding / 2),
 
             // 收藏夹 scrollView 填满收藏夹遮罩（内边距 8pt，圆角由 mask 的 masksToBounds 裁剪）
             favoritesScrollView.topAnchor.constraint(equalTo: favoritesMaskView.topAnchor, constant: 8),
@@ -286,37 +243,16 @@ class SidebarView: NSView {
             tagFlowView.leadingAnchor.constraint(equalTo: tagsMaskView.leadingAnchor, constant: 8),
             tagFlowView.trailingAnchor.constraint(equalTo: tagsMaskView.trailingAnchor, constant: -8),
             tagFlowView.bottomAnchor.constraint(equalTo: tagsMaskView.bottomAnchor, constant: -8),
-
-            // B10: 设备头部 — 固定在 deviceMaskView 顶部（高度 32pt）
-            deviceHeaderView.topAnchor.constraint(equalTo: deviceMaskView.topAnchor, constant: 8),
-            deviceHeaderView.leadingAnchor.constraint(equalTo: deviceMaskView.leadingAnchor, constant: 8),
-            deviceHeaderView.trailingAnchor.constraint(equalTo: deviceMaskView.trailingAnchor, constant: -8),
-            deviceHeaderView.heightAnchor.constraint(equalToConstant: 32),
-
-            // B10: 设备 scrollView — 位于头部下方，填满剩余空间
-            // 折叠时 mask 高度=48，scrollView 高度自动为 0（被 masksToBounds 裁剪）
-            deviceScrollView.topAnchor.constraint(equalTo: deviceHeaderView.bottomAnchor, constant: 0),
-            deviceScrollView.leadingAnchor.constraint(equalTo: deviceMaskView.leadingAnchor, constant: 8),
-            deviceScrollView.trailingAnchor.constraint(equalTo: deviceMaskView.trailingAnchor, constant: -8),
-            deviceScrollView.bottomAnchor.constraint(equalTo: deviceMaskView.bottomAnchor, constant: -8),
         ])
 
-        // 监听卷挂载/卸载通知
-        let nc = NSWorkspace.shared.notificationCenter
-        nc.addObserver(self, selector: #selector(handleVolumeMount(_:)),
-                       name: NSWorkspace.didMountNotification, object: nil)
-        nc.addObserver(self, selector: #selector(handleVolumeUnmount(_:)),
-                       name: NSWorkspace.didUnmountNotification, object: nil)
+        // 任务 F10-3: 卷挂载/卸载监听已迁移至 MainWindowController（设备浮层负责刷新）（v0.6.6）
 
         // 展开收藏夹区域（设备不再使用 section，无需 expandItem）
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.favoritesOutlineView.expandItem(SidebarSection.favorites)
             self.updateFavoritesHeight()
-            self.updateDeviceHeight()
             self.updateTagsHeight()
-            // B10: 初始化设备头部汇总信息
-            self.updateDeviceHeaderSummary()
         }
     }
 
@@ -357,52 +293,9 @@ class SidebarView: NSView {
         return ov
     }
 
-    deinit {
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
-    }
-
-    // MARK: - Volume Events
-
-    @objc private func handleVolumeMount(_ notification: Notification) {
-        DispatchQueue.main.async { [weak self] in
-            self?.refreshDevices()
-        }
-    }
-
-    @objc private func handleVolumeUnmount(_ notification: Notification) {
-        DispatchQueue.main.async { [weak self] in
-            self?.refreshDevices()
-        }
-    }
-
-    // MARK: - B10: Device Collapse/Expand
-
-    /// B10: 切换设备栏折叠/展开状态（带 200ms 动画）
-    @objc private func toggleDeviceExpanded() {
-        isDeviceCollapsed.toggle()
-        let targetHeight: CGFloat
-        if isDeviceCollapsed {
-            targetHeight = deviceCollapsedHeight
-        } else {
-            targetHeight = deviceCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * deviceRowHeight
-        }
-
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
-            context.allowsImplicitAnimation = true
-            deviceHeightConstraint.animator().constant = targetHeight
-            layoutSubtreeIfNeeded()
-        }, completionHandler: nil)
-
-        // 更新箭头方向
-        deviceHeaderView.updateArrow(isCollapsed: isDeviceCollapsed)
-    }
-
-    /// B10: 更新设备头部汇总信息（所有设备的可用空间和总容量之和）
-    private func updateDeviceHeaderSummary() {
-        let (totalFree, totalTotal) = deviceDataSource.totalSpaceSummary()
-        deviceHeaderView.updateSummary(free: totalFree, total: totalTotal, isCollapsed: isDeviceCollapsed)
-    }
+    // 任务 F10-3: 设备区域已迁移至 MainWindowController，SidebarView 不再监听卷挂载/卸载通知（v0.6.6）
+    // 原 deinit removeObserver、handleVolumeMount/Unmount、toggleDeviceExpanded、updateDeviceHeaderSummary
+    // 已随设备浮层迁移
 
     // MARK: - Context Menu
 
@@ -528,25 +421,7 @@ class SidebarView: NSView {
 
     // MARK: - Refresh
 
-    func refreshDevices() {
-        deviceDataSource.loadDevices()
-        deviceOutlineView.reloadData()
-        updateDeviceHeight()
-        updateDeviceHeaderSummary()
-    }
-
-    private func updateDeviceHeight() {
-        // B10: 高度根据折叠状态计算
-        // 折叠态：48pt（仅头部）
-        // 展开态：48pt + 设备数量 * 28pt
-        let height: CGFloat
-        if isDeviceCollapsed {
-            height = deviceCollapsedHeight
-        } else {
-            height = deviceCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * deviceRowHeight
-        }
-        deviceHeightConstraint.constant = max(height, deviceCollapsedHeight)
-    }
+    // 任务 F10-3: 设备刷新逻辑（refreshDevices/updateDeviceHeight）已迁移至 MainWindowController 浮层（v0.6.6）
 
     private func updateFavoritesHeight() {
         // section 标题行（24pt）+ 收藏夹行（24pt）
@@ -611,7 +486,8 @@ private class TagColorHolder: NSObject {
 
 // MARK: - SidebarDataSourceBase
 
-private class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
+/// 任务 F10-3: 改为 internal 可见性，因 DeviceSidebarDataSource 需被 MainWindowController 复用（v0.6.6）
+class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
 
     /// 点击「添加标签」按钮的回调
     var onCreateTagTapped: (() -> Void)?
@@ -1035,10 +911,14 @@ private class TagsSidebarDataSource: SidebarDataSourceBase {
 
 // MARK: - DeviceSidebarDataSource (存储设备)
 
-private class DeviceSidebarDataSource: SidebarDataSourceBase {
-    private var devices: [DeviceItem] = []
+/// 任务 F10-3: 改为 internal 可见性，供 MainWindowController 设备浮层复用（v0.6.6）
+/// 设备数据源：负责 statfs 读取磁盘容量、过滤隐藏卷、提供设备列表
+class DeviceSidebarDataSource: SidebarDataSourceBase {
+    /// 任务 F10-3: 改为 internal，供浮层读取设备列表（v0.6.6）
+    private(set) var devices: [DeviceItem] = []
     /// B11: 设备扩展信息（文件系统类型、挂载点），key 为设备 path
-    private var deviceExtendedInfo: [String: DeviceExtendedInfo] = [:]
+    /// 任务 F10-3: 改为 internal，供浮层读取扩展信息（v0.6.6）
+    private(set) var deviceExtendedInfo: [String: DeviceExtendedInfo] = [:]
 
     var deviceCount: Int { devices.count }
 
@@ -1240,7 +1120,8 @@ private class DeviceSidebarDataSource: SidebarDataSourceBase {
 /// - 折叠态：显示汇总信息 "X GB 可用，共 Y GB" + 向上箭头
 /// - 展开态：显示汇总信息 + 向下箭头
 /// - 点击整块区域切换折叠/展开
-private class DeviceHeaderView: NSView {
+/// 任务 F10-3: 改为 internal 可见性，供 MainWindowController 设备浮层复用（v0.6.6）
+class DeviceHeaderView: NSView {
     private let iconView = NSImageView()
     private let summaryLabel = NSTextField(labelWithString: "")
     private let arrowView = NSImageView()
@@ -1324,7 +1205,8 @@ private class DeviceHeaderView: NSView {
 /// - 单行布局：图标(16x16) + 设备名称(flex) + "X GB 可用"(灰色 10pt)
 /// - 悬停 500ms 后显示 NSPopover 气泡（设备名、文件系统类型、挂载点、总容量、可用空间、使用率）
 /// - 鼠标移出后隐藏气泡
-private class DeviceCellView: NSTableCellView {
+/// 任务 F10-3: 改为 internal 可见性，供 MainWindowController 设备浮层复用（v0.6.6）
+class DeviceCellView: NSTableCellView {
     private var trackingArea: NSTrackingArea?
     private var hoverTimer: Timer?
     private var popover: NSPopover?

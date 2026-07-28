@@ -105,6 +105,25 @@ public class MainWindowController: NSWindowController {
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
+    /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
+    /// 与侧边栏收藏夹/标签模块视觉分离，展开时显示所有设备不需滚动条
+    private var devicePanel: NSView!
+    /// 任务 F10-3: 设备浮层头部（汇总信息 + 折叠箭头）
+    private var devicePanelHeader: DeviceHeaderView!
+    /// 任务 F10-3: 设备浮层内容 stack（设备行纵向排列，高度自适应）
+    private var devicePanelStack: NSStackView!
+    /// 任务 F10-3: 设备数据源（迁移自 SidebarView，负责 statfs 读取磁盘容量、过滤隐藏卷）
+    private let deviceDataSource = DeviceSidebarDataSource()
+    /// 任务 F10-3: 设备浮层折叠状态（默认折叠，仅显示汇总头部）
+    private var isDevicePanelCollapsed = true
+    /// 任务 F10-3: 设备浮层折叠态高度（头部 32pt + 上下 padding 8pt = 48pt）
+    private let devicePanelCollapsedHeight: CGFloat = 48
+    /// 任务 F10-3: 设备行单行高度
+    private let devicePanelRowHeight: CGFloat = 28
+    /// 任务 F10-3: 设备浮层宽度（贴窗口左下角，固定 200pt）
+    private let devicePanelWidth: CGFloat = 200
+    /// 任务 F10-3: 设备浮层高度约束（折叠/展开时调整）
+    private var devicePanelHeightConstraint: NSLayoutConstraint!
     /// 1.2 活动面板顶部 accent 色条（替代 borderWidth 方案）
     private var leftAccentBar: NSView!
     private var rightAccentBar: NSView!
@@ -309,6 +328,28 @@ public class MainWindowController: NSWindowController {
             mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
         ])
         mainContainerView = mainContainer
+
+        // 任务 F10-3: 创建设备浮层并浮动到窗口左下角（v0.6.6）
+        // 设备区域从侧边栏内部移出，改为独立卡片样式，与收藏夹/标签模块视觉分离
+        devicePanel = createDevicePanel()
+        mainContainer.addSubview(devicePanel)
+        devicePanelHeightConstraint = devicePanel.heightAnchor.constraint(equalToConstant: devicePanelCollapsedHeight)
+        devicePanelHeightConstraint.priority = .required
+        NSLayoutConstraint.activate([
+            // 贴 mainContainer 左下角：leading +8pt，bottom -8pt，宽度 200pt
+            devicePanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
+            devicePanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -8),
+            devicePanel.widthAnchor.constraint(equalToConstant: devicePanelWidth),
+            devicePanelHeightConstraint,
+        ])
+
+        // 任务 F10-3: 监听卷挂载/卸载通知，刷新设备浮层（迁移自 SidebarView）
+        let workspaceNC = NSWorkspace.shared.notificationCenter
+        workspaceNC.addObserver(self, selector: #selector(handleVolumeMount(_:)),
+                                name: NSWorkspace.didMountNotification, object: nil)
+        workspaceNC.addObserver(self, selector: #selector(handleVolumeUnmount(_:)),
+                                name: NSWorkspace.didUnmountNotification, object: nil)
+
         window.contentView = visualEffectView
 
         // 确保玻璃效果不被 ThemeManager 覆盖
@@ -366,6 +407,9 @@ public class MainWindowController: NSWindowController {
             if totalWidth > 0 {
                 self.paneSplitView.setPosition(totalWidth / 2, ofDividerAt: 0)
             }
+            // 任务 F10-3: 初始化设备浮层内容（构建设备行 + 更新汇总头部）
+            self.rebuildDevicePanelRows()
+            self.updateDevicePanelSummary()
         }
 
         TaskSchedulerManager.shared.startPolling()
@@ -498,9 +542,159 @@ public class MainWindowController: NSWindowController {
         return container
     }
 
+    // MARK: - 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
+
+    /// 任务 F10-3: 创建设备浮层
+    /// - 浮动在窗口左下角，与侧边栏收藏夹/标签模块视觉分离（独立卡片样式）
+    /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
+    /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
+    private func createDevicePanel() -> NSView {
+        let panel = NSView()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.wantsLayer = true
+        // 独立卡片样式：半透明背景 + 8pt 圆角
+        panel.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.8).cgColor
+        panel.layer?.cornerRadius = 8
+        panel.layer?.masksToBounds = true
+
+        // 设备栏头部（汇总信息 + 折叠箭头，复用 SidebarView 的 DeviceHeaderView）
+        devicePanelHeader = DeviceHeaderView()
+        devicePanelHeader.translatesAutoresizingMaskIntoConstraints = false
+        // 点击头部切换折叠/展开
+        let headerClick = NSClickGestureRecognizer(target: self, action: #selector(toggleDevicePanelExpanded))
+        devicePanelHeader.addGestureRecognizer(headerClick)
+        panel.addSubview(devicePanelHeader)
+
+        // 设备列表（纵向 stack，根据设备数量自适应高度，不需滚动条）
+        devicePanelStack = NSStackView()
+        devicePanelStack.orientation = .vertical
+        devicePanelStack.alignment = .leading
+        devicePanelStack.spacing = 0
+        devicePanelStack.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(devicePanelStack)
+
+        NSLayoutConstraint.activate([
+            // 头部固定在 panel 顶部（高度 32pt，左右内边距 8pt）
+            devicePanelHeader.topAnchor.constraint(equalTo: panel.topAnchor, constant: 8),
+            devicePanelHeader.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
+            devicePanelHeader.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -8),
+            devicePanelHeader.heightAnchor.constraint(equalToConstant: 32),
+
+            // 设备 stack 位于头部下方，填满剩余空间
+            // 折叠时 panel 高度=48，stack 高度自动为 0（被 masksToBounds 裁剪）
+            devicePanelStack.topAnchor.constraint(equalTo: devicePanelHeader.bottomAnchor, constant: 0),
+            devicePanelStack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
+            devicePanelStack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -8),
+            devicePanelStack.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -8),
+        ])
+
+        return panel
+    }
+
+    /// 任务 F10-3: 重建设备浮层的所有设备行
+    /// 迁移自 SidebarView.DeviceSidebarDataSource.outlineView(_:viewFor:) 的 DeviceCellView 构建逻辑
+    /// 每个设备行：图标 + 名称 + "X GB 可用"（复用 DeviceCellView，含悬停气泡）
+    private func rebuildDevicePanelRows() {
+        // 清空旧设备行
+        devicePanelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        // 遍历设备数据源，为每个设备创建一行
+        for dev in deviceDataSource.devices {
+            let row = makeDeviceRow(dev: dev)
+            devicePanelStack.addArrangedSubview(row)
+            // 让行撑满 stack 宽度
+            row.leadingAnchor.constraint(equalTo: devicePanelStack.leadingAnchor).isActive = true
+            row.trailingAnchor.constraint(equalTo: devicePanelStack.trailingAnchor).isActive = true
+            row.heightAnchor.constraint(equalToConstant: devicePanelRowHeight).isActive = true
+        }
+    }
+
+    /// 任务 F10-3: 创建单个设备行视图（复用 DeviceCellView，附带点击导航）
+    /// 迁移自 SidebarView.DeviceSidebarDataSource 的 DeviceCellView 配置逻辑
+    private func makeDeviceRow(dev: DeviceItem) -> NSView {
+        // 复用 SidebarView 的 DeviceCellView（含图标 + 名称 + 可用空间 + 悬停气泡）
+        let cell = DeviceCellView()
+        let extInfo = deviceDataSource.deviceExtendedInfo[dev.path]
+        cell.configure(dev: dev, extInfo: extInfo)
+
+        // 点击设备行切换到该卷（保留设备点击导航功能）
+        let click = NSClickGestureRecognizer(target: self, action: #selector(handleDeviceRowClick(_:)))
+        cell.identifier = NSUserInterfaceItemIdentifier(dev.path)
+        cell.addGestureRecognizer(click)
+        return cell
+    }
+
+    /// 任务 F10-3: 点击设备行 -> 切换活动面板到该卷路径
+    @objc private func handleDeviceRowClick(_ sender: NSClickGestureRecognizer) {
+        guard let path = sender.view?.identifier?.rawValue else { return }
+        let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
+        vm.navigate(to: path)
+    }
+
+    /// 任务 F10-3: 切换设备浮层折叠/展开状态（带 200ms 动画）
+    /// 迁移自 SidebarView.toggleDeviceExpanded
+    @objc private func toggleDevicePanelExpanded() {
+        isDevicePanelCollapsed.toggle()
+        let targetHeight: CGFloat
+        if isDevicePanelCollapsed {
+            targetHeight = devicePanelCollapsedHeight
+        } else {
+            // 展开态：折叠高度 + 设备数量 * 行高（高度自适应，不需滚动条）
+            targetHeight = devicePanelCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * devicePanelRowHeight
+        }
+
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.2
+            context.allowsImplicitAnimation = true
+            devicePanelHeightConstraint.animator().constant = targetHeight
+            devicePanel.layoutSubtreeIfNeeded()
+        }, completionHandler: nil)
+
+        // 更新箭头方向
+        devicePanelHeader.updateArrow(isCollapsed: isDevicePanelCollapsed)
+    }
+
+    /// 任务 F10-3: 更新设备浮层头部汇总信息（所有设备的可用空间和总容量之和）
+    /// 迁移自 SidebarView.updateDeviceHeaderSummary
+    private func updateDevicePanelSummary() {
+        let (totalFree, totalTotal) = deviceDataSource.totalSpaceSummary()
+        devicePanelHeader.updateSummary(free: totalFree, total: totalTotal, isCollapsed: isDevicePanelCollapsed)
+    }
+
+    /// 任务 F10-3: 卷挂载通知 -> 刷新设备浮层
+    /// 迁移自 SidebarView.handleVolumeMount
+    @objc private func handleVolumeMount(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshDevicePanel()
+        }
+    }
+
+    /// 任务 F10-3: 卷卸载通知 -> 刷新设备浮层
+    /// 迁移自 SidebarView.handleVolumeUnmount
+    @objc private func handleVolumeUnmount(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshDevicePanel()
+        }
+    }
+
+    /// 任务 F10-3: 刷新设备浮层（重新加载设备数据 + 重建行 + 更新汇总 + 调整高度）
+    /// 迁移自 SidebarView.refreshDevices
+    private func refreshDevicePanel() {
+        deviceDataSource.loadDevices()
+        rebuildDevicePanelRows()
+        updateDevicePanelSummary()
+        // 若当前展开态，根据新设备数量调整高度（高度自适应，不需滚动条）
+        if !isDevicePanelCollapsed {
+            let targetHeight = devicePanelCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * devicePanelRowHeight
+            devicePanelHeightConstraint.constant = targetHeight
+        }
+    }
+
     deinit {
         // Bug 6 修复：移除所有 NotificationCenter observer，防止悬空回调
         NotificationCenter.default.removeObserver(self)
+        // 任务 F10-3: 移除卷挂载/卸载通知监听（迁移自 SidebarView deinit）
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         TaskSchedulerManager.shared.stopPolling()
     }
 
