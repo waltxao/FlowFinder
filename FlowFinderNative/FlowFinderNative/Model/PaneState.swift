@@ -66,6 +66,12 @@ public class PaneViewModel: ObservableObject {
     /// 选中条目（计算属性，用于 DetailsBar）
     var selectedEntries: [FileEntry] { state.selectedFiles }
 
+    /// 任务 F10-10: 当前目录的完整文件列表快照（已排序，未过滤）。
+    /// 修复问题11辅助：applyFilter 此前基于 state.files 过滤，而 state.files 在搜索时
+    /// 已被缩小为子集，导致用户删字回退搜索时无法恢复被过滤掉的项目。
+    /// 引入 allFiles 保存原始列表，applyFilter 始终从 allFiles 过滤到 state.files。
+    private var allFiles: [FileEntry] = []
+
     init() {}
 
     init(path: String) {
@@ -292,11 +298,9 @@ public class PaneViewModel: ObservableObject {
 
     func setSearchQuery(_ query: String) {
         state.searchQuery = query
-        if query.isEmpty {
-            loadDirectory()
-        } else {
-            applyFilter()
-        }
+        // 任务 F10-10: 始终走 applyFilter（基于 allFiles），避免搜索清空时重新读盘（修复问题11辅助）
+        // applyFilter 在 query 为空时恢复 allFiles，非空时从 allFiles 过滤
+        applyFilter()
     }
 
     func setViewMode(_ mode: ViewMode) {
@@ -429,7 +433,15 @@ public class PaneViewModel: ObservableObject {
                 // 在后台线程完成排序，避免阻塞 UI；使用捕获的快照而非读取 self.state
                 let sortedEntries = self.sortEntries(entries, field: sortField, ascending: sortAscending)
                 DispatchQueue.main.async {
-                    self.state.files = sortedEntries
+                    // 任务 F10-10: 保存原始列表到 allFiles，applyFilter 始终基于 allFiles 过滤（修复问题11辅助）
+                    self.allFiles = sortedEntries
+                    // 若当前有搜索查询，过滤后赋值；否则直接赋值完整列表
+                    if self.state.searchQuery.isEmpty {
+                        self.state.files = sortedEntries
+                    } else {
+                        let query = self.state.searchQuery.lowercased()
+                        self.state.files = sortedEntries.filter { $0.name.lowercased().contains(query) }
+                    }
                     self.state.isLoading = false
                 }
             } catch {
@@ -461,20 +473,32 @@ public class PaneViewModel: ObservableObject {
     }
 
     private func applySort() {
-        let sorted = sortEntries(state.files, field: state.sortField, ascending: state.sortAscending)
-        // 仅在顺序实际变化时才更新（减少不必要的 reloadData）
-        if sorted.map(\.path) != state.files.map(\.path) {
-            state.files = sorted
+        // 任务 F10-10: 排序基于 allFiles（原始列表），避免在已过滤子集上排序导致丢失项目（修复问题11辅助）
+        let sorted = sortEntries(allFiles, field: state.sortField, ascending: state.sortAscending)
+        // 同步更新 allFiles 为排序后顺序
+        allFiles = sorted
+        // 若当前有搜索查询，过滤后赋值；否则直接赋值完整列表
+        if state.searchQuery.isEmpty {
+            // 仅在顺序实际变化时才更新（减少不必要的 reloadData）
+            if sorted.map(\.path) != state.files.map(\.path) {
+                state.files = sorted
+            }
+        } else {
+            let query = state.searchQuery.lowercased()
+            state.files = sorted.filter { $0.name.lowercased().contains(query) }
         }
     }
 
     private func applyFilter() {
         guard !state.searchQuery.isEmpty else {
-            loadDirectory()
+            // 搜索清空：恢复完整列表（基于 allFiles，确保退格回退时项目全部恢复）
+            state.files = allFiles
             return
         }
+        // 任务 F10-10: 始终从 allFiles 过滤，而非从已缩小的 state.files 过滤（修复问题11辅助）
+        // 此前从 state.files 过滤，导致用户删字回退搜索时无法恢复被过滤掉的项目
         let query = state.searchQuery.lowercased()
-        state.files = state.files.filter { $0.name.lowercased().contains(query) }
+        state.files = allFiles.filter { $0.name.lowercased().contains(query) }
     }
 }
 

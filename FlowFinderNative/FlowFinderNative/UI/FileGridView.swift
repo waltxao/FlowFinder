@@ -668,10 +668,14 @@ public class FileGridView: NSView {
     }
 
     @objc private func copyToOtherPane(_ sender: Any?) {
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）
+        print("[F10-10] copyToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
         NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide()])
     }
 
     @objc private func moveToOtherPane(_ sender: Any?) {
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）
+        print("[F10-10] moveToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
         NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide()])
     }
 
@@ -845,6 +849,18 @@ public class FileGridView: NSView {
         // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
         // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
         let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）+ path 空回退提示
+        print("[F10-10] showInfoMenu clicked, clickedEntry=\(clickedEntry?.path ?? "nil"), fallback selectedFirst=\(viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")")
+        // 若无目标路径（既无右键点击项也无选中项），给出提示而非静默无响应
+        if targetPath == nil || (targetPath?.isEmpty ?? true) {
+            let alert = NSAlert()
+            alert.messageText = "显示简介"
+            alert.informativeText = "请先选择一个文件后再查看简介。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
         NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
     }
 
@@ -1075,6 +1091,12 @@ extension FileGridView: NSMenuDelegate {
         if let moveItem = menu.items.first(where: { $0.title == "移动到另一面板" }) {
             moveItem.image = NSImage(systemSymbolName: isLeftPane ? "arrow.right" : "arrow.left",
                                      accessibilityDescription: "移动到另一面板")
+        }
+
+        // 任务 F10-10: "在对侧面板打开"仅当右键点击项为文件夹时显示（修复问题13）
+        // 文件无此操作意义（文件无法被"打开"为目录导航目标）
+        if let openOtherItem = menu.items.first(where: { $0.title == "在对侧面板打开" }) {
+            openOtherItem.isHidden = !(clickedEntry?.isDirectory ?? false)
         }
     }
 }

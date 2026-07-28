@@ -762,6 +762,17 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleFileListShowInfo(_:)),
             name: .fileListShowInfo, object: nil
         )
+        // 任务 F10-10: 注册 OpenSettings 通知（v0.6.6）
+        // 修复问题3：侧边栏齿轮按钮发的 "OpenSettings" 通知无观察者，导致设置窗口打不开
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleOpenSettings(_:)),
+            name: NSNotification.Name("OpenSettings"), object: nil
+        )
+    }
+
+    /// 任务 F10-10: 处理 OpenSettings 通知，弹出设置窗口（修复问题3）
+    @objc private func handleOpenSettings(_ notification: Notification) {
+        SettingsWindowController.shared.showWindow()
     }
 
     @objc private func handleFileListAddTag(_ notification: Notification) {
@@ -1101,6 +1112,29 @@ extension MainWindowController: PaneToolbarDelegate {
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String) {
         let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: path)
+    }
+
+    // 任务 F10-10: 补实现查重/批量重命名回调（v0.6.6）
+    // 修复问题17：PaneToolbarDelegate 协议提供了默认空实现，MainWindowController 未覆写，
+    // 导致工具按钮点击查重扫描/批量重命名时无任何响应（菜单栏菜单可用，工具栏按钮不可用）
+    func paneToolbarDidClickDedupScan(_ toolbar: PaneToolbar) {
+        DuplicateScanWindowController.shared.showWindow()
+    }
+
+    func paneToolbarDidClickBatchRename(_ toolbar: PaneToolbar) {
+        // 转发到现有 menuBatchRename 逻辑：需至少选中 2 个文件
+        let selected = activePaneViewModel.selectedFiles
+        guard selected.count >= 2 else {
+            // 选中不足 2 个时提示用户（与 menuBatchRename 的 validateMenuItem 行为一致）
+            let alert = NSAlert()
+            alert.messageText = "批量重命名"
+            alert.informativeText = "请至少选中 2 个文件后再使用批量重命名。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
+        menuBatchRename(nil)
     }
 }
 

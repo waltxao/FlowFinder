@@ -570,6 +570,13 @@ public class FileListView: NSView {
         let copyOtherItem = menu.addItem(withTitle: "复制到另一面板", action: #selector(copyToOtherPane(_:)), keyEquivalent: "")
         copyOtherItem.image = NSImage(systemSymbolName: effectiveSide == .left ? "arrow.right.square" : "arrow.left.square",
                                       accessibilityDescription: "复制到另一面板")
+        // 任务 F10-10: 新增"在对侧面板打开"菜单项（仅文件夹显示）（修复问题13）
+        // 点击后导航对侧面板到该文件夹（仿访达"在新窗口打开"的跨面板版本）
+        // 可见性由 menuNeedsUpdate 控制：仅当右键点击项为文件夹时显示
+        let openOtherItem = menu.addItem(withTitle: "在对侧面板打开", action: #selector(openInOtherPane(_:)), keyEquivalent: "")
+        openOtherItem.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "在对侧面板打开")
+        // 初始隐藏，由 menuNeedsUpdate 根据右键点击项是否为文件夹动态显示
+        openOtherItem.isHidden = true
         // 10. 分隔线
         menu.addItem(.separator())
         // 11. 重命名 — pencil
@@ -698,6 +705,18 @@ public class FileListView: NSView {
         // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
         // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
         let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）+ path 空回退提示
+        print("[F10-10] showInfoMenu clicked, clickedEntry=\(clickedEntry?.path ?? "nil"), fallback selectedFirst=\(viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")")
+        // 若无目标路径（既无右键点击项也无选中项），给出提示而非静默无响应
+        if targetPath == nil || (targetPath?.isEmpty ?? true) {
+            let alert = NSAlert()
+            alert.messageText = "显示简介"
+            alert.informativeText = "请先选择一个文件后再查看简介。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
         NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
     }
 
@@ -792,10 +811,14 @@ public class FileListView: NSView {
     // MARK: - Cross-Pane Actions
 
     @objc private func copyToOtherPane(_ sender: Any?) {
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）
+        print("[F10-10] copyToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
         NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide()])
     }
 
     @objc private func moveToOtherPane(_ sender: Any?) {
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）
+        print("[F10-10] moveToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
         NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide()])
     }
 
@@ -1715,6 +1738,12 @@ extension FileListView: NSMenuDelegate {
         if let copyOtherItem = menu.items.first(where: { $0.title == "复制到另一面板" }) {
             copyOtherItem.image = NSImage(systemSymbolName: isLeftPane ? "arrow.right.square" : "arrow.left.square",
                                           accessibilityDescription: "复制到另一面板")
+        }
+
+        // 任务 F10-10: "在对侧面板打开"仅当右键点击项为文件夹时显示（修复问题13）
+        // 文件无此操作意义（文件无法被"打开"为目录导航目标）
+        if let openOtherItem = menu.items.first(where: { $0.title == "在对侧面板打开" }) {
+            openOtherItem.isHidden = !(clickedEntry?.isDirectory ?? false)
         }
     }
 

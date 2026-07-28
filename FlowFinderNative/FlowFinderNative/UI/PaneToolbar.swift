@@ -145,6 +145,9 @@ class PaneToolbar: NSView {
         searchTextField.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         searchTextField.target = self
         searchTextField.action = #selector(searchChanged)
+        // 任务 F10-10: 设置 delegate，启用 controlTextDidChange 实时搜索（修复问题11）
+        // 此前仅有 target/action，searchChanged 仅在按 Enter 时触发，输入过程无反馈
+        searchTextField.delegate = self
         searchTextField.translatesAutoresizingMaskIntoConstraints = false
         searchTextField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         searchTextField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -351,5 +354,18 @@ class PaneToolbar: NSView {
 
     @objc private func batchRenameClicked() {
         delegate?.paneToolbarDidClickBatchRename(self)
+    }
+}
+
+// MARK: - 任务 F10-10: NSTextFieldDelegate（搜索实时生效，修复问题11）
+
+extension PaneToolbar: NSTextFieldDelegate {
+    /// 搜索框文本变化时实时触发搜索（无需按 Enter）。
+    /// 修复问题11：此前 searchTextField 仅 target/action，searchChanged 仅 Enter 触发，
+    /// 输入过程无反馈。设置 delegate 后，每次按键都触发 controlTextDidChange -> searchChanged。
+    public func controlTextDidChange(_ obj: Notification) {
+        // 仅响应搜索框（避免将来若有其他 NSTextField 误触）
+        guard let textField = obj.object as? NSTextField, textField === searchTextField else { return }
+        searchChanged()
     }
 }
