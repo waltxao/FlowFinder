@@ -247,7 +247,8 @@ class SidebarView: NSView {
 
         // 任务 F10-3: 卷挂载/卸载监听已迁移至 MainWindowController（设备浮层负责刷新）（v0.6.6）
 
-        // 展开收藏夹区域（设备不再使用 section，无需 expandItem）
+        // 任务 F10-4: 收藏夹默认全部展开（不折叠）
+        // 配合 delegate 的 shouldCollapseItem 返回 false，用户也无法折叠
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.favoritesOutlineView.expandItem(SidebarSection.favorites)
@@ -518,6 +519,16 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         return true
     }
 
+    // MARK: - Collapse Control
+
+    /// 任务 F10-4: 阻止收藏夹 section 折叠，保持默认全部展开（修正 F4 错误，问题1）
+    /// 配合 setupUI 中的 expandItem 调用，确保收藏夹永远展开可见
+    func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool {
+        // 任何 section（收藏夹）均禁止折叠
+        if item is SidebarSection { return false }
+        return false
+    }
+
     // MARK: - Shared Cell Rendering
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -562,10 +573,11 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
 
         NSLayoutConstraint.activate([
             // 任务 F1: 图标贴左边缘（constant 0），Finder 风格
+            // 任务 F10-4: 收藏夹图标放大到 20pt 对齐访达（原16pt改20pt，修正F4）
             imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 16),
-            imageView.heightAnchor.constraint(equalToConstant: 16),
+            imageView.widthAnchor.constraint(equalToConstant: 20),
+            imageView.heightAnchor.constraint(equalToConstant: 20),
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
@@ -610,13 +622,13 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         switch item as? SidebarItem {
         case .favorite(let fav):
             textField.stringValue = fav.name
-            // 任务 F4: 收藏夹仿访达 - 蓝色模板图标（访达风格）
-            let symbolName = FavoritesSidebarDataSource.favoriteSymbolName(for: fav.path)
-            let icon = NSImage(systemSymbolName: symbolName, accessibilityDescription: fav.name)
-            icon?.isTemplate = true
-            icon?.size = NSSize(width: 16, height: 16)
-            imageView.image = icon
-            imageView.contentTintColor = NSColor.controlAccentColor  // 访达蓝色
+            // 任务 F10-4: 修正 F4 错误 - 收藏夹改回彩色真实图标（v0.6.6）
+            // F4 错误地改为蓝色模板 SF Symbols，应使用 NSWorkspace 真实位置图标
+            // 放大对齐访达 20pt，contentTintColor = nil 保留彩色（移除 F4 的 controlAccentColor）
+            let workspaceIcon = NSWorkspace.shared.icon(forFile: fav.path)
+            workspaceIcon.size = NSSize(width: 20, height: 20)
+            imageView.image = workspaceIcon
+            imageView.contentTintColor = nil
 
         default:
             textField.stringValue = ""
@@ -726,26 +738,6 @@ private class FavoritesSidebarDataSource: SidebarDataSourceBase {
     var onFavoritesChanged: (() -> Void)?
 
     var favoriteCount: Int { favorites.count }
-
-    /// 根据收藏夹路径返回对应的 SF Symbol 名称（访达风格蓝色模板图标）
-    /// 任务 F4: 收藏夹仿访达 - 用模板 SF Symbol + controlAccentColor 替代 NSWorkspace 真实图标
-    static func favoriteSymbolName(for path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        switch path {
-        case (home as NSString).appendingPathComponent("Desktop"): return "desktopcomputer"
-        case (home as NSString).appendingPathComponent("Documents"): return "folder.fill"
-        case (home as NSString).appendingPathComponent("Downloads"): return "tray.and.arrow.down"
-        case "/Applications": return "app"
-        case home: return "house"
-        default:
-            // 用户自定义收藏：目录用 folder，文件用 doc
-            var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
-                return "folder"
-            }
-            return "doc"
-        }
-    }
 
     override init() {
         super.init()
