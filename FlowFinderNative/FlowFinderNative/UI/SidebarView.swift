@@ -37,7 +37,7 @@ class SidebarView: NSView {
     private var favoritesMaskView: NSVisualEffectView!
     /// 1.5 标签区域背景（v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质）
     private var tagsMaskView: NSVisualEffectView!
-    /// 标签 flow 视图（替代 outlineView，支持横向 wrap）
+    /// 任务 F10-5: 标签视图（垂直纵向排列：圆点 + 完整标签名，每行一个）（v0.6.6）
     private var tagFlowView: TagFlowView!
     private let favoritesDataSource = FavoritesSidebarDataSource()
     private let tagsDataSource = TagsSidebarDataSource()
@@ -175,7 +175,7 @@ class SidebarView: NSView {
         // 放入遮罩容器，由 mask 提供圆角半透明背景
         favoritesMaskView.addSubview(favoritesScrollView)
 
-        // 标签区域：使用自定义 TagFlowView 实现横向 wrap 药丸布局（设计稿 ff-pill-tag）
+        // 任务 F10-5: 标签区域 - 垂直纵向排列（圆点 + 完整标签名，每行一个）（v0.6.6）
         tagFlowView = TagFlowView()
         tagFlowView.translatesAutoresizingMaskIntoConstraints = false
         tagFlowView.onAddTagTapped = { [weak self] in
@@ -204,7 +204,7 @@ class SidebarView: NSView {
         favoritesHeightConstraint = favoritesMaskView.heightAnchor.constraint(equalToConstant: 48)
         favoritesHeightConstraint.priority = .required
 
-        // 标签区高度根据 wrap 行数动态调整
+        // 任务 F10-5: 标签区高度根据标签行数动态调整（垂直布局）
         tagsHeightConstraint = tagsMaskView.heightAnchor.constraint(equalToConstant: 80)
         tagsHeightConstraint.priority = .required
 
@@ -432,8 +432,7 @@ class SidebarView: NSView {
         favoritesHeightConstraint.constant = max(height, 48)
     }
 
-    /// 根据标签数量和 wrap 行数动态调整 tagsMaskView 高度
-    /// tagFlowView 会报告其需要的理想高度
+    /// 任务 F10-5: 根据 tagFlowView 报告的理想高度调整 tagsMaskView 高度（垂直布局）（v0.6.6）
     private func updateTagsHeight() {
         let flowHeight = tagFlowView.idealHeight(forWidth: bounds.width - 24)  // 减去左右 padding 12*2
         let height = flowHeight + 16  // 上下 padding 8*2
@@ -456,7 +455,7 @@ extension SidebarView: NSMenuDelegate {
                 mi.target = self
             }
         }
-        // 标签右键菜单由 TagFlowView 内部处理（每个药丸自己的 menu）
+        // 任务 F10-5: 标签右键菜单由 TagFlowView 内部处理（每个标签行自己的 menu）
     }
 }
 
@@ -1413,11 +1412,12 @@ extension NSColor {
     }
 }
 
-// MARK: - TagFlowView (横向 wrap 药丸布局)
+// MARK: - TagFlowView (垂直纵向排列，圆点 + 完整标签名)
 
-/// 设计稿 ff-sidebar-section 标签区域：药丸横向 wrap 排列
-/// 布局：[section header: "标签" + "+" 按钮] + [药丸 flow wrap 区域]
-/// 药丸样式：24px 高，9999px 圆角（胶囊），controlBackgroundColor 背景，8x8 圆点 + 文字
+/// 任务 F10-5: 标签模块改为垂直纵向排列（v0.6.6）
+/// 每行一个标签：8x8 彩色圆点 + 13pt 完整标签名，行高 28pt
+/// 对齐访达侧边栏项目高度，标签名完整显示不截断，行宽填满侧边栏
+/// 布局：[section header: "标签" + "+" 按钮] + [垂直标签行列表]
 private class TagFlowView: NSView {
 
     // MARK: - Callbacks
@@ -1434,16 +1434,29 @@ private class TagFlowView: NSView {
 
     private let headerLabel = NSTextField(labelWithString: "标签")
     private let addButton = NSButton()
-    private let flowContainer = NSView()
+    /// 任务 F10-5: 标签行垂直列表容器（NSStackView，vertical）
+    private let listContainer: NSStackView = {
+        let sv = NSStackView()
+        sv.orientation = .vertical
+        sv.alignment = .leading          // 行左对齐
+        sv.spacing = 0                   // 行间距由行高 28pt 内部约束承担
+        sv.distribution = .fill           // 各行按内容填充
+        sv.translatesAutoresizingMaskIntoConstraints = false
+        sv.wantsLayer = true
+        sv.layer?.backgroundColor = NSColor.clear.cgColor
+        return sv
+    }()
 
     // MARK: - Layout Constants (设计稿)
 
-    private let pillHeight: CGFloat = 24
-    private let pillGap: CGFloat = 4       // 药丸之间水平+垂直间距
-    private let headerHeight: CGFloat = 22
+    /// 任务 F10-5: 行高 28pt 对齐访达侧边栏项目高度
+    private let rowHeight: CGFloat = 28
     private let dotSize: CGFloat = 8
-    private let pillHPadding: CGFloat = 10
-    private let pillGapIconText: CGFloat = 6
+    /// 任务 F10-5: 圆点与文字的垂直布局内边距
+    private let rowLeading: CGFloat = 8      // 圆点距行首
+    private let dotLabelGap: CGFloat = 8     // 圆点与文字间距
+    private let rowTrailing: CGFloat = 8     // 文字距行尾
+    private let headerHeight: CGFloat = 22
 
     // MARK: - Init
 
@@ -1461,7 +1474,7 @@ private class TagFlowView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // header label
+        // header label（"标签" 小标题，固定在 section 顶部）
         headerLabel.font = NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize)
         headerLabel.textColor = NSColor.secondaryLabelColor
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1478,11 +1491,8 @@ private class TagFlowView: NSView {
         addButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(addButton)
 
-        // flow container（药丸容器）
-        flowContainer.translatesAutoresizingMaskIntoConstraints = false
-        flowContainer.wantsLayer = true
-        flowContainer.layer?.backgroundColor = NSColor.clear.cgColor
-        addSubview(flowContainer)
+        // 任务 F10-5: 垂直标签行列表容器
+        addSubview(listContainer)
 
         NSLayoutConstraint.activate([
             headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
@@ -1494,10 +1504,11 @@ private class TagFlowView: NSView {
             addButton.widthAnchor.constraint(equalToConstant: 16),
             addButton.heightAnchor.constraint(equalToConstant: 16),
 
-            flowContainer.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
-            flowContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            flowContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            flowContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            // 任务 F10-5: 标签列表紧跟 header 下方，留 8pt 间距确保 section header 不被遮挡
+            listContainer.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 8),
+            listContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 0),
+            listContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 0),
+            listContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
         ])
     }
 
@@ -1509,148 +1520,86 @@ private class TagFlowView: NSView {
 
     func updateTags(_ newTags: [Tag]) {
         self.tags = newTags
-        rebuildPills()
-        needsLayout = true
+        rebuildRows()
     }
 
     /// 计算指定宽度下的理想高度（供外部 updateTagsHeight 使用）
+    /// 任务 F10-5: 垂直布局下高度 = header 区域 + 行数 × 28pt + 上下间距
     func idealHeight(forWidth width: CGFloat) -> CGFloat {
-        let headerTotal = headerHeight + 8  // header + 上下 spacing
-        let flowWidth = max(width - 8, 50)  // 减去左右 padding 4*2
-        let rows = computeLayout(forWidth: flowWidth)
-        let flowHeight: CGFloat
-        if rows.isEmpty {
-            flowHeight = 0
-        } else {
-            flowHeight = CGFloat(rows.count) * pillHeight + CGFloat(max(rows.count - 1, 0)) * pillGap
+        let headerTotal = headerHeight + 12  // header 顶部 4pt + header 与列表间距 8pt
+        let rowsHeight = CGFloat(tags.count) * rowHeight
+        return headerTotal + rowsHeight + 4   // 底部 4pt
+    }
+
+    // MARK: - Rows Rebuild
+
+    /// 重建所有标签行子视图
+    private func rebuildRows() {
+        // 移除旧的 arrangedSubviews
+        listContainer.arrangedSubviews.forEach {
+            listContainer.removeArrangedSubview($0)
+            $0.removeFromSuperview()
         }
-        return headerTotal + flowHeight + 8
-    }
-
-    // MARK: - Layout
-
-    override func layout() {
-        super.layout()
-        layoutPills()
-    }
-
-    /// 重建所有药丸子视图
-    private func rebuildPills() {
-        flowContainer.subviews.forEach { $0.removeFromSuperview() }
         for tag in tags {
-            let pill = makePill(tag: tag)
-            flowContainer.addSubview(pill)
+            let row = makeTagRow(tag: tag)
+            listContainer.addArrangedSubview(row)
+            // 任务 F10-5: 行宽填满侧边栏（NSStackView leading 对齐 + 显式宽度约束）
+            row.widthAnchor.constraint(equalTo: listContainer.widthAnchor).isActive = true
         }
     }
 
-    /// 计算每个药丸的 frame 并设置
-    private func layoutPills() {
-        let rows = computeLayout(forWidth: flowContainer.bounds.width)
-        for (rowIdx, row) in rows.enumerated() {
-            for (colIdx, frame) in row.enumerated() {
-                let idx = offset(forRow: rowIdx, col: colIdx, rows: rows)
-                guard idx < flowContainer.subviews.count else { continue }
-                let pill = flowContainer.subviews[idx]
-                pill.frame = frame
-            }
-        }
-    }
+    // MARK: - Tag Row Creation (圆点 + 完整标签名，垂直排列)
 
-    /// 返回每行的药丸 frame 数组（用于布局计算）
-    private func computeLayout(forWidth width: CGFloat) -> [[NSRect]] {
-        guard !tags.isEmpty else { return [] }
-        var rows: [[NSRect]] = []
-        var currentRow: [NSRect] = []
-        var currentX: CGFloat = 0
-        let gap = pillGap
-        for tag in tags {
-            let pillWidth = pillWidth(for: tag)
-            if currentX + pillWidth > width && !currentRow.isEmpty {
-                rows.append(currentRow)
-                currentRow = []
-                currentX = 0
-            }
-            let frame = NSRect(x: currentX, y: 0, width: pillWidth, height: pillHeight)
-            currentRow.append(frame)
-            currentX += pillWidth + gap
-        }
-        if !currentRow.isEmpty { rows.append(currentRow) }
-        // 设置每行的 y 坐标（从顶部开始，y 向下递增）
-        var result: [[NSRect]] = []
-        for (rowIdx, row) in rows.enumerated() {
-            let y = CGFloat(rowIdx) * (pillHeight + pillGap)
-            let alignedRow = row.map { NSRect(x: $0.origin.x, y: y, width: $0.size.width, height: pillHeight) }
-            result.append(alignedRow)
-        }
-        return result
-    }
-
-    /// 计算单个药丸宽度：左padding + dot + gap + text + 右padding
-    private func pillWidth(for tag: Tag) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: 12)
-        let textWidth = (tag.name as NSString).size(withAttributes: [.font: font]).width
-        return pillHPadding + dotSize + pillGapIconText + ceil(textWidth) + pillHPadding
-    }
-
-    /// 根据 row/col 计算在 tags 数组中的偏移（按行优先顺序）
-    private func offset(forRow row: Int, col: Int, rows: [[NSRect]]) -> Int {
-        var offset = 0
-        for i in 0..<row {
-            offset += rows[i].count
-        }
-        return offset + col
-    }
-
-    // MARK: - Pill Creation
-
-    private func makePill(tag: Tag) -> NSView {
-        let pill = NSView()
-        pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        pill.layer?.cornerRadius = pillHeight / 2  // 胶囊圆角
+    /// 任务 F10-5: 标签行视图（圆点 + 完整标签名，垂直排列）
+    /// 每行：8x8 彩色圆点（tag.color，cornerRadius 4）+ 13pt 完整标签名，行高 28pt
+    /// 行宽填满侧边栏，标签名 byTruncatingTail 但宽度足够时不截断
+    private func makeTagRow(tag: Tag) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
         // 用 identifier 存储 tag.id（NSGestureRecognizer 无 representedObject 属性）
-        pill.identifier = NSUserInterfaceItemIdentifier(tag.id)
+        row.identifier = NSUserInterfaceItemIdentifier(tag.id)
 
-        // 圆点
+        // 圆点（8x8，tag.color，4pt 圆角）
         let dot = NSView()
         dot.wantsLayer = true
         dot.layer?.backgroundColor = (NSColor(hex: tag.color) ?? .systemBlue).cgColor
         dot.layer?.cornerRadius = dotSize / 2
+        dot.translatesAutoresizingMaskIntoConstraints = false
 
-        // 文字
+        // 文字（13pt，完整标签名）
         let label = NSTextField(labelWithString: tag.name)
-        label.font = NSFont.systemFont(ofSize: 12)
+        label.font = NSFont.systemFont(ofSize: 13)
         label.textColor = NSColor.labelColor
         label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
 
-        pill.addSubview(dot)
-        pill.addSubview(label)
+        row.addSubview(dot)
+        row.addSubview(label)
 
-        // 用 autoresizing 而非约束（因为 pill.frame 由 layoutPills 手动设置）
-        dot.autoresizingMask = []
-        label.autoresizingMask = []
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: rowHeight),
+            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: rowLeading),
+            dot.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: dotSize),
+            dot.heightAnchor.constraint(equalToConstant: dotSize),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: dotLabelGap),
+            label.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -rowTrailing),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+        ])
 
-        // 设置 dot 和 label 的 frame（相对于 pill）
-        let pillW = pillWidth(for: tag)
-        dot.frame = NSRect(x: pillHPadding, y: (pillHeight - dotSize) / 2, width: dotSize, height: dotSize)
-        label.frame = NSRect(x: pillHPadding + dotSize + pillGapIconText,
-                             y: (pillHeight - 16) / 2,
-                             width: pillW - pillHPadding * 2 - dotSize - pillGapIconText,
-                             height: 16)
-
-        // 右键菜单（删除标签）
+        // 右键菜单（删除标签）—— 保留拖拽删除/右键删除交互
         let menu = NSMenu()
         let mi = NSMenuItem(title: "删除标签", action: #selector(handleDeleteTag(_:)), keyEquivalent: "")
         mi.target = self
         mi.representedObject = tag.id
         menu.addItem(mi)
-        pill.menu = menu
+        row.menu = menu
 
-        // 点击选择（tag.id 通过 pill.identifier 传递，NSGestureRecognizer 无 representedObject）
-        let click = NSClickGestureRecognizer(target: self, action: #selector(handlePillClick(_:)))
-        pill.addGestureRecognizer(click)
+        // 点击选择（保留点击筛选交互；tag.id 通过 row.identifier 传递）
+        let click = NSClickGestureRecognizer(target: self, action: #selector(handleRowClick(_:)))
+        row.addGestureRecognizer(click)
 
-        return pill
+        return row
     }
 
     @objc private func handleDeleteTag(_ sender: NSMenuItem) {
@@ -1658,7 +1607,7 @@ private class TagFlowView: NSView {
         onTagDeleted?(tagId)
     }
 
-    @objc private func handlePillClick(_ sender: NSClickGestureRecognizer) {
+    @objc private func handleRowClick(_ sender: NSClickGestureRecognizer) {
         guard let tagId = sender.view?.identifier?.rawValue else { return }
         if let tag = tags.first(where: { $0.id == tagId }) {
             onTagSelected?(tag)
