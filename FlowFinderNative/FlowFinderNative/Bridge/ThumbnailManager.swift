@@ -69,7 +69,8 @@ public final class ThumbnailManager {
             fileAt: URL(fileURLWithPath: path),
             size: size,
             scale: scale,
-            representationTypes: .thumbnail
+            // 任务 F10-9: representationTypes 改为 .all，无缩略图文件类型回退到图标
+            representationTypes: .all
         )
 
         let reqRef = request
@@ -96,9 +97,13 @@ public final class ThumbnailManager {
                 return
             }
 
+            // 任务 F10-9: 修正 NSImage.size 用请求的 point size（v0.6.6）
+            // 原代码用 cgImage 像素尺寸（Retina 下翻倍），导致 NSImage.size 翻倍、
+            // 绘制时被按 point size 缩放，最终缩略图模糊（问题7）。
+            // 改为传入的 size（point size），与请求尺寸一致。
             let image = NSImage(
                 cgImage: thumbnail.cgImage,
-                size: CGSize(width: thumbnail.cgImage.width, height: thumbnail.cgImage.height)
+                size: size  // 用请求的 point size，非 cgImage 像素尺寸
             )
             print("[Thumb] 生成成功: \(path) \(thumbnail.cgImage.width)x\(thumbnail.cgImage.height)")
 

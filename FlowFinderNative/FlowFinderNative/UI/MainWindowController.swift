@@ -360,14 +360,17 @@ public class MainWindowController: NSWindowController {
         }
 
         // 任务 F7: 监听主题变更，刷新所有 FileListView 的 appearance（v0.6.5）
+        // 任务 F10-9: 同时刷新所有 FileGridView 的 appearance（F7 遗漏修复，v0.6.6）
         // onModeChanged 是单回调，需保留前一个回调链，避免覆盖 AppearanceSettingsView 等已注册的监听
-        // FileListView 是 NSView（非 ViewController），无 viewDidLayout，故调用 refreshAppearance()
+        // FileListView / FileGridView 是 NSView（非 ViewController），无 viewDidLayout，故调用 refreshAppearance()
         let previousCallback = ThemeManager.shared.onModeChanged
         ThemeManager.shared.onModeChanged = { [weak self] mode in
             previousCallback?(mode)
             DispatchQueue.main.async {
                 self?.leftFileListView?.refreshAppearance()
                 self?.rightFileListView?.refreshAppearance()
+                self?.leftFileGridView?.refreshAppearance()
+                self?.rightFileGridView?.refreshAppearance()
             }
         }
 

@@ -10,6 +10,13 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     var nameLabel: NSTextField!
     private var pathLabel: NSTextField!
 
+    /// 任务 F10-9: 记录该 item 当前显示文件的完整路径（F8 遗漏修复，v0.6.6）。
+    /// 用于缩略图异步回调时校验 item 仍显示同一文件（避免旧请求覆盖新 item），
+    /// 以及 prepareForReuse 取消上一次未完成的缩略图请求。
+    /// 注意：不能用 item.identifier 记录路径--identifier 用于 NSCollectionView
+    /// 的复用匹配，覆写会破坏 item 复用机制（与 FileListView FFTableCellView 对称）。
+    private var currentPath: String?
+
     var entry: FileEntry? {
         didSet {
             guard let entry = entry else { return }
@@ -18,15 +25,34 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
             // 设置图标
             if entry.isDirectory {
+                // 任务 F10-9: 目录不加载缩略图，清除路径标记避免旧回调误覆盖目录图标
+                currentPath = nil
                 thumbnailImageView.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
                     ?? NSImage(named: NSImage.folderName)
             } else {
+                // 任务 F10-9: 缩略图复用校验（F8 遗漏修复，v0.6.6）
+                // 1) 取消该 item 上一次的缩略图请求（避免旧请求覆盖新 item）
+                // 2) 更新 currentPath 标记，回调中校验 item 仍显示同一文件
+                // 3) 先显示占位图标，缩略图返回后再替换
+                let path = entry.path
+                if let oldPath = currentPath, oldPath != path {
+                    ThumbnailManager.shared.cancelGeneration(for: oldPath)
+                }
+                currentPath = path
+
+                // 占位图标（缩略图返回前先显示文件图标）
+                thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
+                    ?? NSImage(named: NSImage.multipleDocumentsName)
+
                 // 使用 ThumbnailManager 获取缩略图
-                ThumbnailManager.shared.generateThumbnail(path: entry.path, size: CGSize(width: 96, height: 96)) { [weak self] image in
+                ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 96, height: 96)) { [weak self] image in
+                    guard let self = self else { return }
+                    // 校验 item 仍显示同一文件（用完整路径而非文件名）
+                    guard self.currentPath == path else { return }
                     if let image = image {
-                        self?.thumbnailImageView.image = image
+                        self.thumbnailImageView.image = image
                     } else {
-                        self?.thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
+                        self.thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
                             ?? NSImage(named: NSImage.multipleDocumentsName)
                     }
                 }
@@ -41,6 +67,23 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 nameLabel.textColor = NSColor.labelColor
             }
         }
+    }
+
+    /// 任务 F10-9: 复用时取消上一次未完成的缩略图请求并重置标记（F8 遗漏修复，v0.6.6）。
+    /// NSCollectionView 复用 item 前会调用 prepareForReuse，此时若不取消旧请求，
+    /// 旧请求回调可能在新 item 已绑定其他文件后才返回，覆盖新 item 的图标。
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        // 取消上一次未完成的缩略图请求
+        if let oldPath = currentPath {
+            ThumbnailManager.shared.cancelGeneration(for: oldPath)
+        }
+        currentPath = nil
+        // 重置图标，避免复用瞬间显示上一个文件的缩略图
+        thumbnailImageView.image = nil
+        // 重置选中背景（防止复用 item 残留选中样式）
+        view.layer?.backgroundColor = NSColor.clear.cgColor
+        view.layer?.cornerRadius = 0
     }
 
     override func loadView() {
@@ -83,11 +126,12 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
     override var isSelected: Bool {
         didSet {
-            // 1.8 选中背景 alpha 0.20→0.15，圆角 6pt
+            // 任务 F10-9: 访达风格实心蓝半透明选中（v0.6.6）
+            // alpha 0.15->0.25 增强可见性（问题10），圆角 6->8 与访达网格一致
             view.layer?.backgroundColor = isSelected
-                ? NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+                ? NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
                 : NSColor.clear.cgColor
-            view.layer?.cornerRadius = isSelected ? 6 : 0
+            view.layer?.cornerRadius = isSelected ? 8 : 0
         }
     }
 }
@@ -802,6 +846,23 @@ public class FileGridView: NSView {
         // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
         let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
         NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
+    }
+
+    // MARK: - Layout
+
+    // 任务 F10-9: 显式同步 appearance，确保选中色解析正确（F7 遗漏修复，v0.6.6）
+    // FileGridView 是 NSView（非 NSViewController），无 viewDidLayout；改用 layout()。
+    // layout() 在布局变更时被频繁调用，appearance 赋值是轻量指针赋值，开销可忽略。
+    // 与 FileListView.layout() 对称实现。
+    public override func layout() {
+        super.layout()
+        collectionView.appearance = NSApp.appearance
+    }
+
+    /// 任务 F10-9: 供外部（MainWindowController 主题监听）显式刷新 appearance（F7 遗漏修复，v0.6.6）
+    /// 与 FileListView.refreshAppearance() 对称实现。
+    public func refreshAppearance() {
+        collectionView.appearance = NSApp.appearance
     }
 
     public func reloadData() {
