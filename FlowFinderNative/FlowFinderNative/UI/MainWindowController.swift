@@ -227,8 +227,12 @@ public class MainWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.title = "FlowFinder"
 
-        // 任务 R2: titlebar 仅保留红绿灯（系统提供），移除中间的应用图标+名称
-        // 应用图标+名称已移到侧边栏顶部（任务 R3，由 SidebarView 内部处理）
+        // 任务 F10-1: 设置 window.delegate，使 windowDidBecomeKey 等回调生效（v0.6.6）
+        // 虽然 NSWindowController 父类在 ObjC 层已声明 <NSWindowDelegate>，
+        // 但 Swift 编译器仍要求显式声明 extension MainWindowController: NSWindowDelegate
+        // 才能将 self 赋值给 (any NSWindowDelegate)?（见文件末 extension）
+        // 修复问题15/16 右键菜单不生效的潜在根因
+        window.delegate = self
 
         // Sidebar
         sidebarView = SidebarView()
@@ -264,34 +268,23 @@ public class MainWindowController: NSWindowController {
         taskProgressBar = TaskProgressBar()
         taskProgressBar.translatesAutoresizingMaskIntoConstraints = false
 
-        // 任务 R2: titlebar 仅保留红绿灯空间（28pt 高，透明背景）
-        let titlebarView = NSView()
-        titlebarView.translatesAutoresizingMaskIntoConstraints = false
-        titlebarView.wantsLayer = true
-        titlebarView.layer?.backgroundColor = NSColor.clear.cgColor
-
         // 任务 F7: 使用 OpaqueContainerView 修复鼠标穿透与选中渲染（v0.6.5）
         // mainContainer（透明背景以透出玻璃效果）
         let mainContainer = OpaqueContainerView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
         mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
-        mainContainer.addSubview(titlebarView)
         mainContainer.addSubview(mainSplitView)
         mainContainer.addSubview(taskProgressBar)
         taskProgressBar.isHidden = true
 
-        // 任务 F2: 三栏布局 - 侧边栏贴边框，左右操作区撑满（仿访达），1pt 发丝线分隔（v0.6.5）
+        // 任务 F10-1: 移除 titlebarView 占位，mainSplitView 顶到顶部（v0.6.6）
+        // 红绿灯由系统自动浮在侧边栏顶部上方（titlebarAppearsTransparent=true）
+        // 侧边栏内部顶部留出红绿灯安全区（由 SidebarView 处理）
         // mainSplitView 的 divider 提供 1pt 发丝线（dividerStyle=.thin）
         NSLayoutConstraint.activate([
-            // titlebarView 顶部 28pt（仅红绿灯空间）
-            titlebarView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
-            titlebarView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
-            titlebarView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            titlebarView.heightAnchor.constraint(equalToConstant: 28),
-
-            // mainSplitView 从 titlebar 下方开始，延伸到底部
-            mainSplitView.topAnchor.constraint(equalTo: titlebarView.bottomAnchor),
+            // mainSplitView 顶到 mainContainer 顶部（红绿灯浮在上方）
+            mainSplitView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
             mainSplitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             mainSplitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
             mainSplitView.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
@@ -1491,3 +1484,11 @@ enum PaneSide {
     case left
     case right
 }
+
+// MARK: - NSWindowDelegate
+
+// 任务 F10-1: 显式声明 NSWindowDelegate 协议遵循（v0.6.6）
+// NSWindowController 父类虽在 ObjC 层声明 <NSWindowDelegate>，但 Swift 编译器要求
+// 显式遵循才能将 MainWindowController 实例赋值给 window.delegate。
+// windowDidBecomeKey/ResignKey/BecomeMain/ResignMain 等回调已在类内实现（见类内 MARK 区）。
+extension MainWindowController: NSWindowDelegate {}
