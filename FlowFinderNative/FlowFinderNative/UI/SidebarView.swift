@@ -280,7 +280,9 @@ class SidebarView: NSView {
         let ov = NSOutlineView()
         ov.allowsMultipleSelection = false
         ov.headerView = nil  // 无表头
-        ov.rowHeight = 24
+        // 任务 F10-11: 收藏夹项目行高 28pt（对齐标签/设备行高，统一访达侧边栏项目高度，v0.6.6）
+        // section 标题行高由 heightOfRowByItem 单独返回 24pt
+        ov.rowHeight = 28
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
         // 任务 F4: 收藏夹仿访达 - sourceList 选中样式（半透明蓝高亮）
@@ -425,9 +427,10 @@ class SidebarView: NSView {
     // 任务 F10-3: 设备刷新逻辑（refreshDevices/updateDeviceHeight）已迁移至 MainWindowController 浮层（v0.6.6）
 
     private func updateFavoritesHeight() {
-        // section 标题行（24pt）+ 收藏夹行（24pt）
+        // section 标题行（24pt）+ 收藏夹行（28pt）
+        // 任务 F10-11: 收藏夹项目行高对齐标签/设备 28pt（v0.6.6）
         let sectionHeight: CGFloat = 24
-        let rowHeight: CGFloat = 24
+        let rowHeight: CGFloat = 28
         let height = sectionHeight + CGFloat(favoritesDataSource.favoriteCount) * rowHeight
         favoritesHeightConstraint.constant = max(height, 48)
     }
@@ -643,7 +646,11 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         if case .device = item as? SidebarItem {
             return 28
         }
-        return 24
+        // 任务 F10-11: section 标题行 24pt，收藏夹项目行 28pt（统一访达侧边栏项目高度，v0.6.6）
+        if item is SidebarSection {
+            return 24
+        }
+        return 28
     }
 
     // MARK: - Tag Pill (药丸样式，圆角背景 + 圆点 + 文字)

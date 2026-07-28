@@ -78,8 +78,9 @@ private final class FFPillHeaderCell: NSTableHeaderCell {
         }
 
         // 文字颜色：标签色
+        // 任务 F10-11: 列头字号统一 11pt（访达列头标准，修正此前 13pt 偏大）（v0.6.6）
         let titleAttr: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+            .font: NSFont.systemFont(ofSize: 11, weight: .regular),
             .foregroundColor: NSColor.labelColor,
         ]
         let title = self.title as NSString
