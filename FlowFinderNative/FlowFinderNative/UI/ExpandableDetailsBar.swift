@@ -67,6 +67,11 @@ class ExpandableDetailsBar: NSView {
     /// 当前正在请求缩略图的路径（用于避免过期回调覆盖）
     private var thumbnailLoadPath: String?
 
+    /// 任务 F11-7: 当前正在请求工作区图标的路径（用于避免过期回调覆盖）。
+    /// 点击选中时 refresh() -> setRealFileIcon 会异步获取图标，用户快速切换选中项时
+    /// 需校验回调返回时仍显示同一文件，否则会闪烁/显示错误图标。
+    private var iconLoadPath: String?
+
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
@@ -85,9 +90,10 @@ class ExpandableDetailsBar: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // 1.6 玻璃背景：FFGlassView(.panel, .headerView, cornerRadius: 8)
-        // 与工具栏同材质，形成统一的"工具栏带"玻璃层次
-        let glassBackground = FFGlassView(level: .panel, cornerRadius: 8, material: .headerView)
+        // 1.6 玻璃背景：FFGlassView(.panel, .sidebar, cornerRadius: 8)
+        // 任务 F10-11: 材质对齐 .sidebar（与侧边栏统一），修正此前 .headerView 导致的材质不统一
+        // 详情栏作为底部信息条，与侧边栏同属"辅助信息区"，应使用同一材质层次（v0.6.6）
+        let glassBackground = FFGlassView(level: .panel, cornerRadius: 8, material: .sidebar)
         glassBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glassBackground)
 
@@ -368,23 +374,31 @@ class ExpandableDetailsBar: NSView {
             thumbnailLoadPath = nil
             bigIconView.image = nil
         }
+        // 任务 F11-7: 文件变化时也清除工作区图标请求标记，避免旧回调覆盖新选中项图标
+        if iconLoadPath != nil && iconLoadPath != entry?.path {
+            iconLoadPath = nil
+        }
 
         // compact 行：名称字号在 setupUI 中统一为 13pt medium；副字段 12pt secondary "大小 · 类型"
+        // 任务 F11-6: 占位图标统一使用灰色（tertiaryLabelColor），未选中时显示空白文件夹占位
         if selectedCount > 1 {
             compactNameField.stringValue = "已选中 \(selectedCount) 项"
             compactSubField?.stringValue = ""
-            smallIconView.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+            setPlaceholderIcon(symbol: "doc.on.doc")
         } else if let entry = entry {
             compactNameField.stringValue = entry.name
             compactSubField?.stringValue = "\(entry.formattedSize) · \(entry.kindDescription)"
-            smallIconView.image = NSWorkspace.shared.icon(forFile: entry.path)
+            // 真实文件图标：使用系统工作区图标（多色非模板，contentTintColor 不影响其渲染）
+            setRealFileIcon(for: entry.path)
         } else {
             compactNameField.stringValue = "未选择文件"
             compactSubField?.stringValue = ""
-            smallIconView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
+            // 任务 F11-6: 空白文件夹占位图标（灰色 tertiaryLabelColor，问题10）
+            setPlaceholderIcon(symbol: "folder")
         }
 
         // expanded 字段：种类 / 大小 / 位置 / 创建 / 修改 / 标签
+        // 任务 F11-6: bigIconView 已在 setPlaceholderIcon/setRealFileIcon 中与 smallIconView 同步设置
         guard let entry = entry, selectedCount <= 1 else {
             let placeholder = selectedCount > 1 ? "已选中 \(selectedCount) 项" : "未选择文件"
             typeField.stringValue = placeholder
@@ -393,7 +407,7 @@ class ExpandableDetailsBar: NSView {
             createdField.stringValue = ""
             modifiedField.stringValue = ""
             tagsField.stringValue = ""
-            bigIconView.image = smallIconView.image
+            // bigIconView 已在上方 compact 分支的 setPlaceholderIcon 中同步，此处无需重复设置
             clearTags()
             showNoTagsPlaceholder()
             return
@@ -404,7 +418,7 @@ class ExpandableDetailsBar: NSView {
         locationField.stringValue = entry.path
         createdField.stringValue = entry.formattedCreationDate
         modifiedField.stringValue = entry.formattedModificationDate
-        bigIconView.image = NSWorkspace.shared.icon(forFile: entry.path)
+        // bigIconView 已在上方 setRealFileIcon 中同步设置真实文件图标
 
         updateTags(path: entry.path)
         // 标签字段文本（药丸容器在下方可视化展示，此处为文本兜底）
@@ -412,6 +426,53 @@ class ExpandableDetailsBar: NSView {
         tagsField.stringValue = tags.isEmpty ? "无" : tags.map { $0.name }.joined(separator: ", ")
 
         if isExpanded { loadThumbnail() }
+    }
+
+    // MARK: - Icon Helpers
+
+    /// 任务 F11-6: 设置占位 SF Symbol 图标（compact 与 expanded 同步）
+    /// SF Symbol 默认为模板图像，通过 contentTintColor 染为灰色（tertiaryLabelColor）
+    /// - Parameter symbol: SF Symbol 名称（如 "folder" / "doc.on.doc"）
+    private func setPlaceholderIcon(symbol: String) {
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        smallIconView.image = image
+        bigIconView.image = image
+        // 灰色占位：tertiaryLabelColor（与"未选择文件"等占位文本视觉一致）
+        let tintColor = NSColor.tertiaryLabelColor
+        smallIconView.contentTintColor = tintColor
+        bigIconView.contentTintColor = tintColor
+    }
+
+    /// 任务 F11-6: 设置真实文件图标（compact 与 expanded 同步）
+    /// 任务 F11-7: 改为异步获取 + 缓存，避免点击选中时主线程同步调用
+    /// NSWorkspace.shared.icon(forFile:) 造成卡顿。原实现每次选中都同步调用，
+    /// 快速连续点击不同文件时主线程被 LaunchServices 查询阻塞。
+    /// 现改为：缓存命中同步显示；未命中先清 tint（保留占位），后台异步获取后回调更新。
+    /// contentTintColor 置 nil 避免多色非模板图标被染色。
+    /// - Parameter path: 文件绝对路径
+    private func setRealFileIcon(for path: String) {
+        // 真实图标为多色非模板图像，清除占位灰色 tint，确保显示原生色彩
+        smallIconView.contentTintColor = nil
+        bigIconView.contentTintColor = nil
+
+        // 缓存命中：同步显示
+        let iconPointSize: CGFloat = 48
+        if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: iconPointSize) {
+            iconLoadPath = nil
+            smallIconView.image = cached
+            bigIconView.image = cached
+            return
+        }
+
+        // 未命中：记录当前请求路径，后台异步获取
+        iconLoadPath = path
+        ThumbnailManager.shared.fetchWorkspaceIcon(for: path, pointSize: iconPointSize) { [weak self] image in
+            guard let self = self, let image = image else { return }
+            // 校验仍显示同一文件（避免快速切换选中时旧回调覆盖）
+            guard self.iconLoadPath == path else { return }
+            self.smallIconView.image = image
+            self.bigIconView.image = image
+        }
     }
 
     // MARK: - Thumbnail

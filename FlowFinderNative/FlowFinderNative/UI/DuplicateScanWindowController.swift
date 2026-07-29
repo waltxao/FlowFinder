@@ -4,6 +4,7 @@ import Combine
 // MARK: - DuplicateOpaqueContainerView
 
 /// 重写 isOpaque 返回 true 的 NSView 子类（与 MainWindowController 同架构）
+/// 任务 F11-2: 窗口级实体背景（v0.6.7），移除透明玻璃架构。
 private class DuplicateOpaqueContainerView: NSView {
     override var isOpaque: Bool { return true }
 }
@@ -11,7 +12,8 @@ private class DuplicateOpaqueContainerView: NSView {
 // MARK: - DuplicateScanWindowController
 
 /// 重复文件扫描窗口控制器：720x560，工具栏+选项条+分栏(左列表+右预览)+操作栏+任务栏
-/// 窗口级玻璃架构：OpaqueContainerView + NSGlassEffectView + mainContainer
+/// 任务 F11-2: 窗口实体背景（windowBackgroundColor），移除 FFGlassView 透明玻璃架构（v0.6.7）。
+/// 各栏（工具栏/操作栏/任务栏/选项条）改为实体 controlBackgroundColor，内容清晰可读。
 public class DuplicateScanWindowController: NSWindowController {
 
     public static let shared = DuplicateScanWindowController()
@@ -84,9 +86,10 @@ public class DuplicateScanWindowController: NSWindowController {
     private func setupUI() {
         guard let window = window else { return }
 
-        // 窗口透明以支持玻璃效果
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        // 任务 F11-2: 窗口实体背景（v0.6.7）
+        // 移除透明窗口配置（isOpaque=false + backgroundColor=.clear），改为实体窗口背景。
+        window.isOpaque = true
+        window.backgroundColor = NSColor.windowBackgroundColor
         window.hasShadow = true
 
         // ===== 顶部工具栏（路径标签+输入框+浏览+开始/停止） =====
@@ -109,7 +112,8 @@ public class DuplicateScanWindowController: NSWindowController {
         sectionHeader.textColor = NSColor.secondaryLabelColor
         sectionHeader.translatesAutoresizingMaskIntoConstraints = false
 
-        let sectionHeaderContainer = FFGlassView(level: .component, cornerRadius: 0)
+        // 任务 F11-2: sectionHeader 容器实体背景（替代 FFGlassView .component，v0.6.7）
+        let sectionHeaderContainer = makeSolidContainer()
         sectionHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
         sectionHeaderContainer.addSubview(sectionHeader)
 
@@ -130,12 +134,13 @@ public class DuplicateScanWindowController: NSWindowController {
         resultsPane.addSubview(sectionHeaderContainer)
         resultsPane.addSubview(resultsScrollView)
 
-        // 右侧预览面板（240pt，FFGlassView .panel .headerView 包裹）
+        // 任务 F11-2: 右侧预览面板实体背景（替代 FFGlassView .panel .headerView，v0.6.7）
+        // 保留 10pt 圆角卡片样式，背景色为系统动态 controlBackgroundColor。
         previewPanel = DuplicatePreviewPanel(frame: .zero)
         previewPanel.translatesAutoresizingMaskIntoConstraints = false
-        let previewGlass = FFGlassView(level: .panel, cornerRadius: 10, material: .headerView)
-        previewGlass.translatesAutoresizingMaskIntoConstraints = false
-        previewGlass.addSubview(previewPanel)
+        let previewContainer = makeSolidContainer(cornerRadius: 10)
+        previewContainer.translatesAutoresizingMaskIntoConstraints = false
+        previewContainer.addSubview(previewPanel)
 
         // 主分栏视图
         let splitView = NSSplitView()
@@ -145,7 +150,7 @@ public class DuplicateScanWindowController: NSWindowController {
         splitView.wantsLayer = true
         splitView.layer?.backgroundColor = NSColor.clear.cgColor
         splitView.addArrangedSubview(resultsPane)
-        splitView.addArrangedSubview(previewGlass)
+        splitView.addArrangedSubview(previewContainer)
 
         // ===== 底部操作栏 =====
         let actionbar = makeActionbar()
@@ -155,11 +160,11 @@ public class DuplicateScanWindowController: NSWindowController {
         let taskbar = makeTaskbar()
         taskbar.translatesAutoresizingMaskIntoConstraints = false
 
-        // 组装主容器
+        // 组装主容器（实体背景）
         let mainContainer = NSView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
-        mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
+        mainContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         mainContainer.addSubview(toolbar)
         mainContainer.addSubview(optionsStrip)
         mainContainer.addSubview(splitView)
@@ -199,7 +204,7 @@ public class DuplicateScanWindowController: NSWindowController {
             taskbar.heightAnchor.constraint(equalToConstant: 28),
 
             // 预览面板宽度 240pt
-            previewGlass.widthAnchor.constraint(equalToConstant: 240),
+            previewContainer.widthAnchor.constraint(equalToConstant: 240),
         ])
 
         // 结果区内部约束
@@ -221,62 +226,53 @@ public class DuplicateScanWindowController: NSWindowController {
             resultsStack.topAnchor.constraint(equalTo: resultsScrollView.contentView.topAnchor),
             resultsStack.widthAnchor.constraint(equalTo: resultsScrollView.contentView.widthAnchor),
 
-            previewPanel.leadingAnchor.constraint(equalTo: previewGlass.leadingAnchor),
-            previewPanel.trailingAnchor.constraint(equalTo: previewGlass.trailingAnchor),
-            previewPanel.topAnchor.constraint(equalTo: previewGlass.topAnchor),
-            previewPanel.bottomAnchor.constraint(equalTo: previewGlass.bottomAnchor),
+            previewPanel.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
+            previewPanel.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
+            previewPanel.topAnchor.constraint(equalTo: previewContainer.topAnchor),
+            previewPanel.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor),
         ])
 
         splitView.setPosition(720 - 240, ofDividerAt: 0)
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
 
-        // ===== 窗口级玻璃架构（参照 MainWindowController） =====
-        if #available(macOS 26.0, *) {
-            let containerView = DuplicateOpaqueContainerView()
-            containerView.wantsLayer = true
-            containerView.translatesAutoresizingMaskIntoConstraints = false
+        // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
+        let containerView = DuplicateOpaqueContainerView()
+        containerView.wantsLayer = true
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-            let glassView = NSGlassEffectView()
-            glassView.style = .clear
-            glassView.cornerRadius = 0
-            glassView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(mainContainer)
+        NSLayoutConstraint.activate([
+            mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
+            mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+        ])
 
-            containerView.addSubview(glassView)
-            containerView.addSubview(mainContainer)
-
-            NSLayoutConstraint.activate([
-                glassView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                glassView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                glassView.topAnchor.constraint(equalTo: containerView.topAnchor),
-                glassView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-                mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
-                mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            ])
-
-            window.contentView = containerView
-        } else {
-            // macOS 12-25 回退：NSVisualEffectView
-            let visualEffectView = NSVisualEffectView()
-            visualEffectView.material = .underWindowBackground
-            visualEffectView.blendingMode = .behindWindow
-            visualEffectView.state = .active
-            visualEffectView.addSubview(mainContainer)
-            NSLayoutConstraint.activate([
-                mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
-                mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
-                mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
-                mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
-            ])
-            window.contentView = visualEffectView
-        }
+        window.contentView = containerView
     }
 
-    /// 构建顶部工具栏（FFGlassView .panel .headerView 玻璃背景，36pt 高）
+    // MARK: - 任务 F11-2: 实体背景容器工厂（v0.6.7）
+
+    /// 创建实体背景 NSView 容器（替代 FFGlassView .panel/.component）。
+    /// - Parameter cornerRadius: 圆角（默认 0；卡片样式传 8/10 等）
+    /// - Returns: isOpaque=true 的 NSView，背景色为系统动态 controlBackgroundColor。
+    /// 工具栏/操作栏/任务栏/选项条使用 controlBackgroundColor（比 windowBackgroundColor 略亮，
+    /// 与系统 NSBox/工具栏视觉一致）；卡片式预览面板同理。
+    private func makeSolidContainer(cornerRadius: CGFloat = 0) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.masksToBounds = cornerRadius > 0
+        return view
+    }
+
+    /// 构建顶部工具栏（实体背景 controlBackgroundColor，36pt 高）（v0.6.7）
     /// 布局：扫描路径: label + 等宽路径输入框（260px）+ 浏览... + spacer + 开始扫描（accent）+ 停止
     private func makeToolbar() -> NSView {
-        let toolbar = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
+        // 任务 F11-2: 实体背景容器（替代 FFGlassView .panel .headerView，v0.6.7）
+        let toolbar = makeSolidContainer()
 
         let pathLabel = NSTextField(labelWithString: "扫描路径:")
         pathLabel.font = NSFont.systemFont(ofSize: 12)
@@ -327,10 +323,11 @@ public class DuplicateScanWindowController: NSWindowController {
         return toolbar
     }
 
-    /// 构建选项条（FFGlassView .component 玻璃背景，32pt 高）
+    /// 构建选项条（实体背景 controlBackgroundColor，32pt 高）（v0.6.7）
     /// 布局：扫描方式: segmented（按内容/按名称）+ 文件类型: popup + 最小大小: popup
     private func makeOptionsStrip() -> NSView {
-        let strip = FFGlassView(level: .component, cornerRadius: 0)
+        // 任务 F11-2: 实体背景容器（替代 FFGlassView .component，v0.6.7）
+        let strip = makeSolidContainer()
 
         let modeLabel = NSTextField(labelWithString: "扫描方式:")
         modeLabel.font = NSFont.systemFont(ofSize: 12)
@@ -377,10 +374,11 @@ public class DuplicateScanWindowController: NSWindowController {
         return strip
     }
 
-    /// 构建操作栏（FFGlassView .panel .headerView 玻璃背景，48pt 高）
+    /// 构建操作栏（实体背景 controlBackgroundColor，48pt 高）（v0.6.7）
     /// 布局：已选择 N 个文件待删除 + spacer + 可释放 X MB + 取消选择 + 确认删除（红色 accent）
     private func makeActionbar() -> NSView {
-        let bar = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
+        // 任务 F11-2: 实体背景容器（替代 FFGlassView .panel .headerView，v0.6.7）
+        let bar = makeSolidContainer()
 
         selectionCountLabel = NSTextField(labelWithString: "已选择 0 个文件待删除")
         selectionCountLabel.font = NSFont.systemFont(ofSize: 12)
@@ -421,10 +419,11 @@ public class DuplicateScanWindowController: NSWindowController {
         return bar
     }
 
-    /// 构建任务栏（FFGlassView .component 玻璃背景，28pt 高）
+    /// 构建任务栏（实体背景 controlBackgroundColor，28pt 高）（v0.6.7）
     /// 布局：状态文字 + 进度条 + 百分比（等宽数字）
     private func makeTaskbar() -> NSView {
-        let bar = FFGlassView(level: .component, cornerRadius: 0)
+        // 任务 F11-2: 实体背景容器（替代 FFGlassView .component，v0.6.7）
+        let bar = makeSolidContainer()
 
         progressIndicator = NSProgressIndicator()
         progressIndicator.style = .bar

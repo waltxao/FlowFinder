@@ -2,6 +2,7 @@ import AppKit
 
 /// 关于 FlowFinder 独立窗口（仿 Finder 关于对话框）
 /// 任务 R3: 点击侧边栏顶部应用图标弹出此窗口
+/// 任务 F11-2: 窗口实体背景（windowBackgroundColor），确保内容清晰可读（v0.6.7）。
 class AboutWindowController: NSWindowController {
 
     convenience init() {
@@ -12,6 +13,9 @@ class AboutWindowController: NSWindowController {
             defer: false
         )
         window.title = "关于 FlowFinder"
+        // 任务 F11-2: 实体窗口背景（v0.6.7）
+        window.isOpaque = true
+        window.backgroundColor = NSColor.windowBackgroundColor
         window.center()
         self.init(window: window)
         setupUI()
@@ -20,6 +24,9 @@ class AboutWindowController: NSWindowController {
     private func setupUI() {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
+        // 任务 F11-2: 容器实体背景（v0.6.7）
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         let iconView = NSImageView()
         iconView.image = NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)

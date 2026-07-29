@@ -105,12 +105,33 @@ public class MainWindowController: NSWindowController {
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
+    /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
+    /// 与侧边栏收藏夹/标签模块视觉分离，展开时显示所有设备不需滚动条
+    private var devicePanel: NSView!
+    /// 任务 F10-3: 设备浮层头部（汇总信息 + 折叠箭头）
+    private var devicePanelHeader: DeviceHeaderView!
+    /// 任务 F10-3: 设备浮层内容 stack（设备行纵向排列，高度自适应）
+    private var devicePanelStack: NSStackView!
+    /// 任务 F10-3: 设备数据源（迁移自 SidebarView，负责 statfs 读取磁盘容量、过滤隐藏卷）
+    private let deviceDataSource = DeviceSidebarDataSource()
+    /// 任务 F10-3: 设备浮层折叠状态（默认折叠，仅显示汇总头部）
+    private var isDevicePanelCollapsed = true
+    /// 任务 F10-3: 设备浮层折叠态高度（头部 32pt + 上下 padding 8pt = 48pt）
+    private let devicePanelCollapsedHeight: CGFloat = 48
+    /// 任务 F10-3: 设备行单行高度
+    private let devicePanelRowHeight: CGFloat = 28
+    /// 任务 F10-3: 设备浮层宽度（贴窗口左下角，固定 200pt）
+    private let devicePanelWidth: CGFloat = 200
+    /// 任务 F10-3: 设备浮层高度约束（折叠/展开时调整）
+    private var devicePanelHeightConstraint: NSLayoutConstraint!
     /// 1.2 活动面板顶部 accent 色条（替代 borderWidth 方案）
     private var leftAccentBar: NSView!
     private var rightAccentBar: NSView!
     private var leftDetailsBar: ExpandableDetailsBar!
     private var rightDetailsBar: ExpandableDetailsBar!
     private var taskProgressBar: TaskProgressBar!
+    /// 任务 F11-9：底部进度栏高度约束（0=收起 / 28=展开，复制/移动/粘贴时动态切换）
+    private var taskProgressBarHeightConstraint: NSLayoutConstraint!
     private var mainSplitView: NSSplitView!
     private var paneSplitView: NSSplitView!
     /// 主内容容器引用（ThemeManager 需设置 appearance 以确保选中高亮可见）
@@ -227,8 +248,12 @@ public class MainWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.title = "FlowFinder"
 
-        // 任务 R2: titlebar 仅保留红绿灯（系统提供），移除中间的应用图标+名称
-        // 应用图标+名称已移到侧边栏顶部（任务 R3，由 SidebarView 内部处理）
+        // 任务 F10-1: 设置 window.delegate，使 windowDidBecomeKey 等回调生效（v0.6.6）
+        // 虽然 NSWindowController 父类在 ObjC 层已声明 <NSWindowDelegate>，
+        // 但 Swift 编译器仍要求显式声明 extension MainWindowController: NSWindowDelegate
+        // 才能将 self 赋值给 (any NSWindowDelegate)?（见文件末 extension）
+        // 修复问题15/16 右键菜单不生效的潜在根因
+        window.delegate = self
 
         // Sidebar
         sidebarView = SidebarView()
@@ -264,42 +289,37 @@ public class MainWindowController: NSWindowController {
         taskProgressBar = TaskProgressBar()
         taskProgressBar.translatesAutoresizingMaskIntoConstraints = false
 
-        // 任务 R2: titlebar 仅保留红绿灯空间（28pt 高，透明背景）
-        let titlebarView = NSView()
-        titlebarView.translatesAutoresizingMaskIntoConstraints = false
-        titlebarView.wantsLayer = true
-        titlebarView.layer?.backgroundColor = NSColor.clear.cgColor
-
         // 任务 F7: 使用 OpaqueContainerView 修复鼠标穿透与选中渲染（v0.6.5）
         // mainContainer（透明背景以透出玻璃效果）
         let mainContainer = OpaqueContainerView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
         mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
-        mainContainer.addSubview(titlebarView)
         mainContainer.addSubview(mainSplitView)
         mainContainer.addSubview(taskProgressBar)
         taskProgressBar.isHidden = true
 
-        // 任务 F2: 三栏布局 - 侧边栏贴边框，左右操作区撑满（仿访达），1pt 发丝线分隔（v0.6.5）
+        // 任务 F10-1: 移除 titlebarView 占位，mainSplitView 顶到顶部（v0.6.6）
+        // 红绿灯由系统自动浮在侧边栏顶部上方（titlebarAppearsTransparent=true）
+        // 侧边栏内部顶部留出红绿灯安全区（由 SidebarView 处理）
         // mainSplitView 的 divider 提供 1pt 发丝线（dividerStyle=.thin）
+        // 任务 F11-9：底部进度栏使用动态高度约束（0=收起 / 28=展开），
+        // mainSplitView.bottomAnchor 锚定到 taskProgressBar.topAnchor，
+        // 这样进度栏展开时会将操作区整体上推，不会遮挡文件列表底部内容。
+        taskProgressBarHeightConstraint = taskProgressBar.heightAnchor.constraint(equalToConstant: 0)
+        taskProgressBarHeightConstraint.priority = .required
         NSLayoutConstraint.activate([
-            // titlebarView 顶部 28pt（仅红绿灯空间）
-            titlebarView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
-            titlebarView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
-            titlebarView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            titlebarView.heightAnchor.constraint(equalToConstant: 28),
-
-            // mainSplitView 从 titlebar 下方开始，延伸到底部
-            mainSplitView.topAnchor.constraint(equalTo: titlebarView.bottomAnchor),
+            // mainSplitView 顶到 mainContainer 顶部（红绿灯浮在上方）
+            mainSplitView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
             mainSplitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             mainSplitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            mainSplitView.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
+            // mainSplitView 底部锚定到 taskProgressBar 顶部，进度栏展开时上推操作区
+            mainSplitView.bottomAnchor.constraint(equalTo: taskProgressBar.topAnchor),
 
             taskProgressBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             taskProgressBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
             taskProgressBar.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
-            taskProgressBar.heightAnchor.constraint(equalToConstant: 0),
+            taskProgressBarHeightConstraint,
         ])
 
         // 统一使用 NSVisualEffectView 作为窗口背景玻璃
@@ -316,6 +336,28 @@ public class MainWindowController: NSWindowController {
             mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
         ])
         mainContainerView = mainContainer
+
+        // 任务 F10-3: 创建设备浮层并浮动到窗口左下角（v0.6.6）
+        // 设备区域从侧边栏内部移出，改为独立卡片样式，与收藏夹/标签模块视觉分离
+        devicePanel = createDevicePanel()
+        mainContainer.addSubview(devicePanel)
+        devicePanelHeightConstraint = devicePanel.heightAnchor.constraint(equalToConstant: devicePanelCollapsedHeight)
+        devicePanelHeightConstraint.priority = .required
+        NSLayoutConstraint.activate([
+            // 贴 mainContainer 左下角：leading +8pt，bottom -8pt，宽度 200pt
+            devicePanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
+            devicePanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -8),
+            devicePanel.widthAnchor.constraint(equalToConstant: devicePanelWidth),
+            devicePanelHeightConstraint,
+        ])
+
+        // 任务 F10-3: 监听卷挂载/卸载通知，刷新设备浮层（迁移自 SidebarView）
+        let workspaceNC = NSWorkspace.shared.notificationCenter
+        workspaceNC.addObserver(self, selector: #selector(handleVolumeMount(_:)),
+                                name: NSWorkspace.didMountNotification, object: nil)
+        workspaceNC.addObserver(self, selector: #selector(handleVolumeUnmount(_:)),
+                                name: NSWorkspace.didUnmountNotification, object: nil)
+
         window.contentView = visualEffectView
 
         // 确保玻璃效果不被 ThemeManager 覆盖
@@ -326,14 +368,20 @@ public class MainWindowController: NSWindowController {
         }
 
         // 任务 F7: 监听主题变更，刷新所有 FileListView 的 appearance（v0.6.5）
+        // 任务 F10-9: 同时刷新所有 FileGridView 的 appearance（F7 遗漏修复，v0.6.6）
+        // 任务 F11-1: 同时刷新操作区/设备栏实体背景色（v0.6.7）
         // onModeChanged 是单回调，需保留前一个回调链，避免覆盖 AppearanceSettingsView 等已注册的监听
-        // FileListView 是 NSView（非 ViewController），无 viewDidLayout，故调用 refreshAppearance()
+        // FileListView / FileGridView 是 NSView（非 ViewController），无 viewDidLayout，故调用 refreshAppearance()
         let previousCallback = ThemeManager.shared.onModeChanged
         ThemeManager.shared.onModeChanged = { [weak self] mode in
             previousCallback?(mode)
             DispatchQueue.main.async {
                 self?.leftFileListView?.refreshAppearance()
                 self?.rightFileListView?.refreshAppearance()
+                self?.leftFileGridView?.refreshAppearance()
+                self?.rightFileGridView?.refreshAppearance()
+                // 任务 F11-1: 刷新操作区容器与设备栏浮层的实体背景色（日间/夜间切换）
+                self?.refreshOperationAreaBackgrounds()
             }
         }
 
@@ -373,21 +421,27 @@ public class MainWindowController: NSWindowController {
             if totalWidth > 0 {
                 self.paneSplitView.setPosition(totalWidth / 2, ofDividerAt: 0)
             }
+            // 任务 F10-3: 初始化设备浮层内容（构建设备行 + 更新汇总头部）
+            self.rebuildDevicePanelRows()
+            self.updateDevicePanelSummary()
         }
 
         TaskSchedulerManager.shared.startPolling()
     }
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
-    /// 任务 F2: 操作区撑满（仿访达），无圆角，背景透明透出 NSVisualEffectView 材质（v0.6.5）
+    /// 任务 F2: 操作区撑满（仿访达），无圆角（v0.6.5）
+    /// 任务 F11-1: 操作区改为实体背景（日间#F5F5F5/夜间#2D2D2D），不再透明透出玻璃材质（v0.6.7）
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.clear.cgColor
+        // 任务 F11-1: 操作区实体背景（v0.6.7）
+        // 日间 #F5F5F5（访达浅灰白），夜间 #2D2D2D（访达深灰黑）
+        // 实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
+        container.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
         // 任务 F2: 移除圆角卡片，仿访达撑满（v0.6.5）
-        // 操作区背景透明，让 NSVisualEffectView 的 .underWindowBackground 材质透出
         container.layer?.cornerRadius = 0
         container.layer?.masksToBounds = false
 
@@ -505,9 +559,184 @@ public class MainWindowController: NSWindowController {
         return container
     }
 
+    // MARK: - 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
+
+    /// 任务 F11-1: 操作区实体背景色（v0.6.7）
+    /// 日间 #F5F5F5（访达浅灰白），夜间 #2D2D2D（访达深灰黑）
+    /// 供 createPaneContainer 初始设置与主题切换刷新共用
+    private func operationAreaBackgroundColor() -> NSColor {
+        let isDark = ThemeManager.shared.resolvedIsDark
+        return isDark
+            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
+            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
+    }
+
+    /// 任务 F11-1: 刷新左右操作区容器背景色（主题切换时调用，v0.6.7）
+    private func refreshOperationAreaBackgrounds() {
+        let color = operationAreaBackgroundColor().cgColor
+        leftPaneContainer?.layer?.backgroundColor = color
+        rightPaneContainer?.layer?.backgroundColor = color
+        // 任务 F11-1: 设备栏浮层同步改为实体背景（与操作区一致）
+        refreshDevicePanelBackground()
+    }
+
+    /// 任务 F11-1: 创建设备浮层
+    /// - 浮动在窗口左下角，与侧边栏收藏夹/标签模块视觉分离（独立卡片样式）
+    /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
+    /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
+    private func createDevicePanel() -> NSView {
+        let panel = NSView()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.wantsLayer = true
+        // 任务 F11-1: 设备栏浮层改为实体背景（与操作区一致，v0.6.7）
+        // 此前为半透明 controlBackgroundColor(0.8)，现统一为操作区实体色，保留 8pt 圆角卡片样式
+        panel.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
+        panel.layer?.cornerRadius = 8
+        panel.layer?.masksToBounds = true
+
+        // 设备栏头部（汇总信息 + 折叠箭头，复用 SidebarView 的 DeviceHeaderView）
+        devicePanelHeader = DeviceHeaderView()
+        devicePanelHeader.translatesAutoresizingMaskIntoConstraints = false
+        // 点击头部切换折叠/展开
+        let headerClick = NSClickGestureRecognizer(target: self, action: #selector(toggleDevicePanelExpanded))
+        devicePanelHeader.addGestureRecognizer(headerClick)
+        panel.addSubview(devicePanelHeader)
+
+        // 设备列表（纵向 stack，根据设备数量自适应高度，不需滚动条）
+        devicePanelStack = NSStackView()
+        devicePanelStack.orientation = .vertical
+        devicePanelStack.alignment = .leading
+        devicePanelStack.spacing = 0
+        devicePanelStack.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(devicePanelStack)
+
+        NSLayoutConstraint.activate([
+            // 头部固定在 panel 顶部（高度 32pt，左右内边距 8pt）
+            devicePanelHeader.topAnchor.constraint(equalTo: panel.topAnchor, constant: 8),
+            devicePanelHeader.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
+            devicePanelHeader.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -8),
+            devicePanelHeader.heightAnchor.constraint(equalToConstant: 32),
+
+            // 设备 stack 位于头部下方，填满剩余空间
+            // 折叠时 panel 高度=48，stack 高度自动为 0（被 masksToBounds 裁剪）
+            devicePanelStack.topAnchor.constraint(equalTo: devicePanelHeader.bottomAnchor, constant: 0),
+            devicePanelStack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
+            devicePanelStack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -8),
+            devicePanelStack.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -8),
+        ])
+
+        return panel
+    }
+
+    /// 任务 F10-3: 重建设备浮层的所有设备行
+    /// 迁移自 SidebarView.DeviceSidebarDataSource.outlineView(_:viewFor:) 的 DeviceCellView 构建逻辑
+    /// 每个设备行：图标 + 名称 + "X GB 可用"（复用 DeviceCellView，含悬停气泡）
+    private func rebuildDevicePanelRows() {
+        // 清空旧设备行
+        devicePanelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        // 遍历设备数据源，为每个设备创建一行
+        for dev in deviceDataSource.devices {
+            let row = makeDeviceRow(dev: dev)
+            devicePanelStack.addArrangedSubview(row)
+            // 让行撑满 stack 宽度
+            row.leadingAnchor.constraint(equalTo: devicePanelStack.leadingAnchor).isActive = true
+            row.trailingAnchor.constraint(equalTo: devicePanelStack.trailingAnchor).isActive = true
+            row.heightAnchor.constraint(equalToConstant: devicePanelRowHeight).isActive = true
+        }
+    }
+
+    /// 任务 F10-3: 创建单个设备行视图（复用 DeviceCellView，附带点击导航）
+    /// 迁移自 SidebarView.DeviceSidebarDataSource 的 DeviceCellView 配置逻辑
+    private func makeDeviceRow(dev: DeviceItem) -> NSView {
+        // 复用 SidebarView 的 DeviceCellView（含图标 + 名称 + 可用空间 + 悬停气泡）
+        let cell = DeviceCellView()
+        let extInfo = deviceDataSource.deviceExtendedInfo[dev.path]
+        cell.configure(dev: dev, extInfo: extInfo)
+
+        // 点击设备行切换到该卷（保留设备点击导航功能）
+        let click = NSClickGestureRecognizer(target: self, action: #selector(handleDeviceRowClick(_:)))
+        cell.identifier = NSUserInterfaceItemIdentifier(dev.path)
+        cell.addGestureRecognizer(click)
+        return cell
+    }
+
+    /// 任务 F10-3: 点击设备行 -> 切换活动面板到该卷路径
+    @objc private func handleDeviceRowClick(_ sender: NSClickGestureRecognizer) {
+        guard let path = sender.view?.identifier?.rawValue else { return }
+        let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
+        vm.navigate(to: path)
+    }
+
+    /// 任务 F10-3: 切换设备浮层折叠/展开状态（带 200ms 动画）
+    /// 迁移自 SidebarView.toggleDeviceExpanded
+    @objc private func toggleDevicePanelExpanded() {
+        isDevicePanelCollapsed.toggle()
+        let targetHeight: CGFloat
+        if isDevicePanelCollapsed {
+            targetHeight = devicePanelCollapsedHeight
+        } else {
+            // 展开态：折叠高度 + 设备数量 * 行高（高度自适应，不需滚动条）
+            targetHeight = devicePanelCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * devicePanelRowHeight
+        }
+
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.2
+            context.allowsImplicitAnimation = true
+            devicePanelHeightConstraint.animator().constant = targetHeight
+            devicePanel.layoutSubtreeIfNeeded()
+        }, completionHandler: nil)
+
+        // 更新箭头方向
+        devicePanelHeader.updateArrow(isCollapsed: isDevicePanelCollapsed)
+    }
+
+    /// 任务 F10-3: 更新设备浮层头部汇总信息（所有设备的可用空间和总容量之和）
+    /// 迁移自 SidebarView.updateDeviceHeaderSummary
+    private func updateDevicePanelSummary() {
+        let (totalFree, totalTotal) = deviceDataSource.totalSpaceSummary()
+        devicePanelHeader.updateSummary(free: totalFree, total: totalTotal, isCollapsed: isDevicePanelCollapsed)
+    }
+
+    /// 任务 F10-3: 卷挂载通知 -> 刷新设备浮层
+    /// 迁移自 SidebarView.handleVolumeMount
+    @objc private func handleVolumeMount(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshDevicePanel()
+        }
+    }
+
+    /// 任务 F10-3: 卷卸载通知 -> 刷新设备浮层
+    /// 迁移自 SidebarView.handleVolumeUnmount
+    @objc private func handleVolumeUnmount(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshDevicePanel()
+        }
+    }
+
+    /// 任务 F10-3: 刷新设备浮层（重新加载设备数据 + 重建行 + 更新汇总 + 调整高度）
+    /// 迁移自 SidebarView.refreshDevices
+    private func refreshDevicePanel() {
+        deviceDataSource.loadDevices()
+        rebuildDevicePanelRows()
+        updateDevicePanelSummary()
+        // 若当前展开态，根据新设备数量调整高度（高度自适应，不需滚动条）
+        if !isDevicePanelCollapsed {
+            let targetHeight = devicePanelCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * devicePanelRowHeight
+            devicePanelHeightConstraint.constant = targetHeight
+        }
+    }
+
+    /// 任务 F11-1: 刷新设备栏浮层背景色（主题切换时调用，v0.6.7）
+    private func refreshDevicePanelBackground() {
+        devicePanel?.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
+    }
+
     deinit {
         // Bug 6 修复：移除所有 NotificationCenter observer，防止悬空回调
         NotificationCenter.default.removeObserver(self)
+        // 任务 F10-3: 移除卷挂载/卸载通知监听（迁移自 SidebarView deinit）
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         TaskSchedulerManager.shared.stopPolling()
     }
 
@@ -527,6 +756,11 @@ public class MainWindowController: NSWindowController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSidebarDirectorySelected(_:)),
             name: .sidebarDidSelectDirectory, object: nil
+        )
+        // 任务 F11-8: 订阅侧边栏标签点击筛选通知（问题3）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarTagSelected(_:)),
+            name: .sidebarDidSelectTag, object: nil
         )
         // 订阅 FileListView 右键菜单通知
         NotificationCenter.default.addObserver(
@@ -572,6 +806,79 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleFileListShowInfo(_:)),
             name: .fileListShowInfo, object: nil
         )
+        // 任务 F10-10: 注册 OpenSettings 通知（v0.6.6）
+        // 修复问题3：侧边栏齿轮按钮发的 "OpenSettings" 通知无观察者，导致设置窗口打不开
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleOpenSettings(_:)),
+            name: NSNotification.Name("OpenSettings"), object: nil
+        )
+        // 任务 F11-11: 注册侧边栏工具面板入口通知（C1）
+        // 查重 -> 打开 DuplicateScanWindowController；批量重命名 -> 转发 menuBatchRename；
+        // AI 工具 -> 调用活动面板视图 triggerAITagGeneration
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarDedupScan(_:)),
+            name: .sidebarDidRequestDedupScan, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarBatchRename(_:)),
+            name: .sidebarDidRequestBatchRename, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarAITools(_:)),
+            name: .sidebarDidRequestAITools, object: nil
+        )
+    }
+
+    /// 任务 F10-10: 处理 OpenSettings 通知，弹出设置窗口（修复问题3）
+    @objc private func handleOpenSettings(_ notification: Notification) {
+        SettingsWindowController.shared.showWindow()
+    }
+
+    // MARK: - 任务 F11-11: 侧边栏工具面板入口通知处理（C1）
+
+    /// 查重扫描入口：打开 DuplicateScanWindowController
+    @objc private func handleSidebarDedupScan(_ notification: Notification) {
+        DuplicateScanWindowController.shared.showWindow()
+    }
+
+    /// 批量重命名入口：转发到 menuBatchRename（需至少选中 2 个文件，否则提示）
+    @objc private func handleSidebarBatchRename(_ notification: Notification) {
+        let selected = activePaneViewModel.selectedFiles
+        guard selected.count >= 2 else {
+            let alert = NSAlert()
+            alert.messageText = "批量重命名"
+            alert.informativeText = "请至少选中 2 个文件后再使用批量重命名。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
+        menuBatchRename(nil)
+    }
+
+    /// AI 工具入口：调用活动面板视图的 triggerAITagGeneration
+    /// 根据活动面板的当前视图模式（列表/图标）选择对应视图，无选中文件时提示
+    @objc private func handleSidebarAITools(_ notification: Notification) {
+        let selected = activePaneViewModel.selectedFiles
+        guard !selected.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "AI 自动打标签"
+            alert.informativeText = "请先选中一个或多个文件后再使用 AI 自动打标签。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
+        // 根据活动面板的视图可见性选择对应视图
+        let isLeft = (activePane == .left)
+        let listView = isLeft ? leftFileListView : rightFileListView
+        let gridView = isLeft ? leftFileGridView : rightFileGridView
+        // 列表视图默认可见（gridView.isHidden == true 表示当前为列表模式）
+        if gridView?.isHidden == true {
+            listView?.triggerAITagGeneration()
+        } else {
+            gridView?.triggerAITagGeneration()
+        }
     }
 
     @objc private func handleFileListAddTag(_ notification: Notification) {
@@ -784,6 +1091,14 @@ public class MainWindowController: NSWindowController {
 
         // 视图模式切换
         updateViewMode(side: side, mode: state.viewMode)
+
+        // 任务 F11-8: 状态变化时同步侧边栏标签高亮（导航清除 tagFilter / 切换活动面板时高亮需跟随）
+        if side == activePane {
+            NotificationCenter.default.post(
+                name: .paneTagFilterChanged, object: nil,
+                userInfo: ["tagFilter": state.tagFilter as Any]
+            )
+        }
     }
 
     private func updateActivePaneVisual() {
@@ -856,12 +1171,33 @@ public class MainWindowController: NSWindowController {
         activePane = side
         updateActivePaneVisual()
         NotificationCenter.default.post(name: .paneDidActivate, object: nil, userInfo: ["side": side == .left ? "left" : "right"])
+        // 任务 F11-8: 切换活动面板时同步侧边栏标签高亮（显示新活动面板的 tagFilter）
+        let vm = side == .left ? leftPaneViewModel : rightPaneViewModel
+        NotificationCenter.default.post(
+            name: .paneTagFilterChanged, object: nil,
+            userInfo: ["tagFilter": vm.state.tagFilter as Any]
+        )
     }
 
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {
         guard let entry = notification.object as? FileEntry else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: entry.path)
+    }
+
+    /// 任务 F11-8: 处理侧边栏标签点击，设置当前活动面板的标签筛选（问题3）。
+    /// - 点击标签 -> 筛选当前面板，仅显示含该标签的文件
+    /// - 再次点击同一标签 -> 取消筛选（setTagFilter 内部判断）
+    /// 筛选状态变化后发布 paneTagFilterChanged 通知，侧边栏据此高亮对应标签
+    @objc private func handleSidebarTagSelected(_ notification: Notification) {
+        guard let tag = notification.object as? Tag else { return }
+        let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
+        vm.setTagFilter(tag)
+        // 发布通知让侧边栏更新标签高亮
+        NotificationCenter.default.post(
+            name: .paneTagFilterChanged, object: nil,
+            userInfo: ["tagFilter": vm.state.tagFilter as Any]
+        )
     }
 }
 
@@ -911,6 +1247,29 @@ extension MainWindowController: PaneToolbarDelegate {
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String) {
         let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: path)
+    }
+
+    // 任务 F10-10: 补实现查重/批量重命名回调（v0.6.6）
+    // 修复问题17：PaneToolbarDelegate 协议提供了默认空实现，MainWindowController 未覆写，
+    // 导致工具按钮点击查重扫描/批量重命名时无任何响应（菜单栏菜单可用，工具栏按钮不可用）
+    func paneToolbarDidClickDedupScan(_ toolbar: PaneToolbar) {
+        DuplicateScanWindowController.shared.showWindow()
+    }
+
+    func paneToolbarDidClickBatchRename(_ toolbar: PaneToolbar) {
+        // 转发到现有 menuBatchRename 逻辑：需至少选中 2 个文件
+        let selected = activePaneViewModel.selectedFiles
+        guard selected.count >= 2 else {
+            // 选中不足 2 个时提示用户（与 menuBatchRename 的 validateMenuItem 行为一致）
+            let alert = NSAlert()
+            alert.messageText = "批量重命名"
+            alert.informativeText = "请至少选中 2 个文件后再使用批量重命名。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
+        menuBatchRename(nil)
     }
 }
 
@@ -1004,6 +1363,16 @@ extension MainWindowController {
         let destPath = activePaneViewModel.currentPath
         let srcs = clipboardItems
 
+        // 任务 F11-9：粘贴也属于复制/移动操作，展示底部进度栏反馈
+        let operationName: String
+        switch operation {
+        case .copy: operationName = "复制"
+        case .cut: operationName = "移动"
+        }
+        let totalCount = srcs.count
+        taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
+        showProgressBar(animated: true)
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let total = srcs.count
@@ -1012,10 +1381,31 @@ extension MainWindowController {
                 switch operation {
                 case .copy:
                     isMove = false
-                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath)
+                    // 任务 F11-9：传入 progress 回调，实时更新底部进度栏
+                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath) { completed, total in
+                        let opName = operationName
+                        DispatchQueue.main.async { [weak self] in
+                            self?.taskProgressBar.updateDirectProgress(
+                                operation: opName,
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
                 case .cut:
                     isMove = true
-                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath)
+                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath) { completed, total in
+                        let opName = operationName
+                        DispatchQueue.main.async { [weak self] in
+                            self?.taskProgressBar.updateDirectProgress(
+                                operation: opName,
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
                 }
 
                 // I2: invalidate cache so the refresh sees the new state.
@@ -1030,8 +1420,8 @@ extension MainWindowController {
                 }
 
                 // I3: capture the detailed partial-failure message now
-                // (getLastError is read-once) before the async UI refresh —
-                // refresh → listDirectory would otherwise consume it on its
+                // (getLastError is read-once) before the async UI refresh -
+                // refresh -> listDirectory would otherwise consume it on its
                 // own failure path. Appended to the user-facing alert.
                 let partialDetail = (success < total) ? CoreBridge.shared.getLastError() : ""
 
@@ -1044,6 +1434,12 @@ extension MainWindowController {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     self.activePaneViewModel.refresh()
+
+                    // 任务 F11-9：标记粘贴进度完成，2 秒后淡出收起
+                    self.taskProgressBar.completeDirectProgress(operation: operationName, count: success)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+                        self?.hideProgressBar(animated: true)
+                    }
 
                     // 注册撤销（仅当至少一个成功；best-effort）
                     if success > 0 {
@@ -1098,8 +1494,11 @@ extension MainWindowController {
                     }
                 }
             } catch {
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     self?.showError(error: error)
+                    // 任务 F11-9：失败时也收起进度栏
+                    self?.taskProgressBar.hide()
+                    self?.hideProgressBar(animated: true)
                 }
             }
         }
@@ -1157,6 +1556,7 @@ extension MainWindowController {
     }
 
     /// 执行跨面板复制/移动操作
+    /// 任务 F11-9（问题1）：增加底部进度栏反馈，避免大文件复制/移动时"无提示"误以为不生效
     private func performCrossPaneOperation(side: String, isMove: Bool) {
         let sourceVM: PaneViewModel = side == "left" ? leftPaneViewModel : rightPaneViewModel
         let destVM: PaneViewModel = side == "left" ? rightPaneViewModel : leftPaneViewModel
@@ -1165,16 +1565,36 @@ extension MainWindowController {
         let selectedFiles = sourceVM.selectedFiles
         guard !selectedFiles.isEmpty else { return }
 
+        // 任务 F11-9：进入"直接进度"模式，展开底部进度栏
+        // 此前未显示进度，用户复制/移动大目录时误以为"不生效"（实际正在后台同步执行）
+        let operationName = isMove ? "移动" : "复制"
+        let totalCount = selectedFiles.count
+        taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
+        showProgressBar(animated: true)
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var successCount = 0
             var failedFiles: [(String, Error)] = []
             // 记录每个成功操作的 (src, dst) 用于撤销注册
             var movedOrCopied: [(src: String, dst: String)] = []
 
-            for entry in selectedFiles {
+            for (index, entry) in selectedFiles.enumerated() {
                 let srcPath = entry.path
                 let fileName = entry.name
                 var dstPath = (destPath as NSString).appendingPathComponent(fileName)
+
+                // 每处理一项前，先更新进度条显示"正在处理 fileName"
+                // 注意：此处在后台线程，UI 更新需切回主线程
+                let displayIndex = index
+                let displayFileName = fileName
+                DispatchQueue.main.async { [weak self] in
+                    self?.taskProgressBar.updateDirectProgress(
+                        operation: operationName,
+                        currentFileName: displayFileName,
+                        completed: displayIndex,
+                        total: totalCount
+                    )
+                }
 
                 // 重名冲突检测 - 添加 "副本" 后缀
                 if FileManager.default.fileExists(atPath: dstPath) {
@@ -1199,6 +1619,17 @@ extension MainWindowController {
                 } catch {
                     failedFiles.append((fileName, error))
                 }
+
+                // 该项完成后更新进度（已完成数 = index + 1）
+                let completedCount = index + 1
+                DispatchQueue.main.async { [weak self] in
+                    self?.taskProgressBar.updateDirectProgress(
+                        operation: operationName,
+                        currentFileName: displayFileName,
+                        completed: completedCount,
+                        total: totalCount
+                    )
+                }
             }
 
             DispatchQueue.main.async { [weak self] in
@@ -1206,6 +1637,13 @@ extension MainWindowController {
                 // 刷新双方面板
                 sourceVM.refresh()
                 destVM.refresh()
+
+                // 任务 F11-9：标记进度完成，显示"复制/移动完成：N 个项目"，2 秒后淡出收起
+                self.taskProgressBar.completeDirectProgress(operation: operationName, count: successCount)
+                // 延迟 2.2 秒收起进度栏（比 TaskProgressBar 内部 2.0s 淡出稍晚，确保淡出动画完成后再收起高度）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+                    self?.hideProgressBar(animated: true)
+                }
 
                 // 注册撤销（仅对成功的操作）
                 if !movedOrCopied.isEmpty {
@@ -1436,6 +1874,48 @@ extension MainWindowController {
         activePane == .left ? leftPaneViewModel : rightPaneViewModel
     }
 
+    // MARK: - 底部进度栏（任务 F11-9）
+
+    /// 展开底部进度栏（高度从 0 动画到 28pt 并显示）
+    /// - Parameter animated: 是否使用动画展开
+    private func showProgressBar(animated: Bool = true) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.taskProgressBar.isHidden = false
+            if animated {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.2
+                    context.allowsImplicitAnimation = true
+                    self.taskProgressBarHeightConstraint.animator().constant = TaskProgressBar.height
+                    self.taskProgressBar.layoutSubtreeIfNeeded()
+                }, completionHandler: nil)
+            } else {
+                self.taskProgressBarHeightConstraint.constant = TaskProgressBar.height
+            }
+        }
+    }
+
+    /// 收起底部进度栏（高度从 28 动画回 0 并隐藏）
+    /// - Parameter animated: 是否使用动画收起
+    private func hideProgressBar(animated: Bool = true) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if animated {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.2
+                    context.allowsImplicitAnimation = true
+                    self.taskProgressBarHeightConstraint.animator().constant = 0
+                    self.taskProgressBar.layoutSubtreeIfNeeded()
+                }, completionHandler: {
+                    self.taskProgressBar.isHidden = true
+                })
+            } else {
+                self.taskProgressBarHeightConstraint.constant = 0
+                self.taskProgressBar.isHidden = true
+            }
+        }
+    }
+
     private func showError(error: Error) {
         let alert = NSAlert()
         alert.messageText = "错误"
@@ -1491,3 +1971,11 @@ enum PaneSide {
     case left
     case right
 }
+
+// MARK: - NSWindowDelegate
+
+// 任务 F10-1: 显式声明 NSWindowDelegate 协议遵循（v0.6.6）
+// NSWindowController 父类虽在 ObjC 层声明 <NSWindowDelegate>，但 Swift 编译器要求
+// 显式遵循才能将 MainWindowController 实例赋值给 window.delegate。
+// windowDidBecomeKey/ResignKey/BecomeMain/ResignMain 等回调已在类内实现（见类内 MARK 区）。
+extension MainWindowController: NSWindowDelegate {}

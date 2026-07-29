@@ -2,9 +2,18 @@ import Cocoa
 
 // MARK: - OpaqueContainerView（设置窗口专用）
 
-/// 重写 isOpaque 返回 true 的 NSView 子类，与 MainWindowController 同架构。
-/// 让窗口服务器捕获鼠标事件，玻璃视觉效果由 NSGlassEffectView 子视图绘制。
+/// 重写 isOpaque 返回 true 的 NSView 子类（与 MainWindowController 同架构）。
+/// 任务 F11-2: 窗口级实体背景（v0.6.7），移除透明玻璃架构。
+/// 让窗口服务器捕获鼠标事件，背景色由 layer.backgroundColor 提供。
 private class SettingsOpaqueContainerView: NSView {
+    override var isOpaque: Bool { return true }
+}
+
+// MARK: - SolidSidebarContainer（设置窗口侧边栏实体背景容器）
+
+/// 任务 F11-2: 侧边栏实体背景容器（替代 FFGlassView .panel .sidebar，v0.6.7）。
+/// 仅承载 sidebarScrollView，背景色使用系统动态 NSColor.windowBackgroundColor。
+private class SolidSidebarContainer: NSView {
     override var isOpaque: Bool { return true }
 }
 
@@ -45,7 +54,8 @@ enum SettingsSection: Int, CaseIterable {
 // MARK: - SettingsWindowController
 
 /// 设置窗口控制器：左侧边栏（180pt，6 分区）+ 右侧滚动内容区
-/// 窗口级玻璃架构：OpaqueContainerView + NSGlassEffectView + mainContainer（参照 MainWindowController）
+/// 任务 F11-2: 窗口实体背景（windowBackgroundColor），移除 FFGlassView 透明玻璃架构（v0.6.7）。
+/// 用户反馈"完全看不清里面什么内容，透明度太高了"——实体背景后内容清晰可读。
 public class SettingsWindowController: NSWindowController {
 
     public static let shared = SettingsWindowController()
@@ -57,8 +67,6 @@ public class SettingsWindowController: NSWindowController {
     private var contentContainer: NSView!
     /// 当前显示的内容视图（侧边栏选中项切换时替换）
     private var currentContentView: NSView?
-    /// 玻璃背景视图（macOS 26+ NSGlassEffectView，旧版 NSVisualEffectView）
-    private var glassEffectView: NSView?
     /// 快捷键分区数据源（强引用持有，避免被释放导致 tableView 失去 dataSource）
     private var shortcutsDataSource: ShortcutsDataSource?
 
@@ -98,19 +106,32 @@ public class SettingsWindowController: NSWindowController {
     private func setupUI() {
         guard let window = window else { return }
 
-        // 窗口透明以支持玻璃效果
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        // 任务 F11-2: 窗口实体背景（v0.6.7）
+        // 移除透明窗口配置（isOpaque=false + backgroundColor=.clear），
+        // 改为实体窗口背景。windowBackgroundColor 为系统动态色（日间浅灰/夜间深灰）。
+        window.isOpaque = true
+        window.backgroundColor = NSColor.windowBackgroundColor
         window.hasShadow = true
 
         // 左侧边栏（180pt）
         sidebarScrollView = makeSidebarScrollView()
         sidebarScrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        // 侧边栏玻璃背景（FFGlassView .panel .sidebar）
-        let sidebarGlass = FFGlassView(level: .panel, cornerRadius: 0, material: .sidebar)
-        sidebarGlass.translatesAutoresizingMaskIntoConstraints = false
-        sidebarGlass.addSubview(sidebarScrollView)
+        // 任务 F11-2: 侧边栏实体背景（替代 FFGlassView .panel .sidebar，v0.6.7）
+        // 使用 SolidSidebarContainer（isOpaque=true）承载 sidebarScrollView，
+        // 背景色为系统动态 windowBackgroundColor，与窗口背景一致。
+        let sidebarContainer = SolidSidebarContainer()
+        sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
+        sidebarContainer.wantsLayer = true
+        sidebarContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        sidebarContainer.addSubview(sidebarScrollView)
+        // 任务 F11-2: sidebarScrollView 撑满 sidebarContainer（v0.6.7）
+        NSLayoutConstraint.activate([
+            sidebarScrollView.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
+            sidebarScrollView.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
+            sidebarScrollView.topAnchor.constraint(equalTo: sidebarContainer.topAnchor),
+            sidebarScrollView.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
+        ])
 
         // 右侧内容区容器（滚动）
         contentContainer = NSView()
@@ -125,14 +146,14 @@ public class SettingsWindowController: NSWindowController {
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.wantsLayer = true
         splitView.layer?.backgroundColor = NSColor.clear.cgColor
-        splitView.addArrangedSubview(sidebarGlass)
+        splitView.addArrangedSubview(sidebarContainer)
         splitView.addArrangedSubview(contentContainer)
 
-        // 主容器（透明背景以透出玻璃效果）
+        // 主容器（实体背景）
         let mainContainer = NSView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
-        mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
+        mainContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         mainContainer.addSubview(splitView)
         mainContainer.appearance = NSApp.effectiveAppearance
 
@@ -143,52 +164,25 @@ public class SettingsWindowController: NSWindowController {
             splitView.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
         ])
 
-        // 窗口级玻璃架构（参照 MainWindowController）
-        if #available(macOS 26.0, *) {
-            let containerView = SettingsOpaqueContainerView()
-            containerView.wantsLayer = true
-            containerView.translatesAutoresizingMaskIntoConstraints = false
+        // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
+        // SettingsOpaqueContainerView 重写 isOpaque=true，背景色由 layer 提供。
+        let containerView = SettingsOpaqueContainerView()
+        containerView.wantsLayer = true
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-            let glassView = NSGlassEffectView()
-            glassView.style = .clear
-            glassView.cornerRadius = 0
-            glassView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(mainContainer)
+        NSLayoutConstraint.activate([
+            mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
+            mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+        ])
 
-            containerView.addSubview(glassView)
-            containerView.addSubview(mainContainer)
-
-            NSLayoutConstraint.activate([
-                glassView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                glassView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                glassView.topAnchor.constraint(equalTo: containerView.topAnchor),
-                glassView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-                mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
-                mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            ])
-
-            glassEffectView = glassView
-            window.contentView = containerView
-        } else {
-            // macOS 12-25 回退：NSVisualEffectView
-            let visualEffectView = NSVisualEffectView()
-            visualEffectView.material = .underWindowBackground
-            visualEffectView.blendingMode = .behindWindow
-            visualEffectView.state = .active
-            visualEffectView.addSubview(mainContainer)
-            NSLayoutConstraint.activate([
-                mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
-                mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
-                mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
-                mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
-            ])
-            glassEffectView = nil
-            window.contentView = visualEffectView
-        }
+        window.contentView = containerView
 
         // 侧边栏宽度固定 180pt
-        sidebarGlass.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        sidebarContainer.widthAnchor.constraint(equalToConstant: 180).isActive = true
         splitView.setPosition(180, ofDividerAt: 0)
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
 

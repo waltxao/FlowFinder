@@ -1,6 +1,7 @@
 import Cocoa
 
 /// 批量重命名窗口控制器：模式替换 / 序号添加 / 大小写转换 + 实时预览
+/// 任务 F11-2: 窗口实体背景（windowBackgroundColor），确保内容清晰可读（v0.6.7）。
 public class BatchRenameWindowController: NSWindowController {
 
     public static let shared = BatchRenameWindowController()
@@ -66,6 +67,9 @@ public class BatchRenameWindowController: NSWindowController {
             defer: false
         )
         window.title = "批量重命名"
+        // 任务 F11-2: 实体窗口背景（v0.6.7）
+        window.isOpaque = true
+        window.backgroundColor = NSColor.windowBackgroundColor
         window.minSize = NSSize(width: 560, height: 400)
         window.center()
         window.setFrameAutosaveName("BatchRenameWindow")
@@ -82,6 +86,9 @@ public class BatchRenameWindowController: NSWindowController {
     private func setupUI() {
         guard let window = window else { return }
         let contentView = window.contentView!
+        // 任务 F11-2: contentView 实体背景（v0.6.7）
+        contentView.wantsLayer = true
+        contentView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         // 顶部模式切换
         modeSegmentedControl = NSSegmentedControl(

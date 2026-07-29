@@ -10,23 +10,84 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     var nameLabel: NSTextField!
     private var pathLabel: NSTextField!
 
+    /// 任务 F10-9: 记录该 item 当前显示文件的完整路径（F8 遗漏修复，v0.6.6）。
+    /// 用于缩略图异步回调时校验 item 仍显示同一文件（避免旧请求覆盖新 item），
+    /// 以及 prepareForReuse 取消上一次未完成的缩略图请求。
+    /// 注意：不能用 item.identifier 记录路径--identifier 用于 NSCollectionView
+    /// 的复用匹配，覆写会破坏 item 复用机制（与 FileListView FFTableCellView 对称）。
+    private var currentPath: String?
+
+    /// 任务 F11-7: 标记是否已收到缩略图。
+    /// 工作区图标回调若在此之后返回则跳过覆盖（缩略图优先级更高，避免用工作区图标盖掉缩略图）。
+    /// entry 重新绑定 / prepareForReuse 时复位。
+    private var didReceiveThumbnail: Bool = false
+
     var entry: FileEntry? {
         didSet {
             guard let entry = entry else { return }
             nameLabel.stringValue = entry.name
             pathLabel.stringValue = entry.path
+            // 任务 F11-7: 复位缩略图标志（item 重新绑定文件）
+            didReceiveThumbnail = false
 
             // 设置图标
             if entry.isDirectory {
-                thumbnailImageView.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
-                    ?? NSImage(named: NSImage.folderName)
+                // 任务 F10-9: 目录不加载缩略图，清除路径标记避免旧回调误覆盖目录图标
+                currentPath = nil
+                // 任务 F11-7: 目录图标也走缓存（避免每次都构造 SF Symbol）
+                if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: entry.path, pointSize: 48) {
+                    thumbnailImageView.image = cached
+                } else {
+                    let placeholder = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
+                        ?? NSImage(named: NSImage.folderName)
+                    thumbnailImageView.image = placeholder
+                    ThumbnailManager.shared.fetchWorkspaceIcon(for: entry.path, pointSize: 48) { [weak self] image in
+                        guard let self = self, self.currentPath == nil else { return }
+                        if let image = image { self.thumbnailImageView.image = image }
+                    }
+                }
             } else {
+                // 任务 F10-9: 缩略图复用校验（F8 遗漏修复，v0.6.6）
+                // 1) 取消该 item 上一次的缩略图请求（避免旧请求覆盖新 item）
+                // 2) 更新 currentPath 标记，回调中校验 item 仍显示同一文件
+                // 3) 先显示占位图标，缩略图返回后再替换
+                let path = entry.path
+                if let oldPath = currentPath, oldPath != path {
+                    ThumbnailManager.shared.cancelGeneration(for: oldPath)
+                }
+                currentPath = path
+
+                // 任务 F11-7: 占位图标优先用缓存的工作区图标（比 SF Symbol 更接近最终视觉），
+                // 缓存未命中再用通用 doc 符号，并后台异步获取真实工作区图标作为缩略图返回前的过渡。
+                // 这样即使缩略图生成慢，用户也能快速看到正确的文件类型图标而非通用 doc。
+                let placeholderPointSize: CGFloat = 48
+                if let cachedIcon = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: placeholderPointSize) {
+                    thumbnailImageView.image = cachedIcon
+                } else {
+                    thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
+                        ?? NSImage(named: NSImage.multipleDocumentsName)
+                    // 后台异步获取真实工作区图标作为过渡（缩略图返回前先显示真实类型图标）
+                    ThumbnailManager.shared.fetchWorkspaceIcon(for: path, pointSize: placeholderPointSize) { [weak self] image in
+                        guard let self = self, self.currentPath == path else { return }
+                        if let image = image {
+                            // 缩略图优先级更高：若缩略图已返回则不覆盖
+                            guard !self.didReceiveThumbnail else { return }
+                            self.thumbnailImageView.image = image
+                        }
+                    }
+                }
+
                 // 使用 ThumbnailManager 获取缩略图
-                ThumbnailManager.shared.generateThumbnail(path: entry.path, size: CGSize(width: 96, height: 96)) { [weak self] image in
+                ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 96, height: 96)) { [weak self] image in
+                    guard let self = self else { return }
+                    // 校验 item 仍显示同一文件（用完整路径而非文件名）
+                    guard self.currentPath == path else { return }
+                    // 任务 F11-7: 标记已收到缩略图，阻止后续工作区图标回调覆盖
+                    self.didReceiveThumbnail = true
                     if let image = image {
-                        self?.thumbnailImageView.image = image
+                        self.thumbnailImageView.image = image
                     } else {
-                        self?.thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
+                        self.thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
                             ?? NSImage(named: NSImage.multipleDocumentsName)
                     }
                 }
@@ -41,6 +102,25 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 nameLabel.textColor = NSColor.labelColor
             }
         }
+    }
+
+    /// 任务 F10-9: 复用时取消上一次未完成的缩略图请求并重置标记（F8 遗漏修复，v0.6.6）。
+    /// NSCollectionView 复用 item 前会调用 prepareForReuse，此时若不取消旧请求，
+    /// 旧请求回调可能在新 item 已绑定其他文件后才返回，覆盖新 item 的图标。
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        // 取消上一次未完成的缩略图请求
+        if let oldPath = currentPath {
+            ThumbnailManager.shared.cancelGeneration(for: oldPath)
+        }
+        currentPath = nil
+        // 任务 F11-7: 复位缩略图标志
+        didReceiveThumbnail = false
+        // 重置图标，避免复用瞬间显示上一个文件的缩略图
+        thumbnailImageView.image = nil
+        // 重置选中背景（防止复用 item 残留选中样式）
+        view.layer?.backgroundColor = NSColor.clear.cgColor
+        view.layer?.cornerRadius = 0
     }
 
     override func loadView() {
@@ -83,12 +163,80 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
     override var isSelected: Bool {
         didSet {
-            // 1.8 选中背景 alpha 0.20→0.15，圆角 6pt
+            // 任务 F10-9: 访达风格实心蓝半透明选中（v0.6.6）
+            // alpha 0.15->0.25 增强可见性（问题10），圆角 6->8 与访达网格一致
             view.layer?.backgroundColor = isSelected
-                ? NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+                ? NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
                 : NSColor.clear.cgColor
-            view.layer?.cornerRadius = isSelected ? 6 : 0
+            view.layer?.cornerRadius = isSelected ? 8 : 0
         }
+    }
+}
+
+// MARK: - FFGridSectionHeaderView
+
+/// 任务 F10-8: 网格视图分组标题补充视图。
+/// 仿访达网格视图分组：浅灰背景、小字号标题（分组名 + 数量）。
+private final class FFGridSectionHeaderView: NSView {
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let countLabel = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        titleLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        titleLabel.textColor = NSColor.secondaryLabelColor
+        titleLabel.backgroundColor = .clear
+        titleLabel.isBezeled = false
+        titleLabel.drawsBackground = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(titleLabel)
+
+        // 任务 F11-5: 计数徽章（与列表视图样式一致：次级字号 + 三级标签色，无括号）
+        countLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        countLabel.textColor = NSColor.tertiaryLabelColor
+        countLabel.backgroundColor = .clear
+        countLabel.isBezeled = false
+        countLabel.drawsBackground = false
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(countLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            countLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
+            countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 浅灰背景（次级填充色，仿访达网格分组标题）
+        if #available(macOS 14.0, *) {
+            NSColor.tertiarySystemFill.setFill()
+        } else {
+            NSColor.controlBackgroundColor.withAlphaComponent(0.6).setFill()
+        }
+        dirtyRect.fill()
+        // 任务 F11-5: 底部分隔线（与列表视图分组标题一致）
+        if #available(macOS 14.0, *) {
+            NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        } else {
+            NSColor.gridColor.withAlphaComponent(0.5).setFill()
+        }
+        NSRect(x: 0, y: 0, width: bounds.width, height: 0.5).fill()
+        super.draw(dirtyRect)
+    }
+
+    /// 设置标题文本（分组名 + 数量徽章，与列表视图样式一致）
+    func configure(title: String, count: Int) {
+        titleLabel.stringValue = title
+        countLabel.stringValue = count > 0 ? "\(count)" : ""
     }
 }
 
@@ -111,26 +259,104 @@ public class FileGridView: NSView {
 
     private var lastFilesCount: Int = -1
 
+    // 任务 F10-8: 分组渲染缓存。
+    // - displayEntries: 按分组顺序拼接的所有文件条目（与各 section item 顺序一致）
+    // - sectionKeys: 每个 section 的分组名（与 displayEntries 的 section 切片对应）
+    // - sectionStarts: 每个 section 在 displayEntries 中的起始下标（用于 indexPath -> flatIndex 映射）
+    // groupBy == "none" 时为单 section（无分组标题），displayEntries == viewModel.files 顺序
+    private var displayEntries: [FileEntry] = []
+    private var sectionKeys: [String] = []
+    private var sectionStarts: [Int] = []
+
+    // 任务 F10-8: 上次刷新记录的分组维度（检测变化决定是否刷新）
+    private var currentGroupBy: String = "none"
+    private var currentSortField: SortField = .name
+    private var currentSortAscending: Bool = true
+
+    // 任务 F10-8: reload 期间标志位，防止 restoreSelection -> didSelectItemsAt ->
+    // state.selectedFiles 变更 -> @Published 发射形成循环（与 FileListView.isReloading 对称）
+    private var isReloading: Bool = false
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
             cancellables.removeAll()
             collectionView.dataSource = self
             collectionView.delegate = self
+            // 任务 F10-8: 初始构建分组缓存
+            rebuildDisplayEntries()
             viewModel?.$state
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] state in
-                    // 仅在 files 数量变化时才 reloadData，
-                    // 避免 selectedFiles 变化触发 reload 清空选中
                     guard let self = self else { return }
-                    if self.lastFilesCount != state.files.count {
+                    // 任务 F10-8: files 数量变化 / 分组维度变化 / 排序变化时刷新
+                    let needReload = self.lastFilesCount != state.files.count
+                        || self.currentGroupBy != state.groupBy
+                        || self.currentSortField != state.sortField
+                        || self.currentSortAscending != state.sortAscending
+                    if needReload {
                         self.lastFilesCount = state.files.count
+                        self.currentGroupBy = state.groupBy
+                        self.currentSortField = state.sortField
+                        self.currentSortAscending = state.sortAscending
                         self.reloadData()
                     }
                 }
                 .store(in: &cancellables)
             reloadData()
         }
+    }
+
+    /// 任务 F10-8: 根据 viewModel.groupedFiles 重建分组缓存。
+    /// 将各分组的 entries 按顺序拼接为 displayEntries，并记录每个 section 的起始下标。
+    private func rebuildDisplayEntries() {
+        guard let viewModel = viewModel else {
+            displayEntries = []
+            sectionKeys = []
+            sectionStarts = []
+            return
+        }
+        let groups = viewModel.groupedFiles
+        var entries: [FileEntry] = []
+        var keys: [String] = []
+        var starts: [Int] = []
+        for group in groups {
+            keys.append(group.key)
+            starts.append(entries.count)
+            entries.append(contentsOf: group.entries)
+        }
+        displayEntries = entries
+        sectionKeys = keys
+        sectionStarts = starts
+
+        // 任务 F10-8: groupBy == "none" 时隐藏分组标题（headerReferenceSize = 0），
+        // 避免网格顶部出现 24pt 空白标题条；分组时恢复 24pt 标题高度。
+        if let layout = collectionView?.collectionViewLayout as? NSCollectionViewFlowLayout {
+            let newSize: CGFloat = (viewModel.state.groupBy == "none") ? 0 : 24
+            if layout.headerReferenceSize.height != newSize {
+                layout.headerReferenceSize = NSSize(width: 0, height: newSize)
+                // invalidateLayout 确保 layout 重新计算（headerReferenceSize 变化需失效缓存）
+                layout.invalidateLayout()
+            }
+        }
+    }
+
+    /// 任务 F10-8: indexPath -> displayEntries 中的扁平下标
+    private func flatIndex(for indexPath: IndexPath) -> Int {
+        guard indexPath.section < sectionStarts.count else { return indexPath.item }
+        return sectionStarts[indexPath.section] + indexPath.item
+    }
+
+    /// 任务 F10-8: displayEntries 扁平下标 -> (section, item)
+    private func indexPath(forFlatIndex flatIndex: Int) -> IndexPath {
+        guard !sectionStarts.isEmpty else { return IndexPath(item: flatIndex, section: 0) }
+        // 找到最后一个 sectionStarts[s] <= flatIndex 的 section
+        var section = 0
+        for (s, start) in sectionStarts.enumerated() where start <= flatIndex {
+            section = s
+        }
+        let item = flatIndex - sectionStarts[section]
+        return IndexPath(item: item, section: section)
     }
 
     /// 对侧面板的 ViewModel（由 MainWindowController 在 setupUI 中注入），
@@ -171,7 +397,10 @@ public class FileGridView: NSView {
     }
 
     private func setupUI() {
-        // 透明背景以透出 NSVisualEffectView 玻璃态
+        // 任务 F11-1: 操作区实体背景（v0.6.7）
+        // 此前为透明背景透出 NSVisualEffectView 玻璃态；现改为实体（日间#F5F5F5/夜间#2D2D2D），
+        // 与 MainWindowController.createPaneContainer 的容器实体背景一致，
+        // 实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
@@ -185,16 +414,25 @@ public class FileGridView: NSView {
         scrollView.contentView.drawsBackground = false
         scrollView.contentView.backgroundColor = .clear
 
-        let layout = NSCollectionViewGridLayout()
-        layout.minimumItemSize = NSSize(width: 120, height: 120)
-        layout.maximumItemSize = NSSize(width: 120, height: 120)
+        // 任务 F10-8: 改用 NSCollectionViewFlowLayout 以支持分组 section header（补充视图）。
+        // NSCollectionViewGridLayout 不支持补充视图，无法渲染分组标题。
+        // FlowLayout 横向排列填满一行后换行，与网格视觉效果一致，且支持 headerReferenceSize。
+        let layout = NSCollectionViewFlowLayout()
+        layout.itemSize = NSSize(width: 120, height: 120)
         layout.minimumInteritemSpacing = 8
         layout.minimumLineSpacing = 8
-        layout.margins = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        layout.sectionInset = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        // 分组标题高度（仿访达网格视图分组标题）
+        layout.headerReferenceSize = NSSize(width: 0, height: 24)
 
         collectionView = DraggingCollectionView()
         collectionView.collectionViewLayout = layout
-        collectionView.backgroundColors = [NSColor.clear]
+        // 任务 F11-1: collectionView 实体背景（v0.6.7）
+        // 配合操作区容器实体背景，不再透明。实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
+        let isDark = ThemeManager.shared.resolvedIsDark
+        collectionView.backgroundColors = [isDark
+            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
+            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)]  // #F5F5F5
         collectionView.allowsMultipleSelection = true
         collectionView.allowsEmptySelection = true
         collectionView.isSelectable = true
@@ -203,6 +441,11 @@ public class FileGridView: NSView {
 
         // 注册 item
         collectionView.register(FileGridCollectionViewItem.self, forItemWithIdentifier: NSUserInterfaceItemIdentifier("GridItem"))
+        // 任务 F10-8: 注册分组标题补充视图。
+        // 使用 NSCollectionView.elementKindSectionHeader（Swift 名称，macOS 11+）。
+        collectionView.register(FFGridSectionHeaderView.self,
+                                forSupplementaryViewOfKind: NSCollectionView.elementKindSectionHeader,
+                                withIdentifier: NSUserInterfaceItemIdentifier("GridSectionHeader"))
 
         scrollView.documentView = collectionView
         addSubview(scrollView)
@@ -297,10 +540,11 @@ public class FileGridView: NSView {
         // 改用当前事件的 locationInWindow（窗口坐标），再转换到 collectionView 坐标系。
         guard let event = NSApp.currentEvent else { return nil }
         let point = collectionView.convert(event.locationInWindow, from: nil)
-        guard let indexPath = collectionView.indexPathForItem(at: point),
-              let viewModel = viewModel,
-              indexPath.item < viewModel.files.count else { return nil }
-        return viewModel.files[indexPath.item]
+        guard let indexPath = collectionView.indexPathForItem(at: point) else { return nil }
+        // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
+        let flatIdx = flatIndex(for: indexPath)
+        guard flatIdx < displayEntries.count else { return nil }
+        return displayEntries[flatIdx]
     }
 
     private func getSide() -> String {
@@ -374,10 +618,12 @@ public class FileGridView: NSView {
 
         // 仅单选时触发重命名
         let selectedIndexPaths = collectionView.selectionIndexPaths
-        guard selectedIndexPaths.count == 1, let indexPath = selectedIndexPaths.first,
-              indexPath.item < viewModel.files.count else { return }
+        guard selectedIndexPaths.count == 1, let indexPath = selectedIndexPaths.first else { return }
+        // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
+        let flatIdx = flatIndex(for: indexPath)
+        guard flatIdx < displayEntries.count else { return }
 
-        let entry = viewModel.files[indexPath.item]
+        let entry = displayEntries[flatIdx]
 
         // 获取选中 item 的 nameLabel
         guard let gridItem = collectionView.item(at: indexPath) as? FileGridCollectionViewItem,
@@ -490,10 +736,14 @@ public class FileGridView: NSView {
     }
 
     @objc private func copyToOtherPane(_ sender: Any?) {
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）
+        print("[F10-10] copyToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
         NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide()])
     }
 
     @objc private func moveToOtherPane(_ sender: Any?) {
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）
+        print("[F10-10] moveToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
         NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide()])
     }
 
@@ -578,6 +828,14 @@ public class FileGridView: NSView {
     }
 
     @objc private func generateAITags(_ sender: Any?) {
+        // 任务 F11-11: 复用公共入口（供侧边栏工具面板 AI 工具入口调用，C1）
+        triggerAITagGeneration()
+    }
+
+    /// 任务 F11-11: AI 自动打标签公共入口（C1）。
+    /// 供 MainWindowController 在收到侧边栏工具面板 AI 工具点击通知后调用。
+    /// 优先使用当前选中文件列表，无选中时回退到右键点击的文件；两者皆无则不执行。
+    public func triggerAITagGeneration() {
         // 优先使用选中的文件列表，无选中时回退到右键点击的文件
         var entries = viewModel?.selectedFiles ?? []
         if entries.isEmpty {
@@ -667,27 +925,118 @@ public class FileGridView: NSView {
         // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
         // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
         let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
+        // 任务 F10-10: 入口日志（修复问题15/16 诊断）+ path 空回退提示
+        print("[F10-10] showInfoMenu clicked, clickedEntry=\(clickedEntry?.path ?? "nil"), fallback selectedFirst=\(viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")")
+        // 若无目标路径（既无右键点击项也无选中项），给出提示而非静默无响应
+        if targetPath == nil || (targetPath?.isEmpty ?? true) {
+            let alert = NSAlert()
+            alert.messageText = "显示简介"
+            alert.informativeText = "请先选择一个文件后再查看简介。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
         NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
     }
 
+    // MARK: - Layout
+
+    // 任务 F10-9: 显式同步 appearance，确保选中色解析正确（F7 遗漏修复，v0.6.6）
+    // FileGridView 是 NSView（非 NSViewController），无 viewDidLayout；改用 layout()。
+    // layout() 在布局变更时被频繁调用，appearance 赋值是轻量指针赋值，开销可忽略。
+    // 与 FileListView.layout() 对称实现。
+    public override func layout() {
+        super.layout()
+        collectionView.appearance = NSApp.appearance
+    }
+
+    /// 任务 F10-9: 供外部（MainWindowController 主题监听）显式刷新 appearance（F7 遗漏修复，v0.6.6）
+    /// 任务 F11-1: 同时刷新 collectionView 实体背景色（日间/夜间切换，v0.6.7）
+    /// 与 FileListView.refreshAppearance() 对称实现。
+    public func refreshAppearance() {
+        collectionView.appearance = NSApp.appearance
+        // 任务 F11-1: 主题切换时同步刷新 collectionView 实体背景色
+        let isDark = ThemeManager.shared.resolvedIsDark
+        collectionView.backgroundColors = [isDark
+            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
+            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)]  // #F5F5F5
+    }
+
     public func reloadData() {
+        // 任务 F10-8: 重建分组缓存后 reload，并恢复选中
+        rebuildDisplayEntries()
+        isReloading = true
         collectionView?.reloadData()
+        // 任务 F10-8: 分组渲染后恢复选中（基于 viewModel.state.selectedFiles 的路径）
+        restoreSelectionFromViewModel()
+        DispatchQueue.main.async { [weak self] in
+            self?.isReloading = false
+        }
+    }
+
+    /// 任务 F10-8: 根据 viewModel.state.selectedFiles 恢复 collectionView 选中。
+    /// 分组后 indexPath.item 不再等于 viewModel.files 下标，需通过 displayEntries 路径匹配。
+    private func restoreSelectionFromViewModel() {
+        guard let viewModel = viewModel, !viewModel.state.selectedFiles.isEmpty else { return }
+        let selectedPaths = Set(viewModel.state.selectedFiles.map { $0.path })
+        var indexPaths: Set<IndexPath> = []
+        for (flatIdx, entry) in displayEntries.enumerated() where selectedPaths.contains(entry.path) {
+            indexPaths.insert(indexPath(forFlatIndex: flatIdx))
+        }
+        if !indexPaths.isEmpty {
+            collectionView?.selectItems(at: indexPaths, scrollPosition: [])
+        }
     }
 }
 
 // MARK: - NSCollectionViewDataSource
 
 extension FileGridView: NSCollectionViewDataSource {
+    // 任务 F10-8: 分组渲染 - 多 section
+    public func numberOfSections(in collectionView: NSCollectionView) -> Int {
+        return sectionKeys.count
+    }
+
     public func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
-        return viewModel?.files.count ?? 0
+        guard section < sectionStarts.count else { return 0 }
+        // 本 section item 数 = 下一个 section 起始 - 本 section 起始（最后一个 section 用 displayEntries.count）
+        let start = sectionStarts[section]
+        let end = section + 1 < sectionStarts.count ? sectionStarts[section + 1] : displayEntries.count
+        return end - start
     }
 
     public func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
         let item = collectionView.makeItem(withIdentifier: NSUserInterfaceItemIdentifier("GridItem"), for: indexPath) as! FileGridCollectionViewItem
-        if let viewModel = viewModel, indexPath.item < viewModel.files.count {
-            item.entry = viewModel.files[indexPath.item]
+        // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
+        let flatIdx = flatIndex(for: indexPath)
+        if flatIdx < displayEntries.count {
+            item.entry = displayEntries[flatIdx]
         }
         return item
+    }
+
+    // 任务 F10-8: 分组标题补充视图
+    public func collectionView(_ collectionView: NSCollectionView,
+                               viewForSupplementaryElementOfKind kind: NSCollectionView.SupplementaryElementKind,
+                               at indexPath: IndexPath) -> NSView {
+        // 使用 NSCollectionView.elementKindSectionHeader（Swift 名称）
+        guard kind == NSCollectionView.elementKindSectionHeader,
+              let header = collectionView.makeSupplementaryView(ofKind: kind,
+                                                                withIdentifier: NSUserInterfaceItemIdentifier("GridSectionHeader"),
+                                                                for: indexPath) as? FFGridSectionHeaderView else {
+            return NSView()
+        }
+        let section = indexPath.section
+        let title = section < sectionKeys.count ? sectionKeys[section] : ""
+        let count = self.collectionView(collectionView, numberOfItemsInSection: section)
+        // groupBy == "none" 时隐藏标题（返回空内容，但视图仍存在以满足 FlowLayout）
+        if viewModel?.state.groupBy == "none" {
+            header.configure(title: "", count: 0)
+        } else {
+            header.configure(title: title, count: count)
+        }
+        return header
     }
 }
 
@@ -696,16 +1045,20 @@ extension FileGridView: NSCollectionViewDataSource {
 extension FileGridView: NSCollectionViewDelegate {
     public func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
         guard let viewModel = viewModel else { return }
+        // 任务 F10-8: reload 期间触发的选择回调应忽略（避免与 restoreSelection 形成循环）
+        if isReloading { return }
         // 点击 item 时激活当前面板（与 FileListView 一致）
         onActivatePane?()
         // Bug 1 修复：使用 collectionView.selectionIndexPaths 获取所有当前选中项
         // （indexPaths 参数仅包含本次新选中的项，不能代表完整选择状态）
         // 同时同步更新 viewModel.state.selectedFiles，否则选中状态不生效
+        // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
         let selectedIndexPaths = collectionView.selectionIndexPaths
         var selected: [FileEntry] = []
         for indexPath in selectedIndexPaths {
-            if indexPath.item < viewModel.files.count {
-                selected.append(viewModel.files[indexPath.item])
+            let flatIdx = flatIndex(for: indexPath)
+            if flatIdx < displayEntries.count {
+                selected.append(displayEntries[flatIdx])
             }
         }
         viewModel.state.selectedFiles = selected
@@ -713,13 +1066,17 @@ extension FileGridView: NSCollectionViewDelegate {
     }
 
     public func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) {
+        // 任务 F10-8: reload 期间触发的选择回调应忽略
+        if isReloading { return }
         // 更新选择状态
         guard let viewModel = viewModel else { return }
         let selectedIndexPaths = collectionView.selectionIndexPaths
         var selected: [FileEntry] = []
         for indexPath in selectedIndexPaths {
-            if indexPath.item < viewModel.files.count {
-                selected.append(viewModel.files[indexPath.item])
+            // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
+            let flatIdx = flatIndex(for: indexPath)
+            if flatIdx < displayEntries.count {
+                selected.append(displayEntries[flatIdx])
             }
         }
         // Bug 1 修复：同步更新 viewModel.state.selectedFiles
@@ -728,8 +1085,10 @@ extension FileGridView: NSCollectionViewDelegate {
     }
 
     public func collectionView(_ collectionView: NSCollectionView, doubleClickItemAt indexPath: IndexPath) {
-        guard let viewModel = viewModel, indexPath.item < viewModel.files.count else { return }
-        onDoubleClick?(viewModel.files[indexPath.item])
+        // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
+        let flatIdx = flatIndex(for: indexPath)
+        guard flatIdx < displayEntries.count else { return }
+        onDoubleClick?(displayEntries[flatIdx])
     }
 
     // MARK: - Drag Source（拖出文件）
@@ -741,8 +1100,10 @@ extension FileGridView: NSCollectionViewDelegate {
     /// 为每个被拖拽的 item 提供 pasteboard writer（文件 URL）
     /// NSCollectionView 会对所有选中项调用此方法，从而发送选中文件的完整路径数组
     public func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
-        guard let viewModel = viewModel, indexPath.item < viewModel.files.count else { return nil }
-        let entry = viewModel.files[indexPath.item]
+        // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
+        let flatIdx = flatIndex(for: indexPath)
+        guard flatIdx < displayEntries.count else { return nil }
+        let entry = displayEntries[flatIdx]
         return NSURL(fileURLWithPath: entry.path)
     }
 
@@ -812,6 +1173,12 @@ extension FileGridView: NSMenuDelegate {
         if let moveItem = menu.items.first(where: { $0.title == "移动到另一面板" }) {
             moveItem.image = NSImage(systemSymbolName: isLeftPane ? "arrow.right" : "arrow.left",
                                      accessibilityDescription: "移动到另一面板")
+        }
+
+        // 任务 F10-10: "在对侧面板打开"仅当右键点击项为文件夹时显示（修复问题13）
+        // 文件无此操作意义（文件无法被"打开"为目录导航目标）
+        if let openOtherItem = menu.items.first(where: { $0.title == "在对侧面板打开" }) {
+            openOtherItem.isHidden = !(clickedEntry?.isDirectory ?? false)
         }
     }
 }
