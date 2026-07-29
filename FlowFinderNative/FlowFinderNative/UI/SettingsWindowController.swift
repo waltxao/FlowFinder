@@ -2,12 +2,8 @@ import Cocoa
 
 // MARK: - OpaqueContainerView（设置窗口专用）
 
-/// 重写 isOpaque 返回 true 的 NSView 子类（与 MainWindowController 同架构）。
-/// 任务 F11-2: 窗口级实体背景（v0.6.7），移除透明玻璃架构。
-/// 让窗口服务器捕获鼠标事件，背景色由 layer.backgroundColor 提供。
-private class SettingsOpaqueContainerView: NSView {
-    override var isOpaque: Bool { return true }
-}
+// FFOpaqueContainerView 已提取到 FFCommon.swift（统一实体背景容器）
+// 原 SettingsOpaqueContainerView 已由 FFOpaqueContainerView 替代
 
 // MARK: - SolidSidebarContainer（设置窗口侧边栏实体背景容器）
 
@@ -165,17 +161,24 @@ public class SettingsWindowController: NSWindowController {
         ])
 
         // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
-        // SettingsOpaqueContainerView 重写 isOpaque=true，背景色由 layer 提供。
-        let containerView = SettingsOpaqueContainerView()
+        // FFOpaqueContainerView 重写 isOpaque=true，背景色由 layer 提供。
+        let containerView = FFOpaqueContainerView()
         containerView.wantsLayer = true
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        // 窗口使用 .fullSizeContentView + titlebarAppearsTransparent=true，
+        // FFOpaqueContainerView 的 isOpaque=true 会导致 safeAreaLayoutGuide 不提供正确的顶部 inset。
+        // 手动补充 28pt 顶部安全区域，确保内容不被红绿灯/标题栏遮挡。
+        containerView.additionalSafeAreaInsets = NSEdgeInsets(top: 28, left: 0, bottom: 0, right: 0)
 
         containerView.addSubview(mainContainer)
         NSLayoutConstraint.activate([
             mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
+            // 修复：窗口使用 .fullSizeContentView + titlebarAppearsTransparent=true，
+            // 内容从 y=0 开始会被标题栏/红绿灯区域遮挡。改用 safeAreaLayoutGuide
+            // 让主容器从标题栏下方开始，避免侧边栏与内容区被遮挡。
+            mainContainer.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
             mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
         ])
 
@@ -323,6 +326,15 @@ public class SettingsWindowController: NSWindowController {
     private func buildFileManageSection() -> NSView {
         let container = makeScrollContainer()
 
+        // Bug #16 修复：原页面三行开关均为禁用态（setDisabled 会把标题/描述置为 tertiaryLabelColor，
+        // 对比度极低），视觉上近似空白。新增可见的页面说明标签（secondaryLabelColor）确保页面有清晰可读内容，
+        // 并将占位提示提亮为 secondaryLabelColor。布局结构与已验证可用的 buildGeneralSection 一致，
+        // 故不额外添加宽度约束以免与 constrainStackInScroll 的宽度约束冲突。
+        let pageDescLabel = NSTextField(labelWithString: "配置文件排序与显示行为（标注项即将支持）")
+        pageDescLabel.font = NSFont.systemFont(ofSize: 12)
+        pageDescLabel.textColor = NSColor.secondaryLabelColor
+        pageDescLabel.translatesAutoresizingMaskIntoConstraints = false
+
         let section = SettingsSectionView(title: "文件管理")
         section.addRow(.toggleRow(title: "智能排序", desc: "文件夹自动置顶", state: true, action: nil).also { $0.setDisabled() })
         section.addRow(.toggleRow(title: "显示文件扩展名", state: true, action: nil).also { $0.setDisabled() })
@@ -330,10 +342,10 @@ public class SettingsWindowController: NSWindowController {
 
         let placeholder = NSTextField(labelWithString: "更多文件管理选项即将支持")
         placeholder.font = NSFont.systemFont(ofSize: 11)
-        placeholder.textColor = NSColor.tertiaryLabelColor
+        placeholder.textColor = NSColor.secondaryLabelColor
         placeholder.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [section, placeholder])
+        let stack = NSStackView(views: [pageDescLabel, section, placeholder])
         stack.orientation = .vertical
         stack.spacing = 16
         stack.detachesHiddenViews = false
@@ -358,7 +370,10 @@ public class SettingsWindowController: NSWindowController {
             smbPanel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             smbPanel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             smbPanel.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
-            smbPanel.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -20),
+            // Bug #15 修复：lessThanOrEqualTo 不会撑满高度，面板高度不确定而塌缩。
+            // 改为 equalTo，使 SMBManagerPanel 填满容器高度；
+            // 面板内部 scrollView 依据 bottom→addButton.top→addButton.bottom→panel.bottom 链获得确定高度。
+            smbPanel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
         ])
         return container
     }
@@ -366,17 +381,24 @@ public class SettingsWindowController: NSWindowController {
     // MARK: - 内容构建：快捷键
 
     private func buildShortcutsSection() -> NSView {
-        let container = makeScrollContainer()
+        // Bug #14 修复：原实现用 makeScrollContainer（外层 scrollView）套内层 scrollView，
+        // 内层 scrollView 无高度约束且置于垂直 NSStackView 中，导致 tableView 塌缩为 0 高度。
+        // 改为普通 NSView 容器：标题固定顶部，内层 scrollView 撑满剩余高度，
+        // 既避免嵌套滚动，又通过 scrollView.bottom == container.bottom 闭合高度链。
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
 
         let titleLabel = NSTextField(labelWithString: "键盘快捷键")
         titleLabel.font = NSFont.boldSystemFont(ofSize: 15)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(titleLabel)
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.drawsBackground = false
+        container.addSubview(scrollView)
 
         let tableView = NSTableView()
         tableView.allowsMultipleSelection = false
@@ -409,16 +431,17 @@ public class SettingsWindowController: NSWindowController {
         tableView.delegate = dataSource
         scrollView.documentView = tableView
 
-        let section = SettingsSectionView(title: "快捷键")
-        // 将 tableView 嵌入 section 内需要直接作为行控件，这里简化为独立布局
-        let stack = NSStackView(views: [titleLabel, scrollView])
-        stack.orientation = .vertical
-        stack.spacing = 12
-        stack.detachesHiddenViews = false
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.documentView = stack
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+            titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            titleLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
 
-        constrainStackInScroll(stack, in: container)
+            scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
+        ])
+
         return container
     }
 

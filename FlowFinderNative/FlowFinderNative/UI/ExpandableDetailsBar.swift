@@ -21,9 +21,12 @@ class ExpandableDetailsBar: NSView {
 
     // MARK: - Constants
 
-    /// 1.6 收起态高度 28→36pt
-    private let collapsedHeight: CGFloat = 36
-    private let expandedHeight: CGFloat = 120
+    /// 收起态高度 36pt + 状态栏 18pt = 54pt
+    private let collapsedHeight: CGFloat = 54
+    /// 展开态高度 120pt + 状态栏 18pt = 138pt
+    private let expandedHeight: CGFloat = 138
+    /// 状态栏高度
+    private let statusBarHeight: CGFloat = 18
 
     // MARK: - State
 
@@ -71,6 +74,9 @@ class ExpandableDetailsBar: NSView {
     /// 点击选中时 refresh() -> setRealFileIcon 会异步获取图标，用户快速切换选中项时
     /// 需校验回调返回时仍显示同一文件，否则会闪烁/显示错误图标。
     private var iconLoadPath: String?
+
+    /// 问题7: 状态栏标签（项目数 + 磁盘可用空间），由 updateStatus(itemCount:diskFree:) 更新
+    private var statusLabel: NSTextField?
 
     // MARK: - Init
 
@@ -202,11 +208,11 @@ class ExpandableDetailsBar: NSView {
             chevronButton.widthAnchor.constraint(equalToConstant: 20),
             chevronButton.heightAnchor.constraint(equalToConstant: 20),
 
-            // compact 填充整个 bar（设计稿：单行布局，36pt 高）
+            // compact 填充 bar 顶部区域，底部留出 statusBarHeight 给状态栏
             compactView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             compactView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             compactView.topAnchor.constraint(equalTo: topAnchor),
-            compactView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            compactView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -statusBarHeight),
 
             // 收起态图标 32x32，垂直居中
             smallIconView.leadingAnchor.constraint(equalTo: compactView.leadingAnchor),
@@ -227,6 +233,7 @@ class ExpandableDetailsBar: NSView {
             expandedView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             expandedView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             expandedView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            expandedView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -statusBarHeight),
 
             bigIconView.leadingAnchor.constraint(equalTo: expandedView.leadingAnchor),
             bigIconView.topAnchor.constraint(equalTo: expandedView.topAnchor),
@@ -333,6 +340,34 @@ class ExpandableDetailsBar: NSView {
         refresh()
     }
 
+    /// 问题7: 更新状态栏文字（项目数 + 磁盘可用空间）
+    /// - Parameters:
+    ///   - itemCount: 当前文件夹的项目数
+    ///   - diskFree: 磁盘可用空间描述（如 "42.8 GB 可用"），为 nil 时仅显示项目数
+    func updateStatus(itemCount: Int, diskFree: String? = nil) {
+        if statusLabel == nil {
+            let label = NSTextField(labelWithString: "")
+            label.font = NSFont.systemFont(ofSize: 11)
+            label.textColor = NSColor.secondaryLabelColor
+            label.alignment = .left
+            label.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(label)
+            // 状态栏位于 bar 底部独立区域，与上方详情内容不重叠
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+                label.heightAnchor.constraint(equalToConstant: statusBarHeight),
+            ])
+            statusLabel = label
+        }
+        var text = "\(itemCount) 项"
+        if let diskFree = diskFree {
+            text += "    \(diskFree)"
+        }
+        statusLabel?.stringValue = text
+    }
+
     // MARK: - Toggle
 
     @objc private func toggleExpanded() {
@@ -393,8 +428,8 @@ class ExpandableDetailsBar: NSView {
         } else {
             compactNameField.stringValue = "未选择文件"
             compactSubField?.stringValue = ""
-            // 任务 F11-6: 空白文件夹占位图标（灰色 tertiaryLabelColor，问题10）
-            setPlaceholderIcon(symbol: "folder")
+            // 问题6: 使用更精致的 tray.full.fill 填充图标替代简陋的 outline 图标
+            setPlaceholderIcon(symbol: "tray.full.fill")
         }
 
         // expanded 字段：种类 / 大小 / 位置 / 创建 / 修改 / 标签
@@ -434,11 +469,17 @@ class ExpandableDetailsBar: NSView {
     /// SF Symbol 默认为模板图像，通过 contentTintColor 染为灰色（tertiaryLabelColor）
     /// - Parameter symbol: SF Symbol 名称（如 "folder" / "doc.on.doc"）
     private func setPlaceholderIcon(symbol: String) {
+        // 问题6: 使用 SymbolConfiguration 让小图标(24pt)与大图标(36pt light)视觉更协调分明
+        let config = NSImage.SymbolConfiguration(pointSize: 24, weight: .regular)
+        let bigConfig = NSImage.SymbolConfiguration(pointSize: 36, weight: .light)
+
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        smallIconView.image = image
-        bigIconView.image = image
-        // 灰色占位：tertiaryLabelColor（与"未选择文件"等占位文本视觉一致）
-        let tintColor = NSColor.tertiaryLabelColor
+        smallIconView.image = image?.withSymbolConfiguration(config)
+        bigIconView.image = image?.withSymbolConfiguration(bigConfig)
+
+        // 占位图标使用次级标签色（tertiaryLabelColor），与"未选择文件"等占位文本视觉一致
+        // 问题6: 改用 systemBlue 色 0.6 透明度，比纯灰色更有视觉层次
+        let tintColor = NSColor.systemBlue.withAlphaComponent(0.5)
         smallIconView.contentTintColor = tintColor
         bigIconView.contentTintColor = tintColor
     }

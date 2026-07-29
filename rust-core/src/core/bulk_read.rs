@@ -99,6 +99,14 @@ mod native {
     #[repr(C, align(8))]
     struct AlignedBuffer([u8; BUF_SIZE]);
 
+    // P0-2 修复：使用 FdGuard RAII 保护 fd，确保 panic 时 fd 被自动 close。
+    struct FdGuard(libc::c_int);
+    impl Drop for FdGuard {
+        fn drop(&mut self) {
+            unsafe { libc::close(self.0); }
+        }
+    }
+
     pub fn list_dir_bulk_native(dir_path: &str) -> io::Result<Vec<super::BulkEntry>> {
         let c_path = CString::new(dir_path).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL byte")
@@ -107,9 +115,9 @@ mod native {
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
-        let result = list_dir_bulk_fd(fd, dir_path);
-        unsafe { libc::close(fd) };
-        result
+        // fd 由 FdGuard 管理，panic 时也会自动 close
+        let guard = FdGuard(fd);
+        list_dir_bulk_fd(guard.0, dir_path)
     }
 
     fn list_dir_bulk_fd(fd: libc::c_int, dir_path: &str) -> io::Result<Vec<super::BulkEntry>> {

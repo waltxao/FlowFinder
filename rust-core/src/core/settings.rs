@@ -1,6 +1,6 @@
-//! Settings management with macOS native plist storage.
+//! Settings management with JSON file storage.
 //!
-//! Settings are stored in ~/Library/Preferences/com.flowfinder.native.plist
+//! Settings are stored in ~/Library/Preferences/com.flowfinder.native.json
 //! and organized into categories: General, Appearance, Shortcuts, Advanced.
 
 use std::ffi::{CStr, CString};
@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const PLIST_NAME: &str = "com.flowfinder.native.plist";
+// P2-18 修复：文件内容为 JSON，扩展名改为 .json 以保持一致
+const PLIST_NAME: &str = "com.flowfinder.native.json";
 
 // ── Error codes ─────────────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import os.log
 
 /// 任务调度管理器：单例轮询 CoreBridge.listTasks() 更新进度
 public final class TaskSchedulerManager: ObservableObject {
@@ -66,7 +67,7 @@ public final class TaskSchedulerManager: ObservableObject {
             try CoreBridge.shared.cancelTask(taskId: taskId)
             refreshTasks()
         } catch {
-            print("TaskSchedulerManager: 取消任务失败: \(error.localizedDescription)")
+            FFLog.error("TaskSchedulerManager: 取消任务失败: \(error.localizedDescription)", log: FFLog.task)
         }
     }
 

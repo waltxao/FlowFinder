@@ -6,9 +6,11 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+use parking_lot::Mutex;
 
 /// Callback type for FSEvents notifications.
 /// Arguments: (path, user_data)
@@ -29,8 +31,9 @@ struct FSEventsState {
     join_handle: Option<JoinHandle<()>>,
 }
 
-unsafe impl Send for FSEventsState {}
-unsafe impl Sync for FSEventsState {}
+// P2-9 修复：删除不必要的 unsafe impl Send/Sync。
+// FSEventsState 自动满足 Send（Arc<AtomicBool> 和 Option<JoinHandle> 均为 Send）。
+// Sync 不需要手动实现——Mutex<Option<FSEventsState>> 的 Sync 仅要求 T: Send。
 
 static FSEVENTS_STATE: Mutex<Option<FSEventsState>> = Mutex::new(None);
 
@@ -85,12 +88,13 @@ pub fn start(path: &str, callback: FSEventCallback, user_data: *mut c_void) -> i
         // explicit and avoid "unused variable" warnings getting promoted
         // to errors in stricter builds.
         let _ = (callback, user_data_addr, worker_path);
-        while !worker_flag.load(Ordering::Relaxed) {
+        // P2-20 修复：使用 Acquire 读取 stop_flag，确保看到 store(Release) 的写入
+        while !worker_flag.load(Ordering::Acquire) {
             thread::sleep(Duration::from_secs(1));
         }
     });
 
-    let mut global = FSEVENTS_STATE.lock().unwrap();
+    let mut global = FSEVENTS_STATE.lock();
     *global = Some(FSEventsState {
         stop_flag,
         join_handle: Some(join_handle),
@@ -102,10 +106,11 @@ pub fn start(path: &str, callback: FSEventCallback, user_data: *mut c_void) -> i
 /// Internal helper: stop and join the current watcher (if any) without
 /// touching the global lock's contents beyond replacing it with `None`.
 fn stop_internal() {
-    let mut global = FSEVENTS_STATE.lock().unwrap();
+    let mut global = FSEVENTS_STATE.lock();
     if let Some(mut state) = global.take() {
         // Signal the worker to exit its polling loop.
-        state.stop_flag.store(true, Ordering::Relaxed);
+        // P2-20 修复：使用 Release 存储 stop_flag，确保 load(Acquire) 能看到写入
+        state.stop_flag.store(true, Ordering::Release);
         // Block until the worker has actually exited, reclaiming its
         // stack and OS thread resources. A real FSEvents implementation
         // would additionally `CFRunLoopStop()` here; the placeholder
@@ -124,7 +129,6 @@ fn stop_internal() {
 pub fn stop() -> i32 {
     let was_running = FSEVENTS_STATE
         .lock()
-        .unwrap()
         .is_some();
     stop_internal();
     if was_running { 0 } else { -1 }

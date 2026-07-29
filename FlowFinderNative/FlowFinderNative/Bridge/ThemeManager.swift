@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import os.log
 
 /// 外观模式枚举（任务 F11-3: 恢复三态 light/dark/system，修正 v0.6.5 T2 错误移除）
 public enum AppearanceMode: Int, CaseIterable {
@@ -212,7 +213,7 @@ public final class ThemeManager: ObservableObject {
         do {
             try CoreBridge.shared.setSetting(key: settingsKey, value: String(mode.rawValue))
         } catch {
-            print("ThemeManager: 保存主题到 Rust 失败: \(error.localizedDescription)")
+            FFLog.error("ThemeManager: 保存主题到 Rust 失败: \(error.localizedDescription)", log: FFLog.theme)
         }
     }
 }

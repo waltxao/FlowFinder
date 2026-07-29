@@ -373,7 +373,8 @@ public final class CoreBridge {
         // C strings we allocated are safe to free immediately after the call.
         let _ = path.withCString { cPath in
             refs.withUnsafeBufferPointer { buffer in
-                ff_cache_put(cPath, buffer.baseAddress!, refs.count)
+                guard let baseAddress = buffer.baseAddress else { return }
+                ff_cache_put(cPath, baseAddress, refs.count)
             }
         }
 
@@ -608,7 +609,8 @@ public final class CoreBridge {
 
             let result = dstDir.withCString { cDstDir in
                 cStringPtrs.withUnsafeBufferPointer { buffer in
-                    buffer.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
+                    guard let baseAddress = buffer.baseAddress else { return Int32(0) }
+                    return baseAddress.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
                         ff_parallel_copy(
                             reboundPtr,
                             cStringPtrs.count,
@@ -669,7 +671,8 @@ public final class CoreBridge {
 
             let result = dstDir.withCString { cDstDir in
                 cStringPtrs.withUnsafeBufferPointer { buffer in
-                    buffer.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
+                    guard let baseAddress = buffer.baseAddress else { return Int32(0) }
+                    return baseAddress.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
                         ff_parallel_move(
                             reboundPtr,
                             cStringPtrs.count,
@@ -730,7 +733,8 @@ public final class CoreBridge {
             defer { semaphore.signal() }
 
             let result = cStringPtrs.withUnsafeBufferPointer { buffer in
-                buffer.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
+                guard let baseAddress = buffer.baseAddress else { return Int32(0) }
+                return baseAddress.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
                     ff_parallel_delete(
                         reboundPtr,
                         cStringPtrs.count,
@@ -1066,7 +1070,8 @@ public final class CoreBridge {
             defer { semaphore.signal() }
 
             let result = cItems.withUnsafeBufferPointer { buffer in
-                ff_batch_rename(buffer.baseAddress!, cItems.count)
+                guard let baseAddress = buffer.baseAddress else { return Int32(0) }
+                return ff_batch_rename(baseAddress, cItems.count)
             }
             ffiResult = result
         }

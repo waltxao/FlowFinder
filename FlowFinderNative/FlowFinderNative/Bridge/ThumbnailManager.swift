@@ -1,6 +1,7 @@
 import Foundation
 import QuickLookThumbnailing
 import AppKit
+import os.log
 
 /// 缩略图管理器：QLThumbnailGenerator 异步生成 + NSCache LRU + 磁盘缓存
 public final class ThumbnailManager {
@@ -91,7 +92,7 @@ public final class ThumbnailManager {
             }
 
             // 任务 F8: 调试日志（v0.6.5）
-            print("[Thumb] 请求生成: \(path) size=\(size)")
+            FFLog.debug("[Thumb] 请求生成: \(path) size=\(size)", log: FFLog.thumbnail)
 
             // 3. 异步生成（QLThumbnailGenerator 本身异步，但请求构建移到后台）
             let scale = NSScreen.main?.backingScaleFactor ?? 2.0
@@ -117,7 +118,7 @@ public final class ThumbnailManager {
                 self?.lock.unlock()
 
                 if let error = error {
-                    print("[Thumb] 生成失败: \(path) - \(error.localizedDescription)")
+                    FFLog.error("[Thumb] 生成失败: \(path) - \(error.localizedDescription)", log: FFLog.thumbnail)
                     DispatchQueue.main.async { completion(nil) }
                     return
                 }
@@ -135,7 +136,7 @@ public final class ThumbnailManager {
                     cgImage: thumbnail.cgImage,
                     size: size  // 用请求的 point size，非 cgImage 像素尺寸
                 )
-                print("[Thumb] 生成成功: \(path) \(thumbnail.cgImage.width)x\(thumbnail.cgImage.height)")
+                FFLog.debug("[Thumb] 生成成功: \(path) \(thumbnail.cgImage.width)x\(thumbnail.cgImage.height)", log: FFLog.thumbnail)
 
                 // 写入缓存
                 self?.memoryCache.setObject(image, forKey: cacheKey)

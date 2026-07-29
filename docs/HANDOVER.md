@@ -246,7 +246,7 @@ gh release create v0.6.7 \
 
 ### 7.6 GitHub Token 警告
 
-旧 token `[REDACTED_TOKEN]` 已暴露在对话历史中，**建议立即撤销并重新生成**。
+旧 token 已暴露在对话历史中，**建议立即撤销并重新生成**。
 
 ---
 

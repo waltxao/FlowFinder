@@ -9,7 +9,7 @@ enum SidebarSection: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .favorites: return "收藏夹"
+        case .favorites: return "我的收藏"
         case .tags: return "标签"
         case .devices: return "存储设备"
         }

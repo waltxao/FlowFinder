@@ -32,6 +32,19 @@ struct DeviceExtendedInfo {
     let freeSize: UInt64
 }
 
+// MARK: - FFFNoDisclosureOutlineView
+
+/// 隐藏系统 disclosure triangle 的 NSOutlineView 子类
+/// 任务修复：收藏夹折叠箭头必须完全隐藏（问题1）
+/// 系统 NSOutlineView 会自动绘制展开三角形（disclosure triangle），
+/// 仅隐藏 cell 内部自定义 imageView 无效，需重写 frameOfOutlineCell 返回零矩形，
+/// 使系统在布局时不为 disclosure triangle 分配空间，从而完全不绘制。
+private class FFFNoDisclosureOutlineView: NSOutlineView {
+    override func frameOfOutlineCell(atRow row: Int) -> NSRect {
+        return .zero  // 返回零矩形，系统不绘制展开三角形
+    }
+}
+
 // MARK: - SidebarView
 
 class SidebarView: NSView {
@@ -47,12 +60,17 @@ class SidebarView: NSView {
 
     private var favoritesOutlineView: NSOutlineView!
     private var favoritesScrollView: NSScrollView!
-    /// 1.5 收藏夹区域背景（v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质，移除 FFGlassView 卡片）
-    private var favoritesMaskView: NSVisualEffectView!
-    /// 1.5 标签区域背景（v0.6.5 任务 F4：改用 NSVisualEffectView .sidebar 材质）
-    private var tagsMaskView: NSVisualEffectView!
+    /// 白色圆角卡片容器（设计稿：标题外置 + 白色圆角卡片包裹内容）
+    private var favoritesMaskView: NSView!
+    /// 白色圆角卡片容器
+    private var tagsMaskView: NSView!
     /// 任务 F10-5: 标签视图（垂直纵向排列：圆点 + 完整标签名，每行一个）（v0.6.6）
     private var tagFlowView: TagFlowView!
+    /// 外置标题（卡片上方灰色小字，设计稿风格）
+    private var favoritesTitleLabel: NSTextField!
+    private var tagsTitleLabel: NSTextField!
+    /// 标签标题旁"+"按钮（从 TagFlowView 内部移出至外置标题行）
+    private var tagsAddButton: NSButton!
     private let favoritesDataSource = FavoritesSidebarDataSource()
     private let tagsDataSource = TagsSidebarDataSource()
     private var favoritesHeightConstraint: NSLayoutConstraint!
@@ -126,21 +144,30 @@ class SidebarView: NSView {
             appNameLabel.centerYAnchor.constraint(equalTo: brandView.centerYAnchor),
         ])
 
-        // 任务 F4: 收藏夹仿访达 - 直接使用 NSVisualEffectView(.sidebar) 材质（v0.6.5）
-        // 移除 FFGlassView 圆角卡片包裹，改为访达侧边栏标准材质
-        favoritesMaskView = NSVisualEffectView()
-        favoritesMaskView.material = .sidebar
-        favoritesMaskView.blendingMode = .behindWindow
-        favoritesMaskView.state = .active
-        favoritesMaskView.translatesAutoresizingMaskIntoConstraints = false
+        // 设计稿：白色圆角卡片包裹收藏夹内容，标题外置在卡片上方
+        favoritesMaskView = makeCardView()
         addSubview(favoritesMaskView)
 
-        tagsMaskView = NSVisualEffectView()
-        tagsMaskView.material = .sidebar
-        tagsMaskView.blendingMode = .behindWindow
-        tagsMaskView.state = .active
-        tagsMaskView.translatesAutoresizingMaskIntoConstraints = false
+        favoritesTitleLabel = makeSectionTitleLabel("我的收藏")
+        addSubview(favoritesTitleLabel)
+
+        // 白色圆角卡片包裹标签内容
+        tagsMaskView = makeCardView()
         addSubview(tagsMaskView)
+
+        tagsTitleLabel = makeSectionTitleLabel("标签")
+        addSubview(tagsTitleLabel)
+
+        tagsAddButton = NSButton()
+        tagsAddButton.bezelStyle = .inline
+        tagsAddButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "添加标签")
+        tagsAddButton.imagePosition = .imageOnly
+        tagsAddButton.isBordered = false
+        tagsAddButton.contentTintColor = NSColor.secondaryLabelColor
+        tagsAddButton.target = self
+        tagsAddButton.action = #selector(showCreateTagDialog)
+        tagsAddButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tagsAddButton)
 
         // 任务 F10-3: 设备区域已移出侧边栏，改为 MainWindowController 的浮动浮层（v0.6.6）
         // 故 deviceMaskView 不再在此创建
@@ -269,57 +296,92 @@ class SidebarView: NSView {
         toolPanelHeightConstraint.priority = .required
 
         NSLayoutConstraint.activate([
-            // 任务 R3: 收藏夹遮罩区域 - 从 brandView 下方开始
-            favoritesMaskView.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: padding),
+            // 收藏夹外置标题（卡片上方灰色小字，紧跟 brandView 下方）
+            favoritesTitleLabel.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: padding),
+            favoritesTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding + 4),
+            favoritesTitleLabel.heightAnchor.constraint(equalToConstant: 16),
+
+            // 收藏夹白色圆角卡片（标题下方 6pt）
+            favoritesMaskView.topAnchor.constraint(equalTo: favoritesTitleLabel.bottomAnchor, constant: 6),
             favoritesMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             favoritesMaskView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             favoritesHeightConstraint,
 
-            // B8: 标签遮罩区域 - 紧跟收藏夹下方，高度由 tagsHeightConstraint 控制
-            tagsMaskView.topAnchor.constraint(equalTo: favoritesMaskView.bottomAnchor, constant: padding),
+            // 标签外置标题（收藏夹卡片下方 20pt 区块间距）
+            tagsTitleLabel.topAnchor.constraint(equalTo: favoritesMaskView.bottomAnchor, constant: 20),
+            tagsTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding + 4),
+            tagsTitleLabel.heightAnchor.constraint(equalToConstant: 16),
+
+            // "+" 按钮与标签标题同行右侧
+            tagsAddButton.centerYAnchor.constraint(equalTo: tagsTitleLabel.centerYAnchor),
+            tagsAddButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding - 4),
+            tagsAddButton.widthAnchor.constraint(equalToConstant: 16),
+            tagsAddButton.heightAnchor.constraint(equalToConstant: 16),
+
+            // 标签白色圆角卡片（标题下方 6pt）
+            tagsMaskView.topAnchor.constraint(equalTo: tagsTitleLabel.bottomAnchor, constant: 6),
             tagsMaskView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             tagsMaskView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             tagsHeightConstraint,
 
-            // 任务 T1: 工具栏行 - 位于标签下方，水平占满
-            // 任务 F10-3: 设备区域已移出，toolBarRow 改为锚定 tagsMaskView 底部（v0.6.6）
-            toolBarRow.topAnchor.constraint(equalTo: tagsMaskView.bottomAnchor, constant: 8),
+            // 工具栏行
+            toolBarRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             toolBarRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             toolBarRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             toolBarRow.heightAnchor.constraint(equalToConstant: 28),
 
-            // 任务 F11-11: 工具面板 - 紧跟 toolBarRow 下方，宽度与工具栏行对齐（C1）
-            toolPanelView.topAnchor.constraint(equalTo: toolBarRow.bottomAnchor, constant: 4),
+            // 工具面板
+            toolPanelView.bottomAnchor.constraint(equalTo: toolBarRow.topAnchor, constant: -4),
             toolPanelView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             toolPanelView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             toolPanelHeightConstraint,
 
-            // 收藏夹 scrollView 填满收藏夹遮罩（内边距 8pt，圆角由 mask 的 masksToBounds 裁剪）
-            favoritesScrollView.topAnchor.constraint(equalTo: favoritesMaskView.topAnchor, constant: 8),
-            favoritesScrollView.leadingAnchor.constraint(equalTo: favoritesMaskView.leadingAnchor, constant: 8),
-            favoritesScrollView.trailingAnchor.constraint(equalTo: favoritesMaskView.trailingAnchor, constant: -8),
-            favoritesScrollView.bottomAnchor.constraint(equalTo: favoritesMaskView.bottomAnchor, constant: -8),
+            // 收藏夹 scrollView 填满卡片（上下 6pt，左右 4pt 内边距）
+            favoritesScrollView.topAnchor.constraint(equalTo: favoritesMaskView.topAnchor, constant: 6),
+            favoritesScrollView.leadingAnchor.constraint(equalTo: favoritesMaskView.leadingAnchor, constant: 4),
+            favoritesScrollView.trailingAnchor.constraint(equalTo: favoritesMaskView.trailingAnchor, constant: -4),
+            favoritesScrollView.bottomAnchor.constraint(equalTo: favoritesMaskView.bottomAnchor, constant: -6),
 
-            // 标签 flowView 填满标签遮罩（内边距 8pt）
-            tagFlowView.topAnchor.constraint(equalTo: tagsMaskView.topAnchor, constant: 8),
-            tagFlowView.leadingAnchor.constraint(equalTo: tagsMaskView.leadingAnchor, constant: 8),
-            tagFlowView.trailingAnchor.constraint(equalTo: tagsMaskView.trailingAnchor, constant: -8),
-            tagFlowView.bottomAnchor.constraint(equalTo: tagsMaskView.bottomAnchor, constant: -8),
+            // 标签 flowView 填满卡片
+            tagFlowView.topAnchor.constraint(equalTo: tagsMaskView.topAnchor, constant: 6),
+            tagFlowView.leadingAnchor.constraint(equalTo: tagsMaskView.leadingAnchor, constant: 4),
+            tagFlowView.trailingAnchor.constraint(equalTo: tagsMaskView.trailingAnchor, constant: -4),
+            tagFlowView.bottomAnchor.constraint(equalTo: tagsMaskView.bottomAnchor, constant: -6),
         ])
 
         // 任务 F10-3: 卷挂载/卸载监听已迁移至 MainWindowController（设备浮层负责刷新）（v0.6.6）
 
-        // 任务 F10-4: 收藏夹默认全部展开（不折叠）
-        // 配合 delegate 的 shouldCollapseItem 返回 false，用户也无法折叠
+        // 收藏夹无 section 层级，直接显示收藏项列表，无需 expandItem
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.favoritesOutlineView.expandItem(SidebarSection.favorites)
             self.updateFavoritesHeight()
             self.updateTagsHeight()
         }
+        // 监听标签数据源刷新通知，更新标签显示
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshTagDisplay), name: NSNotification.Name("SidebarTagsDidRefresh"), object: nil)
     }
 
     // MARK: - Helpers
+
+    /// 创建白色圆角卡片容器（设计稿风格：浅色模式纯白，深色模式深灰，圆角 12pt）
+    private func makeCardView() -> NSView {
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        v.layer?.cornerRadius = 12
+        v.layer?.masksToBounds = true
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }
+
+    /// 创建外置标题 Label（卡片上方灰色小字，设计稿风格）
+    private func makeSectionTitleLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        label.textColor = NSColor.secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }
 
     private func makeScrollView() -> NSScrollView {
         let sv = NSScrollView()
@@ -339,11 +401,11 @@ class SidebarView: NSView {
     }
 
     private func makeOutlineView() -> NSOutlineView {
-        let ov = NSOutlineView()
+        // 任务修复：使用 FFFNoDisclosureOutlineView 子类，隐藏系统 disclosure triangle（问题1）
+        let ov = FFFNoDisclosureOutlineView()
         ov.allowsMultipleSelection = false
         ov.headerView = nil  // 无表头
-        // 任务 F10-11: 收藏夹项目行高 28pt（对齐标签/设备行高，统一访达侧边栏项目高度，v0.6.6）
-        // section 标题行高由 heightOfRowByItem 单独返回 24pt
+        // 收藏夹项目行高 28pt
         ov.rowHeight = 28
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
@@ -406,6 +468,14 @@ class SidebarView: NSView {
 
         // 切换按钮激活态外观：展开时强调色，收起时次级标签色
         toolBtn.contentTintColor = isToolPanelExpanded ? .controlAccentColor : .secondaryLabelColor
+
+        // 任务修复：通知 MainWindowController 隐藏/显示设备浮层（问题3）
+        // 工具面板与设备浮层为独立视图系统，展开工具面板时设备浮层需隐藏，通过通知解耦联动
+        NotificationCenter.default.post(
+            name: NSNotification.Name("SidebarToolPanelDidToggle"),
+            object: nil,
+            userInfo: ["isExpanded": isToolPanelExpanded]
+        )
     }
 
     /// 任务 F11-11: 构建工具面板内容（三个入口行：查重 / 批量重命名 / AI 工具）（C1）
@@ -505,6 +575,12 @@ class SidebarView: NSView {
         updateTagsHeight()
     }
 
+    /// 标签数据源刷新后更新标签流视图显示
+    @objc private func refreshTagDisplay() {
+        tagFlowView.updateTags(tagsDataSource.allTags())
+        updateTagsHeight()
+    }
+
     /// 任务 F11-8: 处理面板标签筛选变化通知，更新标签行高亮。
     /// userInfo["tagFilter"] 为当前活动面板的 tagFilter（Tag 或 nil），用于高亮对应标签行。
     @objc private func handlePaneTagFilterChanged(_ notification: Notification) {
@@ -514,7 +590,7 @@ class SidebarView: NSView {
 
     /// 任务 F11-8: 清理通知观察者
     deinit {
-        NotificationCenter.default.removeObserver(self, name: .paneTagFilterChanged, object: nil)
+        NotificationCenter.default.removeObserver(self)
     }
 
     /// 添加收藏夹（供外部调用）
@@ -532,7 +608,7 @@ class SidebarView: NSView {
 
     // MARK: - Create Tag Dialog
 
-    private func showCreateTagDialog() {
+    @objc private func showCreateTagDialog() {
         guard let window = self.window else { return }
         let alert = NSAlert()
         alert.messageText = "新建标签"
@@ -593,19 +669,17 @@ class SidebarView: NSView {
     // 任务 F10-3: 设备刷新逻辑（refreshDevices/updateDeviceHeight）已迁移至 MainWindowController 浮层（v0.6.6）
 
     private func updateFavoritesHeight() {
-        // section 标题行（24pt）+ 收藏夹行（28pt）
-        // 任务 F10-11: 收藏夹项目行高对齐标签/设备 28pt（v0.6.6）
-        let sectionHeight: CGFloat = 24
+        // 无 section 标题行，仅收藏夹行（28pt）+ 上下内边距 12pt
         let rowHeight: CGFloat = 28
-        let height = sectionHeight + CGFloat(favoritesDataSource.favoriteCount) * rowHeight
+        let height = CGFloat(favoritesDataSource.favoriteCount) * rowHeight + 12
         favoritesHeightConstraint.constant = max(height, 48)
     }
 
-    /// 任务 F10-5: 根据 tagFlowView 报告的理想高度调整 tagsMaskView 高度（垂直布局）（v0.6.6）
+    /// 根据 tagFlowView 报告的理想高度调整 tagsMaskView 高度
     private func updateTagsHeight() {
-        let flowHeight = tagFlowView.idealHeight(forWidth: bounds.width - 24)  // 减去左右 padding 12*2
-        let height = flowHeight + 16  // 上下 padding 8*2
-        tagsHeightConstraint.constant = max(height, 80)
+        let flowHeight = tagFlowView.idealHeight(forWidth: bounds.width - 24)
+        let height = flowHeight + 12  // 上下 padding 6*2
+        tagsHeightConstraint.constant = max(height, 60)
     }
 }
 
@@ -673,27 +747,17 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        // 任务 F2: 收藏夹 section 必须可展开（修复"收藏夹没有任何东西"根因）
-        // 原代码 `section != .favorites` 导致收藏夹不可展开，expandItem 无效，子项不显示
-        if let section = item as? SidebarSection {
-            return section == .favorites
-        }
+        // 无 section 层级，收藏项均为叶子节点
         return false
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        // 区域标题不可选
-        if item is SidebarSection { return false }
         return true
     }
 
     // MARK: - Collapse Control
 
-    /// 任务 F10-4: 阻止收藏夹 section 折叠，保持默认全部展开（修正 F4 错误，问题1）
-    /// 配合 setupUI 中的 expandItem 调用，确保收藏夹永远展开可见
     func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool {
-        // 任何 section（收藏夹）均禁止折叠
-        if item is SidebarSection { return false }
         return false
     }
 
@@ -723,7 +787,7 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
             return cell
         }
 
-        // 默认布局：图标 + 文字（区域标题 / 收藏夹）
+        // 默认布局：图标 + 文字（收藏夹项）
         let textField = NSTextField(labelWithString: "")
         textField.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         textField.textColor = NSColor.labelColor
@@ -740,8 +804,7 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         cell.textField = textField
 
         NSLayoutConstraint.activate([
-            // 任务 F1: 图标贴左边缘（constant 0），Finder 风格
-            // 任务 F10-4: 收藏夹图标放大到 20pt 对齐访达（原16pt改20pt，修正F4）
+            // 图标贴左边缘（constant 0），Finder 风格
             imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             imageView.widthAnchor.constraint(equalToConstant: 20),
@@ -750,41 +813,7 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
 
-        if let section = item as? SidebarSection {
-            textField.stringValue = section.title
-            textField.font = NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize)
-            textField.textColor = NSColor.secondaryLabelColor
-            imageView.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
-            imageView.isHidden = true
-
-            // A1: 仅标签区域标题旁添加"+"按钮（收藏夹区域移除+按钮，改用拖拽添加）
-            if section == .tags {
-                let addButton = NSButton()
-                addButton.bezelStyle = .inline
-                addButton.imagePosition = .imageOnly
-                addButton.isBordered = false
-                addButton.contentTintColor = NSColor.secondaryLabelColor
-                addButton.translatesAutoresizingMaskIntoConstraints = false
-                addButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "添加标签")
-                addButton.action = #selector(handleCreateTagButton)
-                addButton.target = self
-                cell.addSubview(addButton)
-
-                NSLayoutConstraint.activate([
-                    addButton.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                    addButton.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                    addButton.widthAnchor.constraint(equalToConstant: 16),
-                    addButton.heightAnchor.constraint(equalToConstant: 16),
-                    textField.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -4),
-                ])
-            } else {
-                textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6).isActive = true
-            }
-
-            return cell
-        }
-
-        // 非区域标题行（收藏夹项）：文本填充至右侧
+        // 收藏夹项：文本填充至右侧
         textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6).isActive = true
 
         switch item as? SidebarItem {
@@ -812,10 +841,7 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         if case .device = item as? SidebarItem {
             return 28
         }
-        // 任务 F10-11: section 标题行 24pt，收藏夹项目行 28pt（统一访达侧边栏项目高度，v0.6.6）
-        if item is SidebarSection {
-            return 24
-        }
+        // 收藏夹项目行 28pt
         return 28
     }
 
@@ -965,21 +991,16 @@ private class FavoritesSidebarDataSource: SidebarDataSourceBase {
     // MARK: - NSOutlineViewDataSource
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        // 无 section 层级：root 直接返回收藏项数量
         if item == nil {
-            // 仅收藏夹一个 section
-            return 1
-        }
-        if let section = item as? SidebarSection, section == .favorites {
             return favorites.count
         }
         return 0
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        // 无 section 层级：root 直接返回收藏项
         if item == nil {
-            return SidebarSection.favorites
-        }
-        if let section = item as? SidebarSection, section == .favorites {
             return SidebarItem.favorite(favorites[index])
         }
         return ""
@@ -1031,6 +1052,20 @@ private class TagsSidebarDataSource: SidebarDataSourceBase {
     override init() {
         super.init()
         loadTags()
+        // 监听文件标签变更通知，自动刷新侧边栏标签列表
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFileTagsChange), name: NSNotification.Name("FileTagsDidChange"), object: nil)
+    }
+
+    /// 文件标签变更时重新加载侧边栏标签列表并通知 SidebarView 刷新显示
+    @objc func handleFileTagsChange() {
+        // 重新加载标签（UserDefaults 中的标签列表可能已更新）
+        loadTags()
+        // 通知 SidebarView 刷新显示
+        NotificationCenter.default.post(name: NSNotification.Name("SidebarTagsDidRefresh"), object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Data Loading
@@ -1395,6 +1430,9 @@ class DeviceCellView: NSTableCellView {
     }
 
     private func setupUI() {
+        // 修复：裁剪子视图内容到 cell 边界内，防止文字溢出到相邻行
+        wantsLayer = true
+        layer?.masksToBounds = true
         iconView.imageScaling = .scaleProportionallyDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
@@ -1402,6 +1440,11 @@ class DeviceCellView: NSTableCellView {
         nameField.font = NSFont.systemFont(ofSize: 11)
         nameField.textColor = NSColor.labelColor
         nameField.lineBreakMode = .byTruncatingTail
+        nameField.cell?.truncatesLastVisibleLine = true
+        nameField.cell?.wraps = false
+        nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // 任务修复：nameField 低拥抱优先级，允许被压缩以优先满足 freeField 布局（问题2）
+        nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         nameField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(nameField)
 
@@ -1409,8 +1452,18 @@ class DeviceCellView: NSTableCellView {
         freeField.font = NSFont.systemFont(ofSize: 10)
         freeField.textColor = NSColor.tertiaryLabelColor
         freeField.lineBreakMode = .byTruncatingTail
+        freeField.cell?.truncatesLastVisibleLine = true
+        freeField.cell?.wraps = false
+        freeField.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        // 任务修复：freeField 高拥抱优先级，防止被拉伸导致与 nameField 文字重叠（问题2）
+        freeField.setContentHuggingPriority(.required, for: .horizontal)
         freeField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(freeField)
+
+        // 任务修复：nameField 尾部约束优先级降为 750，避免侧边栏变窄时与 widthAnchor>=30
+        // 及 freeField 约束冲突，Auto Layout 打破约束导致文字溢出重叠（问题2）
+        let nameTrailingConstraint = nameField.trailingAnchor.constraint(equalTo: freeField.leadingAnchor, constant: -4)
+        nameTrailingConstraint.priority = .defaultHigh  // 750
 
         NSLayoutConstraint.activate([
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
@@ -1424,7 +1477,9 @@ class DeviceCellView: NSTableCellView {
             freeField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             freeField.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            nameField.trailingAnchor.constraint(equalTo: freeField.leadingAnchor, constant: -4),
+            nameTrailingConstraint,
+            // 防止 nameField 被压缩到 0
+            nameField.widthAnchor.constraint(greaterThanOrEqualToConstant: 30),
         ])
     }
 
@@ -1607,9 +1662,7 @@ private class TagFlowView: NSView {
 
     // MARK: - UI Elements
 
-    private let headerLabel = NSTextField(labelWithString: "标签")
-    private let addButton = NSButton()
-    /// 任务 F10-5: 标签行垂直列表容器（NSStackView，vertical）
+    /// 标签行垂直列表容器（NSStackView，vertical）
     private let listContainer: NSStackView = {
         let sv = NSStackView()
         sv.orientation = .vertical
@@ -1624,14 +1677,13 @@ private class TagFlowView: NSView {
 
     // MARK: - Layout Constants (设计稿)
 
-    /// 任务 F10-5: 行高 28pt 对齐访达侧边栏项目高度
+    /// 行高 28pt 对齐访达侧边栏项目高度
     private let rowHeight: CGFloat = 28
     private let dotSize: CGFloat = 8
-    /// 任务 F10-5: 圆点与文字的垂直布局内边距
-    private let rowLeading: CGFloat = 8      // 圆点距行首
+    /// 圆点距行首（与收藏夹图标贴边对齐，0pt）
+    private let rowLeading: CGFloat = 0
     private let dotLabelGap: CGFloat = 8     // 圆点与文字间距
     private let rowTrailing: CGFloat = 8     // 文字距行尾
-    private let headerHeight: CGFloat = 22
 
     // MARK: - Init
 
@@ -1649,46 +1701,15 @@ private class TagFlowView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // header label（"标签" 小标题，固定在 section 顶部）
-        headerLabel.font = NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize)
-        headerLabel.textColor = NSColor.secondaryLabelColor
-        headerLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(headerLabel)
-
-        // "+" 按钮
-        addButton.bezelStyle = .inline
-        addButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "添加标签")
-        addButton.imagePosition = .imageOnly
-        addButton.isBordered = false
-        addButton.contentTintColor = NSColor.secondaryLabelColor
-        addButton.target = self
-        addButton.action = #selector(handleAddButton)
-        addButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(addButton)
-
-        // 任务 F10-5: 垂直标签行列表容器
+        // 标签行列表容器直接填满整个视图（标题已外置到卡片上方）
         addSubview(listContainer)
 
         NSLayoutConstraint.activate([
-            headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            headerLabel.heightAnchor.constraint(equalToConstant: headerHeight),
-
-            addButton.centerYAnchor.constraint(equalTo: headerLabel.centerYAnchor),
-            addButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            addButton.widthAnchor.constraint(equalToConstant: 16),
-            addButton.heightAnchor.constraint(equalToConstant: 16),
-
-            // 任务 F10-5: 标签列表紧跟 header 下方，留 8pt 间距确保 section header 不被遮挡
-            listContainer.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 8),
+            listContainer.topAnchor.constraint(equalTo: topAnchor, constant: 0),
             listContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 0),
             listContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 0),
-            listContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            listContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: 0),
         ])
-    }
-
-    @objc private func handleAddButton() {
-        onAddTagTapped?()
     }
 
     // MARK: - Public API
@@ -1708,11 +1729,10 @@ private class TagFlowView: NSView {
     }
 
     /// 计算指定宽度下的理想高度（供外部 updateTagsHeight 使用）
-    /// 任务 F10-5: 垂直布局下高度 = header 区域 + 行数 × 28pt + 上下间距
+    /// 无 header：高度 = 行数 × 28pt
     func idealHeight(forWidth width: CGFloat) -> CGFloat {
-        let headerTotal = headerHeight + 12  // header 顶部 4pt + header 与列表间距 8pt
         let rowsHeight = CGFloat(tags.count) * rowHeight
-        return headerTotal + rowsHeight + 4   // 底部 4pt
+        return rowsHeight
     }
 
     // MARK: - Rows Rebuild

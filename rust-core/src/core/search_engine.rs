@@ -58,17 +58,16 @@ pub fn fuzzy_match(haystack: &str, needle: &str) -> bool {
 
 /// Search for files matching `query` under `root_path`.
 ///
-/// Returns results through the callback as they are found.
+/// Results are delivered through the callback as they are found.
+// P2-17 修复：改为回调消费结果模式，不返回 Vec，避免双重克隆。
 pub fn search_files<F>(
     root_path: &str,
     query: &str,
     callback: &mut F,
-) -> Result<Vec<SearchResult>, std::io::Error>
+) -> Result<(), std::io::Error>
 where
     F: FnMut(SearchResult),
 {
-    let mut results = Vec::new();
-
     for entry in WalkDir::new(root_path)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -87,34 +86,33 @@ where
             let path = entry.path().to_string_lossy().to_string();
 
             let result = SearchResult {
-                path: path.clone(),
-                name: name.clone(),
+                path,
+                name,
                 size,
                 modified,
                 is_dir,
             };
-            callback(result.clone());
-            results.push(result);
+            // 回调直接消费 result，无需克隆
+            callback(result);
         }
     }
 
-    Ok(results)
+    Ok(())
 }
 
 /// Search for files with advanced filters.
 ///
-/// Returns results through the callback as they are found.
+/// Results are delivered through the callback as they are found.
+// P2-17 修复：改为回调消费结果模式，不返回 Vec，避免双重克隆。
 pub fn search_with_filters<F>(
     root_path: &str,
     query: &str,
     filters: &SearchFilters,
     callback: &mut F,
-) -> Result<Vec<SearchResult>, std::io::Error>
+) -> Result<(), std::io::Error>
 where
     F: FnMut(SearchResult),
 {
-    let mut results = Vec::new();
-
     // Parse file type filter
     let allowed_extensions: Option<Vec<String>> = filters.file_types.as_ref().map(|types| {
         types
@@ -181,17 +179,17 @@ where
         }
 
         let result = SearchResult {
-            path: path.clone(),
-            name: name.clone(),
+            path,
+            name,
             size,
             modified,
             is_dir,
         };
-        callback(result.clone());
-        results.push(result);
+        // 回调直接消费 result，无需克隆
+        callback(result);
     }
 
-    Ok(results)
+    Ok(())
 }
 
 #[cfg(test)]

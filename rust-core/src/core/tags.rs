@@ -176,12 +176,27 @@ pub fn tags_to_json(tags: &[GeneratedTag]) -> String {
 }
 
 /// 转义 JSON 字符串中的特殊字符。
+// P2-13 修复：补充 \b(U+0008)、\f(U+000C) 及所有 U+0000-U+001F 控制字符的转义，
+// 符合 RFC 8259 规范。
 fn escape_json_string(s: &str) -> String {
-    s.replace('\\', r"\\")
-        .replace('"', r#"\""#)
-        .replace('\n', r"\n")
-        .replace('\r', r"\r")
-        .replace('\t', r"\t")
+    let mut result = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '"' => result.push_str(r#"\""#),
+            '\\' => result.push_str(r"\\"),
+            '\n' => result.push_str(r"\n"),
+            '\r' => result.push_str(r"\r"),
+            '\t' => result.push_str(r"\t"),
+            '\u{0008}' => result.push_str(r"\b"),
+            '\u{000C}' => result.push_str(r"\f"),
+            // 所有 U+0000-U+001F 范围内的其他控制字符使用 \uXXXX 转义
+            c if (c as u32) < 0x20 => {
+                result.push_str(&format!(r"\u{:04x}", c as u32));
+            }
+            c => result.push(c),
+        }
+    }
+    result
 }
 
 // ── 单元测试 ─────────────────────────────────────────────────────────

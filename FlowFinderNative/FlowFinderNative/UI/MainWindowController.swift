@@ -73,14 +73,8 @@ private class FFSplitView: NSSplitView {
 /// 使用逐像素 alpha 决定鼠标事件捕获。普通 NSView 的 isOpaque 默认返回 false，
 /// 且其 layer 背景为 clear（alpha=0），导致整个窗口对所有像素透明——鼠标事件全部穿透。
 ///
-/// NSVisualEffectView 之所以能正常工作，是因为它重写了 isOpaque 返回 true。
-/// 此处对 containerView 做同样处理，让窗口服务器捕获鼠标事件，同时不影响玻璃视觉效果
-/// （玻璃效果由 NSGlassEffectView 子视图绘制，containerView 仅作为事件接收容器）。
-private class OpaqueContainerView: NSView {
-    override var isOpaque: Bool {
-        return true
-    }
-}
+// FFOpaqueContainerView 已提取到 FFCommon.swift（统一实体背景容器）
+// 原 OpaqueContainerView 已由 FFOpaqueContainerView 替代
 
 // MARK: - MainWindowController
 
@@ -199,6 +193,10 @@ public class MainWindowController: NSWindowController {
         setupNotifications()
         loadInitialDirectories()
 
+        // 启动 FSEvents 文件系统监控：当外部程序（如访达）修改/删除/创建文件时，
+        // 自动失效缓存并刷新对应面板，确保操作区显示最新文件系统状态
+        startFileSystemWatcher()
+
         // setupUI 完成后再显示窗口（此时透明设置已就绪）
         window.makeKeyAndOrderFront(nil)
         FFDebug.log("Window state: isKey=\(window.isKeyWindow) isMain=\(window.isMainWindow) isVisible=\(window.isVisible) frame=\(window.frame) ignoresMouseEvents=\(window.ignoresMouseEvents)")
@@ -271,8 +269,9 @@ public class MainWindowController: NSWindowController {
         paneSplitView.delegate = self
         paneSplitView.wantsLayer = true
         paneSplitView.layer?.backgroundColor = NSColor.clear.cgColor
-        paneSplitView.addArrangedSubview(leftPaneContainer)
-        paneSplitView.addArrangedSubview(rightPaneContainer)
+        // 问题13修复：左右操作区用圆角卡片包裹，四周留 8pt 边距使圆角在所有边可见
+        paneSplitView.addArrangedSubview(makeCardWrapper(for: leftPaneContainer))
+        paneSplitView.addArrangedSubview(makeCardWrapper(for: rightPaneContainer))
 
         // Main Split View（侧边栏 + 操作区）
         mainSplitView = NSSplitView()
@@ -291,7 +290,7 @@ public class MainWindowController: NSWindowController {
 
         // 任务 F7: 使用 OpaqueContainerView 修复鼠标穿透与选中渲染（v0.6.5）
         // mainContainer（透明背景以透出玻璃效果）
-        let mainContainer = OpaqueContainerView()
+        let mainContainer = FFOpaqueContainerView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
         mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
@@ -344,10 +343,11 @@ public class MainWindowController: NSWindowController {
         devicePanelHeightConstraint = devicePanel.heightAnchor.constraint(equalToConstant: devicePanelCollapsedHeight)
         devicePanelHeightConstraint.priority = .required
         NSLayoutConstraint.activate([
-            // 贴 mainContainer 左下角：leading +8pt，bottom -8pt，宽度 200pt
+            // 贴 mainContainer 左下角：leading +8pt
+            // 底部上移 36pt，为工具栏按钮（主题/设置/工具）留出空间
             devicePanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
-            devicePanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -8),
-            devicePanel.widthAnchor.constraint(equalToConstant: devicePanelWidth),
+            devicePanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -44),
+            devicePanel.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor, constant: -8),
             devicePanelHeightConstraint,
         ])
 
@@ -429,6 +429,27 @@ public class MainWindowController: NSWindowController {
         TaskSchedulerManager.shared.startPolling()
     }
 
+    /// 问题13修复：为操作区创建带 8pt 边距的透明包裹视图
+    /// createPaneContainer 已设置 cornerRadius=8 + masksToBounds + 实体背景色，
+    /// 但此前容器直接铺满 split view，圆角紧贴窗口边缘不可见。
+    /// 此包裹视图在容器四周留出 8pt 透明边距，使圆角矩形在四个边均可见，形成独立卡片效果。
+    /// 两个卡片之间经 split divider 分隔，视觉上呈现为左右两张独立圆角卡片。
+    private func makeCardWrapper(for content: NSView) -> NSView {
+        let wrapper = NSView()
+        wrapper.wantsLayer = true
+        wrapper.layer?.backgroundColor = NSColor.clear.cgColor
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 8),
+            content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 8),
+            content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -8),
+            content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -8),
+        ])
+        return wrapper
+    }
+
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
     /// 任务 F2: 操作区撑满（仿访达），无圆角（v0.6.5）
     /// 任务 F11-1: 操作区改为实体背景（日间#F5F5F5/夜间#2D2D2D），不再透明透出玻璃材质（v0.6.7）
@@ -441,9 +462,9 @@ public class MainWindowController: NSWindowController {
         // 日间 #F5F5F5（访达浅灰白），夜间 #2D2D2D（访达深灰黑）
         // 实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
         container.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
-        // 任务 F2: 移除圆角卡片，仿访达撑满（v0.6.5）
-        container.layer?.cornerRadius = 0
-        container.layer?.masksToBounds = false
+        // 任务 F2→v0.6.7-2: 恢复圆角卡片布局，左右操作区分别被圆角矩形包裹
+        container.layer?.cornerRadius = 8
+        container.layer?.masksToBounds = true
 
         // 1.2 活动面板顶部 accent 色条（2pt 高，初始隐藏，由 updateActivePaneVisual 切换）
         let accentBar = NSView()
@@ -827,11 +848,25 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleSidebarAITools(_:)),
             name: .sidebarDidRequestAITools, object: nil
         )
+        // 问题3续修复：监听侧边栏工具面板展开/收起，联动设备浮层显隐
+        // SidebarView 已发送 SidebarToolPanelDidToggle 通知，但此前无观察者，导致设备浮层不隐藏
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleToolPanelToggle(_:)),
+            name: NSNotification.Name("SidebarToolPanelDidToggle"), object: nil
+        )
     }
 
     /// 任务 F10-10: 处理 OpenSettings 通知，弹出设置窗口（修复问题3）
     @objc private func handleOpenSettings(_ notification: Notification) {
         SettingsWindowController.shared.showWindow()
+    }
+
+    /// 问题3续修复：工具面板展开时隐藏设备浮层，收起时恢复
+    /// 工具面板与设备浮层同处侧边栏左下角区域，展开工具面板会覆盖设备浮层，需联动隐藏避免视觉重叠
+    @objc private func handleToolPanelToggle(_ notification: Notification) {
+        guard let isExpanded = notification.userInfo?["isExpanded"] as? Bool else { return }
+        // 工具展开时隐藏设备浮层，收起时恢复显示
+        devicePanel?.isHidden = isExpanded
     }
 
     // MARK: - 任务 F11-11: 侧边栏工具面板入口通知处理（C1）
@@ -924,6 +959,47 @@ public class MainWindowController: NSWindowController {
     private func refreshPane(_ side: PaneSide) {
         let vm = side == .left ? leftPaneViewModel : rightPaneViewModel
         vm.refresh()
+    }
+
+    // MARK: - FSEvents 文件系统监控
+
+    /// 启动 FSEvents 文件系统变更监控
+    /// 监控用户主目录，当文件被外部程序（如访达）创建/删除/修改时，
+    /// 自动失效对应目录缓存并刷新受影响的面板
+    private func startFileSystemWatcher() {
+        let homeDir = NSHomeDirectory()
+        do {
+            try CoreBridge.shared.startFSEventsWatcher(path: homeDir) { [weak self] changedPath in
+                DispatchQueue.main.async { [weak self] in
+                    self?.handleFileSystemChange(changedPath: changedPath)
+                }
+            }
+            FFDebug.log("FSEvents 文件系统监控已启动，监控路径: \(homeDir)")
+        } catch {
+            FFLog.error("FSEvents 监控启动失败: \(error.localizedDescription)", log: FFLog.bridge)
+        }
+    }
+
+    /// 处理文件系统变更通知：失效缓存 + 刷新受影响的面板
+    private func handleFileSystemChange(changedPath: String) {
+        // 失效变更路径及其父目录的缓存
+        let parentDir = (changedPath as NSString).deletingLastPathComponent
+        try? CoreBridge.shared.invalidateCache(path: changedPath)
+        if !parentDir.isEmpty && parentDir != changedPath {
+            try? CoreBridge.shared.invalidateCache(path: parentDir)
+        }
+
+        // 检查变更路径是否影响当前面板显示的目录
+        let leftPath = leftPaneViewModel.currentPath
+        let rightPath = rightPaneViewModel.currentPath
+
+        // 如果变更发生在当前显示的目录内，或变更的就是当前目录本身
+        if changedPath == leftPath || parentDir == leftPath {
+            leftPaneViewModel.refresh()
+        }
+        if changedPath == rightPath || parentDir == rightPath {
+            rightPaneViewModel.refresh()
+        }
     }
 
     // MARK: - Keyboard Events
@@ -1092,6 +1168,13 @@ public class MainWindowController: NSWindowController {
         // 视图模式切换
         updateViewMode(side: side, mode: state.viewMode)
 
+        // 问题7修复：刷新状态栏（项目数 + 磁盘可用空间）
+        // ExpandableDetailsBar.updateStatus 已实现但此前从未被调用，导致状态栏文字缺失
+        let detailsBar = side == .left ? leftDetailsBar : rightDetailsBar
+        let itemCount = state.files.count
+        let diskFree = getDiskFreeSpace(forPath: state.path)
+        detailsBar?.updateStatus(itemCount: itemCount, diskFree: diskFree)
+
         // 任务 F11-8: 状态变化时同步侧边栏标签高亮（导航清除 tagFilter / 切换活动面板时高亮需跟随）
         if side == activePane {
             NotificationCenter.default.post(
@@ -1099,6 +1182,20 @@ public class MainWindowController: NSWindowController {
                 userInfo: ["tagFilter": state.tagFilter as Any]
             )
         }
+    }
+
+    /// 问题7修复：获取指定路径所在卷的可用磁盘空间
+    /// - Parameter path: 任意路径（通常为当前面板所在目录）
+    /// - Returns: 形如 "42.8 GB 可用" 的描述串；获取失败时返回 nil
+    private func getDiskFreeSpace(forPath path: String) -> String? {
+        guard !path.isEmpty else { return nil }
+        do {
+            let attrs = try FileManager.default.attributesOfFileSystem(forPath: path)
+            if let freeSize = attrs[.systemFreeSize] as? UInt64 {
+                return ByteCountFormatter.string(fromByteCount: Int64(freeSize), countStyle: .file) + " 可用"
+            }
+        } catch {}
+        return nil
     }
 
     private func updateActivePaneVisual() {
@@ -1538,12 +1635,16 @@ extension MainWindowController {
 
     @objc private func handleFileListCopyToOther(_ notification: Notification) {
         guard let side = notification.userInfo?["side"] as? String else { return }
-        performCrossPaneOperation(side: side, isMove: false)
+        // 问题12修复：取出右键点击文件路径，传入操作方法做空选兜底
+        let clickedPath = notification.userInfo?["clickedPath"] as? String
+        performCrossPaneOperation(side: side, isMove: false, clickedPath: clickedPath)
     }
 
     @objc private func handleFileListMoveToOther(_ notification: Notification) {
         guard let side = notification.userInfo?["side"] as? String else { return }
-        performCrossPaneOperation(side: side, isMove: true)
+        // 问题12修复：取出右键点击文件路径，传入操作方法做空选兜底
+        let clickedPath = notification.userInfo?["clickedPath"] as? String
+        performCrossPaneOperation(side: side, isMove: true, clickedPath: clickedPath)
     }
 
     @objc private func handleFileListOpenInOther(_ notification: Notification) {
@@ -1557,78 +1658,179 @@ extension MainWindowController {
 
     /// 执行跨面板复制/移动操作
     /// 任务 F11-9（问题1）：增加底部进度栏反馈，避免大文件复制/移动时"无提示"误以为不生效
-    private func performCrossPaneOperation(side: String, isMove: Bool) {
+    /// 问题12修复：
+    ///   1. 空选兜底——无选中时使用右键点击的文件（clickedPath）作为操作对象，不再静默返回
+    ///   2. 同目录保护——源与目标为同一目录时提示并返回
+    ///   3. 改用 parallelMove/parallelCopy 批量接口，解决跨卷 move 失败问题
+    ///      （parallelMove 内部对跨卷移动自动回退为复制+删除）
+    private func performCrossPaneOperation(side: String, isMove: Bool, clickedPath: String? = nil) {
         let sourceVM: PaneViewModel = side == "left" ? leftPaneViewModel : rightPaneViewModel
         let destVM: PaneViewModel = side == "left" ? rightPaneViewModel : leftPaneViewModel
         let destPath = destVM.currentPath
 
-        let selectedFiles = sourceVM.selectedFiles
-        guard !selectedFiles.isEmpty else { return }
+        // 问题12修复：同目录保护——源与目标为同一目录，操作无意义
+        if sourceVM.currentPath == destPath {
+            let alert = NSAlert()
+            alert.messageText = "无法操作"
+            alert.informativeText = "目标目录与源目录相同，请先切换对侧面板到其他目录。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
+
+        // 问题12修复：空选兜底——无选中文件时使用右键点击的文件作为操作对象
+        var selectedFiles = sourceVM.selectedFiles
+        if selectedFiles.isEmpty, let path = clickedPath, !path.isEmpty {
+            let name = (path as NSString).lastPathComponent
+            let isDir = (try? FileManager.default.attributesOfItem(atPath: path)[.type] as? FileAttributeType) == .typeDirectory
+            selectedFiles = [FileEntry(path: path, name: name, isDirectory: isDir, isFile: !isDir)]
+        }
+        guard !selectedFiles.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "无选中文件"
+            alert.informativeText = "请先选择要\(isMove ? "移动" : "复制")的文件，或在文件上右键选择操作。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
 
         // 任务 F11-9：进入"直接进度"模式，展开底部进度栏
-        // 此前未显示进度，用户复制/移动大目录时误以为"不生效"（实际正在后台同步执行）
         let operationName = isMove ? "移动" : "复制"
         let totalCount = selectedFiles.count
         taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
         showProgressBar(animated: true)
+
+        // 预计算每个文件的目标名：重名冲突时追加 "副本" 后缀。
+        // 无冲突文件（dstName == 原名）走批量 parallel 接口；冲突文件单独处理以保留重命名。
+        // parallel 接口将文件放入 dstDir 并保留原名，因此无冲突文件的 dst = dstDir/原名。
+        struct OpItem {
+            let src: String
+            let name: String
+            let dstName: String
+        }
+        var items: [OpItem] = []
+        for entry in selectedFiles {
+            let fileName = entry.name
+            var dstName = fileName
+            let baseDst = (destPath as NSString).appendingPathComponent(fileName)
+            if FileManager.default.fileExists(atPath: baseDst) {
+                let ext = (fileName as NSString).pathExtension
+                let nameWithoutExt = (fileName as NSString).deletingPathExtension
+                var counter = 1
+                repeat {
+                    let suffixName = ext.isEmpty ? "\(nameWithoutExt) 副本 \(counter)" : "\(nameWithoutExt) 副本 \(counter).\(ext)"
+                    dstName = suffixName
+                    counter += 1
+                } while FileManager.default.fileExists(atPath: (destPath as NSString).appendingPathComponent(dstName))
+            }
+            items.append(OpItem(src: entry.path, name: fileName, dstName: dstName))
+        }
+
+        let batchItems = items.filter { $0.dstName == $0.name }
+        let conflictItems = items.filter { $0.dstName != $0.name }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var successCount = 0
             var failedFiles: [(String, Error)] = []
             // 记录每个成功操作的 (src, dst) 用于撤销注册
             var movedOrCopied: [(src: String, dst: String)] = []
+            var completed = 0
 
-            for (index, entry) in selectedFiles.enumerated() {
-                let srcPath = entry.path
-                let fileName = entry.name
-                var dstPath = (destPath as NSString).appendingPathComponent(fileName)
+            // 跨卷安全移动：moveFile 跨卷会失败，失败时回退 copyFile + deleteFile
+            func safeMove(src: String, dst: String) throws {
+                do {
+                    try CoreBridge.shared.moveFile(src: src, dst: dst)
+                } catch {
+                    try CoreBridge.shared.copyFile(src: src, dst: dst)
+                    try CoreBridge.shared.deleteFile(path: src)
+                }
+            }
 
-                // 每处理一项前，先更新进度条显示"正在处理 fileName"
-                // 注意：此处在后台线程，UI 更新需切回主线程
-                let displayIndex = index
-                let displayFileName = fileName
+            // 1) 批量处理无冲突文件（parallel 接口，跨卷移动自动回退复制+删除）
+            if !batchItems.isEmpty {
+                let batchSrcs = batchItems.map { $0.src }
+                let batchCount = batchItems.count
+                let progressHandler: ((Int, Int) -> Void)? = { done, _ in
+                    let displayDone = done
+                    DispatchQueue.main.async { [weak self] in
+                        self?.taskProgressBar.updateDirectProgress(
+                            operation: operationName,
+                            currentFileName: "正在\(operationName)…",
+                            completed: displayDone,
+                            total: totalCount
+                        )
+                    }
+                }
+                do {
+                    let ok = isMove
+                        ? try CoreBridge.shared.parallelMove(srcs: batchSrcs, dstDir: destPath, progress: progressHandler)
+                        : try CoreBridge.shared.parallelCopy(srcs: batchSrcs, dstDir: destPath, progress: progressHandler)
+                    successCount += ok
+                    for it in batchItems {
+                        movedOrCopied.append((src: it.src, dst: (destPath as NSString).appendingPathComponent(it.name)))
+                    }
+                } catch {
+                    // 批量失败：将每个文件记为失败
+                    for it in batchItems {
+                        failedFiles.append((it.name, error))
+                    }
+                }
+                completed += batchCount
+                let c = completed
                 DispatchQueue.main.async { [weak self] in
                     self?.taskProgressBar.updateDirectProgress(
                         operation: operationName,
-                        currentFileName: displayFileName,
-                        completed: displayIndex,
+                        currentFileName: "正在\(operationName)…",
+                        completed: min(c, totalCount),
                         total: totalCount
                     )
                 }
+            }
 
-                // 重名冲突检测 - 添加 "副本" 后缀
-                if FileManager.default.fileExists(atPath: dstPath) {
-                    let ext = (fileName as NSString).pathExtension
-                    let nameWithoutExt = (fileName as NSString).deletingPathExtension
-                    var counter = 1
-                    repeat {
-                        let suffixName = ext.isEmpty ? "\(nameWithoutExt) 副本 \(counter)" : "\(nameWithoutExt) 副本 \(counter).\(ext)"
-                        dstPath = (destPath as NSString).appendingPathComponent(suffixName)
-                        counter += 1
-                    } while FileManager.default.fileExists(atPath: dstPath)
+            // 2) 逐个处理冲突文件（保留 "副本" 重命名）
+            for it in conflictItems {
+                let dstPath = (destPath as NSString).appendingPathComponent(it.dstName)
+                let preCompleted = completed
+                DispatchQueue.main.async { [weak self] in
+                    self?.taskProgressBar.updateDirectProgress(
+                        operation: operationName,
+                        currentFileName: it.dstName,
+                        completed: preCompleted,
+                        total: totalCount
+                    )
                 }
-
                 do {
                     if isMove {
-                        try CoreBridge.shared.moveFile(src: srcPath, dst: dstPath)
+                        try safeMove(src: it.src, dst: dstPath)
                     } else {
-                        try CoreBridge.shared.copyFile(src: srcPath, dst: dstPath)
+                        try CoreBridge.shared.copyFile(src: it.src, dst: dstPath)
                     }
-                    movedOrCopied.append((src: srcPath, dst: dstPath))
+                    movedOrCopied.append((src: it.src, dst: dstPath))
                     successCount += 1
                 } catch {
-                    failedFiles.append((fileName, error))
+                    failedFiles.append((it.dstName, error))
                 }
-
-                // 该项完成后更新进度（已完成数 = index + 1）
-                let completedCount = index + 1
+                completed += 1
+                let c = completed
                 DispatchQueue.main.async { [weak self] in
                     self?.taskProgressBar.updateDirectProgress(
                         operation: operationName,
-                        currentFileName: displayFileName,
-                        completed: completedCount,
+                        currentFileName: it.dstName,
+                        completed: min(c, totalCount),
                         total: totalCount
                     )
+                }
+            }
+
+            // 失效缓存：跨面板操作改变了源目录和目标目录的文件列表，
+            // 必须在 refresh 之前失效缓存，否则 refresh 会命中过期缓存
+            try? CoreBridge.shared.invalidateCache(path: destPath)
+            if isMove {
+                let sourceDir = (selectedFiles.first?.path as NSString?)?.deletingLastPathComponent ?? ""
+                if !sourceDir.isEmpty {
+                    try? CoreBridge.shared.invalidateCache(path: sourceDir)
                 }
             }
 
@@ -1649,43 +1851,43 @@ extension MainWindowController {
                 if !movedOrCopied.isEmpty {
                     let sourceSide: PaneSide = side == "left" ? .left : .right
                     let destSide: PaneSide = side == "left" ? .right : .left
-                    let items = movedOrCopied
+                    let undoItems = movedOrCopied
                     if isMove {
                         self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                             // undo: 移回原位
-                            for (src, dst) in items {
+                            for (src, dst) in undoItems {
                                 try? CoreBridge.shared.moveFile(src: dst, dst: src)
                             }
                             // 注册 redo：再次移动
                             ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
-                                for (src, dst) in items {
+                                for (src, dst) in undoItems {
                                     try? CoreBridge.shared.moveFile(src: src, dst: dst)
                                 }
                                 ctrl2.refreshPane(sourceSide)
                                 ctrl2.refreshPane(destSide)
                             }
-                            ctrl.undoManager?.setActionName("移动 \(items.count) 个项目")
+                            ctrl.undoManager?.setActionName("移动 \(undoItems.count) 个项目")
                             ctrl.refreshPane(sourceSide)
                             ctrl.refreshPane(destSide)
                         }
-                        self.ffUndoManager.setActionName("移动 \(items.count) 个项目")
+                        self.ffUndoManager.setActionName("移动 \(undoItems.count) 个项目")
                     } else {
                         self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                             // undo: 删除复制项
-                            for (_, dst) in items {
+                            for (_, dst) in undoItems {
                                 try? CoreBridge.shared.deleteFile(path: dst)
                             }
                             // 注册 redo：重新复制
                             ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
-                                for (src, dst) in items {
+                                for (src, dst) in undoItems {
                                     try? CoreBridge.shared.copyFile(src: src, dst: dst)
                                 }
                                 ctrl2.refreshPane(destSide)
                             }
-                            ctrl.undoManager?.setActionName("复制 \(items.count) 个项目")
+                            ctrl.undoManager?.setActionName("复制 \(undoItems.count) 个项目")
                             ctrl.refreshPane(destSide)
                         }
-                        self.ffUndoManager.setActionName("复制 \(items.count) 个项目")
+                        self.ffUndoManager.setActionName("复制 \(undoItems.count) 个项目")
                     }
                 }
 

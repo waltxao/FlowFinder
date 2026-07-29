@@ -107,6 +107,11 @@ public class AppearanceSettingsView: NSView {
             descriptionLabel.topAnchor.constraint(equalTo: buttonContainer.bottomAnchor, constant: 12),
             descriptionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
             descriptionLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            // Bug #17 修复：原约束链仅自顶向下，未闭合到底部，视图在 NSStackView 中高度歧义、塌缩为 0。
+            // 增加底部约束闭合高度链，使视图依据内容获得确定高度。
+            // 修复：lessThanOrEqualTo 只设最小高度约束，在 NSStackView 中视图可能被压缩到 0 高度。
+            // 改为 equalTo 闭合高度链，使视图获得确定高度。
+            descriptionLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
         ])
 
         updateSelection()

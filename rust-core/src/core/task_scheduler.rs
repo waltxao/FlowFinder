@@ -10,10 +10,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -181,22 +184,37 @@ impl TaskScheduler {
         let task_arc = Arc::new(Mutex::new(task));
 
         {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock();
             tasks.insert(id, task_arc.clone());
         }
 
         {
-            let mut queue = self.queue.lock().unwrap();
+            let mut queue = self.queue.lock();
             queue.push_back(id);
-            // Sort by priority (higher first)
+
+            // P0-1 修复：排序前一次性快照所有优先级到 Vec<(u64, i32)>，
+            // 避免在比较函数内反复加锁（原先 O(N log N) 次重复加锁）。
+            let priorities: Vec<(u64, i32)> = {
+                let tasks = self.tasks.lock();
+                queue
+                    .iter()
+                    .map(|&tid| {
+                        let prio = tasks
+                            .get(&tid)
+                            .map(|arc| arc.lock().priority as i32)
+                            .unwrap_or(0);
+                        (tid, prio)
+                    })
+                    .collect()
+            };
+            // 基于快照排序，比较函数内不再加锁
             queue.make_contiguous().sort_by_key(|&task_id| {
-                let tasks = self.tasks.lock().unwrap();
-                if let Some(task) = tasks.get(&task_id) {
-                    let task_guard = task.lock().unwrap();
-                    std::cmp::Reverse(task_guard.priority as i32)
-                } else {
-                    std::cmp::Reverse(0)
-                }
+                let prio = priorities
+                    .iter()
+                    .find(|(tid, _)| *tid == task_id)
+                    .map(|(_, p)| *p)
+                    .unwrap_or(0);
+                std::cmp::Reverse(prio)
             });
         }
 
@@ -207,9 +225,9 @@ impl TaskScheduler {
     }
 
     pub fn cancel(&self, id: u64) -> bool {
-        let tasks = self.tasks.lock().unwrap();
+        let tasks = self.tasks.lock();
         if let Some(task_arc) = tasks.get(&id) {
-            let mut task = task_arc.lock().unwrap();
+            let mut task = task_arc.lock();
             if task.status == TaskStatus::Pending || task.status == TaskStatus::Running {
                 task.status = TaskStatus::Cancelled;
                 return true;
@@ -219,41 +237,41 @@ impl TaskScheduler {
     }
 
     fn get_task(&self, id: u64) -> Option<Arc<Mutex<Task>>> {
-        let tasks = self.tasks.lock().unwrap();
+        let tasks = self.tasks.lock();
         tasks.get(&id).cloned()
     }
 
     pub fn list_tasks(&self) -> Vec<Task> {
-        let tasks = self.tasks.lock().unwrap();
+        let tasks = self.tasks.lock();
         tasks.values()
-            .map(|arc| arc.lock().unwrap().clone())
+            .map(|arc| arc.lock().clone())
             .collect()
     }
 
     fn get_history(&self) -> Vec<Task> {
-        let history = self.history.lock().unwrap();
+        let history = self.history.lock();
         history.clone()
     }
 
     fn set_max_concurrent(&self, max: usize) {
-        let mut max_concurrent = self.max_concurrent.lock().unwrap();
+        let mut max_concurrent = self.max_concurrent.lock();
         *max_concurrent = max.max(1);
     }
 
     fn process_queue(&self) {
-        let max = *self.max_concurrent.lock().unwrap();
+        let max = *self.max_concurrent.lock();
         let active = self.active_count.load(Ordering::SeqCst);
         
         if active >= max {
             return;
         }
 
-        let mut queue = self.queue.lock().unwrap();
+        let mut queue = self.queue.lock();
         while let Some(id) = queue.pop_front() {
-            let tasks = self.tasks.lock().unwrap();
+            let tasks = self.tasks.lock();
             if let Some(task_arc) = tasks.get(&id) {
                 let task_clone = task_arc.clone();
-                let mut task = task_clone.lock().unwrap();
+                let mut task = task_clone.lock();
                 if task.status == TaskStatus::Pending {
                     task.status = TaskStatus::Running;
                     task.started_at = Some(
@@ -277,9 +295,15 @@ impl TaskScheduler {
                     // `scheduler()` (a `&'static TaskScheduler`) inside the
                     // thread, every worker shares the same queues and
                     // counters as the caller.
+                    //
+                    // P1-7 修复：用 catch_unwind 包装 execute_task，
+                    // 确保即使任务执行过程中 panic，active_count 也一定递减
+                    // 且 process_queue 被调用，避免计数器泄漏导致调度器卡死。
                     thread::spawn(move || {
                         let s = scheduler();
-                        s.execute_task(task_clone);
+                        let _ = catch_unwind(AssertUnwindSafe(|| {
+                            s.execute_task(task_clone);
+                        }));
                         s.active_count.fetch_sub(1, Ordering::SeqCst);
                         s.process_queue();
                     });
@@ -290,8 +314,8 @@ impl TaskScheduler {
     }
 
     fn execute_task(&self, task_arc: Arc<Mutex<Task>>) {
-        // Simulate task execution
-        let task_guard = task_arc.lock().unwrap();
+        // 模拟任务执行
+        let task_guard = task_arc.lock();
         if task_guard.status == TaskStatus::Cancelled {
             let t = task_guard.clone();
             drop(task_guard);
@@ -303,9 +327,9 @@ impl TaskScheduler {
         let _task_id = task_guard.id;
         drop(task_guard);
 
-        // Simulate work with progress updates
+        // 模拟工作并更新进度
         for i in 1..=10 {
-            let mut task = task_arc.lock().unwrap();
+            let mut task = task_arc.lock();
             if task.status == TaskStatus::Cancelled {
                 let t = task.clone();
                 drop(task);
@@ -317,7 +341,7 @@ impl TaskScheduler {
             thread::sleep(Duration::from_millis(100));
         }
 
-        let mut task = task_arc.lock().unwrap();
+        let mut task = task_arc.lock();
         task.progress = 1.0;
         task.status = TaskStatus::Completed;
         task.completed_at = Some(
@@ -333,19 +357,19 @@ impl TaskScheduler {
     }
 
     fn move_to_history(&self, task: &Task) {
-        let mut history = self.history.lock().unwrap();
+        let mut history = self.history.lock();
         history.push(task.clone());
         if history.len() > self.history_limit {
             history.remove(0);
         }
 
-        // Remove from active tasks
-        let mut tasks = self.tasks.lock().unwrap();
+        // 从活跃任务中移除
+        let mut tasks = self.tasks.lock();
         tasks.remove(&task.id);
     }
 
     fn clear_history(&self) {
-        let mut history = self.history.lock().unwrap();
+        let mut history = self.history.lock();
         history.clear();
     }
 }
@@ -426,7 +450,11 @@ pub extern "C" fn ff_task_submit(
     let task_priority = TaskPriority::from_i32(priority);
     let id = scheduler().submit(task_type, task_priority, params);
 
-    let id_str = CString::new(id.to_string()).unwrap_or_default();
+    // P1-8 修复：id.to_string() 是纯数字字符串，不会包含 NUL 字节，
+    // 使用 expect 而非 unwrap_or_default()——后者在失败时会静默返回空字符串，
+    // 导致调用方拿到无效的任务 ID 指针。数字字符串不可能失败，此处 expect 是安全的。
+    let id_str = CString::new(id.to_string())
+        .expect("task id (numeric string) cannot contain NUL byte");
     unsafe {
         *out_task_id = id_str.into_raw();
     }

@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage
 import QuartzCore
+import os.log
 
 /// 玻璃材质视图：封装 NSGlassEffectView/NSVisualEffectView + 噪声 + 高光 + 内阴影
 ///
@@ -102,7 +103,7 @@ class FFGlassView: NSView {
             FFGlassView.allInstances.add(self)
             #if DEBUG
             if FFGlassView.panelInstanceCount > FFDesign.Glass.maxGlassInstances {
-                print("⚠️ FFGlassView: panel 实例数 \(FFGlassView.panelInstanceCount) 超过预算 \(FFDesign.Glass.maxGlassInstances)")
+                FFLog.warning("FFGlassView: panel 实例数 \(FFGlassView.panelInstanceCount) 超过预算 \(FFDesign.Glass.maxGlassInstances)", log: FFLog.glass)
             }
             #endif
         case .component:
@@ -317,7 +318,7 @@ class FFGlassView: NSView {
         let instances = allInstances.allObjects
         let panelCount = instances.filter { $0.level == .panel }.count
         let componentCount = instances.filter { $0.level == .component }.count
-        print("🔍 FFGlassView 实例: panel=\(panelCount) / 预算 \(FFDesign.Glass.maxGlassInstances), component=\(componentCount)")
+        FFLog.debug("FFGlassView 实例: panel=\(panelCount) / 预算 \(FFDesign.Glass.maxGlassInstances), component=\(componentCount)", log: FFLog.glass)
     }
     #endif
 }
@@ -365,13 +366,16 @@ enum FFGlassNoise {
             return fallbackWhiteImage(size: size)
         }
 
-        let randomOutput = randomFilter.outputImage!.cropped(to: rect)
+        guard let randomOutput = randomFilter.outputImage?.cropped(to: rect) else {
+            return fallbackWhiteImage(size: size)
+        }
         monochromeFilter.setValue(randomOutput, forKey: kCIInputImageKey)
         monochromeFilter.setValue(CIColor(red: 1, green: 1, blue: 1), forKey: "inputColor")
         monochromeFilter.setValue(1.0, forKey: "inputIntensity")
 
         let context = CIContext(options: nil)
-        guard let cgImage = context.createCGImage(monochromeFilter.outputImage!, from: rect) else {
+        guard let monochromeOutput = monochromeFilter.outputImage,
+              let cgImage = context.createCGImage(monochromeOutput, from: rect) else {
             return fallbackWhiteImage(size: size)
         }
         return cgImage
@@ -379,15 +383,40 @@ enum FFGlassNoise {
 
     /// 回退方案：纯白 CGImage（噪声生成失败时）
     private static func fallbackWhiteImage(size: Int) -> CGImage {
-        let context = CGContext(data: nil,
+        guard let context = CGContext(data: nil,
                                 width: size,
                                 height: size,
                                 bitsPerComponent: 8,
                                 bytesPerRow: size * 4,
                                 space: CGColorSpaceCreateDeviceRGB(),
-                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            // 极端情况：连 CGContext 都创建失败，尝试 1x1 尺寸
+            return fallbackWhiteImage1x1()
+        }
         context.setFillColor(NSColor.white.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: size, height: size))
-        return context.makeImage()!
+        if let img = context.makeImage() {
+            return img
+        }
+        return fallbackWhiteImage1x1()
+    }
+
+    /// 1x1 纯白图片的终极回退方案
+    private static func fallbackWhiteImage1x1() -> CGImage {
+        let ctx = CGContext(data: nil, width: 1, height: 1,
+                            bitsPerComponent: 8, bytesPerRow: 4,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        ctx?.setFillColor(NSColor.white.cgColor)
+        ctx?.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        if let img = ctx?.makeImage() {
+            return img
+        }
+        // 理论上不可能到达这里，但编译器需要保证返回值
+        return NSImage(size: NSSize(width: 1, height: 1), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            return true
+        }.cgImage(forProposedRect: nil, context: nil, hints: nil)!
     }
 }

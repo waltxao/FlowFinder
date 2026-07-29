@@ -68,7 +68,15 @@ fn copy_single(src: &str, dst_dir: &str) -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "无法获取文件名"))?;
     let dst_path = Path::new(dst_dir).join(file_name);
 
-    crate::core::cow_copy::copy_file_cow(src_path, &dst_path).map(|_| ())
+    // P2-10 修复：copy_file_cow 失败时清理已部分写入的目标文件残留
+    match crate::core::cow_copy::copy_file_cow(src_path, &dst_path) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // 删除可能已部分写入的目标文件，避免残留损坏文件
+            let _ = std::fs::remove_file(&dst_path);
+            Err(e)
+        }
+    }
 }
 
 fn move_single(src: &str, dst_dir: &str) -> io::Result<()> {

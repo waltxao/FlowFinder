@@ -4,13 +4,38 @@
 //! checks disk space, permissions, health status,
 //! and supports SMART data reading.
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
 
 use crate::ffi::{FFVolumeCallback, FFVolumeInfo};
+
+// P2-12 修复：添加缓存机制避免重复 spawn mount/df 进程。
+// 缓存 TTL 为 5 秒，避免频繁的系统调用。
+const VOLUME_CACHE_TTL: Duration = Duration::from_secs(5);
+
+struct VolumeCache {
+    volumes: Option<(Vec<VolumeInfo>, Instant)>,
+    sizes: HashMap<String, ((u64, u64, u64), Instant)>,
+}
+
+static VOLUME_CACHE: OnceLock<Mutex<VolumeCache>> = OnceLock::new();
+
+fn volume_cache() -> &'static Mutex<VolumeCache> {
+    VOLUME_CACHE.get_or_init(|| {
+        Mutex::new(VolumeCache {
+            volumes: None,
+            sizes: HashMap::new(),
+        })
+    })
+}
 
 // ── Error codes ─────────────────────────────────────────────────────
 
@@ -103,6 +128,16 @@ impl VolumeManager {
 
     /// List all mounted volumes
     pub fn list_volumes(&self) -> Vec<VolumeInfo> {
+        // P2-12 修复：先检查缓存，避免重复 spawn mount 进程
+        {
+            let cache = volume_cache().lock();
+            if let Some((ref volumes, fetched_at)) = cache.volumes {
+                if fetched_at.elapsed() < VOLUME_CACHE_TTL {
+                    return volumes.clone();
+                }
+            }
+        }
+
         let mut volumes = Vec::new();
 
         // Get mounted volumes using mount command
@@ -113,6 +148,12 @@ impl VolumeManager {
                     volumes.push(info);
                 }
             }
+        }
+
+        // 更新缓存
+        {
+            let mut cache = volume_cache().lock();
+            cache.volumes = Some((volumes.clone(), Instant::now()));
         }
 
         volumes
@@ -248,11 +289,22 @@ impl VolumeManager {
 
     /// Get volume size information
     pub fn get_volume_size(&self, path: &str) -> (u64, u64, u64) {
-        if let Ok(output) = std::process::Command::new("df")
+        // P2-12 修复：先检查缓存，避免重复 spawn df 进程
+        {
+            let cache = volume_cache().lock();
+            if let Some((sizes, fetched_at)) = cache.sizes.get(path) {
+                if fetched_at.elapsed() < VOLUME_CACHE_TTL {
+                    return *sizes;
+                }
+            }
+        }
+
+        let result = if let Ok(output) = std::process::Command::new("df")
             .args(&["-k", path])
             .output()
         {
             let output_str = String::from_utf8_lossy(&output.stdout);
+            let mut found = (0, 0, 0);
             for line in output_str.lines().skip(1) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 4 {
@@ -261,12 +313,23 @@ impl VolumeManager {
                         parts[2].parse::<u64>(),
                         parts[3].parse::<u64>(),
                     ) {
-                        return (total * 1024, used * 1024, free * 1024);
+                        found = (total * 1024, used * 1024, free * 1024);
+                        break;
                     }
                 }
             }
+            found
+        } else {
+            (0, 0, 0)
+        };
+
+        // 更新缓存
+        {
+            let mut cache = volume_cache().lock();
+            cache.sizes.insert(path.to_string(), (result, Instant::now()));
         }
-        (0, 0, 0)
+
+        result
     }
 
     /// Get detailed volume info
@@ -407,9 +470,30 @@ pub extern "C" fn ff_volume_list(
     let volumes = manager.list_volumes();
 
     for volume in volumes {
-        let name_c = CString::new(volume.name.clone()).unwrap_or_default();
-        let path_c = CString::new(volume.path.clone()).unwrap_or_default();
-        let fs_c = CString::new(volume.filesystem.clone()).unwrap_or_default();
+        // P1-8 修复：volume.name/path/filesystem 来自 mount 命令输出，
+        // 理论上不含 NUL 字节，但 unwrap_or_default() 会在失败时静默返回空字符串。
+        // 改为正确处理 CString::new 失败——跳过含 NUL 字节的异常条目。
+        let name_c = match CString::new(volume.name.as_str()) {
+            Ok(c) => c,
+            Err(_) => {
+                log::warn!("volume name contains NUL byte, skipping: {}", volume.path);
+                continue;
+            }
+        };
+        let path_c = match CString::new(volume.path.as_str()) {
+            Ok(c) => c,
+            Err(_) => {
+                log::warn!("volume path contains NUL byte, skipping");
+                continue;
+            }
+        };
+        let fs_c = match CString::new(volume.filesystem.as_str()) {
+            Ok(c) => c,
+            Err(_) => {
+                log::warn!("volume filesystem contains NUL byte, skipping: {}", volume.path);
+                continue;
+            }
+        };
 
         let c_vol = FFVolumeInfo {
             name: name_c.into_raw(),
@@ -466,9 +550,28 @@ pub extern "C" fn ff_volume_info(
     let manager = VolumeManager::new();
 
     if let Some(volume) = manager.get_volume_info(path_str) {
-        let name_c = CString::new(volume.name.clone()).unwrap_or_default().into_raw();
-        let path_c = CString::new(volume.path.clone()).unwrap_or_default().into_raw();
-        let fs_c = CString::new(volume.filesystem.clone()).unwrap_or_default().into_raw();
+        // P1-8 修复：正确处理 CString::new 失败，而非静默返回空字符串
+        let name_c = match CString::new(volume.name.as_str()) {
+            Ok(c) => c.into_raw(),
+            Err(_) => return FF_ERR_GENERIC,
+        };
+        let path_c = match CString::new(volume.path.as_str()) {
+            Ok(c) => c.into_raw(),
+            Err(_) => {
+                unsafe { let _ = CString::from_raw(name_c); }
+                return FF_ERR_GENERIC;
+            }
+        };
+        let fs_c = match CString::new(volume.filesystem.as_str()) {
+            Ok(c) => c.into_raw(),
+            Err(_) => {
+                unsafe {
+                    let _ = CString::from_raw(name_c);
+                    let _ = CString::from_raw(path_c);
+                }
+                return FF_ERR_GENERIC;
+            }
+        };
 
         unsafe {
             *out_info = FFVolumeInfo {

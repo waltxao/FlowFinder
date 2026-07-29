@@ -16,11 +16,8 @@ public enum SearchMode: Int, CaseIterable {
 
 // MARK: - SearchOpaqueContainerView
 
-/// 重写 isOpaque 返回 true 的 NSView 子类（与 MainWindowController 同架构）
-/// 任务 F11-2: 窗口级实体背景（v0.6.7），移除透明玻璃架构。
-private class SearchOpaqueContainerView: NSView {
-    override var isOpaque: Bool { return true }
-}
+// FFOpaqueContainerView 已提取到 FFCommon.swift（统一实体背景容器）
+// 原 SearchOpaqueContainerView 已由 FFOpaqueContainerView 替代
 
 // MARK: - FFSearchNameCell
 
@@ -315,7 +312,7 @@ public class SearchPanelController: NSWindowController {
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
 
         // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
-        let containerView = SearchOpaqueContainerView()
+        let containerView = FFOpaqueContainerView()
         containerView.wantsLayer = true
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
@@ -427,7 +424,11 @@ public class SearchPanelController: NSWindowController {
             performSearch()
         }
         // 确保应用在前台
-        NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         // 显示窗口并置前
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)

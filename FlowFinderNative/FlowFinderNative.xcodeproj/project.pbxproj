@@ -58,6 +58,8 @@
 		FF0000000000000000200053 /* DeleteConfirmDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200054; };
 		FF0000000000000000200055 /* ConnectServerDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200056; };
 		FF0000000000000000200057 /* ProgressDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200058; };
+		FF0000000000000000200063 /* FFLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200064; };
+		FF0000000000000000200065 /* FFCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200066; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -114,6 +116,8 @@
 		FF0000000000000000200054 /* DeleteConfirmDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteConfirmDialog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200056 /* ConnectServerDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectServerDialog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200058 /* ProgressDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressDialog.swift; sourceTree = "<group>"; };
+		FF0000000000000000200064 /* FFLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLog.swift; sourceTree = "<group>"; };
+		FF0000000000000000200066 /* FFCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCommon.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -191,6 +195,7 @@
 				FF0000000000000000200054 /* DeleteConfirmDialog.swift */,
 				FF0000000000000000200056 /* ConnectServerDialog.swift */,
 				FF0000000000000000200058 /* ProgressDialog.swift */,
+				FF0000000000000000200066 /* FFCommon.swift */,
 		);
 		path = UI;
 		sourceTree = "<group>";
@@ -221,6 +226,7 @@
 				FF000000000000000020000A /* TaskSchedulerManager.swift */,
 				FF000000000000000020000C /* ThemeManager.swift */,
 				FF0000000000000000200010 /* ThumbnailManager.swift */,
+				FF0000000000000000200064 /* FFLog.swift */,
 );
 			path = Bridge;
 			sourceTree = "<group>";
@@ -283,7 +289,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FF00000B000000000000000B /* Info.plist in Resources */,
 				FF0000000000000000300002 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -388,6 +393,8 @@
 				FF0000000000000000200053 /* DeleteConfirmDialog.swift in Sources */,
 				FF0000000000000000200055 /* ConnectServerDialog.swift in Sources */,
 				FF0000000000000000200057 /* ProgressDialog.swift in Sources */,
+				FF0000000000000000200063 /* FFLog.swift in Sources */,
+				FF0000000000000000200065 /* FFCommon.swift in Sources */,
 		);
 		runOnlyForDeploymentPostprocessing = 0;
 	};
@@ -520,7 +527,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 670;
+				CURRENT_PROJECT_VERSION = 671;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -544,7 +551,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.7;
+				MARKETING_VERSION = 0.6.7.1;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
@@ -565,7 +572,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 670;
+				CURRENT_PROJECT_VERSION = 671;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -589,7 +596,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.7;
+				MARKETING_VERSION = 0.6.7.1;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",

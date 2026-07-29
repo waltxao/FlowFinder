@@ -61,10 +61,21 @@ public final class TagBridge {
         return setTags(tags, path: path)
     }
 
-    /// 移除标签
+    /// 移除标签（同时按 id 和 name 匹配，兼容原生标签的随机 id）
     public func removeTag(_ tagId: String, path: String) -> Bool {
         var tags = getTags(path: path)
+        // 先尝试按 id 匹配
         tags.removeAll(where: { $0.id == tagId })
+        // 再尝试按 name 匹配（原生标签 id 每次随机，需按 name 补充移除）
+        // 通过 tagId 查找对应的 tag name（调用方可能传入 name 作为 tagId）
+        tags.removeAll(where: { $0.name == tagId })
+        return setTags(tags, path: path)
+    }
+
+    /// 按名称移除标签
+    public func removeTagByName(_ name: String, path: String) -> Bool {
+        var tags = getTags(path: path)
+        tags.removeAll(where: { $0.name == name })
         return setTags(tags, path: path)
     }
 

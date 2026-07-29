@@ -14,12 +14,13 @@
 //! - All heap-allocated strings returned to C must be freed with
 //!   `ff_free_string()`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 // ── L2 persistent cache db path ────────────────────────────────────
 //
@@ -48,19 +49,21 @@ pub const FF_ERR_PERMISSION_DENIED: c_int = -6;
 
 // ── Thread-local error storage ────────────────────────────────────────
 
+// P1-6 修复：thread_local 保证单线程访问，使用 RefCell 替代 Mutex，
+// 避免 .lock().unwrap() 的开销和潜在死锁。
 thread_local! {
-    static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
+    static LAST_ERROR: RefCell<Option<String>> = RefCell::new(None);
 }
 
 fn set_last_error(msg: String) {
     LAST_ERROR.with(|e| {
-        *e.lock().unwrap() = Some(msg);
+        *e.borrow_mut() = Some(msg);
     });
 }
 
 fn clear_last_error() {
     LAST_ERROR.with(|e| {
-        *e.lock().unwrap() = None;
+        *e.borrow_mut() = None;
     });
 }
 
@@ -175,10 +178,12 @@ pub struct FFSearchResult {
 /// Callback for search results.
 pub type FFSearchCallback = extern "C" fn(result: *const FFSearchResult, user_data: *mut c_void);
 
-// ── Helper: convert Rust String to C string ─────────────────────────
+// ── Helper: convert Rust string to C string ─────────────────────────
 
-fn rust_string_to_c(s: String) -> *mut c_char {
-    match CString::new(s) {
+// P2-16 修复：签名改为接受 impl AsRef<str>，避免调用方不必要的 String 克隆。
+// CString::new 直接接受 &[u8]（实现了 Into<Vec<u8>>），由 CString 内部完成唯一一次拷贝。
+fn rust_string_to_c(s: impl AsRef<str>) -> *mut c_char {
+    match CString::new(s.as_ref().as_bytes()) {
         Ok(cstr) => cstr.into_raw(),
         Err(_) => ptr::null_mut(),
     }
@@ -284,14 +289,16 @@ pub extern "C" fn ff_list_dir(
         match crate::core::bulk_read::list_dir_bulk(path_str) {
             Ok(entries) => {
                 for entry in entries {
-                    let name_c = rust_string_to_c(entry.name.clone());
-                    let path_c = rust_string_to_c(entry.path.clone());
-                    let ext_c = rust_string_to_c(entry.extension.clone());
+                    // P0-3 修复：使用 RAII CString 保持所有权，仅借用裸指针给回调。
+                    // 回调返回后 CString 自动 drop，即使回调 panic 也不会泄漏内存。
+                    let name_c = CString::new(entry.name.as_bytes()).ok();
+                    let path_c = CString::new(entry.path.as_bytes()).ok();
+                    let ext_c = CString::new(entry.extension.as_bytes()).ok();
 
                     let ff_entry = FFEntryRef {
-                        name: name_c,
-                        path: path_c,
-                        extension: ext_c,
+                        name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                        path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                        extension: ext_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
                         is_dir: entry.is_dir,
                         is_file: entry.is_file,
                         is_symlink: entry.is_symlink,
@@ -303,17 +310,7 @@ pub extern "C" fn ff_list_dir(
                     };
 
                     callback(&ff_entry, user_data);
-
-                    // Clean up the strings we allocated for this entry.
-                    if !name_c.is_null() {
-                        unsafe { let _ = CString::from_raw(name_c); }
-                    }
-                    if !path_c.is_null() {
-                        unsafe { let _ = CString::from_raw(path_c); }
-                    }
-                    if !ext_c.is_null() {
-                        unsafe { let _ = CString::from_raw(ext_c); }
-                    }
+                    // name_c, path_c, ext_c 在此自动 drop，无需手动释放
                 }
                 clear_last_error();
                 FF_OK
@@ -340,7 +337,7 @@ pub extern "C" fn ff_list_dir(
 pub extern "C" fn ff_last_error() -> *mut c_char {
     ffi_catch_ptr(|| {
         LAST_ERROR.with(|e| {
-            let guard = e.lock().unwrap();
+            let guard = e.borrow();
             match guard.as_ref() {
                 Some(msg) => rust_string_to_c(msg.clone()),
                 None => ptr::null_mut(),
@@ -775,46 +772,47 @@ pub extern "C" fn ff_scan_duplicates(
                         (self.progress)(scanned, total_val, self.user_data);
                     }
                     crate::core::dedup_engine::DedupEvent::GroupFound { group } => {
+                        // P0-3 修复：使用 RAII Vec<CString> 保持所有权，
+                        // 仅借用裸指针给回调。回调返回后（即使 panic）所有 CString 自动释放。
+                        let mut id_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
+                        let mut path_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
+                        let mut name_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
+
                         let files: Vec<FFDuplicateFile> = group
                             .files
                             .iter()
-                            .map(|f| FFDuplicateFile {
-                                id: rust_string_to_c(f.id.clone()),
-                                path: rust_string_to_c(f.path.clone()),
-                                name: rust_string_to_c(f.name.clone()),
-                                size: f.size,
-                                modified: f.modified,
+                            .map(|f| {
+                                let id_c = CString::new(f.id.as_bytes()).ok();
+                                let path_c = CString::new(f.path.as_bytes()).ok();
+                                let name_c = CString::new(f.name.as_bytes()).ok();
+                                let file = FFDuplicateFile {
+                                    id: id_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                                    path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                                    name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                                    size: f.size,
+                                    modified: f.modified,
+                                };
+                                // 将 CString 推入 Vec 保持所有权
+                                if let Some(c) = id_c { id_cstrings.push(c); }
+                                if let Some(c) = path_c { path_cstrings.push(c); }
+                                if let Some(c) = name_c { name_cstrings.push(c); }
+                                file
                             })
                             .collect();
 
+                        let group_id_c = CString::new(group.id.as_bytes()).ok();
+                        let group_hash_c = CString::new(group.hash.as_bytes()).ok();
+
                         let group_c = FFDuplicateGroup {
-                            id: rust_string_to_c(group.id.clone()),
-                            hash: rust_string_to_c(group.hash.clone()),
+                            id: group_id_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                            hash: group_hash_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
                             size: group.size,
                             files: files.as_ptr(),
                             file_count: files.len(),
                         };
 
                         (self.group)(&group_c, self.user_data);
-
-                        // Clean up allocated strings
-                        for f in &files {
-                            if !f.id.is_null() {
-                                unsafe { let _ = CString::from_raw(f.id); }
-                            }
-                            if !f.path.is_null() {
-                                unsafe { let _ = CString::from_raw(f.path); }
-                            }
-                            if !f.name.is_null() {
-                                unsafe { let _ = CString::from_raw(f.name); }
-                            }
-                        }
-                        if !group_c.id.is_null() {
-                            unsafe { let _ = CString::from_raw(group_c.id); }
-                        }
-                        if !group_c.hash.is_null() {
-                            unsafe { let _ = CString::from_raw(group_c.hash); }
-                        }
+                        // files, *_cstrings, group_id_c, group_hash_c 在此自动 drop
                     }
                     _ => {}
                 }
@@ -906,20 +904,18 @@ pub extern "C" fn ff_search(
         };
 
         let mut cb = |result: crate::core::search_engine::SearchResult| {
+            // P0-3 修复：使用 RAII CString 保持所有权，回调 panic 时自动释放
+            let path_c = CString::new(result.path.as_bytes()).ok();
+            let name_c = CString::new(result.name.as_bytes()).ok();
             let result_c = FFSearchResult {
-                path: rust_string_to_c(result.path),
-                name: rust_string_to_c(result.name),
+                path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
                 size: result.size,
                 modified: result.modified,
                 is_dir: result.is_dir,
             };
             callback(&result_c, user_data);
-            if !result_c.path.is_null() {
-                unsafe { let _ = CString::from_raw(result_c.path); }
-            }
-            if !result_c.name.is_null() {
-                unsafe { let _ = CString::from_raw(result_c.name); }
-            }
+            // path_c, name_c 在此自动 drop
         };
 
         match crate::core::search_engine::search_files(path_str, query_str, &mut cb) {
@@ -1023,20 +1019,18 @@ pub extern "C" fn ff_search_with_filters(
         };
 
         let mut cb = |result: crate::core::search_engine::SearchResult| {
+            // P0-3 修复：使用 RAII CString 保持所有权，回调 panic 时自动释放
+            let path_c = CString::new(result.path.as_bytes()).ok();
+            let name_c = CString::new(result.name.as_bytes()).ok();
             let result_c = FFSearchResult {
-                path: rust_string_to_c(result.path),
-                name: rust_string_to_c(result.name),
+                path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
                 size: result.size,
                 modified: result.modified,
                 is_dir: result.is_dir,
             };
             callback(&result_c, user_data);
-            if !result_c.path.is_null() {
-                unsafe { let _ = CString::from_raw(result_c.path); }
-            }
-            if !result_c.name.is_null() {
-                unsafe { let _ = CString::from_raw(result_c.name); }
-            }
+            // path_c, name_c 在此自动 drop
         };
 
         match crate::core::search_engine::search_with_filters(path_str, query_str, &rust_filters, &mut cb) {
@@ -1097,11 +1091,11 @@ pub extern "C" fn ff_get_preview_path(
         };
 
         // For now, just return the original path
-        let path_c = rust_string_to_c(path_str.to_string());
-        callback(path_c, user_data);
-        if !path_c.is_null() {
-            unsafe { let _ = CString::from_raw(path_c); }
-        }
+        // P0-3 修复：使用 RAII CString 保持所有权，回调 panic 时自动释放
+        let path_c = CString::new(path_str.as_bytes()).ok();
+        let ptr = path_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+        callback(ptr, user_data);
+        // path_c 在此自动 drop
 
         clear_last_error();
         FF_OK
@@ -1321,18 +1315,19 @@ pub extern "C" fn ff_cache_get(
             }
         };
 
-        // Inline helper: deliver a batch of skeletons through the callback,
-        // freeing the transient C strings after each invocation.
-        let deliver = |entries: Vec<crate::core::scanner::FileEntrySkeleton>| {
+        // Inline helper: deliver a batch of skeletons through the callback.
+        // P0-3 修复：使用 RAII CString 保持所有权，回调 panic 时自动释放。
+        // P2-15 修复：改为接受 &[FileEntrySkeleton] 切片引用，避免 Vec 克隆。
+        let deliver = |entries: &[crate::core::scanner::FileEntrySkeleton]| {
             for skeleton in entries {
-                let name_c = rust_string_to_c(skeleton.name.clone());
-                let path_c = rust_string_to_c(skeleton.path.clone());
-                let ext_c = rust_string_to_c(skeleton.extension.clone());
+                let name_c = CString::new(skeleton.name.as_bytes()).ok();
+                let path_c = CString::new(skeleton.path.as_bytes()).ok();
+                let ext_c = CString::new(skeleton.extension.as_bytes()).ok();
 
                 let ff_entry = FFEntryRef {
-                    name: name_c,
-                    path: path_c,
-                    extension: ext_c,
+                    name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                    path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                    extension: ext_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
                     is_dir: skeleton.is_dir,
                     is_file: skeleton.is_file,
                     is_symlink: skeleton.is_symlink,
@@ -1344,22 +1339,14 @@ pub extern "C" fn ff_cache_get(
                 };
 
                 callback(&ff_entry, user_data);
-
-                if !name_c.is_null() {
-                    unsafe { let _ = CString::from_raw(name_c); }
-                }
-                if !path_c.is_null() {
-                    unsafe { let _ = CString::from_raw(path_c); }
-                }
-                if !ext_c.is_null() {
-                    unsafe { let _ = CString::from_raw(ext_c); }
-                }
+                // name_c, path_c, ext_c 在此自动 drop
             }
         };
 
         // ── L1 lookup ──────────────────────────────────────────────────
+        // P2-15 修复：get() 返回 Arc<Vec<...>>，直接借用切片，无需克隆
         if let Some(entries) = crate::core::dir_cache::get(path_str) {
-            deliver(entries);
+            deliver(&entries);
             clear_last_error();
             return FF_OK;
         }
@@ -1370,7 +1357,7 @@ pub extern "C" fn ff_cache_get(
                 Ok(Some(entries)) => {
                     // Write back to L1 so subsequent reads hit memory.
                     crate::core::dir_cache::put(path_str.to_string(), entries.clone());
-                    deliver(entries);
+                    deliver(&entries);
                     clear_last_error();
                     return FF_OK;
                 }
@@ -1414,6 +1401,13 @@ pub extern "C" fn ff_cache_get(
 ///
 /// - `path` must be a valid, NUL-terminated UTF-8 string.
 /// - `entries` must be a valid pointer to an array of `FFEntryRef`.
+/// - P2-11 补充说明：`entries` 数组中每个 `FFEntryRef` 的字符串字段
+///   (`name`, `path`, `extension`) 必须为有效的 NUL 结尾 UTF-8 C 字符串指针，
+///   或为 `NULL`（NULL 时该字段被视为空字符串）。
+///   调用方需保证这些指针在 `ff_cache_put` 返回前持续有效。
+///   指针有效性要求：每个非 NULL 的字符串指针必须指向以 `\0` 结尾的字节序列，
+///   且不得在函数执行期间被释放或修改。
+/// - `entry_count` must not exceed the actual length of the `entries` array.
 #[no_mangle]
 pub extern "C" fn ff_cache_put(
     path: *const c_char,
@@ -2852,16 +2846,8 @@ mod tests {
 
     #[test]
     fn test_ff_volume_health_check_null() {
-        extern "C" fn health_callback(
-            _path: *const c_char,
-            _overall_status: *const c_char,
-            _disk_usage_percent: f64,
-            _smart_available: bool,
-            _smart_status: *const c_char,
-            _user_data: *mut c_void,
-        ) {}
-
-        let result = crate::core::volumes::ff_volume_health_check(std::ptr::null(), health_callback, std::ptr::null_mut());
+        // ff_volume_health_check 签名为 (path, out_result)，测试 null 路径
+        let result = crate::core::volumes::ff_volume_health_check(std::ptr::null(), std::ptr::null_mut());
         assert_eq!(result, FF_ERR_INVALID_PATH);
     }
 

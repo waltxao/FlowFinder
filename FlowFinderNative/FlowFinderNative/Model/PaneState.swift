@@ -146,6 +146,8 @@ public class PaneViewModel: ObservableObject {
     }
 
     func refresh() {
+        // 刷新前先失效缓存，确保读取最新文件系统状态而非过期缓存数据
+        try? CoreBridge.shared.invalidateCache(path: state.path)
         loadDirectory()
     }
 

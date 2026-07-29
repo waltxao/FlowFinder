@@ -3,11 +3,8 @@ import Combine
 
 // MARK: - DuplicateOpaqueContainerView
 
-/// 重写 isOpaque 返回 true 的 NSView 子类（与 MainWindowController 同架构）
-/// 任务 F11-2: 窗口级实体背景（v0.6.7），移除透明玻璃架构。
-private class DuplicateOpaqueContainerView: NSView {
-    override var isOpaque: Bool { return true }
-}
+// FFOpaqueContainerView 已提取到 FFCommon.swift（统一实体背景容器）
+// 原 DuplicateOpaqueContainerView 已由 FFOpaqueContainerView 替代
 
 // MARK: - DuplicateScanWindowController
 
@@ -236,16 +233,23 @@ public class DuplicateScanWindowController: NSWindowController {
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
 
         // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
-        let containerView = DuplicateOpaqueContainerView()
+        let containerView = FFOpaqueContainerView()
         containerView.wantsLayer = true
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        // 修复：窗口使用 .fullSizeContentView + titlebarAppearsTransparent=true，
+        // 由于 FFOpaqueContainerView 的 isOpaque=true，safeAreaLayoutGuide 可能不提供正确的顶部 inset，
+        // 导致工具栏被红绿灯按钮遮挡。通过 additionalSafeAreaInsets 手动补充顶部安全区域间距。
+        containerView.additionalSafeAreaInsets = NSEdgeInsets(top: 28, left: 0, bottom: 0, right: 0)
 
         containerView.addSubview(mainContainer)
         NSLayoutConstraint.activate([
             mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
+            // 问题18: 窗口使用 .fullSizeContentView + 透明标题栏，内容从 y=0 开始会被红绿灯按钮遮挡。
+            // 使用 safeAreaLayoutGuide 让主容器从红绿灯下方开始，避免工具栏被遮挡。
+            mainContainer.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
             mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
         ])
 

@@ -109,7 +109,8 @@ pub fn batch_rename(
                 succeeded += 1;
             }
             Err(e) => {
-                eprintln!("rename {} -> {} failed: {}", item.original_path, item.new_name, e);
+                // P2-19 修复：使用 log::error! 替代 eprintln!，集成日志框架
+                log::error!("rename {} -> {} failed: {}", item.original_path, item.new_name, e);
             }
         }
 
@@ -201,7 +202,8 @@ pub fn organize_by_date(
                 moved += 1;
             }
             Err(e) => {
-                eprintln!("move {} -> {} failed: {}", file_path.display(), target_path.display(), e);
+                // P2-19 修复：使用 log::error! 替代 eprintln!
+                log::error!("move {} -> {} failed: {}", file_path.display(), target_path.display(), e);
             }
         }
 
@@ -255,7 +257,8 @@ pub fn organize_by_type(
                 moved += 1;
             }
             Err(e) => {
-                eprintln!("move {} -> {} failed: {}", file_path.display(), target_path.display(), e);
+                // P2-19 修复：使用 log::error! 替代 eprintln!
+                log::error!("move {} -> {} failed: {}", file_path.display(), target_path.display(), e);
             }
         }
 

@@ -1,5 +1,6 @@
 import Cocoa
 import Combine
+import os.log
 
 // MARK: - FFDebug (file-based debug logger)
 
@@ -751,6 +752,9 @@ public class FileListView: NSView {
         openOtherItem.isHidden = true
         // 10. 分隔线
         menu.addItem(.separator())
+        // 添加到我的收藏 — star
+        let favItem = menu.addItem(withTitle: "添加到我的收藏", action: #selector(addToFavorites(_:)), keyEquivalent: "")
+        favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
         // 11. 重命名 — pencil
         let renameItem = menu.addItem(withTitle: "重命名", action: #selector(renameSelected(_:)), keyEquivalent: "")
         renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "重命名")
@@ -878,7 +882,7 @@ public class FileListView: NSView {
         // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
         let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
         // 任务 F10-10: 入口日志（修复问题15/16 诊断）+ path 空回退提示
-        print("[F10-10] showInfoMenu clicked, clickedEntry=\(clickedEntry?.path ?? "nil"), fallback selectedFirst=\(viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")")
+        FFLog.debug("[F10-10] showInfoMenu clicked, clickedEntry=\(clickedEntry?.path ?? "nil"), fallback selectedFirst=\(viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")", log: FFLog.ui)
         // 若无目标路径（既无右键点击项也无选中项），给出提示而非静默无响应
         if targetPath == nil || (targetPath?.isEmpty ?? true) {
             let alert = NSAlert()
@@ -992,14 +996,16 @@ public class FileListView: NSView {
 
     @objc private func copyToOtherPane(_ sender: Any?) {
         // 任务 F10-10: 入口日志（修复问题15/16 诊断）
-        print("[F10-10] copyToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
-        NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide()])
+        FFLog.debug("[F10-10] copyToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)", log: FFLog.ui)
+        // 问题12修复：传递右键点击文件路径，供空选兜底使用
+        NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide(), "clickedPath": clickedEntry?.path])
     }
 
     @objc private func moveToOtherPane(_ sender: Any?) {
         // 任务 F10-10: 入口日志（修复问题15/16 诊断）
-        print("[F10-10] moveToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
-        NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide()])
+        FFLog.debug("[F10-10] moveToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)", log: FFLog.ui)
+        // 问题12修复：传递右键点击文件路径，供空选兜底使用
+        NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide(), "clickedPath": clickedEntry?.path])
     }
 
     @objc private func openInOtherPane(_ sender: Any?) {
@@ -1095,7 +1101,8 @@ public class FileListView: NSView {
             NSLayoutConstraint.activate([
                 // 任务 F5: 药丸紧贴文件名后 8pt（硬约束，避免被推向右边缘裁切）
                 stack.leadingAnchor.constraint(equalTo: textField.trailingAnchor, constant: 8),
-                stack.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: -4),
+                // 允许药丸溢出到后续列（用户要求"可以被后面的列遮挡"）
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: 0),
                 stack.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
             ])
             pillContainer = stack
@@ -1121,6 +1128,16 @@ public class FileListView: NSView {
                     pillContainer?.addArrangedSubview(countPill)
                 }
             }
+            // 设置右键菜单用于移除标签
+            let tagMenu = NSMenu()
+            tagMenu.autoenablesItems = false
+            for tag in tags {
+                let item = NSMenuItem(title: "移除「\(tag.name)」", action: #selector(removeTagByNameFromPill(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["tagName": tag.name, "path": entry.path]
+                tagMenu.addItem(item)
+            }
+            pillContainer?.menu = tagMenu
         }
     }
 
@@ -1137,6 +1154,8 @@ public class FileListView: NSView {
         pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
         pill.layer?.cornerRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
+        // 设置最小宽度约束，保证至少显示 4 个字符（防止药丸在空间不足时塌缩）
+        pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
 
         let dot = NSView()
         dot.wantsLayer = true
@@ -1145,10 +1164,18 @@ public class FileListView: NSView {
         dot.translatesAutoresizingMaskIntoConstraints = false
         pill.addSubview(dot)
 
+        // 标签名完整显示，由 label 的 truncation 和药丸最小宽度约束自动处理
+        // 空间不足时 label 会截断显示，但药丸最小宽度 40pt 保证至少显示 4 个字符
         let label = NSTextField(labelWithString: tag.name)
         label.font = NSFont.systemFont(ofSize: 11)
         label.lineBreakMode = .byTruncatingTail
+        // 禁止文本换行，确保截断而非换行；末尾可见行截断
+        label.cell?.wraps = false
+        label.cell?.truncatesLastVisibleLine = true
         label.translatesAutoresizingMaskIntoConstraints = false
+        // 设置 hugging 优先级：让 label 保持自然宽度，空间不足时才截断
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         pill.addSubview(label)
 
         NSLayoutConstraint.activate([
@@ -1590,6 +1617,180 @@ extension FileListView: NSTableViewDelegate {
         return !displayRows[row].isHeader
     }
 
+    // Bug #2 修复：实现拖拽源方法，使表格行可作为拖拽提供者
+    // 此前 handleTableDrag() 为死代码，NSTableViewDelegate 未实现 pasteboardWriterForRowAt:，
+    // 导致拖拽完全不生效。现在由 NSTableView 标准机制驱动拖拽。
+    public func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 else { return nil }
+        let entry = viewModel!.files[displayRow.fileIndex]
+        return NSURL(fileURLWithPath: entry.path)
+    }
+
+    // MARK: - Drag & Drop Destination
+
+    /// 拖拽目标校验：决定是否接受拖拽及操作类型（move/copy）。
+    /// 问题1 修复：通过 NSTableViewDataSource 标准方法接管拖放目标，
+    /// 替代被 tableView 子视图拦截、永不触发的 NSView 层
+    /// draggingEntered/draggingUpdated/performDragOperation。
+    public func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        // 检查拖拽内容是否包含文件 URL
+        guard let items = info.draggingPasteboard.pasteboardItems, !items.isEmpty else { return [] }
+        for item in items {
+            guard item.types.contains(.fileURL) else { continue }
+            // 判断目标位置：.on 拖到文件夹行上 → 移入文件夹；.above 拖到行间/空白 → 移到当前目录
+            if dropOperation == .on, row < displayRows.count {
+                let displayRow = displayRows[row]
+                if !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 {
+                    let entry = viewModel!.files[displayRow.fileIndex]
+                    // 仅文件夹行允许 .on（移入文件夹）；文件行/标题行回退为 .above
+                    if entry.isDirectory {
+                        return isMoveOperation(info) ? .move : .copy
+                    }
+                }
+                // 拖到文件行/标题行上 → 改为 .above，避免歧义
+                tableView.setDropRow(row, dropOperation: .above)
+                return isMoveOperation(info) ? .move : .copy
+            }
+            return isMoveOperation(info) ? .move : .copy
+        }
+        return []
+    }
+
+    /// 接受拖拽并执行文件操作（move/copy）。
+    /// 保留原 performDragOperation 的异步执行 / 撤销注册 / 跨面板刷新 / 部分失败提示逻辑，
+    /// 并新增“拖到文件夹行上 → 移入该文件夹”的目标判定。
+    public func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard let viewModel = viewModel else { return false }
+
+        // 解析拖拽的文件路径
+        guard let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              !urls.isEmpty else {
+            return false
+        }
+
+        // 确定目标路径：拖到文件夹行上 → 移入该文件夹；否则 → 当前目录
+        var destPath = viewModel.currentPath
+        if dropOperation == .on, row < displayRows.count {
+            let displayRow = displayRows[row]
+            if !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count {
+                let entry = viewModel.files[displayRow.fileIndex]
+                if entry.isDirectory {
+                    destPath = entry.path
+                }
+            }
+        }
+        guard !destPath.isEmpty else { return false }
+
+        let isMove = isMoveOperation(info)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let srcs = urls.map { $0.path }
+            let total = srcs.count
+            do {
+                let success: Int
+                if isMove {
+                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath)
+                } else {
+                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath)
+                }
+
+                // I2: 失效缓存使刷新反映新状态。目标目录总会变化；
+                // move 操作下每个源父目录也会变化（条目离开了这些目录），best-effort。
+                try? CoreBridge.shared.invalidateCache(path: destPath)
+                if isMove {
+                    let sourceDirs = Set(srcs.map { ($0 as NSString).deletingLastPathComponent })
+                    for dir in sourceDirs where !dir.isEmpty {
+                        try? CoreBridge.shared.invalidateCache(path: dir)
+                    }
+                }
+
+                // I3: 在异步 UI 刷新前捕获详细的部分失败信息（getLastError 为读一次即失效）
+                let partialDetail = (success < total) ? CoreBridge.shared.getLastError() : ""
+
+                // 计算 dst 路径用于撤销注册（best-effort：假设 srcs 都成功）
+                let dstPaths = srcs.map { src -> String in
+                    let name = (src as NSString).lastPathComponent
+                    return (destPath as NSString).appendingPathComponent(name)
+                }
+
+                DispatchQueue.main.async {
+                    self?.viewModel?.refresh()
+
+                    // Bug 3 修复：跨面板拖拽时，若源文件来自对侧面板的当前目录，需刷新对侧面板
+                    // （仅 move 操作会改变源目录；copy 不改变源，但为安全起见也刷新对侧）
+                    if let counterpartPath = self?.counterpartViewModel?.currentPath,
+                       !counterpartPath.isEmpty,
+                       srcs.contains(where: { ($0 as NSString).deletingLastPathComponent == counterpartPath }) {
+                        self?.counterpartViewModel?.refresh()
+                    }
+
+                    // 注册撤销（通过 viewModel?.undoManager 访问 per-window UndoManager）
+                    if success > 0, let vm = self?.viewModel, let undoManager = vm.undoManager {
+                        let counterpart = self?.counterpartViewModel
+                        if isMove {
+                            let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
+                            undoManager.registerUndo(withTarget: vm) { [weak counterpart] targetVM in
+                                // undo: 移回原位
+                                for (src, dst) in pairs {
+                                    try? CoreBridge.shared.moveFile(src: dst, dst: src)
+                                }
+                                // 注册 redo：再次移动
+                                targetVM.undoManager?.registerUndo(withTarget: targetVM) { [weak counterpart] vm2 in
+                                    for (src, dst) in pairs {
+                                        try? CoreBridge.shared.moveFile(src: src, dst: dst)
+                                    }
+                                    vm2.refresh()
+                                    counterpart?.refresh()
+                                }
+                                targetVM.undoManager?.setActionName("移动 \(success) 个项目")
+                                // I1: 刷新双面板（跨面板移动 undo 后源面板需同步）
+                                targetVM.refresh()
+                                counterpart?.refresh()
+                            }
+                            undoManager.setActionName("移动 \(success) 个项目")
+                        } else {
+                            let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
+                            undoManager.registerUndo(withTarget: vm) { [weak counterpart] targetVM in
+                                // undo: 删除复制项
+                                for (_, dst) in pairs {
+                                    try? CoreBridge.shared.deleteFile(path: dst)
+                                }
+                                // 注册 redo：重新复制
+                                targetVM.undoManager?.registerUndo(withTarget: targetVM) { [weak counterpart] vm2 in
+                                    for (src, dst) in pairs {
+                                        try? CoreBridge.shared.copyFile(src: src, dst: dst)
+                                    }
+                                    vm2.refresh()
+                                    counterpart?.refresh()
+                                }
+                                targetVM.undoManager?.setActionName("复制 \(success) 个项目")
+                                // I1: 刷新双面板
+                                targetVM.refresh()
+                                counterpart?.refresh()
+                            }
+                            undoManager.setActionName("复制 \(success) 个项目")
+                        }
+                    }
+
+                    if success < total {
+                        self?.showError(error: NSError(
+                            domain: "FlowFinder", code: -1,
+                            userInfo: [NSLocalizedDescriptionKey: "\(total - success) 个项目操作失败：\(partialDetail)"])
+                        )
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.showError(error: error)
+                }
+            }
+        }
+
+        return true
+    }
+
     // 选择变更时才执行选择逻辑（单击选中、Cmd+点击多选、Shift+范围选）
     public func tableViewSelectionDidChange(_ notification: Notification) {
         FFDebug.log("selectionDidChange selectedRows=\(tableView.selectedRowIndexes) isReloading=\(isReloading) filesCount=\(viewModel?.files.count ?? -1)")
@@ -1601,16 +1802,10 @@ extension FileListView: NSTableViewDelegate {
         // 点击行时激活当前面板（tableView 作为子视图拦截了 mouseDown，
         // FileListView.mouseDown 不会触发，需在此补充激活）
         onActivatePane?()
-        // 任务 F7: 确保 window 为 key + tableView 为 firstResponder（v0.6.5）
-        // 透明窗口的 key 状态不稳定，需显式 makeKey + makeFirstResponder
-        if let window = tableView.window {
-            if !window.isKeyWindow {
-                window.makeKeyAndOrderFront(nil)
-            }
-            if window.firstResponder !== tableView {
-                window.makeFirstResponder(tableView)
-            }
-        }
+        // 问题2 修复：移除选中变更时的 makeKey + makeFirstResponder 调用。
+        // 透明窗口的 key 状态切换会触发系统重绘导致可见抖动/跳动。
+        // 选中变更不应改变窗口层级或第一响应者，key 状态与 firstResponder
+        // 应在 mouseDown 或 windowDidBecomeKey 时处理。
         let selectedRows = tableView.selectedRowIndexes
         // 任务 F10-8: 通过 displayRows 映射显示行号 -> viewModel.files 下标
         let entries = selectedRows.compactMap { rowNum -> FileEntry? in
@@ -1819,135 +2014,6 @@ extension FileListView: NSDraggingSource {
 }
 
 extension FileListView {
-    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        return isMoveOperation(sender) ? .move : .copy
-    }
-
-    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        return isMoveOperation(sender) ? .move : .copy
-    }
-
-    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let pasteboard = sender.draggingPasteboard
-
-        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
-              !urls.isEmpty else {
-            return false
-        }
-
-        let destPath = viewModel?.currentPath ?? ""
-        guard !destPath.isEmpty else { return false }
-
-        let isMove = isMoveOperation(sender)
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let srcs = urls.map { $0.path }
-            let total = srcs.count
-            do {
-                let success: Int
-                if isMove {
-                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath)
-                } else {
-                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath)
-                }
-
-                // I2: invalidate cache so the refresh reflects the new state.
-                // Destination always changes; for a move each source parent
-                // directory also changes (items left those dirs). Best-effort.
-                try? CoreBridge.shared.invalidateCache(path: destPath)
-                if isMove {
-                    let sourceDirs = Set(srcs.map { ($0 as NSString).deletingLastPathComponent })
-                    for dir in sourceDirs where !dir.isEmpty {
-                        try? CoreBridge.shared.invalidateCache(path: dir)
-                    }
-                }
-
-                // I3: capture the detailed partial-failure message now
-                // (getLastError is read-once) before the async UI refresh.
-                let partialDetail = (success < total) ? CoreBridge.shared.getLastError() : ""
-
-                // 计算 dst 路径用于撤销注册（best-effort：假设 srcs 都成功）
-                let dstPaths = srcs.map { src -> String in
-                    let name = (src as NSString).lastPathComponent
-                    return (destPath as NSString).appendingPathComponent(name)
-                }
-
-                DispatchQueue.main.async {
-                    self?.viewModel?.refresh()
-
-                    // Bug 3 修复：跨面板拖拽时，若源文件来自对侧面板的当前目录，需刷新对侧面板
-                    // （仅 move 操作会改变源目录；copy 不改变源，但为安全起见也刷新对侧）
-                    if let counterpartPath = self?.counterpartViewModel?.currentPath,
-                       !counterpartPath.isEmpty,
-                       srcs.contains(where: { ($0 as NSString).deletingLastPathComponent == counterpartPath }) {
-                        self?.counterpartViewModel?.refresh()
-                    }
-
-                    // 注册撤销（通过 viewModel?.undoManager 访问 per-window UndoManager）
-                    if success > 0, let vm = self?.viewModel, let undoManager = vm.undoManager {
-                        let counterpart = self?.counterpartViewModel
-                        if isMove {
-                            let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
-                            undoManager.registerUndo(withTarget: vm) { [weak counterpart] targetVM in
-                                // undo: 移回原位
-                                for (src, dst) in pairs {
-                                    try? CoreBridge.shared.moveFile(src: dst, dst: src)
-                                }
-                                // 注册 redo：再次移动
-                                targetVM.undoManager?.registerUndo(withTarget: targetVM) { [weak counterpart] vm2 in
-                                    for (src, dst) in pairs {
-                                        try? CoreBridge.shared.moveFile(src: src, dst: dst)
-                                    }
-                                    vm2.refresh()
-                                    counterpart?.refresh()
-                                }
-                                targetVM.undoManager?.setActionName("移动 \(success) 个项目")
-                                // I1: 刷新双面板（跨面板移动 undo 后源面板需同步）
-                                targetVM.refresh()
-                                counterpart?.refresh()
-                            }
-                            undoManager.setActionName("移动 \(success) 个项目")
-                        } else {
-                            let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
-                            undoManager.registerUndo(withTarget: vm) { [weak counterpart] targetVM in
-                                // undo: 删除复制项
-                                for (_, dst) in pairs {
-                                    try? CoreBridge.shared.deleteFile(path: dst)
-                                }
-                                // 注册 redo：重新复制
-                                targetVM.undoManager?.registerUndo(withTarget: targetVM) { [weak counterpart] vm2 in
-                                    for (src, dst) in pairs {
-                                        try? CoreBridge.shared.copyFile(src: src, dst: dst)
-                                    }
-                                    vm2.refresh()
-                                    counterpart?.refresh()
-                                }
-                                targetVM.undoManager?.setActionName("复制 \(success) 个项目")
-                                // I1: 刷新双面板
-                                targetVM.refresh()
-                                counterpart?.refresh()
-                            }
-                            undoManager.setActionName("复制 \(success) 个项目")
-                        }
-                    }
-
-                    if success < total {
-                        self?.showError(error: NSError(
-                            domain: "FlowFinder", code: -1,
-                            userInfo: [NSLocalizedDescriptionKey: "\(total - success) 个项目操作失败：\(partialDetail)"])
-                        )
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self?.showError(error: error)
-                }
-            }
-        }
-
-        return true
-    }
-
     /// 判断是否为移动操作（同卷 + 未按 Cmd）
     private func isMoveOperation(_ sender: NSDraggingInfo) -> Bool {
         // Cmd 键切换为复制
@@ -2143,6 +2209,19 @@ extension FileListView {
 
         // 刷新列表以更新名称列内联药丸
         reloadData()
+        // 通知侧边栏刷新标签列表
+        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil)
+    }
+
+    /// 右键药丸移除标签（按名称移除，兼容原生标签随机 id）
+    @objc private func removeTagByNameFromPill(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let tagName = info["tagName"],
+              let path = info["path"] else { return }
+        _ = TagBridge.shared.removeTagByName(tagName, path: path)
+        reloadData()
+        // 通知侧边栏刷新
+        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil)
     }
 
     /// 新建标签对话框（参考 SidebarView.showCreateTagDialog 实现）

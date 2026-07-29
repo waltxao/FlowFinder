@@ -71,9 +71,46 @@ fn get_thumbnail_cache_path(path: &str) -> io::Result<PathBuf> {
 
     std::fs::create_dir_all(&cache_dir)?;
 
+    // P2-14 修复：启动时清理超过 30 天的旧缩略图
+    cleanup_old_thumbnails(&cache_dir);
+
     let hash = blake3::hash(path.as_bytes());
     let thumb_name = format!("{}.jpg", hash.to_hex());
     Ok(cache_dir.join(thumb_name))
+}
+
+/// P2-14 修复：清理超过 30 天的旧缩略图缓存文件。
+///
+/// 该函数在每次获取缩略图缓存路径时被调用（惰性清理）。
+/// 清理操作是尽力而为的——如果遍历目录失败或删除单个文件失败，
+/// 不会影响正常的缩略图生成流程。
+fn cleanup_old_thumbnails(cache_dir: &std::path::Path) {
+    const MAX_AGE_DAYS: u64 = 30;
+    let max_age = std::time::Duration::from_secs(MAX_AGE_DAYS * 24 * 60 * 60);
+
+    let entries = match std::fs::read_dir(cache_dir) {
+        Ok(e) => e,
+        Err(_) => return, // 目录读取失败，静默跳过清理
+    };
+
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // 仅清理 .jpg 缩略图文件
+        if path.extension().and_then(|e| e.to_str()) != Some("jpg") {
+            continue;
+        }
+        if let Ok(metadata) = entry.metadata() {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(age) = now.duration_since(modified) {
+                    if age > max_age {
+                        // 删除过期的缩略图文件，忽略错误
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

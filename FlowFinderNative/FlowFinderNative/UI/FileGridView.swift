@@ -1,5 +1,6 @@
 import Cocoa
 import Combine
+import os.log
 
 // MARK: - FileGridCollectionViewItem
 
@@ -507,9 +508,9 @@ public class FileGridView: NSView {
         let newFolderItem = menu.addItem(withTitle: "新建文件夹", action: #selector(createDirectory(_:)), keyEquivalent: "n")
         newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
         menu.addItem(.separator())
-        // 11. 添加到收藏夹 - star
-        let favItem = menu.addItem(withTitle: "添加到收藏夹", action: #selector(addToFavorites(_:)), keyEquivalent: "")
-        favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到收藏夹")
+        // 11. 添加到我的收藏 - star
+        let favItem = menu.addItem(withTitle: "添加到我的收藏", action: #selector(addToFavorites(_:)), keyEquivalent: "")
+        favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
         // 12. AI 自动打标签 - sparkles
         let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: #selector(generateAITags(_:)), keyEquivalent: "")
         aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI 自动打标签")
@@ -737,14 +738,16 @@ public class FileGridView: NSView {
 
     @objc private func copyToOtherPane(_ sender: Any?) {
         // 任务 F10-10: 入口日志（修复问题15/16 诊断）
-        print("[F10-10] copyToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
-        NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide()])
+        FFLog.debug("[F10-10] copyToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)", log: FFLog.ui)
+        // 问题12修复：传递右键点击文件路径，供空选兜底使用
+        NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide(), "clickedPath": clickedEntry?.path])
     }
 
     @objc private func moveToOtherPane(_ sender: Any?) {
         // 任务 F10-10: 入口日志（修复问题15/16 诊断）
-        print("[F10-10] moveToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)")
-        NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide()])
+        FFLog.debug("[F10-10] moveToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)", log: FFLog.ui)
+        // 问题12修复：传递右键点击文件路径，供空选兜底使用
+        NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide(), "clickedPath": clickedEntry?.path])
     }
 
     @objc private func openInOtherPane(_ sender: Any?) {
@@ -926,7 +929,7 @@ public class FileGridView: NSView {
         // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
         let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
         // 任务 F10-10: 入口日志（修复问题15/16 诊断）+ path 空回退提示
-        print("[F10-10] showInfoMenu clicked, clickedEntry=\(clickedEntry?.path ?? "nil"), fallback selectedFirst=\(viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")")
+        FFLog.debug("[F10-10] showInfoMenu clicked, clickedEntry=\(clickedEntry?.path ?? "nil"), fallback selectedFirst=\(viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")", log: FFLog.ui)
         // 若无目标路径（既无右键点击项也无选中项），给出提示而非静默无响应
         if targetPath == nil || (targetPath?.isEmpty ?? true) {
             let alert = NSAlert()
@@ -1007,7 +1010,10 @@ extension FileGridView: NSCollectionViewDataSource {
     }
 
     public func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
-        let item = collectionView.makeItem(withIdentifier: NSUserInterfaceItemIdentifier("GridItem"), for: indexPath) as! FileGridCollectionViewItem
+        guard let item = collectionView.makeItem(withIdentifier: NSUserInterfaceItemIdentifier("GridItem"), for: indexPath) as? FileGridCollectionViewItem else {
+            // 安全回退：类型转换失败时返回空 item，避免崩溃
+            return NSCollectionViewItem()
+        }
         // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
         let flatIdx = flatIndex(for: indexPath)
         if flatIdx < displayEntries.count {
