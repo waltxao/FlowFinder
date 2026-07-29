@@ -130,6 +130,8 @@ public class MainWindowController: NSWindowController {
     private var leftDetailsBar: ExpandableDetailsBar!
     private var rightDetailsBar: ExpandableDetailsBar!
     private var taskProgressBar: TaskProgressBar!
+    /// 任务 F11-9：底部进度栏高度约束（0=收起 / 28=展开，复制/移动/粘贴时动态切换）
+    private var taskProgressBarHeightConstraint: NSLayoutConstraint!
     private var mainSplitView: NSSplitView!
     private var paneSplitView: NSSplitView!
     /// 主内容容器引用（ThemeManager 需设置 appearance 以确保选中高亮可见）
@@ -301,17 +303,23 @@ public class MainWindowController: NSWindowController {
         // 红绿灯由系统自动浮在侧边栏顶部上方（titlebarAppearsTransparent=true）
         // 侧边栏内部顶部留出红绿灯安全区（由 SidebarView 处理）
         // mainSplitView 的 divider 提供 1pt 发丝线（dividerStyle=.thin）
+        // 任务 F11-9：底部进度栏使用动态高度约束（0=收起 / 28=展开），
+        // mainSplitView.bottomAnchor 锚定到 taskProgressBar.topAnchor，
+        // 这样进度栏展开时会将操作区整体上推，不会遮挡文件列表底部内容。
+        taskProgressBarHeightConstraint = taskProgressBar.heightAnchor.constraint(equalToConstant: 0)
+        taskProgressBarHeightConstraint.priority = .required
         NSLayoutConstraint.activate([
             // mainSplitView 顶到 mainContainer 顶部（红绿灯浮在上方）
             mainSplitView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
             mainSplitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             mainSplitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            mainSplitView.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
+            // mainSplitView 底部锚定到 taskProgressBar 顶部，进度栏展开时上推操作区
+            mainSplitView.bottomAnchor.constraint(equalTo: taskProgressBar.topAnchor),
 
             taskProgressBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             taskProgressBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
             taskProgressBar.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
-            taskProgressBar.heightAnchor.constraint(equalToConstant: 0),
+            taskProgressBarHeightConstraint,
         ])
 
         // 统一使用 NSVisualEffectView 作为窗口背景玻璃
@@ -1293,6 +1301,16 @@ extension MainWindowController {
         let destPath = activePaneViewModel.currentPath
         let srcs = clipboardItems
 
+        // 任务 F11-9：粘贴也属于复制/移动操作，展示底部进度栏反馈
+        let operationName: String
+        switch operation {
+        case .copy: operationName = "复制"
+        case .cut: operationName = "移动"
+        }
+        let totalCount = srcs.count
+        taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
+        showProgressBar(animated: true)
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let total = srcs.count
@@ -1301,10 +1319,31 @@ extension MainWindowController {
                 switch operation {
                 case .copy:
                     isMove = false
-                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath)
+                    // 任务 F11-9：传入 progress 回调，实时更新底部进度栏
+                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath) { completed, total in
+                        let opName = operationName
+                        DispatchQueue.main.async { [weak self] in
+                            self?.taskProgressBar.updateDirectProgress(
+                                operation: opName,
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
                 case .cut:
                     isMove = true
-                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath)
+                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath) { completed, total in
+                        let opName = operationName
+                        DispatchQueue.main.async { [weak self] in
+                            self?.taskProgressBar.updateDirectProgress(
+                                operation: opName,
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
                 }
 
                 // I2: invalidate cache so the refresh sees the new state.
@@ -1319,8 +1358,8 @@ extension MainWindowController {
                 }
 
                 // I3: capture the detailed partial-failure message now
-                // (getLastError is read-once) before the async UI refresh —
-                // refresh → listDirectory would otherwise consume it on its
+                // (getLastError is read-once) before the async UI refresh -
+                // refresh -> listDirectory would otherwise consume it on its
                 // own failure path. Appended to the user-facing alert.
                 let partialDetail = (success < total) ? CoreBridge.shared.getLastError() : ""
 
@@ -1333,6 +1372,12 @@ extension MainWindowController {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     self.activePaneViewModel.refresh()
+
+                    // 任务 F11-9：标记粘贴进度完成，2 秒后淡出收起
+                    self.taskProgressBar.completeDirectProgress(operation: operationName, count: success)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+                        self?.hideProgressBar(animated: true)
+                    }
 
                     // 注册撤销（仅当至少一个成功；best-effort）
                     if success > 0 {
@@ -1387,8 +1432,11 @@ extension MainWindowController {
                     }
                 }
             } catch {
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     self?.showError(error: error)
+                    // 任务 F11-9：失败时也收起进度栏
+                    self?.taskProgressBar.hide()
+                    self?.hideProgressBar(animated: true)
                 }
             }
         }
@@ -1446,6 +1494,7 @@ extension MainWindowController {
     }
 
     /// 执行跨面板复制/移动操作
+    /// 任务 F11-9（问题1）：增加底部进度栏反馈，避免大文件复制/移动时"无提示"误以为不生效
     private func performCrossPaneOperation(side: String, isMove: Bool) {
         let sourceVM: PaneViewModel = side == "left" ? leftPaneViewModel : rightPaneViewModel
         let destVM: PaneViewModel = side == "left" ? rightPaneViewModel : leftPaneViewModel
@@ -1454,16 +1503,36 @@ extension MainWindowController {
         let selectedFiles = sourceVM.selectedFiles
         guard !selectedFiles.isEmpty else { return }
 
+        // 任务 F11-9：进入"直接进度"模式，展开底部进度栏
+        // 此前未显示进度，用户复制/移动大目录时误以为"不生效"（实际正在后台同步执行）
+        let operationName = isMove ? "移动" : "复制"
+        let totalCount = selectedFiles.count
+        taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
+        showProgressBar(animated: true)
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var successCount = 0
             var failedFiles: [(String, Error)] = []
             // 记录每个成功操作的 (src, dst) 用于撤销注册
             var movedOrCopied: [(src: String, dst: String)] = []
 
-            for entry in selectedFiles {
+            for (index, entry) in selectedFiles.enumerated() {
                 let srcPath = entry.path
                 let fileName = entry.name
                 var dstPath = (destPath as NSString).appendingPathComponent(fileName)
+
+                // 每处理一项前，先更新进度条显示"正在处理 fileName"
+                // 注意：此处在后台线程，UI 更新需切回主线程
+                let displayIndex = index
+                let displayFileName = fileName
+                DispatchQueue.main.async { [weak self] in
+                    self?.taskProgressBar.updateDirectProgress(
+                        operation: operationName,
+                        currentFileName: displayFileName,
+                        completed: displayIndex,
+                        total: totalCount
+                    )
+                }
 
                 // 重名冲突检测 - 添加 "副本" 后缀
                 if FileManager.default.fileExists(atPath: dstPath) {
@@ -1488,6 +1557,17 @@ extension MainWindowController {
                 } catch {
                     failedFiles.append((fileName, error))
                 }
+
+                // 该项完成后更新进度（已完成数 = index + 1）
+                let completedCount = index + 1
+                DispatchQueue.main.async { [weak self] in
+                    self?.taskProgressBar.updateDirectProgress(
+                        operation: operationName,
+                        currentFileName: displayFileName,
+                        completed: completedCount,
+                        total: totalCount
+                    )
+                }
             }
 
             DispatchQueue.main.async { [weak self] in
@@ -1495,6 +1575,13 @@ extension MainWindowController {
                 // 刷新双方面板
                 sourceVM.refresh()
                 destVM.refresh()
+
+                // 任务 F11-9：标记进度完成，显示"复制/移动完成：N 个项目"，2 秒后淡出收起
+                self.taskProgressBar.completeDirectProgress(operation: operationName, count: successCount)
+                // 延迟 2.2 秒收起进度栏（比 TaskProgressBar 内部 2.0s 淡出稍晚，确保淡出动画完成后再收起高度）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+                    self?.hideProgressBar(animated: true)
+                }
 
                 // 注册撤销（仅对成功的操作）
                 if !movedOrCopied.isEmpty {
@@ -1723,6 +1810,48 @@ extension MainWindowController {
 
     private var activePaneViewModel: PaneViewModel {
         activePane == .left ? leftPaneViewModel : rightPaneViewModel
+    }
+
+    // MARK: - 底部进度栏（任务 F11-9）
+
+    /// 展开底部进度栏（高度从 0 动画到 28pt 并显示）
+    /// - Parameter animated: 是否使用动画展开
+    private func showProgressBar(animated: Bool = true) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.taskProgressBar.isHidden = false
+            if animated {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.2
+                    context.allowsImplicitAnimation = true
+                    self.taskProgressBarHeightConstraint.animator().constant = TaskProgressBar.height
+                    self.taskProgressBar.layoutSubtreeIfNeeded()
+                }, completionHandler: nil)
+            } else {
+                self.taskProgressBarHeightConstraint.constant = TaskProgressBar.height
+            }
+        }
+    }
+
+    /// 收起底部进度栏（高度从 28 动画回 0 并隐藏）
+    /// - Parameter animated: 是否使用动画收起
+    private func hideProgressBar(animated: Bool = true) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if animated {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.2
+                    context.allowsImplicitAnimation = true
+                    self.taskProgressBarHeightConstraint.animator().constant = 0
+                    self.taskProgressBar.layoutSubtreeIfNeeded()
+                }, completionHandler: {
+                    self.taskProgressBar.isHidden = true
+                })
+            } else {
+                self.taskProgressBarHeightConstraint.constant = 0
+                self.taskProgressBar.isHidden = true
+            }
+        }
     }
 
     private func showError(error: Error) {
