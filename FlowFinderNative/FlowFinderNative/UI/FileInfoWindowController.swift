@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 ///
 /// 显示文件的图标、名称、种类、大小、位置、创建/修改日期、标签和权限信息。
 /// 文件夹大小异步计算，避免阻塞主线程。
+/// 任务 F11-2: 窗口实体背景（windowBackgroundColor），移除透明玻璃架构（v0.6.7）。
 public class FileInfoWindowController: NSWindowController {
 
     // MARK: - State
@@ -36,8 +37,10 @@ public class FileInfoWindowController: NSWindowController {
         window.title = (filePath as NSString).lastPathComponent
         window.center()
         window.isReleasedWhenClosed = true
-        window.backgroundColor = .clear
-        window.isOpaque = false
+        // 任务 F11-2: 实体窗口背景（v0.6.7）
+        // 移除透明窗口配置（isOpaque=false + backgroundColor=.clear），改为实体窗口背景。
+        window.isOpaque = true
+        window.backgroundColor = NSColor.windowBackgroundColor
         window.minSize = NSSize(width: 280, height: 360)
         super.init(window: window)
         setupUI()
@@ -65,13 +68,13 @@ public class FileInfoWindowController: NSWindowController {
         guard let window = window else { return }
         let contentView = window.contentView!
 
-        // 玻璃风格背景
-        let visualEffect = NSVisualEffectView()
-        visualEffect.material = .underWindowBackground
-        visualEffect.blendingMode = .behindWindow
-        visualEffect.state = .active
-        visualEffect.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(visualEffect)
+        // 任务 F11-2: 实体背景容器（替代 NSVisualEffectView .underWindowBackground，v0.6.7）
+        // 使用系统动态 windowBackgroundColor，与窗口背景一致。
+        let backgroundContainer = NSView()
+        backgroundContainer.translatesAutoresizingMaskIntoConstraints = false
+        backgroundContainer.wantsLayer = true
+        backgroundContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        contentView.addSubview(backgroundContainer)
 
         // 内容容器（垂直堆叠）
         let contentStack = NSStackView()
@@ -79,7 +82,7 @@ public class FileInfoWindowController: NSWindowController {
         contentStack.alignment = .leading
         contentStack.spacing = 12
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        visualEffect.addSubview(contentStack)
+        backgroundContainer.addSubview(contentStack)
 
         // 顶部图标（用 wrapper 实现居中）
         let iconWrapper = NSView()
@@ -155,14 +158,14 @@ public class FileInfoWindowController: NSWindowController {
         permissionLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
         NSLayoutConstraint.activate([
-            visualEffect.topAnchor.constraint(equalTo: contentView.topAnchor),
-            visualEffect.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            visualEffect.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            visualEffect.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            backgroundContainer.topAnchor.constraint(equalTo: contentView.topAnchor),
+            backgroundContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            backgroundContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            backgroundContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
 
-            contentStack.topAnchor.constraint(equalTo: visualEffect.topAnchor, constant: 16),
-            contentStack.leadingAnchor.constraint(equalTo: visualEffect.leadingAnchor, constant: 16),
-            contentStack.trailingAnchor.constraint(equalTo: visualEffect.trailingAnchor, constant: -16),
+            contentStack.topAnchor.constraint(equalTo: backgroundContainer.topAnchor, constant: 16),
+            contentStack.leadingAnchor.constraint(equalTo: backgroundContainer.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(equalTo: backgroundContainer.trailingAnchor, constant: -16),
 
             iconImageView.topAnchor.constraint(equalTo: iconWrapper.topAnchor),
             iconImageView.bottomAnchor.constraint(equalTo: iconWrapper.bottomAnchor),
@@ -173,7 +176,7 @@ public class FileInfoWindowController: NSWindowController {
 
         // bottom 用低优先级约束，允许内容多于可见区域时扩展（用户可拉伸窗口）
         let bottomConstraint = contentStack.bottomAnchor.constraint(
-            equalTo: visualEffect.bottomAnchor, constant: -16
+            equalTo: backgroundContainer.bottomAnchor, constant: -16
         )
         bottomConstraint.priority = .defaultLow
         bottomConstraint.isActive = true

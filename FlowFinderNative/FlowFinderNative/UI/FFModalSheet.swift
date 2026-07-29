@@ -16,7 +16,9 @@ enum FFModalSheetButtonStyle {
 /// 模态对话框基类
 ///
 /// 设计稿中所有对话框共用 macOS sheet 风格（圆角 12pt、阴影、header/body/footer 三段式）。
-/// 基于 `FFGlassView(level: .panel, material: .sheet, cornerRadius: 12)` 提供液态玻璃增强背景。
+/// 任务 F11-2: 移除 FFGlassView 透明玻璃背景，改为实体 `windowBackgroundColor`（v0.6.7）。
+/// 此前用户反馈对话框透明度过高、内容不可读；实体背景后所有子类（DeleteConfirmDialog/
+/// ConnectServerDialog/TagSelectorDialog/ProgressDialog）均清晰可读。
 ///
 /// 用法：
 /// ```swift
@@ -87,20 +89,26 @@ class FFModalSheet: NSWindow {
                    defer: false)
 
         self.title = title
-        self.isOpaque = false
-        self.backgroundColor = .clear
+        // 任务 F11-2: 对话框实体背景（v0.6.7）
+        // 移除透明窗口配置（isOpaque=false + backgroundColor=.clear），改为实体窗口背景。
+        // windowBackgroundColor 为系统动态色（日间浅灰/夜间深灰），随外观自动切换。
+        self.isOpaque = true
+        self.backgroundColor = NSColor.windowBackgroundColor
         self.isMovableByWindowBackground = true
         self.titlebarAppearsTransparent = true
         self.titleVisibility = .hidden
         self.hasShadow = true
         self.isReleasedWhenClosed = false
 
-        // 玻璃背景
-        let glass = FFGlassView(level: .panel,
-                                cornerRadius: 12,
-                                material: .sheet)
-        glass.translatesAutoresizingMaskIntoConstraints = false
-        self.contentView = glass
+        // 任务 F11-2: 实体背景容器（替代 FFGlassView .panel .sheet 玻璃背景，v0.6.7）
+        // 保留 12pt 圆角以维持 sheet 视觉风格；背景色为系统动态 windowBackgroundColor。
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        container.layer?.cornerRadius = 12
+        container.layer?.masksToBounds = true
+        self.contentView = container
 
         setupHeader(title: title)
         setupBody(bodyView: bodyView)
@@ -236,28 +244,14 @@ class FFModalSheet: NSWindow {
         button.controlSize = .small
         button.font = .systemFont(ofSize: 12, weight: isPrimary ? .semibold : .regular)
 
-        // 用 FFGlassView(level: .component) 包裹提供玻璃质感
-        let glassBg = FFGlassView(level: .component, cornerRadius: 4)
-        glassBg.translatesAutoresizingMaskIntoConstraints = false
-        glassBg.wantsLayer = true
-        button.addSubview(glassBg, positioned: .below, relativeTo: nil)  // 放到最底层
-        NSLayoutConstraint.activate([
-            glassBg.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            glassBg.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-            glassBg.topAnchor.constraint(equalTo: button.topAnchor),
-            glassBg.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-        ])
-
+        // 任务 F11-2: 移除 FFGlassView .component 按钮背景，改用原生 bezelStyle=.rounded（v0.6.7）
+        // .rounded bezel 已提供实体背景与圆角，无需额外玻璃包裹层。
         // 主按钮文字色按样式
         switch style {
         case .default:
             button.contentTintColor = .white
-            // 叠加 accent 色 tint
-            let accentOverlay = CALayer()
-            accentOverlay.backgroundColor = NSColor.controlAccentColor.cgColor
-            accentOverlay.opacity = 0.85
-            glassBg.layer?.addSublayer(accentOverlay)
-            // 让文字白色更清晰
+            // 主按钮叠加 accent 色 bezelColor（实体填充）
+            button.bezelColor = NSColor.controlAccentColor
             button.attributedTitle = NSAttributedString(
                 string: title,
                 attributes: [.foregroundColor: NSColor.white,
@@ -265,10 +259,8 @@ class FFModalSheet: NSWindow {
             )
         case .destructive:
             button.contentTintColor = .white
-            let accentOverlay = CALayer()
-            accentOverlay.backgroundColor = NSColor.systemRed.cgColor
-            accentOverlay.opacity = 0.85
-            glassBg.layer?.addSublayer(accentOverlay)
+            // 危险按钮叠加红色 bezelColor（实体填充）
+            button.bezelColor = NSColor.systemRed
             button.attributedTitle = NSAttributedString(
                 string: title,
                 attributes: [.foregroundColor: NSColor.white,

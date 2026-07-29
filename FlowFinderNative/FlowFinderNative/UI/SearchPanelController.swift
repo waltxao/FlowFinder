@@ -17,6 +17,7 @@ public enum SearchMode: Int, CaseIterable {
 // MARK: - SearchOpaqueContainerView
 
 /// 重写 isOpaque 返回 true 的 NSView 子类（与 MainWindowController 同架构）
+/// 任务 F11-2: 窗口级实体背景（v0.6.7），移除透明玻璃架构。
 private class SearchOpaqueContainerView: NSView {
     override var isOpaque: Bool { return true }
 }
@@ -76,7 +77,7 @@ private class FFSearchNameCell: NSTableCellView {
 // MARK: - SearchPanelController
 
 /// 搜索面板窗口控制器：大搜索框 + 筛选侧边栏 + 双行结果
-/// 窗口级玻璃架构：OpaqueContainerView + NSGlassEffectView + mainContainer
+/// 任务 F11-2: 窗口实体背景（windowBackgroundColor），移除 FFGlassView 透明玻璃架构（v0.6.7）。
 public class SearchPanelController: NSWindowController {
 
     public static let shared = SearchPanelController()
@@ -148,9 +149,10 @@ public class SearchPanelController: NSWindowController {
     private func setupUI() {
         guard let window = window else { return }
 
-        // 窗口透明以支持玻璃效果
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        // 任务 F11-2: 窗口实体背景（v0.6.7）
+        // 移除透明窗口配置（isOpaque=false + backgroundColor=.clear），改为实体窗口背景。
+        window.isOpaque = true
+        window.backgroundColor = NSColor.windowBackgroundColor
         window.hasShadow = true
 
         // ===== 顶部搜索工具栏 =====
@@ -158,15 +160,15 @@ public class SearchPanelController: NSWindowController {
         searchToolbar.translatesAutoresizingMaskIntoConstraints = false
 
         // ===== 中部内容区（筛选侧边栏 + 结果区） =====
-        // 筛选侧边栏（180pt，FFGlassView .panel .sidebar 包裹）
+        // 任务 F11-2: 筛选侧边栏实体背景（替代 FFGlassView .panel .sidebar，v0.6.7）
         filterSidebar = SearchFilterSidebar(frame: .zero)
         filterSidebar.translatesAutoresizingMaskIntoConstraints = false
         filterSidebar.onConfigChanged = { [weak self] _ in
             self?.applyFiltersAndReload()
         }
-        let sidebarGlass = FFGlassView(level: .panel, cornerRadius: 0, material: .sidebar)
-        sidebarGlass.translatesAutoresizingMaskIntoConstraints = false
-        sidebarGlass.addSubview(filterSidebar)
+        let sidebarContainer = makeSolidContainer()
+        sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
+        sidebarContainer.addSubview(filterSidebar)
 
         // 结果区容器
         let resultsPane = NSView()
@@ -174,8 +176,8 @@ public class SearchPanelController: NSWindowController {
         resultsPane.wantsLayer = true
         resultsPane.layer?.backgroundColor = NSColor.clear.cgColor
 
-        // resultsHeader（22pt，"找到 N 个结果 · 用时 X 秒"）
-        let resultsHeaderContainer = FFGlassView(level: .component, cornerRadius: 0)
+        // 任务 F11-2: resultsHeader 容器实体背景（替代 FFGlassView .component，v0.6.7）
+        let resultsHeaderContainer = makeSolidContainer()
         resultsHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
         resultsHeader = NSTextField(labelWithString: "就绪")
         resultsHeader.font = NSFont.systemFont(ofSize: 11)
@@ -228,8 +230,9 @@ public class SearchPanelController: NSWindowController {
         resultsTableView.delegate = self
         scrollView.documentView = resultsTableView
 
-        // 收起详情栏（36pt，FFGlassView .panel .headerView）
-        let detailsBar = FFGlassView(level: .panel, cornerRadius: 8, material: .headerView)
+        // 任务 F11-2: 详情栏实体背景（替代 FFGlassView .panel .headerView，v0.6.7）
+        // 保留 8pt 圆角卡片样式。
+        let detailsBar = makeSolidContainer(cornerRadius: 8)
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
         let detailsLabel = NSTextField(labelWithString: "选择一个结果以查看详情")
         detailsLabel.font = NSFont.systemFont(ofSize: 11)
@@ -249,14 +252,14 @@ public class SearchPanelController: NSWindowController {
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.wantsLayer = true
         splitView.layer?.backgroundColor = NSColor.clear.cgColor
-        splitView.addArrangedSubview(sidebarGlass)
+        splitView.addArrangedSubview(sidebarContainer)
         splitView.addArrangedSubview(resultsPane)
 
-        // 主容器（透明背景以透出玻璃效果）
+        // 主容器（实体背景）
         let mainContainer = NSView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
-        mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
+        mainContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         mainContainer.addSubview(searchToolbar)
         mainContainer.addSubview(splitView)
         mainContainer.appearance = NSApp.effectiveAppearance
@@ -275,7 +278,7 @@ public class SearchPanelController: NSWindowController {
             splitView.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
 
             // 筛选侧边栏宽度 180pt
-            sidebarGlass.widthAnchor.constraint(equalToConstant: 180),
+            sidebarContainer.widthAnchor.constraint(equalToConstant: 180),
         ])
 
         // 结果区内部约束
@@ -302,62 +305,50 @@ public class SearchPanelController: NSWindowController {
             detailsLabel.leadingAnchor.constraint(equalTo: detailsBar.leadingAnchor, constant: 12),
             detailsLabel.centerYAnchor.constraint(equalTo: detailsBar.centerYAnchor),
 
-            filterSidebar.leadingAnchor.constraint(equalTo: sidebarGlass.leadingAnchor),
-            filterSidebar.trailingAnchor.constraint(equalTo: sidebarGlass.trailingAnchor),
-            filterSidebar.topAnchor.constraint(equalTo: sidebarGlass.topAnchor),
-            filterSidebar.bottomAnchor.constraint(equalTo: sidebarGlass.bottomAnchor),
+            filterSidebar.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
+            filterSidebar.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
+            filterSidebar.topAnchor.constraint(equalTo: sidebarContainer.topAnchor),
+            filterSidebar.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
         ])
 
         splitView.setPosition(180, ofDividerAt: 0)
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
 
-        // ===== 窗口级玻璃架构（参照 MainWindowController） =====
-        if #available(macOS 26.0, *) {
-            let containerView = SearchOpaqueContainerView()
-            containerView.wantsLayer = true
-            containerView.translatesAutoresizingMaskIntoConstraints = false
+        // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
+        let containerView = SearchOpaqueContainerView()
+        containerView.wantsLayer = true
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-            let glassView = NSGlassEffectView()
-            glassView.style = .clear
-            glassView.cornerRadius = 0
-            glassView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(mainContainer)
+        NSLayoutConstraint.activate([
+            mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
+            mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+        ])
 
-            containerView.addSubview(glassView)
-            containerView.addSubview(mainContainer)
-
-            NSLayoutConstraint.activate([
-                glassView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                glassView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                glassView.topAnchor.constraint(equalTo: containerView.topAnchor),
-                glassView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-                mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
-                mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            ])
-
-            window.contentView = containerView
-        } else {
-            // macOS 12-25 回退：NSVisualEffectView
-            let visualEffectView = NSVisualEffectView()
-            visualEffectView.material = .underWindowBackground
-            visualEffectView.blendingMode = .behindWindow
-            visualEffectView.state = .active
-            visualEffectView.addSubview(mainContainer)
-            NSLayoutConstraint.activate([
-                mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
-                mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
-                mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
-                mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
-            ])
-            window.contentView = visualEffectView
-        }
+        window.contentView = containerView
     }
 
-    /// 构建顶部搜索工具栏（大搜索框 32pt + 控件行）
+    // MARK: - 任务 F11-2: 实体背景容器工厂（v0.6.7）
+
+    /// 创建实体背景 NSView 容器（替代 FFGlassView .panel/.component）。
+    /// - Parameter cornerRadius: 圆角（默认 0；卡片样式传 8/10 等）
+    /// - Returns: isOpaque=true 的 NSView，背景色为系统动态 controlBackgroundColor。
+    private func makeSolidContainer(cornerRadius: CGFloat = 0) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.masksToBounds = cornerRadius > 0
+        return view
+    }
+
+    /// 构建顶部搜索工具栏（大搜索框 32pt + 控件行）（v0.6.7）
     private func makeSearchToolbar() -> NSView {
-        // 玻璃背景
-        let toolbar = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
+        // 任务 F11-2: 实体背景容器（替代 FFGlassView .panel .headerView，v0.6.7）
+        let toolbar = makeSolidContainer()
 
         // 大搜索框（32pt 高）
         searchField = NSSearchField()
