@@ -142,6 +142,7 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 /// 仿访达网格视图分组：浅灰背景、小字号标题（分组名 + 数量）。
 private final class FFGridSectionHeaderView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
+    private let countLabel = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -150,12 +151,26 @@ private final class FFGridSectionHeaderView: NSView {
 
         titleLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         titleLabel.textColor = NSColor.secondaryLabelColor
+        titleLabel.backgroundColor = .clear
+        titleLabel.isBezeled = false
+        titleLabel.drawsBackground = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
+
+        // 任务 F11-5: 计数徽章（与列表视图样式一致：次级字号 + 三级标签色，无括号）
+        countLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        countLabel.textColor = NSColor.tertiaryLabelColor
+        countLabel.backgroundColor = .clear
+        countLabel.isBezeled = false
+        countLabel.drawsBackground = false
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(countLabel)
+
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            countLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
+            countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
@@ -171,12 +186,20 @@ private final class FFGridSectionHeaderView: NSView {
             NSColor.controlBackgroundColor.withAlphaComponent(0.6).setFill()
         }
         dirtyRect.fill()
+        // 任务 F11-5: 底部分隔线（与列表视图分组标题一致）
+        if #available(macOS 14.0, *) {
+            NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        } else {
+            NSColor.gridColor.withAlphaComponent(0.5).setFill()
+        }
+        NSRect(x: 0, y: 0, width: bounds.width, height: 0.5).fill()
         super.draw(dirtyRect)
     }
 
-    /// 设置标题文本（分组名 + 数量）
+    /// 设置标题文本（分组名 + 数量徽章，与列表视图样式一致）
     func configure(title: String, count: Int) {
-        titleLabel.stringValue = "\(title)  (\(count))"
+        titleLabel.stringValue = title
+        countLabel.stringValue = count > 0 ? "\(count)" : ""
     }
 }
 

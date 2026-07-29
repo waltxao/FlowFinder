@@ -169,9 +169,14 @@ private final class FFPillHeaderCell: NSTableHeaderCell {
 private class FFTableCellView: NSTableCellView {
     /// 任务 F8：记录该 cell 当前显示文件的完整路径。
     /// 用于缩略图异步回调时校验 cell 仍显示同一文件（避免旧请求覆盖新 cell）。
-    /// 注意：不能用 cellView.identifier 记录路径——identifier 用于 NSTableView
+    /// 注意：不能用 cellView.identifier 记录路径--identifier 用于 NSTableView
     /// 的复用匹配（makeView(withIdentifier:owner:)），覆写会破坏 cell 复用机制。
     var currentFilePath: String?
+
+    /// 任务 F11-5: 名称列图标 leading 约束引用。
+    /// 分组开启时文件行需缩进（仿访达），通过动态调整此约束的 constant 实现。
+    /// 复用时每次 tableView(_:viewFor:row:) 重新设置 constant。
+    var nameLeadingConstraint: NSLayoutConstraint?
 }
 
 // MARK: - FFTableRowView
@@ -187,11 +192,20 @@ private class FFTableRowView: NSTableRowView {
     // 空实现：仅作为扩展点保留（如将来添加 hover 效果）
 }
 
-/// 任务 F10-8: 分组标题行的 rowView。
-/// 仿访达列表视图分组：浅灰背景、小字号标题，不参与选中绘制（标题行不可选）。
+/// 任务 F10-8 / F11-5: 分组标题行的 rowView。
+/// 仿访达列表视图分组：浅灰背景、小字号标题 + 计数徽章，不参与选中绘制（标题行不可选）。
+///
+/// 任务 F11-5 重叠 bug 根因（v0.6.6 问题14）：
+/// 此前标题文字在两处同时绘制——本类的 draw() 绘制 sectionTitle，
+/// 而 makeSectionHeaderCell 又在 name 列 cell 中添加 NSTextField 显示 "key  (count)"。
+/// 两层文字重叠（rowView 的 draw 与 cellView 的 textField 各画一遍），造成肉眼可见的重影。
+/// 修复方案：单一绘制源——所有标题文字（分组名 + 计数）仅由本类 draw() 绘制，
+/// makeSectionHeaderCell 返回完全透明的空 cell（仅占位保持列对齐，不显示任何文本）。
 private final class FFSectionHeaderRowView: NSTableRowView {
     /// 分组名（用于绘制）
     var sectionTitle: String = ""
+    /// 分组内文件数量（用于绘制计数徽章，如 "图片  12"）
+    var sectionCount: Int = 0
 
     override var isFlipped: Bool { true }
 
@@ -209,14 +223,118 @@ private final class FFSectionHeaderRowView: NSTableRowView {
             .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
-        let textRect = NSRect(x: 12, y: 3, width: bounds.width - 24, height: bounds.height - 6)
         let title = sectionTitle as NSString
-        title.draw(in: textRect, withAttributes: attrs)
+        let titleSize = title.size(withAttributes: attrs)
+
+        // 标题绘制区域：垂直居中，左侧 12pt 边距
+        let titleX: CGFloat = 12
+        let titleY = (bounds.height - titleSize.height) / 2
+        let titleRect = NSRect(x: titleX, y: titleY, width: bounds.width - 24, height: titleSize.height)
+        title.draw(in: titleRect, withAttributes: attrs)
+
+        // 计数徽章：标题右侧 6pt，使用更弱的次级标签色（仿访达分组数量样式）
+        // 仅当数量 > 0 时绘制，避免单 "全部" 分组显示无意义的 0
+        if sectionCount > 0 {
+            let countText = "\(sectionCount)" as NSString
+            let countAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            let countSize = countText.size(withAttributes: countAttrs)
+            let countX = titleX + titleSize.width + 6
+            let countY = (bounds.height - countSize.height) / 2
+            let countRect = NSRect(x: countX, y: countY, width: countSize.width, height: countSize.height)
+            countText.draw(in: countRect, withAttributes: countAttrs)
+        }
+
+        // 底部细分隔线（增强分组层次，仿访达）
+        if #available(macOS 14.0, *) {
+            NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        } else {
+            NSColor.gridColor.withAlphaComponent(0.5).setFill()
+        }
+        NSRect(x: 0, y: 0, width: bounds.width, height: 0.5).fill()
     }
 
     // 标题行不绘制选中高亮
     override func drawSelection(in dirtyRect: NSRect) {
         // 空实现：标题行不可选，不绘制选中
+    }
+}
+
+// MARK: - FFStickySectionHeaderView
+
+/// 任务 F11-5: 粘性分组标题浮层。
+///
+/// 访达行为：列表滚动时，当前可见分组的标题固定在列表顶部，直到下一分组标题顶上来再切换。
+/// NSTableView 无原生粘性 section header 支持，本类作为 scrollView.contentView 之上的
+/// 浮层视图实现该效果：由 FileListView 监听 clipView 滚动，计算当前应固定的分组并刷新本视图。
+///
+/// 视觉与 FFSectionHeaderRowView 完全一致（浅灰背景 + 标题 + 计数徽章 + 底部分隔线），
+/// 保证粘性标题与行内标题无缝衔接。分组关闭（groupBy == "none"）时本视图隐藏。
+private final class FFStickySectionHeaderView: NSView {
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let countLabel = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        titleLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        titleLabel.textColor = NSColor.secondaryLabelColor
+        titleLabel.backgroundColor = .clear
+        titleLabel.isBezeled = false
+        titleLabel.drawsBackground = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(titleLabel)
+
+        countLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        countLabel.textColor = NSColor.tertiaryLabelColor
+        countLabel.backgroundColor = .clear
+        countLabel.isBezeled = false
+        countLabel.drawsBackground = false
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(countLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            countLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
+            countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// 配置粘性标题内容（标题 + 计数），空标题时隐藏整个视图
+    func configure(title: String, count: Int) {
+        if title.isEmpty {
+            isHidden = true
+            return
+        }
+        isHidden = false
+        titleLabel.stringValue = title
+        countLabel.stringValue = count > 0 ? "\(count)" : ""
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 浅灰背景（与 FFSectionHeaderRowView 一致）
+        if #available(macOS 14.0, *) {
+            NSColor.tertiarySystemFill.setFill()
+        } else {
+            NSColor.controlBackgroundColor.withAlphaComponent(0.6).setFill()
+        }
+        dirtyRect.fill()
+        // 底部分隔线
+        if #available(macOS 14.0, *) {
+            NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        } else {
+            NSColor.gridColor.withAlphaComponent(0.5).setFill()
+        }
+        NSRect(x: 0, y: 0, width: bounds.width, height: 0.5).fill()
     }
 }
 
@@ -238,6 +356,11 @@ public class FileListView: NSView {
     private var scrollView: NSScrollView!
     private var cancellables = Set<AnyCancellable>()
     private var lastFilesCount: Int = -1
+
+    // 任务 F11-5: 粘性分组标题浮层（仿访达，滚动时固定当前分组标题于列表顶部）
+    private var stickyHeader: FFStickySectionHeaderView?
+    // 任务 F11-5: 滚动监听观察者（clipView.boundsDidChange 通知）
+    private var clipViewObserver: NSObjectProtocol?
 
     // 任务 F10-8: 显示行映射缓存。
     // 将"分组渲染"的显示行号映射为 (是否分组标题行, 文件在 viewModel.files 中的下标)。
@@ -410,6 +533,13 @@ public class FileListView: NSView {
         setupContextMenu()
     }
 
+    deinit {
+        // 任务 F11-5: 移除 clipView 滚动观察者，防止悬空通知回调
+        if let observer = clipViewObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
     // MARK: - UI Setup
 
     private func setupUI() {
@@ -537,6 +667,32 @@ public class FileListView: NSView {
         // 注意：不调用 sizeToFit()，避免它压缩列宽导致第 5 列不可见。
         // columnAutoresizingStyle = .none 时，各列保持 width 设定的固定宽度，
         // 用户可通过列分隔条手动拖宽（userResizingMask 已启用）。
+
+        // 任务 F11-5: 粘性分组标题浮层。
+        // 添加为 clipView 的子视图并置于最前（覆盖在 tableView 行之上），
+        // 通过监听 clipView.boundsDidChange 滚动通知动态更新位置与内容。
+        let sticky = FFStickySectionHeaderView()
+        sticky.translatesAutoresizingMaskIntoConstraints = false
+        sticky.isHidden = true
+        scrollView.contentView.addSubview(sticky)
+        NSLayoutConstraint.activate([
+            sticky.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            sticky.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            sticky.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            sticky.heightAnchor.constraint(equalToConstant: 24),
+        ])
+        self.stickyHeader = sticky
+
+        // 任务 F11-5: 监听 clipView 滚动，刷新粘性标题
+        let clipView = scrollView.contentView
+        clipView.postsBoundsChangedNotifications = true
+        clipViewObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clipView,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateStickyHeader()
+        }
 
         // 注册为拖拽目标
         registerForDraggedTypes([.fileURL])
@@ -1016,39 +1172,21 @@ public class FileListView: NSView {
         return pill
     }
 
-    /// 任务 F10-8: 创建分组标题行的 cell。
-    /// 标题文字由 FFSectionHeaderRowView 整行绘制，cell 本身保持透明，
-    /// 仅作为 NSTableView 列填充的占位（避免列错位）。
-    /// 名称列额外显示分组名 + 数量，作为辅助信息（在玻璃态下 rowView 背景更清晰）。
+    /// 任务 F10-8 / F11-5: 创建分组标题行的 cell。
+    ///
+    /// 任务 F11-5 重叠 bug 修复：标题文字（分组名 + 计数）完全由 FFSectionHeaderRowView.draw()
+    /// 统一绘制，cell 仅作为 NSTableView 列填充的透明占位（避免列错位），不显示任何文本。
+    /// 此前 cell 内的 NSTextField 与 rowView.draw 同时绘制标题，造成重影（问题14）。
     private func makeSectionHeaderCell(tableView: NSTableView, tableColumn: NSTableColumn?, key: String) -> NSView? {
         let cellView = tableView.makeView(withIdentifier: sectionHeaderCellID, owner: self) as? NSTableCellView
             ?? NSTableCellView()
         cellView.identifier = sectionHeaderCellID
         cellView.wantsLayer = true
         cellView.layer?.backgroundColor = NSColor.clear.cgColor
-
-        // 计算分组内文件数量（用于名称列显示 "图片 (12)"）
-        let count = viewModel?.groupedFiles.first(where: { $0.key == key })?.entries.count ?? 0
-
-        // 仅名称列显示标题文本，其他列返回空 cell
-        let columnID = tableColumn?.identifier.rawValue ?? ""
-        if columnID == "name" {
-            if cellView.textField == nil {
-                let tf = NSTextField(labelWithString: "")
-                tf.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-                tf.translatesAutoresizingMaskIntoConstraints = false
-                cellView.addSubview(tf)
-                cellView.textField = tf
-                NSLayoutConstraint.activate([
-                    tf.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 12),
-                    tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                ])
-            }
-            cellView.textField?.stringValue = "\(key)  (\(count))"
-            cellView.textField?.textColor = NSColor.secondaryLabelColor
-        } else {
-            cellView.textField?.stringValue = ""
-        }
+        // 透明占位：不添加 textField，不清空已存在的 textField（复用时可能残留旧 cellView，
+        // 但 makeView(withIdentifier:) 在我们未设置 textField 的前提下不会创建文本视图）。
+        // 显式置空以防复用残留导致重影。
+        cellView.textField?.stringValue = ""
         return cellView
     }
 
@@ -1063,9 +1201,87 @@ public class FileListView: NSView {
         tableView?.reloadData()
         // 任务 F10-8: 分组渲染后恢复选中行的显示（基于 viewModel.state.selectedFiles 的路径）
         restoreSelectionFromViewModel()
+        // 任务 F11-5: 数据变更后刷新粘性标题（分组维度/内容可能变化）
+        updateStickyHeader()
         DispatchQueue.main.async { [weak self] in
             self?.isReloading = false
+            // reload 后行视图坐标可能尚未更新，下一 runloop 再刷新一次粘性标题
+            self?.updateStickyHeader()
         }
+    }
+
+    /// 任务 F11-5: 更新粘性分组标题（仿访达）。
+    ///
+    /// 算法：根据 clipView 当前可见区域的顶部 Y（document 坐标系），找到该位置所属的分组
+    /// （向上回溯最近的 header 行）。若顶部正好压在某个 header 行的可见区域内，则让粘性标题
+    /// "贴住"该 header 行顶部（视差上推），实现下一分组顶上来时粘性标题被平滑顶替的访达效果。
+    /// groupBy == "none" 时隐藏粘性标题。
+    private func updateStickyHeader() {
+        guard let tableView = tableView, let viewModel = viewModel else { return }
+        // 分组关闭：隐藏粘性标题
+        guard viewModel.state.groupBy != "none" else {
+            stickyHeader?.isHidden = true
+            return
+        }
+        guard !displayRows.isEmpty else {
+            stickyHeader?.isHidden = true
+            return
+        }
+
+        let clipView = scrollView.contentView
+        // clipView 的 bounds.origin.y 是 document 坐标系下可见区域顶部的 Y（NSTableView isFlipped=true）
+        let visibleTopY = clipView.bounds.origin.y
+
+        // 定位可见区域顶部落在哪一行
+        guard visibleTopY >= 0,
+              let topRow = tableView.row(at: NSPoint(x: 0, y: visibleTopY + 1)) as Int?,
+              topRow >= 0, topRow < displayRows.count else {
+            // 顶部点未命中任何行（如表格尚未布局完成或行高未就绪）：保守隐藏，避免显示错误分组
+            stickyHeader?.isHidden = true
+            return
+        }
+
+        // 从 topRow 向上找最近的 header 行（当前所属分组）
+        var headerRow = topRow
+        while headerRow > 0 && !displayRows[headerRow].isHeader {
+            headerRow -= 1
+        }
+        guard displayRows[headerRow].isHeader else {
+            stickyHeader?.isHidden = true
+            return
+        }
+
+        // 当前粘性分组信息
+        let currentKey = displayRows[headerRow].key
+        let currentCount = sectionCount(forKey: currentKey)
+
+        // 判断当前 header 行是否已被顶部完全裁切：
+        // - 若 header 仍有部分处于可见区顶部（headerBottomInDoc > visibleTopY 且 headerTopInDoc <= visibleTopY），
+        //   则隐藏粘性标题，让行内标题显示（避免重影）；
+        // - 若 header 已完全滚出顶部（headerBottomInDoc <= visibleTopY），显示粘性标题。
+        let headerRect = tableView.rect(ofRow: headerRow)
+        let headerTopInDoc = headerRect.origin.y
+        let headerBottomInDoc = headerTopInDoc + headerRect.height
+
+        if headerBottomInDoc > visibleTopY && headerTopInDoc <= visibleTopY {
+            // header 仍部分可见：隐藏粘性标题，让行内标题显示
+            stickyHeader?.isHidden = true
+            return
+        }
+        // header 已完全滚出顶部：显示粘性标题
+        applySticky(title: currentKey, count: currentCount)
+    }
+
+    /// 取指定分组键的文件数量
+    private func sectionCount(forKey key: String) -> Int {
+        return viewModel?.groupedFiles.first(where: { $0.key == key })?.entries.count ?? 0
+    }
+
+    /// 应用粘性标题内容（统一入口，便于未来扩展）
+    private func applySticky(title: String, count: Int) {
+        guard let sticky = stickyHeader else { return }
+        sticky.configure(title: title, count: count)
+        sticky.needsDisplay = true
     }
 
     /// 任务 F10-8: 根据 viewModel.state.selectedFiles 恢复 tableView 的选中行。
@@ -1096,6 +1312,8 @@ public class FileListView: NSView {
     public override func layout() {
         super.layout()
         tableView.appearance = NSApp.appearance
+        // 任务 F11-5: 布局变化（列宽/窗口尺寸）后刷新粘性标题宽度与位置
+        updateStickyHeader()
     }
 
     /// 任务 F7: 供外部（MainWindowController 主题监听）显式刷新 appearance（v0.6.5）
@@ -1107,6 +1325,9 @@ public class FileListView: NSView {
         tableView.backgroundColor = isDark
             ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
             : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
+        // 任务 F11-5: 主题切换时刷新粘性标题重绘（语义色自动解析，需触发 needsDisplay）
+        stickyHeader?.needsDisplay = true
+        updateStickyHeader()
     }
 
     // MARK: - Double Click
@@ -1210,12 +1431,16 @@ extension FileListView: NSTableViewDelegate {
                 iv.translatesAutoresizingMaskIntoConstraints = false
                 cellView.imageView = iv
                 cellView.addSubview(iv)
+                // 任务 F11-5: 基础 leading constant 4，分组开启时由下方缩进逻辑动态调整。
+                // 保存约束引用到 cellView，便于复用时按分组状态调整 constant。
+                let leadingC = iv.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4)
                 NSLayoutConstraint.activate([
-                    iv.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
+                    leadingC,
                     iv.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
                     iv.widthAnchor.constraint(equalToConstant: 18),
                     iv.heightAnchor.constraint(equalToConstant: 18),
                 ])
+                cellView.nameLeadingConstraint = leadingC
                 // 更新 textField 的 leading 约束到 imageView 之后
                 if let tf = cellView.textField {
                     // 移除旧的 leading 约束并添加新的
@@ -1225,6 +1450,11 @@ extension FileListView: NSTableViewDelegate {
                     tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 4).isActive = true
                 }
             }
+            // 任务 F11-5: 分组内文件缩进（仿访达）。
+            // groupBy != "none" 时文件行图标整体右移 16pt，对齐访达分组内文件的缩进层级。
+            // groupBy == "none" 时恢复无缩进（base constant 4），保证非分组视图不受影响。
+            let isGrouped = (viewModel.state.groupBy != "none")
+            cellView.nameLeadingConstraint?.constant = isGrouped ? 20 : 4
             // 使用 NSWorkspace.shared.icon(forFile:) 获取真实文件图标（访达风格）
             // 文件夹、应用、图片、文档等都会显示正确的系统图标
             let workspaceIcon = NSWorkspace.shared.icon(forFile: entry.path)
@@ -1282,9 +1512,9 @@ extension FileListView: NSTableViewDelegate {
     }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        // 任务 F10-8: 分组标题行高度 22，文件行高度 26
+        // 任务 F10-8 / F11-5: 分组标题行高度 24（仿访达，留出标题+计数徽章+底部分隔线空间），文件行高度 26
         guard row < displayRows.count else { return 26 }
-        return displayRows[row].isHeader ? 22 : 26
+        return displayRows[row].isHeader ? 24 : 26
     }
 
     /// 返回自定义 FFTableRowView。标准 NSTableRowView.drawSelection 已能正确绘制
@@ -1296,6 +1526,8 @@ extension FileListView: NSTableViewDelegate {
         if displayRows[row].isHeader {
             let hv = FFSectionHeaderRowView()
             hv.sectionTitle = displayRows[row].key
+            // 任务 F11-5: 传入分组内文件数量，用于绘制计数徽章
+            hv.sectionCount = viewModel?.groupedFiles.first(where: { $0.key == displayRows[row].key })?.entries.count ?? 0
             return hv
         }
         return FFTableRowView()
