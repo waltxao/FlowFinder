@@ -1,13 +1,14 @@
 import Cocoa
 
-/// 外观设置视图：主题切换（浅色/深色二态）
-/// 任务 T2: 移除 system 自动跟随，仅保留 light/dark 二态
+/// 外观设置视图：主题切换（浅色/深色/自动跟随系统 三态）
+/// 任务 F11-3: 恢复 .system 三态（v0.6.7），修正 v0.6.5 T2 错误移除
 public class AppearanceSettingsView: NSView {
 
     private var titleLabel: NSTextField!
     private var buttonContainer: NSView!
     private var lightButton: NSButton!
     private var darkButton: NSButton!
+    private var systemButton: NSButton!
     private var descriptionLabel: NSTextField!
 
     private var onModeChangedToken: ((AppearanceMode) -> Void)?
@@ -58,8 +59,16 @@ public class AppearanceSettingsView: NSView {
             mode: .dark
         )
 
+        // 自动跟随系统按钮（任务 F11-3: 恢复三态）
+        systemButton = createThemeButton(
+            title: AppearanceMode.system.title,
+            icon: AppearanceMode.system.iconName,
+            mode: .system
+        )
+
         buttonContainer.addSubview(lightButton)
         buttonContainer.addSubview(darkButton)
+        buttonContainer.addSubview(systemButton)
 
         // 描述标签
         descriptionLabel = NSTextField(labelWithString: "")
@@ -89,6 +98,11 @@ public class AppearanceSettingsView: NSView {
             darkButton.leadingAnchor.constraint(equalTo: lightButton.trailingAnchor, constant: 16),
             darkButton.widthAnchor.constraint(equalToConstant: 100),
             darkButton.heightAnchor.constraint(equalToConstant: 100),
+
+            systemButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
+            systemButton.leadingAnchor.constraint(equalTo: darkButton.trailingAnchor, constant: 16),
+            systemButton.widthAnchor.constraint(equalToConstant: 100),
+            systemButton.heightAnchor.constraint(equalToConstant: 100),
 
             descriptionLabel.topAnchor.constraint(equalTo: buttonContainer.bottomAnchor, constant: 12),
             descriptionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
@@ -142,12 +156,15 @@ public class AppearanceSettingsView: NSView {
 
         lightButton.state = currentMode == .light ? .on : .off
         darkButton.state = currentMode == .dark ? .on : .off
+        systemButton.state = currentMode == .system ? .on : .off
 
         switch currentMode {
         case .light:
             descriptionLabel.stringValue = "应用始终使用浅色外观，不受系统设置影响。"
         case .dark:
             descriptionLabel.stringValue = "应用始终使用深色外观，不受系统设置影响。"
+        case .system:
+            descriptionLabel.stringValue = "应用自动跟随系统外观，系统切换浅/深色时即时生效。"
         }
     }
 

@@ -2,15 +2,17 @@ import Foundation
 import AppKit
 import Combine
 
-/// 外观模式枚举（任务 T2: 移除 system 自动跟随，仅 light/dark 二态）
+/// 外观模式枚举（任务 F11-3: 恢复三态 light/dark/system，修正 v0.6.5 T2 错误移除）
 public enum AppearanceMode: Int, CaseIterable {
     case light = 1   // 浅色
     case dark = 2    // 深色
+    case system = 3  // 自动跟随系统
 
     public var title: String {
         switch self {
         case .light: return "浅色"
         case .dark: return "深色"
+        case .system: return "自动跟随系统"
         }
     }
 
@@ -18,12 +20,19 @@ public enum AppearanceMode: Int, CaseIterable {
         switch self {
         case .light: return "sun.max"
         case .dark: return "moon"
+        case .system: return "circle.lefthalf.filled"
         }
     }
 
-    /// 切换到另一态
+    /// 任务 T2 遗留：在浅色/深色二态间切换。
+    /// .system 视为“深色”，切换到 .light；其余按 light<->dark 互换。
+    /// 侧边栏 toggleTheme 用此方法，保留原行为。
     public var toggled: AppearanceMode {
-        return self == .light ? .dark : .light
+        switch self {
+        case .light: return .dark
+        case .dark: return .light
+        case .system: return .light
+        }
     }
 }
 
@@ -46,18 +55,39 @@ public final class ThemeManager: ObservableObject {
 
     // MARK: - Public API
 
+    /// 将当前模式解析为最终生效的 light/dark。
+    /// .system 模式下根据系统当前外观决定 light/dark。
+    /// 供 UI 层（FileListView/FileGridView/MainWindowController 等）判断深浅色用，
+    /// 避免在 .system + 系统深色场景下 currentMode == .dark 误判为浅色。
+    public var resolvedMode: AppearanceMode {
+        switch currentMode {
+        case .light, .dark:
+            return currentMode
+        case .system:
+            return systemIsDark ? .dark : .light
+        }
+    }
+
+    /// 当前是否为深色（已解析 .system）。供 UI 层快速判断使用。
+    public var resolvedIsDark: Bool {
+        return resolvedMode == .dark
+    }
+
     /// 应用指定外观模式
     /// - Parameter mode: 外观模式
     public func applyMode(_ mode: AppearanceMode) {
         currentMode = mode
         saveMode(mode)
 
-        // 任务 T2: 仅 light/dark 二态，无 system 自动跟随
+        // 任务 F11-3: 恢复 .system 三态
+        // .system: 不设置 NSApp.appearance（nil = 跟随系统），由系统自动切换 light/dark
         switch mode {
         case .light:
             NSApp.appearance = NSAppearance(named: .aqua)
         case .dark:
             NSApp.appearance = NSAppearance(named: .darkAqua)
+        case .system:
+            NSApp.appearance = nil
         }
 
         // 通知所有窗口刷新
@@ -115,7 +145,7 @@ public final class ThemeManager: ObservableObject {
         return nil
     }
 
-    /// 开始监听系统主题变更（任务 T2: 仅用于刷新玻璃效果，不再自动切换模式）
+    /// 开始监听系统主题变更（任务 F11-3: .system 模式下系统切换时实际刷新窗口外观）
     public func startObservingSystemChanges() {
         DistributedNotificationCenter.default.addObserver(
             self,
@@ -130,7 +160,7 @@ public final class ThemeManager: ObservableObject {
         DistributedNotificationCenter.default.removeObserver(self)
     }
 
-    /// 获取当前系统外观（任务 T2: 用于决定首次启动时的初始模式）
+    /// 获取当前系统外观（任务 F11-3: .system 模式下决定 light/dark 解析）
     public var systemIsDark: Bool {
         let effective = NSApp.appearance ?? NSApp.effectiveAppearance
         return effective.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -139,12 +169,21 @@ public final class ThemeManager: ObservableObject {
     // MARK: - Private
 
     @objc private func systemAppearanceChanged() {
-        // 任务 T2: 不再自动跟随系统，仅刷新玻璃效果令牌
-        // 用户必须手动点击切换按钮才会改变 light/dark 模式
-        for window in NSApp.windows {
-            window.appearance = NSApp.appearance
-            if let mainContainer = findMainContainer(in: window) {
-                mainContainer.appearance = NSApp.appearance ?? NSApp.effectiveAppearance
+        // 任务 F11-3: .system 模式下，系统切换浅/深色时需实际刷新窗口外观；
+        // light/dark 模式下用户已显式锁定，仅刷新玻璃效果令牌。
+        if currentMode == .system {
+            for window in NSApp.windows {
+                window.appearance = nil  // 跟随系统
+                if let mainContainer = findMainContainer(in: window) {
+                    mainContainer.appearance = NSApp.effectiveAppearance
+                }
+            }
+        } else {
+            for window in NSApp.windows {
+                window.appearance = NSApp.appearance
+                if let mainContainer = findMainContainer(in: window) {
+                    mainContainer.appearance = NSApp.appearance ?? NSApp.effectiveAppearance
+                }
             }
         }
         FFGlassView.refreshAllInstances()
@@ -161,8 +200,8 @@ public final class ThemeManager: ObservableObject {
                   let mode = AppearanceMode(rawValue: savedValue) {
             currentMode = mode
         } else {
-            // 任务 T2: 首次启动根据系统当前外观决定初始模式
-            currentMode = systemIsDark ? .dark : .light
+            // 任务 F11-3: 首次启动默认 .system（自动跟随系统）
+            currentMode = .system
         }
     }
 
