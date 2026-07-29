@@ -76,6 +76,19 @@ public class PaneViewModel: ObservableObject {
     /// 引入 allFiles 保存原始列表，applyFilter 始终从 allFiles 过滤到 state.files。
     private var allFiles: [FileEntry] = []
 
+    /// 任务 F11-11: 大目录分页加载状态（C5）。
+    /// 为避免 10 万+ 文件一次性渲染卡顿，loadDirectory 后首批 pageSize 条立即显示，
+    /// 其余按 pageSize 分批异步追加（DispatchQueue.main.asyncAfter）。
+    /// 任何会重置列表的操作（loadDirectory/applySort/applyFilter 由搜索/标签触发）
+    /// 都须先 cancelPagination() 取消挂起的追加任务，避免竞态覆盖。
+    private var paginationWorkItems: [DispatchWorkItem] = []
+    /// 分页每批大小（首批与追加批均为 500 条）
+    private let paginationPageSize: Int = 500
+    /// 任务 F11-11: loadDirectory 的加载代次（C5）。
+    /// 每次发起新 loadDirectory 时自增，后台完成回主线程时校验代次一致才应用结果，
+    /// 避免快速导航时旧后台加载覆盖新加载（竞态导致显示错误目录内容）。
+    private var loadGeneration: Int = 0
+
     init() {}
 
     init(path: String) {
@@ -446,6 +459,10 @@ public class PaneViewModel: ObservableObject {
 
     private func loadDirectory() {
         guard !state.path.isEmpty else { return }
+        // 任务 F11-11: 取消上一轮挂起的分页追加任务，并自增加载代次（C5）
+        // 代次校验用于丢弃快速导航时旧后台加载的过时完成结果
+        cancelPagination()
+        let generation = { self.loadGeneration += 1; return self.loadGeneration }()
         state.isLoading = true
         state.error = nil
 
@@ -462,10 +479,13 @@ public class PaneViewModel: ObservableObject {
                 // 在后台线程完成排序，避免阻塞 UI；使用捕获的快照而非读取 self.state
                 let sortedEntries = self.sortEntries(entries, field: sortField, ascending: sortAscending)
                 DispatchQueue.main.async {
+                    // 任务 F11-11: 代次校验 - 若期间又发起新 loadDirectory 则丢弃本次结果（C5）
+                    guard self.loadGeneration == generation else { return }
                     // 任务 F10-10: 保存原始列表到 allFiles，applyFilter 始终基于 allFiles 过滤（修复问题11辅助）
                     self.allFiles = sortedEntries
                     // 任务 F11-8: 统一走 applyFilter（综合标签+搜索过滤），保持单一过滤入口
-                    self.applyFilter()
+                    // 任务 F11-11: 大目录分页加载（C5）- 首批 pageSize 条立即显示，其余异步追加
+                    self.applyFilterPaginated()
                     // 若当前有非空搜索查询，触发子目录递归搜索（追加深层匹配项）
                     if !self.state.searchQuery.isEmpty && self.state.tagFilter == nil {
                         self.performRecursiveSearch(query: self.state.searchQuery)
@@ -474,6 +494,8 @@ public class PaneViewModel: ObservableObject {
                 }
             } catch {
                 DispatchQueue.main.async {
+                    // 任务 F11-11: 代次校验 - 错误回退也需丢弃过时结果（C5）
+                    guard self.loadGeneration == generation else { return }
                     self.state.error = error.localizedDescription
                     self.state.isLoading = false
                 }
@@ -501,6 +523,8 @@ public class PaneViewModel: ObservableObject {
     }
 
     private func applySort() {
+        // 任务 F11-11: 排序变化为完整重载，取消挂起的分页追加任务（C5）
+        cancelPagination()
         // 任务 F10-10: 排序基于 allFiles（原始列表），避免在已过滤子集上排序导致丢失项目（修复问题11辅助）
         let sorted = sortEntries(allFiles, field: state.sortField, ascending: state.sortAscending)
         // 同步更新 allFiles 为排序后顺序
@@ -510,6 +534,9 @@ public class PaneViewModel: ObservableObject {
     }
 
     private func applyFilter() {
+        // 任务 F11-11: 搜索/标签筛选变化为完整重载，取消挂起的分页追加任务（C5）
+        // （loadDirectory 的初始分页走 applyFilterPaginated，不经过此处）
+        cancelPagination()
         // 任务 F11-8: 综合应用标签筛选 + 搜索过滤，结果均基于 allFiles（原始列表）
         var filtered = allFiles
         // 1. 标签筛选：仅保留含该标签的文件（TagBridge.getTags 检查是否含该标签）
@@ -529,6 +556,77 @@ public class PaneViewModel: ObservableObject {
             filtered = filtered.filter { $0.name.lowercased().contains(query) }
         }
         state.files = filtered
+    }
+
+    // MARK: - 任务 F11-11: 大目录分页加载（C5）
+
+    /// 取消所有挂起的分页追加任务。
+    /// 在任何重置列表的操作（loadDirectory/applySort/applyFilter）前调用，
+    /// 避免旧的追加任务在新列表已建立后覆盖 state.files（竞态）。
+    private func cancelPagination() {
+        for item in paginationWorkItems {
+            item.cancel()
+        }
+        paginationWorkItems.removeAll()
+    }
+
+    /// 任务 F11-11: 分页应用过滤结果（C5）。
+    /// 仅 loadDirectory 初始加载时调用：首批 pageSize 条立即显示（state.files 立即更新触发 UI），
+    /// 其余按 pageSize 分批通过 DispatchQueue.main.asyncAfter 异步追加到 state.files。
+    /// 搜索/排序/标签筛选变化走 applyFilter（完整重载），不经过此分页路径。
+    ///
+    /// 实现说明（简化方案，非增量插入）：
+    /// - 首批直接赋值 state.files，触发 @Published -> FileListView reloadData
+    /// - 后续每批用 asyncAfter 追加，每批到达时校验 loadGeneration 与 searchQuery/tagFilter
+    ///   未变才应用，否则丢弃（用户可能在追加期间导航/搜索，需避免覆盖）
+    private func applyFilterPaginated() {
+        cancelPagination()
+
+        // 综合标签 + 搜索过滤（与 applyFilter 相同逻辑，结果为完整过滤列表）
+        var filtered = allFiles
+        if let tagFilter = state.tagFilter {
+            filtered = filtered.filter { entry in
+                if !entry.tags.isEmpty {
+                    return entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+                }
+                let tags = TagBridge.shared.getTags(path: entry.path)
+                return tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+            }
+        }
+        if !state.searchQuery.isEmpty {
+            let query = state.searchQuery.lowercased()
+            filtered = filtered.filter { $0.name.lowercased().contains(query) }
+        }
+
+        // 捕获快照，供追加批次校验（避免闭包内读取 self.state 造成竞态）
+        let generation = loadGeneration
+        let capturedQuery = state.searchQuery
+        let capturedTagFilterId = state.tagFilter?.id
+
+        // 首批：立即显示前 pageSize 条
+        let firstBatchEnd = min(paginationPageSize, filtered.count)
+        state.files = Array(filtered.prefix(firstBatchEnd))
+
+        // 其余分批异步追加
+        var offset = firstBatchEnd
+        while offset < filtered.count {
+            let batchStart = offset
+            let batchEnd = min(batchStart + paginationPageSize, filtered.count)
+            let batch = Array(filtered[batchStart..<batchEnd])
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                // 校验：加载代次未变 + 搜索查询未变 + 标签筛选未变，否则丢弃此批
+                guard self.loadGeneration == generation else { return }
+                guard self.state.searchQuery == capturedQuery else { return }
+                guard self.state.tagFilter?.id == capturedTagFilterId else { return }
+                // 追加批次（非增量插入，直接 append 后 @Published 触发 FileListView reloadData）
+                self.state.files.append(contentsOf: batch)
+            }
+            paginationWorkItems.append(workItem)
+            // 每批间隔 16ms（约一帧），让首批渲染先完成，避免阻塞主线程
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16 * (offset / paginationPageSize)), execute: workItem)
+            offset = batchEnd
+        }
     }
 
     /// 任务 F11-8: 异步递归搜索子目录，将匹配项追加到当前结果。

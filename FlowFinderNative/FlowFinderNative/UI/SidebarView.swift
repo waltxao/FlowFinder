@@ -10,6 +10,15 @@ extension Notification.Name {
     static let sidebarDidSelectTag = Notification.Name("sidebarDidSelectTag")
     /// 任务 F11-8: 活动面板/标签筛选变化通知，侧边栏据此更新标签高亮
     static let paneTagFilterChanged = Notification.Name("paneTagFilterChanged")
+    /// 任务 F11-11: 侧边栏工具面板入口通知（C1）
+    /// 工具面板三个入口（查重 / 批量重命名 / AI 工具）点击后，由 SidebarView 发送对应通知，
+    /// MainWindowController 及活动面板视图据此打开对应窗口或执行操作。
+    /// - sidebarDidRequestDedupScan: 查重扫描，MainWindowController 打开 DuplicateScanWindowController
+    /// - sidebarDidRequestBatchRename: 批量重命名，MainWindowController 转发 menuBatchRename
+    /// - sidebarDidRequestAITools: AI 工具，活动面板视图触发 generateAITags
+    static let sidebarDidRequestDedupScan = Notification.Name("sidebarDidRequestDedupScan")
+    static let sidebarDidRequestBatchRename = Notification.Name("sidebarDidRequestBatchRename")
+    static let sidebarDidRequestAITools = Notification.Name("sidebarDidRequestAITools")
 }
 
 // MARK: - DeviceExtendedInfo (设备扩展信息，用于悬停气泡)
@@ -48,6 +57,17 @@ class SidebarView: NSView {
     private let tagsDataSource = TagsSidebarDataSource()
     private var favoritesHeightConstraint: NSLayoutConstraint!
     private var tagsHeightConstraint: NSLayoutConstraint!
+
+    // 任务 F11-11: 侧边栏底部工具面板（C1）
+    // 点击工具按钮后从 toolBarRow 下方展开，含三个入口：查重 / 批量重命名 / AI 工具
+    private var toolPanelView: NSVisualEffectView!
+    private var toolPanelHeightConstraint: NSLayoutConstraint!
+    /// 工具按钮引用（用于切换激活态 contentTintColor）
+    private var toolBtn: NSButton!
+    /// 工具面板当前是否展开
+    private var isToolPanelExpanded: Bool = false
+    /// 工具面板展开高度（3 个入口行 * 36pt + 上下 padding 8*2）
+    private let toolPanelExpandedHeight: CGFloat = 124
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -164,6 +184,8 @@ class SidebarView: NSView {
         toolBtn.action = #selector(toggleToolPanel)
         toolBtn.translatesAutoresizingMaskIntoConstraints = false
         toolBarRow.addArrangedSubview(toolBtn)
+        // 任务 F11-11: 保存引用以便切换激活态（C1）
+        self.toolBtn = toolBtn
 
         // 收藏夹区域
         favoritesScrollView = makeScrollView()
@@ -228,6 +250,24 @@ class SidebarView: NSView {
 
         let padding: CGFloat = 12
 
+        // 任务 F11-11: 底部工具面板（C1）
+        // 默认高度 0（收起），点击工具按钮后动画展开到 toolPanelExpandedHeight。
+        // 使用 NSVisualEffectView(.sidebar) 材质与收藏夹/标签区一致，圆角 8pt。
+        toolPanelView = NSVisualEffectView()
+        toolPanelView.material = .sidebar
+        toolPanelView.blendingMode = .behindWindow
+        toolPanelView.state = .active
+        toolPanelView.translatesAutoresizingMaskIntoConstraints = false
+        toolPanelView.wantsLayer = true
+        toolPanelView.layer?.cornerRadius = 8
+        toolPanelView.layer?.masksToBounds = true
+        addSubview(toolPanelView)
+        buildToolPanelContents()
+
+        // 工具面板高度约束：初始 0（收起）
+        toolPanelHeightConstraint = toolPanelView.heightAnchor.constraint(equalToConstant: 0)
+        toolPanelHeightConstraint.priority = .required
+
         NSLayoutConstraint.activate([
             // 任务 R3: 收藏夹遮罩区域 - 从 brandView 下方开始
             favoritesMaskView.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: padding),
@@ -247,6 +287,12 @@ class SidebarView: NSView {
             toolBarRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             toolBarRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             toolBarRow.heightAnchor.constraint(equalToConstant: 28),
+
+            // 任务 F11-11: 工具面板 - 紧跟 toolBarRow 下方，宽度与工具栏行对齐（C1）
+            toolPanelView.topAnchor.constraint(equalTo: toolBarRow.bottomAnchor, constant: 4),
+            toolPanelView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
+            toolPanelView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
+            toolPanelHeightConstraint,
 
             // 收藏夹 scrollView 填满收藏夹遮罩（内边距 8pt，圆角由 mask 的 masksToBounds 裁剪）
             favoritesScrollView.topAnchor.constraint(equalTo: favoritesMaskView.topAnchor, constant: 8),
@@ -343,10 +389,102 @@ class SidebarView: NSView {
         NotificationCenter.default.post(name: NSNotification.Name("OpenSettings"), object: nil)
     }
 
-    /// 任务 T1: 展开侧边栏底部工具面板（查重/重命名等）
-    /// TODO: 后续实现工具面板展开动画
+    /// 任务 T1 / F11-11: 展开侧边栏底部工具面板（查重/批量重命名/AI 工具入口）（C1）
+    /// 点击工具按钮切换展开/收起，动画改变 toolPanelView 高度约束。
+    /// 再次点击收起。按钮 contentTintColor 随状态切换以提示当前激活态。
     @objc private func toggleToolPanel() {
-        // 预留：点击后展开侧边栏底部隐藏的工具面板
+        isToolPanelExpanded.toggle()
+        let targetHeight: CGFloat = isToolPanelExpanded ? toolPanelExpandedHeight : 0
+
+        // 动画展开/收起高度约束（NSView.animator）
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.2
+            context.allowsImplicitAnimation = true
+            toolPanelHeightConstraint.animator().constant = targetHeight
+            toolPanelView.layoutSubtreeIfNeeded()
+        }, completionHandler: nil)
+
+        // 切换按钮激活态外观：展开时强调色，收起时次级标签色
+        toolBtn.contentTintColor = isToolPanelExpanded ? .controlAccentColor : .secondaryLabelColor
+    }
+
+    /// 任务 F11-11: 构建工具面板内容（三个入口行：查重 / 批量重命名 / AI 工具）（C1）
+    /// 每行：SF Symbol 图标 + 文字标签，点击发送对应 NotificationCenter 通知。
+    private func buildToolPanelContents() {
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 0
+        container.distribution = .fill
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.edgeInsets = NSEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
+        toolPanelView.addSubview(container)
+
+        NSLayoutConstraint.activate([
+            container.topAnchor.constraint(equalTo: toolPanelView.topAnchor),
+            container.leadingAnchor.constraint(equalTo: toolPanelView.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: toolPanelView.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: toolPanelView.bottomAnchor),
+        ])
+
+        // 三个入口项：(图标, 标题, 通知名)
+        let entries: [(icon: String, title: String, notification: Notification.Name)] = [
+            ("rectangle.dashed", "查重扫描", .sidebarDidRequestDedupScan),
+            ("pencil.and.list.rectangle", "批量重命名", .sidebarDidRequestBatchRename),
+            ("sparkles", "AI 自动打标签", .sidebarDidRequestAITools),
+        ]
+        for entry in entries {
+            let row = makeToolPanelEntry(icon: entry.icon, title: entry.title, notification: entry.notification)
+            container.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        }
+    }
+
+    /// 任务 F11-11: 创建单个工具面板入口行（图标 + 文字，点击发通知）（C1）
+    private func makeToolPanelEntry(icon: String, title: String, notification: Notification.Name) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.wantsLayer = true
+        row.layer?.backgroundColor = NSColor.clear.cgColor
+        row.heightAnchor.constraint(equalToConstant: 36).isActive = true
+
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
+        iconView.contentTintColor = .secondaryLabelColor
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(iconView)
+
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: 13)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 10),
+            iconView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 18),
+            iconView.heightAnchor.constraint(equalToConstant: 18),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+        ])
+
+        // 点击发送对应通知（由 MainWindowController / 活动面板视图监听处理）
+        let click = NSClickGestureRecognizer(target: self, action: #selector(handleToolPanelEntryClick(_:)))
+        row.addGestureRecognizer(click)
+        // 用 identifier 携带通知名，回调时取出
+        row.identifier = NSUserInterfaceItemIdentifier(notification.rawValue)
+        return row
+    }
+
+    /// 任务 F11-11: 工具面板入口点击回调，根据 row.identifier 发送对应通知（C1）
+    @objc private func handleToolPanelEntryClick(_ sender: NSClickGestureRecognizer) {
+        guard let raw = sender.view?.identifier?.rawValue else { return }
+        let name = Notification.Name(raw)
+        NotificationCenter.default.post(name: name, object: nil)
     }
 
     @objc private func removeFavorite(_ sender: Any?) {

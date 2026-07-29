@@ -828,6 +828,14 @@ public class FileGridView: NSView {
     }
 
     @objc private func generateAITags(_ sender: Any?) {
+        // 任务 F11-11: 复用公共入口（供侧边栏工具面板 AI 工具入口调用，C1）
+        triggerAITagGeneration()
+    }
+
+    /// 任务 F11-11: AI 自动打标签公共入口（C1）。
+    /// 供 MainWindowController 在收到侧边栏工具面板 AI 工具点击通知后调用。
+    /// 优先使用当前选中文件列表，无选中时回退到右键点击的文件；两者皆无则不执行。
+    public func triggerAITagGeneration() {
         // 优先使用选中的文件列表，无选中时回退到右键点击的文件
         var entries = viewModel?.selectedFiles ?? []
         if entries.isEmpty {

@@ -812,11 +812,73 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleOpenSettings(_:)),
             name: NSNotification.Name("OpenSettings"), object: nil
         )
+        // 任务 F11-11: 注册侧边栏工具面板入口通知（C1）
+        // 查重 -> 打开 DuplicateScanWindowController；批量重命名 -> 转发 menuBatchRename；
+        // AI 工具 -> 调用活动面板视图 triggerAITagGeneration
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarDedupScan(_:)),
+            name: .sidebarDidRequestDedupScan, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarBatchRename(_:)),
+            name: .sidebarDidRequestBatchRename, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarAITools(_:)),
+            name: .sidebarDidRequestAITools, object: nil
+        )
     }
 
     /// 任务 F10-10: 处理 OpenSettings 通知，弹出设置窗口（修复问题3）
     @objc private func handleOpenSettings(_ notification: Notification) {
         SettingsWindowController.shared.showWindow()
+    }
+
+    // MARK: - 任务 F11-11: 侧边栏工具面板入口通知处理（C1）
+
+    /// 查重扫描入口：打开 DuplicateScanWindowController
+    @objc private func handleSidebarDedupScan(_ notification: Notification) {
+        DuplicateScanWindowController.shared.showWindow()
+    }
+
+    /// 批量重命名入口：转发到 menuBatchRename（需至少选中 2 个文件，否则提示）
+    @objc private func handleSidebarBatchRename(_ notification: Notification) {
+        let selected = activePaneViewModel.selectedFiles
+        guard selected.count >= 2 else {
+            let alert = NSAlert()
+            alert.messageText = "批量重命名"
+            alert.informativeText = "请至少选中 2 个文件后再使用批量重命名。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
+        menuBatchRename(nil)
+    }
+
+    /// AI 工具入口：调用活动面板视图的 triggerAITagGeneration
+    /// 根据活动面板的当前视图模式（列表/图标）选择对应视图，无选中文件时提示
+    @objc private func handleSidebarAITools(_ notification: Notification) {
+        let selected = activePaneViewModel.selectedFiles
+        guard !selected.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "AI 自动打标签"
+            alert.informativeText = "请先选中一个或多个文件后再使用 AI 自动打标签。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+            return
+        }
+        // 根据活动面板的视图可见性选择对应视图
+        let isLeft = (activePane == .left)
+        let listView = isLeft ? leftFileListView : rightFileListView
+        let gridView = isLeft ? leftFileGridView : rightFileGridView
+        // 列表视图默认可见（gridView.isHidden == true 表示当前为列表模式）
+        if gridView?.isHidden == true {
+            listView?.triggerAITagGeneration()
+        } else {
+            gridView?.triggerAITagGeneration()
+        }
     }
 
     @objc private func handleFileListAddTag(_ notification: Notification) {
