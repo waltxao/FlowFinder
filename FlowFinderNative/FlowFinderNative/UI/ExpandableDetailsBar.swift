@@ -67,6 +67,11 @@ class ExpandableDetailsBar: NSView {
     /// 当前正在请求缩略图的路径（用于避免过期回调覆盖）
     private var thumbnailLoadPath: String?
 
+    /// 任务 F11-7: 当前正在请求工作区图标的路径（用于避免过期回调覆盖）。
+    /// 点击选中时 refresh() -> setRealFileIcon 会异步获取图标，用户快速切换选中项时
+    /// 需校验回调返回时仍显示同一文件，否则会闪烁/显示错误图标。
+    private var iconLoadPath: String?
+
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
@@ -369,6 +374,10 @@ class ExpandableDetailsBar: NSView {
             thumbnailLoadPath = nil
             bigIconView.image = nil
         }
+        // 任务 F11-7: 文件变化时也清除工作区图标请求标记，避免旧回调覆盖新选中项图标
+        if iconLoadPath != nil && iconLoadPath != entry?.path {
+            iconLoadPath = nil
+        }
 
         // compact 行：名称字号在 setupUI 中统一为 13pt medium；副字段 12pt secondary "大小 · 类型"
         // 任务 F11-6: 占位图标统一使用灰色（tertiaryLabelColor），未选中时显示空白文件夹占位
@@ -435,15 +444,35 @@ class ExpandableDetailsBar: NSView {
     }
 
     /// 任务 F11-6: 设置真实文件图标（compact 与 expanded 同步）
-    /// 使用 NSWorkspace.shared.icon(forFile:) 返回的多色非模板图标，contentTintColor 置 nil 避免干扰
+    /// 任务 F11-7: 改为异步获取 + 缓存，避免点击选中时主线程同步调用
+    /// NSWorkspace.shared.icon(forFile:) 造成卡顿。原实现每次选中都同步调用，
+    /// 快速连续点击不同文件时主线程被 LaunchServices 查询阻塞。
+    /// 现改为：缓存命中同步显示；未命中先清 tint（保留占位），后台异步获取后回调更新。
+    /// contentTintColor 置 nil 避免多色非模板图标被染色。
     /// - Parameter path: 文件绝对路径
     private func setRealFileIcon(for path: String) {
-        let image = NSWorkspace.shared.icon(forFile: path)
-        smallIconView.image = image
-        bigIconView.image = image
         // 真实图标为多色非模板图像，清除占位灰色 tint，确保显示原生色彩
         smallIconView.contentTintColor = nil
         bigIconView.contentTintColor = nil
+
+        // 缓存命中：同步显示
+        let iconPointSize: CGFloat = 48
+        if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: iconPointSize) {
+            iconLoadPath = nil
+            smallIconView.image = cached
+            bigIconView.image = cached
+            return
+        }
+
+        // 未命中：记录当前请求路径，后台异步获取
+        iconLoadPath = path
+        ThumbnailManager.shared.fetchWorkspaceIcon(for: path, pointSize: iconPointSize) { [weak self] image in
+            guard let self = self, let image = image else { return }
+            // 校验仍显示同一文件（避免快速切换选中时旧回调覆盖）
+            guard self.iconLoadPath == path else { return }
+            self.smallIconView.image = image
+            self.bigIconView.image = image
+        }
     }
 
     // MARK: - Thumbnail

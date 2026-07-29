@@ -17,18 +17,35 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     /// 的复用匹配，覆写会破坏 item 复用机制（与 FileListView FFTableCellView 对称）。
     private var currentPath: String?
 
+    /// 任务 F11-7: 标记是否已收到缩略图。
+    /// 工作区图标回调若在此之后返回则跳过覆盖（缩略图优先级更高，避免用工作区图标盖掉缩略图）。
+    /// entry 重新绑定 / prepareForReuse 时复位。
+    private var didReceiveThumbnail: Bool = false
+
     var entry: FileEntry? {
         didSet {
             guard let entry = entry else { return }
             nameLabel.stringValue = entry.name
             pathLabel.stringValue = entry.path
+            // 任务 F11-7: 复位缩略图标志（item 重新绑定文件）
+            didReceiveThumbnail = false
 
             // 设置图标
             if entry.isDirectory {
                 // 任务 F10-9: 目录不加载缩略图，清除路径标记避免旧回调误覆盖目录图标
                 currentPath = nil
-                thumbnailImageView.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
-                    ?? NSImage(named: NSImage.folderName)
+                // 任务 F11-7: 目录图标也走缓存（避免每次都构造 SF Symbol）
+                if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: entry.path, pointSize: 48) {
+                    thumbnailImageView.image = cached
+                } else {
+                    let placeholder = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
+                        ?? NSImage(named: NSImage.folderName)
+                    thumbnailImageView.image = placeholder
+                    ThumbnailManager.shared.fetchWorkspaceIcon(for: entry.path, pointSize: 48) { [weak self] image in
+                        guard let self = self, self.currentPath == nil else { return }
+                        if let image = image { self.thumbnailImageView.image = image }
+                    }
+                }
             } else {
                 // 任务 F10-9: 缩略图复用校验（F8 遗漏修复，v0.6.6）
                 // 1) 取消该 item 上一次的缩略图请求（避免旧请求覆盖新 item）
@@ -40,15 +57,33 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 }
                 currentPath = path
 
-                // 占位图标（缩略图返回前先显示文件图标）
-                thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
-                    ?? NSImage(named: NSImage.multipleDocumentsName)
+                // 任务 F11-7: 占位图标优先用缓存的工作区图标（比 SF Symbol 更接近最终视觉），
+                // 缓存未命中再用通用 doc 符号，并后台异步获取真实工作区图标作为缩略图返回前的过渡。
+                // 这样即使缩略图生成慢，用户也能快速看到正确的文件类型图标而非通用 doc。
+                let placeholderPointSize: CGFloat = 48
+                if let cachedIcon = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: placeholderPointSize) {
+                    thumbnailImageView.image = cachedIcon
+                } else {
+                    thumbnailImageView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
+                        ?? NSImage(named: NSImage.multipleDocumentsName)
+                    // 后台异步获取真实工作区图标作为过渡（缩略图返回前先显示真实类型图标）
+                    ThumbnailManager.shared.fetchWorkspaceIcon(for: path, pointSize: placeholderPointSize) { [weak self] image in
+                        guard let self = self, self.currentPath == path else { return }
+                        if let image = image {
+                            // 缩略图优先级更高：若缩略图已返回则不覆盖
+                            guard !self.didReceiveThumbnail else { return }
+                            self.thumbnailImageView.image = image
+                        }
+                    }
+                }
 
                 // 使用 ThumbnailManager 获取缩略图
                 ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 96, height: 96)) { [weak self] image in
                     guard let self = self else { return }
                     // 校验 item 仍显示同一文件（用完整路径而非文件名）
                     guard self.currentPath == path else { return }
+                    // 任务 F11-7: 标记已收到缩略图，阻止后续工作区图标回调覆盖
+                    self.didReceiveThumbnail = true
                     if let image = image {
                         self.thumbnailImageView.image = image
                     } else {
@@ -79,6 +114,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             ThumbnailManager.shared.cancelGeneration(for: oldPath)
         }
         currentPath = nil
+        // 任务 F11-7: 复位缩略图标志
+        didReceiveThumbnail = false
         // 重置图标，避免复用瞬间显示上一个文件的缩略图
         thumbnailImageView.image = nil
         // 重置选中背景（防止复用 item 残留选中样式）

@@ -173,6 +173,17 @@ private class FFTableCellView: NSTableCellView {
     /// 的复用匹配（makeView(withIdentifier:owner:)），覆写会破坏 cell 复用机制。
     var currentFilePath: String?
 
+    /// 任务 F11-7: 记录该 cell 当前工作区图标对应的文件路径（含目录）。
+    /// 与 currentFilePath 分离：currentFilePath 仅记录文件（用于缩略图取消），
+    /// 目录时为 nil；而 iconPath 同时覆盖目录与文件，用于工作区图标回调校验，
+    /// 避免目录的异步图标回调无法通过 currentFilePath 校验而被丢弃。
+    var iconPath: String?
+
+    /// 任务 F11-7: 标记该 cell 是否已收到缩略图。
+    /// 缩略图返回后置 true，工作区图标回调若此时才返回则跳过覆盖（缩略图优先级更高）。
+    /// 每次 viewFor 重新绑定文件时复位为 false。
+    var didReceiveThumbnail: Bool = false
+
     /// 任务 F11-5: 名称列图标 leading 约束引用。
     /// 分组开启时文件行需缩进（仿访达），通过动态调整此约束的 constant 实现。
     /// 复用时每次 tableView(_:viewFor:row:) 重新设置 constant。
@@ -1455,11 +1466,40 @@ extension FileListView: NSTableViewDelegate {
             // groupBy == "none" 时恢复无缩进（base constant 4），保证非分组视图不受影响。
             let isGrouped = (viewModel.state.groupBy != "none")
             cellView.nameLeadingConstraint?.constant = isGrouped ? 20 : 4
-            // 使用 NSWorkspace.shared.icon(forFile:) 获取真实文件图标（访达风格）
-            // 文件夹、应用、图片、文档等都会显示正确的系统图标
-            let workspaceIcon = NSWorkspace.shared.icon(forFile: entry.path)
-            workspaceIcon.size = NSSize(width: 18, height: 18)
-            cellView.imageView?.image = workspaceIcon
+
+            // 任务 F11-7: 卡顿修复 - NSWorkspace.shared.icon 异步化 + 应用层缓存。
+            // 原实现每次 viewFor 都在主线程同步调用 NSWorkspace.shared.icon(forFile:)，
+            // 大目录（数百文件）下叠加 LaunchServices 同步查询造成明显卡顿。
+            // 现改为：
+            // 1) 先查应用层缓存（workspaceIconCache），命中则同步显示（O(1) 内存查找）
+            // 2) 未命中先显示通用占位图标（folder/doc），再后台异步获取真实图标
+            // 3) 回调主线程更新 imageView，校验 cell 仍显示同一文件（复用安全）
+            // 目录用 folder 占位，文件用 doc 占位（与 FileGridView 一致）
+            let iconPointSize: CGFloat = 18
+            let path = entry.path
+            // 先更新 iconPath 标记并复位缩略图标志（cell 重新绑定文件）
+            cellView.iconPath = path
+            cellView.didReceiveThumbnail = false
+            if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: iconPointSize) {
+                cellView.imageView?.image = cached
+            } else {
+                // 占位图标：目录用 folder，文件用 doc（缩略图返回前先显示）
+                let placeholder = entry.isDirectory
+                    ? (NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹") ?? NSImage(named: NSImage.folderName))
+                    : (NSImage(systemSymbolName: "doc", accessibilityDescription: "文件") ?? NSImage(named: NSImage.multipleDocumentsName))
+                placeholder?.size = NSSize(width: iconPointSize, height: iconPointSize)
+                cellView.imageView?.image = placeholder
+
+                // 后台异步获取真实工作区图标
+                ThumbnailManager.shared.fetchWorkspaceIcon(for: path, pointSize: iconPointSize) { [weak cellView] image in
+                    guard let image = image else { return }
+                    // 校验 cell 仍显示同一文件（含目录，复用安全，避免旧请求覆盖新 cell）
+                    guard let cell = cellView, cell.iconPath == path else { return }
+                    // 缩略图优先级更高：若缩略图已返回则不覆盖（避免用工作区图标盖掉缩略图）
+                    guard !cell.didReceiveThumbnail else { return }
+                    cell.imageView?.image = image
+                }
+            }
 
             // 任务 F8: 缩略图加载层修复（v0.6.5）
             // 1) 取消该 cell 上一次的缩略图请求（避免旧请求覆盖新 cell）
@@ -1483,6 +1523,8 @@ extension FileListView: NSTableViewDelegate {
                     // 校验 cell 仍显示同一文件（用完整路径而非文件名）
                     guard let cell = cellView,
                           cell.currentFilePath == path else { return }
+                    // 任务 F11-7: 标记已收到缩略图，阻止后续工作区图标回调覆盖
+                    cell.didReceiveThumbnail = true
                     cell.imageView?.image = image
                 }
             } else {
