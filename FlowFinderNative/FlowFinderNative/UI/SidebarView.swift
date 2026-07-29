@@ -5,6 +5,11 @@ import Cocoa
 extension Notification.Name {
     static let sidebarDidSelectDirectory = Notification.Name("sidebarDidSelectDirectory")
     static let paneDidActivate = Notification.Name("paneDidActivate")
+    /// 任务 F11-8: 侧边栏标签点击筛选通知（问题3）。
+    /// object 携带被点击的 Tag，MainWindowController 据此设置当前活动面板的 tagFilter
+    static let sidebarDidSelectTag = Notification.Name("sidebarDidSelectTag")
+    /// 任务 F11-8: 活动面板/标签筛选变化通知，侧边栏据此更新标签高亮
+    static let paneTagFilterChanged = Notification.Name("paneTagFilterChanged")
 }
 
 // MARK: - DeviceExtendedInfo (设备扩展信息，用于悬停气泡)
@@ -185,7 +190,18 @@ class SidebarView: NSView {
             self?.tagsDataSource.removeTag(id: tagId)
             self?.tagFlowView.updateTags(self?.tagsDataSource.allTags() ?? [])
         }
+        // 任务 F11-8: 标签点击 -> 发送通知，由 MainWindowController 设置当前活动面板的 tagFilter（问题3）
+        tagFlowView.onTagSelected = { [weak self] tag in
+            guard self != nil else { return }
+            NotificationCenter.default.post(name: .sidebarDidSelectTag, object: tag)
+        }
         tagsMaskView.addSubview(tagFlowView)
+
+        // 任务 F11-8: 监听面板标签筛选变化，更新标签行高亮（当前筛选的标签高亮显示）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handlePaneTagFilterChanged(_:)),
+            name: .paneTagFilterChanged, object: nil
+        )
 
         // 任务 F10-3: 设备区域相关视图（deviceHeaderView/deviceScrollView/deviceOutlineView）
         // 已迁移至 MainWindowController 的 createDevicePanel 浮层，此处不再创建
@@ -349,6 +365,18 @@ class SidebarView: NSView {
         tagsDataSource.removeTag(id: tagId)
         tagFlowView.updateTags(tagsDataSource.allTags())
         updateTagsHeight()
+    }
+
+    /// 任务 F11-8: 处理面板标签筛选变化通知，更新标签行高亮。
+    /// userInfo["tagFilter"] 为当前活动面板的 tagFilter（Tag 或 nil），用于高亮对应标签行。
+    @objc private func handlePaneTagFilterChanged(_ notification: Notification) {
+        let tagFilter = notification.userInfo?["tagFilter"] as? Tag
+        tagFlowView.setHighlightedTagId(tagFilter?.id)
+    }
+
+    /// 任务 F11-8: 清理通知观察者
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .paneTagFilterChanged, object: nil)
     }
 
     /// 添加收藏夹（供外部调用）
@@ -1436,6 +1464,8 @@ private class TagFlowView: NSView {
     // MARK: - State
 
     private var tags: [Tag] = []
+    /// 任务 F11-8: 当前高亮的标签 id（来自活动面板的 tagFilter），nil 表示无高亮
+    private var highlightedTagId: String?
 
     // MARK: - UI Elements
 
@@ -1530,6 +1560,15 @@ private class TagFlowView: NSView {
         rebuildRows()
     }
 
+    /// 任务 F11-8: 设置当前高亮标签 id（来自活动面板 tagFilter），并重建行以应用高亮样式。
+    /// nil 表示无高亮（取消筛选）。点击同一标签切换筛选时由 MainWindowController 负责置 nil。
+    func setHighlightedTagId(_ tagId: String?) {
+        // 仅在变化时重建，避免无谓刷新
+        guard highlightedTagId != tagId else { return }
+        highlightedTagId = tagId
+        rebuildRows()
+    }
+
     /// 计算指定宽度下的理想高度（供外部 updateTagsHeight 使用）
     /// 任务 F10-5: 垂直布局下高度 = header 区域 + 行数 × 28pt + 上下间距
     func idealHeight(forWidth width: CGFloat) -> CGFloat {
@@ -1565,6 +1604,17 @@ private class TagFlowView: NSView {
         row.translatesAutoresizingMaskIntoConstraints = false
         // 用 identifier 存储 tag.id（NSGestureRecognizer 无 representedObject 属性）
         row.identifier = NSUserInterfaceItemIdentifier(tag.id)
+        // 任务 F11-8: 当前筛选标签高亮（圆角背景 + 强调色），便于用户识别当前筛选
+        let isHighlighted = (highlightedTagId == tag.id)
+        row.wantsLayer = true
+        if isHighlighted {
+            // 选中态：使用标签色的半透明背景 + 圆角，文字加重
+            let tinted = (NSColor(hex: tag.color) ?? .systemBlue).withAlphaComponent(0.18)
+            row.layer?.backgroundColor = tinted.cgColor
+            row.layer?.cornerRadius = 6
+        } else {
+            row.layer?.backgroundColor = NSColor.clear.cgColor
+        }
 
         // 圆点（8x8，tag.color，4pt 圆角）
         let dot = NSView()
@@ -1575,7 +1625,9 @@ private class TagFlowView: NSView {
 
         // 文字（13pt，完整标签名）
         let label = NSTextField(labelWithString: tag.name)
-        label.font = NSFont.systemFont(ofSize: 13)
+        label.font = isHighlighted
+            ? NSFont.boldSystemFont(ofSize: 13)
+            : NSFont.systemFont(ofSize: 13)
         label.textColor = NSColor.labelColor
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -1594,7 +1646,7 @@ private class TagFlowView: NSView {
             label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
         ])
 
-        // 右键菜单（删除标签）—— 保留拖拽删除/右键删除交互
+        // 右键菜单（删除标签）-- 保留拖拽删除/右键删除交互
         let menu = NSMenu()
         let mi = NSMenuItem(title: "删除标签", action: #selector(handleDeleteTag(_:)), keyEquivalent: "")
         mi.target = self

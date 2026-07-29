@@ -41,6 +41,10 @@ struct PaneState {
     var sortAscending: Bool = true
     var viewMode: ViewMode = .list
     var groupBy: String = "none"
+    /// 任务 F11-8: 当前活动标签筛选（点击侧边栏标签后设置）。
+    /// nil 表示未筛选；非 nil 表示仅显示含该标签的文件。
+    /// 再次点击同一标签时置 nil 取消筛选。
+    var tagFilter: Tag?
 }
 
 // MARK: - PaneViewModel
@@ -92,6 +96,7 @@ public class PaneViewModel: ObservableObject {
         state.path = path
         state.selectedFiles.removeAll()
         state.searchQuery = ""
+        state.tagFilter = nil  // 任务 F11-8: 导航时清除标签筛选（与 searchQuery 一致）
         state.error = nil
         loadDirectory()
     }
@@ -102,6 +107,7 @@ public class PaneViewModel: ObservableObject {
         state.path = state.history[state.historyIndex]
         state.selectedFiles.removeAll()
         state.searchQuery = ""
+        state.tagFilter = nil  // 任务 F11-8: 导航时清除标签筛选
         state.error = nil
         loadDirectory()
         return true
@@ -113,6 +119,7 @@ public class PaneViewModel: ObservableObject {
         state.path = state.history[state.historyIndex]
         state.selectedFiles.removeAll()
         state.searchQuery = ""
+        state.tagFilter = nil  // 任务 F11-8: 导航时清除标签筛选
         state.error = nil
         loadDirectory()
         return true
@@ -300,6 +307,28 @@ public class PaneViewModel: ObservableObject {
         state.searchQuery = query
         // 任务 F10-10: 始终走 applyFilter（基于 allFiles），避免搜索清空时重新读盘（修复问题11辅助）
         // applyFilter 在 query 为空时恢复 allFiles，非空时从 allFiles 过滤
+        // 任务 F11-8: 非空查询触发子目录递归搜索（异步），先回退到当前目录过滤避免界面空白
+        if query.isEmpty {
+            applyFilter()
+        } else {
+            // 先用当前目录直接子项过滤（即时反馈，避免界面空白）
+            applyFilter()
+            // 再异步递归搜索子目录，匹配项追加到结果中
+            performRecursiveSearch(query: query)
+        }
+    }
+
+    /// 任务 F11-8: 设置标签筛选（点击侧边栏标签触发）。
+    /// - 传入 tag 非空：仅显示含该标签的文件（在当前目录直接子项基础上过滤）
+    /// - 传入 tag 为 nil：取消标签筛选，恢复完整列表
+    /// - 再次点击当前已筛选的同一标签：自动取消（tagFilter 置 nil）
+    func setTagFilter(_ tag: Tag?) {
+        if let tag = tag, state.tagFilter?.id == tag.id {
+            // 再次点击同一标签 -> 取消筛选
+            state.tagFilter = nil
+        } else {
+            state.tagFilter = tag
+        }
         applyFilter()
     }
 
@@ -435,12 +464,11 @@ public class PaneViewModel: ObservableObject {
                 DispatchQueue.main.async {
                     // 任务 F10-10: 保存原始列表到 allFiles，applyFilter 始终基于 allFiles 过滤（修复问题11辅助）
                     self.allFiles = sortedEntries
-                    // 若当前有搜索查询，过滤后赋值；否则直接赋值完整列表
-                    if self.state.searchQuery.isEmpty {
-                        self.state.files = sortedEntries
-                    } else {
-                        let query = self.state.searchQuery.lowercased()
-                        self.state.files = sortedEntries.filter { $0.name.lowercased().contains(query) }
+                    // 任务 F11-8: 统一走 applyFilter（综合标签+搜索过滤），保持单一过滤入口
+                    self.applyFilter()
+                    // 若当前有非空搜索查询，触发子目录递归搜索（追加深层匹配项）
+                    if !self.state.searchQuery.isEmpty && self.state.tagFilter == nil {
+                        self.performRecursiveSearch(query: self.state.searchQuery)
                     }
                     self.state.isLoading = false
                 }
@@ -477,28 +505,113 @@ public class PaneViewModel: ObservableObject {
         let sorted = sortEntries(allFiles, field: state.sortField, ascending: state.sortAscending)
         // 同步更新 allFiles 为排序后顺序
         allFiles = sorted
-        // 若当前有搜索查询，过滤后赋值；否则直接赋值完整列表
-        if state.searchQuery.isEmpty {
-            // 仅在顺序实际变化时才更新（减少不必要的 reloadData）
-            if sorted.map(\.path) != state.files.map(\.path) {
-                state.files = sorted
-            }
-        } else {
-            let query = state.searchQuery.lowercased()
-            state.files = sorted.filter { $0.name.lowercased().contains(query) }
-        }
+        // 任务 F11-8: 统一走 applyFilter（综合标签+搜索过滤），保持单一过滤入口一致
+        applyFilter()
     }
 
     private func applyFilter() {
-        guard !state.searchQuery.isEmpty else {
-            // 搜索清空：恢复完整列表（基于 allFiles，确保退格回退时项目全部恢复）
-            state.files = allFiles
-            return
+        // 任务 F11-8: 综合应用标签筛选 + 搜索过滤，结果均基于 allFiles（原始列表）
+        var filtered = allFiles
+        // 1. 标签筛选：仅保留含该标签的文件（TagBridge.getTags 检查是否含该标签）
+        if let tagFilter = state.tagFilter {
+            filtered = filtered.filter { entry in
+                // 优先使用 FileEntry 已缓存的 tags，避免对每个文件都做 xattr 读取
+                if !entry.tags.isEmpty {
+                    return entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+                }
+                let tags = TagBridge.shared.getTags(path: entry.path)
+                return tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+            }
         }
-        // 任务 F10-10: 始终从 allFiles 过滤，而非从已缩小的 state.files 过滤（修复问题11辅助）
-        // 此前从 state.files 过滤，导致用户删字回退搜索时无法恢复被过滤掉的项目
-        let query = state.searchQuery.lowercased()
-        state.files = allFiles.filter { $0.name.lowercased().contains(query) }
+        // 2. 搜索过滤：从（已标签筛选的）列表中按名称匹配
+        if !state.searchQuery.isEmpty {
+            let query = state.searchQuery.lowercased()
+            filtered = filtered.filter { $0.name.lowercased().contains(query) }
+        }
+        state.files = filtered
+    }
+
+    /// 任务 F11-8: 异步递归搜索子目录，将匹配项追加到当前结果。
+    /// 修复问题11：此前搜索仅匹配当前目录直接子项，搜索深层文件时一片空白。
+    /// 性能策略：限制递归深度为 3 层，限制最大结果数为 500，避免大目录卡顿。
+    /// 仅当 searchQuery 非空且未设置标签筛选时执行（标签筛选为精确集合，不递归）。
+    private func performRecursiveSearch(query: String) {
+        guard !query.isEmpty, state.tagFilter == nil else { return }
+        // 在派发到后台前捕获不可变快照，避免数据竞争
+        let basePath = state.path
+        let loweredQuery = query.lowercased()
+        let maxDepth = 3
+        let maxResults = 500
+        // 已在当前目录过滤中存在的路径集合（避免重复）
+        let existingPaths = Set(allFiles.map { $0.path })
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var results: [FileEntry] = []
+            let fm = FileManager.default
+            // 遍历子目录递归收集匹配项（深度优先）
+            func walk(_ dir: String, depth: Int) {
+                guard depth <= maxDepth, results.count < maxResults else { return }
+                guard let children = try? fm.contentsOfDirectory(atPath: dir) else { return }
+                for child in children {
+                    if results.count >= maxResults { return }
+                    let childPath = (dir as NSString).appendingPathComponent(child)
+                    // 跳过隐藏文件（与 listDirectory 行为一致，避免 .Trash 等噪音）
+                    if child.hasPrefix(".") { continue }
+                    var isDir: ObjCBool = false
+                    guard fm.fileExists(atPath: childPath, isDirectory: &isDir) else { continue }
+                    if isDir.boolValue {
+                        // 递归进入子目录
+                        walk(childPath, depth: depth + 1)
+                    } else {
+                        // 当前目录直接子项已由 applyFilter 处理，跳过避免重复
+                        if existingPaths.contains(childPath) { continue }
+                        if child.lowercased().contains(loweredQuery) {
+                            // 构造 FileEntry（modificationDate 用文件属性填充，tags 留空）
+                            let entry = self.makeFileEntry(path: childPath, name: child, isDirectory: false)
+                            results.append(entry)
+                        }
+                    }
+                }
+            }
+            walk(basePath, depth: 1)
+
+            DispatchQueue.main.async {
+                // 外层已强引用解包 self，此处直接使用（注意：仍需校验查询未变）
+                // 仅当用户搜索查询未变时才应用结果（避免异步竞态：用户已清空或改字）
+                guard self.state.searchQuery == query else { return }
+                // 仅当未启用标签筛选时才合并（标签筛选期间不递归）
+                guard self.state.tagFilter == nil else { return }
+                // 合并：当前已显示的（当前目录直接匹配项）+ 递归匹配项
+                let currentPaths = Set(self.state.files.map { $0.path })
+                let newResults = results.filter { !currentPaths.contains($0.path) }
+                if !newResults.isEmpty {
+                    self.state.files.append(contentsOf: newResults)
+                }
+            }
+        }
+    }
+
+    /// 任务 F11-8: 通过 FileManager.attributes 构造 FileEntry（供递归搜索结果使用）。
+    /// tags 字段读取 xattr（标签筛选时可命中）
+    private func makeFileEntry(path: String, name: String, isDirectory: Bool) -> FileEntry {
+        let fm = FileManager.default
+        var size: UInt64 = 0
+        var modDate = Date()
+        var createDate = Date()
+        if let attrs = try? fm.attributesOfItem(atPath: path) {
+            if let s = attrs[.size] as? UInt64 { size = s }
+            if let m = attrs[.modificationDate] as? Date { modDate = m }
+            if let c = attrs[.creationDate] as? Date { createDate = c }
+        }
+        let tags = TagBridge.shared.getTags(path: path)
+        return FileEntry(
+            path: path, name: name, isDirectory: isDirectory,
+            isFile: !isDirectory, isSymlink: false,
+            isHidden: false, isSystemProtected: false,
+            size: size, modificationDate: modDate, creationDate: createDate,
+            tags: tags
+        )
     }
 }
 

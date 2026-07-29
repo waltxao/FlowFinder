@@ -749,6 +749,11 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleSidebarDirectorySelected(_:)),
             name: .sidebarDidSelectDirectory, object: nil
         )
+        // 任务 F11-8: 订阅侧边栏标签点击筛选通知（问题3）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarTagSelected(_:)),
+            name: .sidebarDidSelectTag, object: nil
+        )
         // 订阅 FileListView 右键菜单通知
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleFileListCopy(_:)),
@@ -1016,6 +1021,14 @@ public class MainWindowController: NSWindowController {
 
         // 视图模式切换
         updateViewMode(side: side, mode: state.viewMode)
+
+        // 任务 F11-8: 状态变化时同步侧边栏标签高亮（导航清除 tagFilter / 切换活动面板时高亮需跟随）
+        if side == activePane {
+            NotificationCenter.default.post(
+                name: .paneTagFilterChanged, object: nil,
+                userInfo: ["tagFilter": state.tagFilter as Any]
+            )
+        }
     }
 
     private func updateActivePaneVisual() {
@@ -1088,12 +1101,33 @@ public class MainWindowController: NSWindowController {
         activePane = side
         updateActivePaneVisual()
         NotificationCenter.default.post(name: .paneDidActivate, object: nil, userInfo: ["side": side == .left ? "left" : "right"])
+        // 任务 F11-8: 切换活动面板时同步侧边栏标签高亮（显示新活动面板的 tagFilter）
+        let vm = side == .left ? leftPaneViewModel : rightPaneViewModel
+        NotificationCenter.default.post(
+            name: .paneTagFilterChanged, object: nil,
+            userInfo: ["tagFilter": vm.state.tagFilter as Any]
+        )
     }
 
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {
         guard let entry = notification.object as? FileEntry else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: entry.path)
+    }
+
+    /// 任务 F11-8: 处理侧边栏标签点击，设置当前活动面板的标签筛选（问题3）。
+    /// - 点击标签 -> 筛选当前面板，仅显示含该标签的文件
+    /// - 再次点击同一标签 -> 取消筛选（setTagFilter 内部判断）
+    /// 筛选状态变化后发布 paneTagFilterChanged 通知，侧边栏据此高亮对应标签
+    @objc private func handleSidebarTagSelected(_ notification: Notification) {
+        guard let tag = notification.object as? Tag else { return }
+        let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
+        vm.setTagFilter(tag)
+        // 发布通知让侧边栏更新标签高亮
+        NotificationCenter.default.post(
+            name: .paneTagFilterChanged, object: nil,
+            userInfo: ["tagFilter": vm.state.tagFilter as Any]
+        )
     }
 }
 
