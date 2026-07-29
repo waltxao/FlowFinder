@@ -361,6 +361,7 @@ public class MainWindowController: NSWindowController {
 
         // 任务 F7: 监听主题变更，刷新所有 FileListView 的 appearance（v0.6.5）
         // 任务 F10-9: 同时刷新所有 FileGridView 的 appearance（F7 遗漏修复，v0.6.6）
+        // 任务 F11-1: 同时刷新操作区/设备栏实体背景色（v0.6.7）
         // onModeChanged 是单回调，需保留前一个回调链，避免覆盖 AppearanceSettingsView 等已注册的监听
         // FileListView / FileGridView 是 NSView（非 ViewController），无 viewDidLayout，故调用 refreshAppearance()
         let previousCallback = ThemeManager.shared.onModeChanged
@@ -371,6 +372,8 @@ public class MainWindowController: NSWindowController {
                 self?.rightFileListView?.refreshAppearance()
                 self?.leftFileGridView?.refreshAppearance()
                 self?.rightFileGridView?.refreshAppearance()
+                // 任务 F11-1: 刷新操作区容器与设备栏浮层的实体背景色（日间/夜间切换）
+                self?.refreshOperationAreaBackgrounds()
             }
         }
 
@@ -419,15 +422,18 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
-    /// 任务 F2: 操作区撑满（仿访达），无圆角，背景透明透出 NSVisualEffectView 材质（v0.6.5）
+    /// 任务 F2: 操作区撑满（仿访达），无圆角（v0.6.5）
+    /// 任务 F11-1: 操作区改为实体背景（日间#F5F5F5/夜间#2D2D2D），不再透明透出玻璃材质（v0.6.7）
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.clear.cgColor
+        // 任务 F11-1: 操作区实体背景（v0.6.7）
+        // 日间 #F5F5F5（访达浅灰白），夜间 #2D2D2D（访达深灰黑）
+        // 实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
+        container.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
         // 任务 F2: 移除圆角卡片，仿访达撑满（v0.6.5）
-        // 操作区背景透明，让 NSVisualEffectView 的 .underWindowBackground 材质透出
         container.layer?.cornerRadius = 0
         container.layer?.masksToBounds = false
 
@@ -547,7 +553,26 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
 
-    /// 任务 F10-3: 创建设备浮层
+    /// 任务 F11-1: 操作区实体背景色（v0.6.7）
+    /// 日间 #F5F5F5（访达浅灰白），夜间 #2D2D2D（访达深灰黑）
+    /// 供 createPaneContainer 初始设置与主题切换刷新共用
+    private func operationAreaBackgroundColor() -> NSColor {
+        let isDark = ThemeManager.shared.currentMode == .dark
+        return isDark
+            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
+            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
+    }
+
+    /// 任务 F11-1: 刷新左右操作区容器背景色（主题切换时调用，v0.6.7）
+    private func refreshOperationAreaBackgrounds() {
+        let color = operationAreaBackgroundColor().cgColor
+        leftPaneContainer?.layer?.backgroundColor = color
+        rightPaneContainer?.layer?.backgroundColor = color
+        // 任务 F11-1: 设备栏浮层同步改为实体背景（与操作区一致）
+        refreshDevicePanelBackground()
+    }
+
+    /// 任务 F11-1: 创建设备浮层
     /// - 浮动在窗口左下角，与侧边栏收藏夹/标签模块视觉分离（独立卡片样式）
     /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
     /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
@@ -555,8 +580,9 @@ public class MainWindowController: NSWindowController {
         let panel = NSView()
         panel.translatesAutoresizingMaskIntoConstraints = false
         panel.wantsLayer = true
-        // 独立卡片样式：半透明背景 + 8pt 圆角
-        panel.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.8).cgColor
+        // 任务 F11-1: 设备栏浮层改为实体背景（与操作区一致，v0.6.7）
+        // 此前为半透明 controlBackgroundColor(0.8)，现统一为操作区实体色，保留 8pt 圆角卡片样式
+        panel.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
         panel.layer?.cornerRadius = 8
         panel.layer?.masksToBounds = true
 
@@ -691,6 +717,11 @@ public class MainWindowController: NSWindowController {
             let targetHeight = devicePanelCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * devicePanelRowHeight
             devicePanelHeightConstraint.constant = targetHeight
         }
+    }
+
+    /// 任务 F11-1: 刷新设备栏浮层背景色（主题切换时调用，v0.6.7）
+    private func refreshDevicePanelBackground() {
+        devicePanel?.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
     }
 
     deinit {

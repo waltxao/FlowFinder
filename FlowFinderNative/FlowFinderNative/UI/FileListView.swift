@@ -413,7 +413,10 @@ public class FileListView: NSView {
     // MARK: - UI Setup
 
     private func setupUI() {
-        // 透明背景以透出 NSVisualEffectView 玻璃态
+        // 任务 F11-1: 操作区实体背景（v0.6.7）
+        // 此前为透明背景透出 NSVisualEffectView 玻璃态；现改为实体（日间#F5F5F5/夜间#2D2D2D），
+        // 与 MainWindowController.createPaneContainer 的容器实体背景一致，
+        // 实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
@@ -448,12 +451,13 @@ public class FileListView: NSView {
         // 并移除 sizeToFit() 调用，确保第 5 列（标签）可见且用户可手动拖宽列分隔条。
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.rowHeight = 26
-        // 透明背景：让 NSVisualEffectView/NSGlassEffectView 玻璃态透过 tableView 显示，
-        // 同时不遮挡 NSTableRowView.drawSelection 的标准选中绘制。
-        // 任务 F10-2: 修正 F7 错误 - tableView 背景改回 .clear（v0.6.6）
-        // F7 的 0.6 alpha 背景恰恰遮挡了 NSTableRowView.drawSelection 的选中色（问题14根因）
-        // 选中色由 NSVisualEffectView 玻璃材质衬托，无需 tableView 自身底色
-        tableView.backgroundColor = .clear
+        // 任务 F11-1: tableView 实体背景（v0.6.7）
+        // 配合操作区容器实体背景，不再透明。实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
+        // 保留 selectionHighlightStyle = .regular（标准选中绘制，默认值，不显式赋值）
+        let isDark = ThemeManager.shared.currentMode == .dark
+        tableView.backgroundColor = isDark
+            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
+            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
         tableView.enclosingScrollView?.drawsBackground = false
         scrollView.drawsBackground = false
         scrollView.backgroundColor = NSColor.clear
@@ -1095,8 +1099,14 @@ public class FileListView: NSView {
     }
 
     /// 任务 F7: 供外部（MainWindowController 主题监听）显式刷新 appearance（v0.6.5）
+    /// 任务 F11-1: 同时刷新 tableView 实体背景色（日间/夜间切换，v0.6.7）
     public func refreshAppearance() {
         tableView.appearance = NSApp.appearance
+        // 任务 F11-1: 主题切换时同步刷新 tableView 实体背景色
+        let isDark = ThemeManager.shared.currentMode == .dark
+        tableView.backgroundColor = isDark
+            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
+            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
     }
 
     // MARK: - Double Click

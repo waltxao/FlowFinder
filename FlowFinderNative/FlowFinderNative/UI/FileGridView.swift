@@ -337,7 +337,10 @@ public class FileGridView: NSView {
     }
 
     private func setupUI() {
-        // 透明背景以透出 NSVisualEffectView 玻璃态
+        // 任务 F11-1: 操作区实体背景（v0.6.7）
+        // 此前为透明背景透出 NSVisualEffectView 玻璃态；现改为实体（日间#F5F5F5/夜间#2D2D2D），
+        // 与 MainWindowController.createPaneContainer 的容器实体背景一致，
+        // 实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
@@ -364,7 +367,12 @@ public class FileGridView: NSView {
 
         collectionView = DraggingCollectionView()
         collectionView.collectionViewLayout = layout
-        collectionView.backgroundColors = [NSColor.clear]
+        // 任务 F11-1: collectionView 实体背景（v0.6.7）
+        // 配合操作区容器实体背景，不再透明。实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
+        let isDark = ThemeManager.shared.currentMode == .dark
+        collectionView.backgroundColors = [isDark
+            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
+            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)]  // #F5F5F5
         collectionView.allowsMultipleSelection = true
         collectionView.allowsEmptySelection = true
         collectionView.isSelectable = true
@@ -876,9 +884,15 @@ public class FileGridView: NSView {
     }
 
     /// 任务 F10-9: 供外部（MainWindowController 主题监听）显式刷新 appearance（F7 遗漏修复，v0.6.6）
+    /// 任务 F11-1: 同时刷新 collectionView 实体背景色（日间/夜间切换，v0.6.7）
     /// 与 FileListView.refreshAppearance() 对称实现。
     public func refreshAppearance() {
         collectionView.appearance = NSApp.appearance
+        // 任务 F11-1: 主题切换时同步刷新 collectionView 实体背景色
+        let isDark = ThemeManager.shared.currentMode == .dark
+        collectionView.backgroundColors = [isDark
+            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
+            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)]  // #F5F5F5
     }
 
     public func reloadData() {
