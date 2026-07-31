@@ -126,6 +126,9 @@ class FFGlassView: NSView {
         visualEffect.material = material ?? .headerView
         visualEffect.blendingMode = .behindWindow
         visualEffect.state = .active
+        // 修复主题反转: NSVisualEffectView 必须显式设置 appearance 以跟随 NSApp.appearance，
+        // 否则 state = .active 时它会跟随系统外观而非应用强制外观，导致浅色/深色模式反转。
+        visualEffect.appearance = NSApp.appearance
         // NSVisualEffectView 无 cornerRadius 属性，圆角由外层 layer.cornerRadius 控制
         visualEffect.wantsLayer = true
         visualEffect.layer?.cornerRadius = 0
@@ -291,6 +294,10 @@ class FFGlassView: NSView {
     /// 主题变更时刷新噪声/高光/内阴影令牌
     /// 由 `ThemeManager.onModeChanged` 统一调用
     func refreshAppearance() {
+        // 修复主题反转: 更新 NSVisualEffectView 的 appearance 以跟随 NSApp.appearance
+        if let glassView = nativeGlassView as? NSVisualEffectView {
+            glassView.appearance = NSApp.appearance
+        }
         // tint
         tintLayer?.backgroundColor = FFDesign.glassTint.cgColor
         // 噪声 alpha

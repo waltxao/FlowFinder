@@ -722,24 +722,24 @@ public class FileListView: NSView {
 
         // 1. 打开（图标由 menuNeedsUpdate 根据选中项是文件夹还是文件动态设置：folder / doc）
         menu.addItem(withTitle: "打开", action: #selector(openSelected(_:)), keyEquivalent: "")
-        // 3. 显示简介 — info.circle
-        let infoItem = menu.addItem(withTitle: "显示简介", action: #selector(showInfoMenu(_:)), keyEquivalent: "i")
-        infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "显示简介")
-        // 4. 分隔线
+        // 2. 分隔线
         menu.addItem(.separator())
-        // 5. 复制 — doc.on.doc
+        // 3. 复制 — doc.on.doc
         let copyItem = menu.addItem(withTitle: "复制", action: #selector(copySelected(_:)), keyEquivalent: "c")
         copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制")
-        // 6. 粘贴 — doc.on.clipboard
+        // 4. 剪切 — scissors
+        let cutItem = menu.addItem(withTitle: "剪切", action: #selector(cutSelected(_:)), keyEquivalent: "x")
+        cutItem.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "剪切")
+        // 5. 粘贴 — doc.on.clipboard
         let pasteItem = menu.addItem(withTitle: "粘贴", action: #selector(pasteSelected(_:)), keyEquivalent: "v")
         pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "粘贴")
-        // 7. 分隔线
+        // 6. 分隔线
         menu.addItem(.separator())
-        // 8. 移动到另一面板（图标根据当前面板方向：左面板→arrow.right，右面板→arrow.left）
+        // 7. 移动到另一面板（图标根据当前面板方向：左面板→arrow.right，右面板→arrow.left）
         let moveItem = menu.addItem(withTitle: "移动到另一面板", action: #selector(moveToOtherPane(_:)), keyEquivalent: "")
         moveItem.image = NSImage(systemSymbolName: effectiveSide == .left ? "arrow.right" : "arrow.left",
                                  accessibilityDescription: "移动到另一面板")
-        // 9. 复制到另一面板（图标根据当前面板方向：左面板→arrow.right.square，右面板→arrow.left.square）
+        // 8. 复制到另一面板（图标根据当前面板方向：左面板→arrow.right.square，右面板→arrow.left.square）
         let copyOtherItem = menu.addItem(withTitle: "复制到另一面板", action: #selector(copyToOtherPane(_:)), keyEquivalent: "")
         copyOtherItem.image = NSImage(systemSymbolName: effectiveSide == .left ? "arrow.right.square" : "arrow.left.square",
                                       accessibilityDescription: "复制到另一面板")
@@ -750,27 +750,42 @@ public class FileListView: NSView {
         openOtherItem.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "在对侧面板打开")
         // 初始隐藏，由 menuNeedsUpdate 根据右键点击项是否为文件夹动态显示
         openOtherItem.isHidden = true
-        // 10. 分隔线
+        // 9. 分隔线
         menu.addItem(.separator())
-        // 添加到我的收藏 — star
-        let favItem = menu.addItem(withTitle: "添加到我的收藏", action: #selector(addToFavorites(_:)), keyEquivalent: "")
-        favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
-        // 11. 重命名 — pencil
+        // 10. 重命名 — pencil
         let renameItem = menu.addItem(withTitle: "重命名", action: #selector(renameSelected(_:)), keyEquivalent: "")
         renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "重命名")
-        // 12. 标签（二级菜单） — tag
+        // 11. 移到废纸篓 — trash（红色文字）
+        let trashItem = menu.addItem(withTitle: "移到废纸篓", action: #selector(deleteSelected(_:)), keyEquivalent: "\u{7F}")
+        trashItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "移到废纸篓")
+        let redAttrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.systemRed]
+        trashItem.attributedTitle = NSAttributedString(string: "移到废纸篓", attributes: redAttrs)
+        // 12. 分隔线
+        menu.addItem(.separator())
+        // 13. 新建文件夹 — folder.badge.plus
+        let newFolderItem = menu.addItem(withTitle: "新建文件夹", action: #selector(createDirectory(_:)), keyEquivalent: "n")
+        newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
+        // 14. 分隔线
+        menu.addItem(.separator())
+        // 15. 添加到我的收藏 — star
+        let favItem = menu.addItem(withTitle: "添加到我的收藏", action: #selector(addToFavorites(_:)), keyEquivalent: "")
+        favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
+        // 16. 标签（二级菜单） — tag
         //     仅当选中单个文件时显示（多选时由 menuNeedsUpdate 隐藏）
         let tagsItem = menu.addItem(withTitle: "标签", action: nil, keyEquivalent: "")
         tagsItem.image = NSImage(systemSymbolName: "tag", accessibilityDescription: "标签")
         tagsItem.submenu = tagsSubmenu
-        // 13. 查重扫描 — rectangle.dashed
+        // 17. AI 自动打标签 — sparkles
+        let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: #selector(generateAITags(_:)), keyEquivalent: "")
+        aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI 自动打标签")
+        // 18. 查重扫描 — rectangle.dashed
         let dupItem = menu.addItem(withTitle: "查重扫描", action: #selector(duplicateScan(_:)), keyEquivalent: "")
         dupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
-        // 14. 分隔线
+        // 19. 分隔线
         menu.addItem(.separator())
-        // 15. 移到废纸篓 — trash
-        let trashItem = menu.addItem(withTitle: "移到废纸篓", action: #selector(deleteSelected(_:)), keyEquivalent: "\u{7F}")
-        trashItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "移到废纸篓")
+        // 20. 显示简介 — info.circle
+        let infoItem = menu.addItem(withTitle: "显示简介", action: #selector(showInfoMenu(_:)), keyEquivalent: "i")
+        infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "显示简介")
 
         for item in menu.items where item.action != nil {
             item.target = self
@@ -2209,8 +2224,9 @@ extension FileListView {
 
         // 刷新列表以更新名称列内联药丸
         reloadData()
-        // 通知侧边栏刷新标签列表
-        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil)
+        // 通知侧边栏刷新标签列表，携带文件当前标签以同步侧边栏
+        let updatedTags = TagBridge.shared.getTags(path: path)
+        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": updatedTags])
     }
 
     /// 右键药丸移除标签（按名称移除，兼容原生标签随机 id）
@@ -2220,8 +2236,9 @@ extension FileListView {
               let path = info["path"] else { return }
         _ = TagBridge.shared.removeTagByName(tagName, path: path)
         reloadData()
-        // 通知侧边栏刷新
-        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil)
+        // 通知侧边栏刷新，携带文件当前标签以同步侧边栏
+        let updatedTags = TagBridge.shared.getTags(path: path)
+        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": updatedTags])
     }
 
     /// 新建标签对话框（参考 SidebarView.showCreateTagDialog 实现）
@@ -2293,8 +2310,12 @@ extension FileListView {
                 self?.reloadData()
             }
 
-            // 3) 通知侧边栏刷新标签显示
-            NotificationCenter.default.post(name: NSNotification.Name("FileListTagsChanged"), object: nil)
+            // 3) 通知侧边栏刷新标签显示，携带新标签以同步侧边栏
+            var notifyTags = allTags
+            if !notifyTags.contains(where: { $0.name == tag.name }) {
+                notifyTags.append(tag)
+            }
+            NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": notifyTags])
         }
     }
 }
@@ -2303,7 +2324,7 @@ extension FileListView {
 
 /// 颜色选择 holder：与 SidebarView.TagColorHolder 同结构，但 FileListView 不能引用 private 类，
 /// 故在此单独定义（仅在 FileListView 内部使用）
-private final class FFCreateTagColorHolder: NSObject {
+final class FFCreateTagColorHolder: NSObject {
     private let colors: [String]
     private(set) var selectedHex: String
 

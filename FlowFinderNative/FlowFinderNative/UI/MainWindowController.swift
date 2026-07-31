@@ -85,6 +85,8 @@ public class MainWindowController: NSWindowController {
     private let leftPaneViewModel = PaneViewModel()
     private let rightPaneViewModel = PaneViewModel()
     private var activePane: PaneSide = .left
+    /// 防抖: 选中变更工作项，用于取消上一次未完成的 UI 更新，防止快速点击时窗口跳动
+    private var selectionChangeWorkItem: DispatchWorkItem?
     private var cancellables = Set<AnyCancellable>()
 
     /// 全局撤销/重做栈（per-window）。通过覆盖 undoManager 计算属性让响应链使用它，
@@ -215,6 +217,11 @@ public class MainWindowController: NSWindowController {
     /// 修复验证：此前日志显示 isKey=false，导致鼠标事件无法到达。
     public func windowDidBecomeKey(_ notification: Notification) {
         FFDebug.log("windowDidBecomeKey: window is now key window")
+    }
+
+    /// 返回自定义 UndoManager，确保 Edit 菜单的 撤销/重做 使用 ffUndoManager。
+    public func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        ffUndoManager
     }
 
     public func windowDidResignKey(_ notification: Notification) {
@@ -360,11 +367,11 @@ public class MainWindowController: NSWindowController {
 
         window.contentView = visualEffectView
 
-        // 确保玻璃效果不被 ThemeManager 覆盖
+        // 窗口外观跟随 ThemeManager 设置（不强制 nil，否则夜间模式无法生效）
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.window?.appearance = nil
-            self.mainContainerView?.appearance = NSApp.effectiveAppearance
+            self.window?.appearance = NSApp.appearance
+            self.mainContainerView?.appearance = NSApp.appearance
         }
 
         // 任务 F7: 监听主题变更，刷新所有 FileListView 的 appearance（v0.6.5）
@@ -919,7 +926,8 @@ public class MainWindowController: NSWindowController {
     @objc private func handleFileListAddTag(_ notification: Notification) {
         guard let path = notification.userInfo?["path"] as? String else { return }
         let currentTags = TagBridge.shared.getTags(path: path)
-        let dialog = TagSelectorDialog(filePath: path, currentTags: currentTags)
+        let allTags = sidebarView.allSidebarTags()
+        let dialog = TagSelectorDialog(filePath: path, currentTags: currentTags, allTags: allTags)
         if let window = window {
             dialog.beginSheetModal(for: window)
         }
@@ -1250,18 +1258,23 @@ public class MainWindowController: NSWindowController {
     }
 
     private func handleSelectionChanged(side: PaneSide, files: [FileEntry]) {
-        guard let detailsBar = side == .left ? leftDetailsBar : rightDetailsBar else { return }
-        if let first = files.first {
-            detailsBar.update(with: first)
-            detailsBar.setSelectedCount(files.count)
-            // 选中文件时自动展开详情面板（用户偏好：选中即显示详情）
-            detailsBar.isExpanded = true
-        } else {
-            detailsBar.update(with: nil)
-            detailsBar.setSelectedCount(0)
-            // 取消选中时自动收起
-            detailsBar.isExpanded = false
+        // 防抖: 取消上一次未完成的选中变更 UI 更新，防止快速连续点击不同文件时
+        // 多次 layout 触发窗口跳动。将详情栏更新推迟到下一个 runloop，确保
+        // NSTableView 的选中态渲染完成后再更新详情栏，避免布局冲突。
+        selectionChangeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            guard let detailsBar = side == .left ? self.leftDetailsBar : self.rightDetailsBar else { return }
+            if let first = files.first {
+                detailsBar.update(with: first)
+                detailsBar.setSelectedCount(files.count)
+            } else {
+                detailsBar.update(with: nil)
+                detailsBar.setSelectedCount(0)
+            }
         }
+        selectionChangeWorkItem = workItem
+        DispatchQueue.main.async(execute: workItem)
     }
 
     func activatePane(_ side: PaneSide) {
@@ -1416,9 +1429,10 @@ extension MainWindowController {
     @objc func menuAddTag(_ sender: Any?) {
         let selectedFiles = activePaneViewModel.selectedFiles
         guard let firstFile = selectedFiles.first else { return }
-        // 获取当前文件的标签（allTags 留空，由 TagSelectorDialog 使用默认预设）
+        // 获取当前文件的标签，并传入侧边栏标签供选择
         let currentTags = TagBridge.shared.getTags(path: firstFile.path)
-        let dialog = TagSelectorDialog(filePath: firstFile.path, currentTags: currentTags)
+        let allTags = sidebarView.allSidebarTags()
+        let dialog = TagSelectorDialog(filePath: firstFile.path, currentTags: currentTags, allTags: allTags)
         if let window = window {
             dialog.beginSheetModal(for: window)
         }

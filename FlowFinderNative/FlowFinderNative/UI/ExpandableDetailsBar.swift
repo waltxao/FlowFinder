@@ -103,18 +103,6 @@ class ExpandableDetailsBar: NSView {
         glassBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glassBackground)
 
-        // chevron 按钮（共享，始终可见于右上角）
-        chevronButton.bezelStyle = .texturedRounded
-        chevronButton.imagePosition = .imageOnly
-        chevronButton.isBordered = false
-        chevronButton.refusesFirstResponder = true
-        chevronButton.contentTintColor = NSColor.secondaryLabelColor
-        chevronButton.target = self
-        chevronButton.action = #selector(toggleExpanded)
-        chevronButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "展开")
-        chevronButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(chevronButton)
-
         // compact 视图（收起态）
         compactView.translatesAutoresizingMaskIntoConstraints = false
         smallIconView.imageScaling = .scaleProportionallyUpOrDown
@@ -180,11 +168,23 @@ class ExpandableDetailsBar: NSView {
         expandedView.addSubview(tagsContainer)
         addSubview(expandedView)
 
-        // 顶部细分隔线（最后添加，确保绘制在最上层）
+        // 顶部细分隔线
         let separator = NSBox()
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
         addSubview(separator)
+
+        // chevron 按钮（最后添加，确保在最上层不被覆盖）
+        chevronButton.bezelStyle = .texturedRounded
+        chevronButton.imagePosition = .imageOnly
+        chevronButton.isBordered = false
+        chevronButton.refusesFirstResponder = true
+        chevronButton.contentTintColor = NSColor.secondaryLabelColor
+        chevronButton.target = self
+        chevronButton.action = #selector(toggleExpanded)
+        chevronButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "展开")
+        chevronButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(chevronButton)
 
         // 高度约束（由展开状态驱动）
         heightConstraint = heightAnchor.constraint(equalToConstant: collapsedHeight)

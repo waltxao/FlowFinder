@@ -105,7 +105,11 @@ public final class ThemeManager: ObservableObject {
                 }
                 continue
             }
+            // NSVisualEffectView 架构：窗口和内容容器都跟随 NSApp.appearance
             window.appearance = NSApp.appearance
+            if let mainContainer = findMainContainer(in: window) {
+                mainContainer.appearance = NSApp.appearance
+            }
         }
 
         // 刷新所有 FFGlassView 实例的玻璃令牌（噪声/高光/内阴影/tint）

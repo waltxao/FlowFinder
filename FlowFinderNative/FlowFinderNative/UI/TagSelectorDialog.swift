@@ -26,7 +26,15 @@ class TagSelectorDialog: FFModalSheet {
     init(filePath: String, currentTags: [Tag] = [], allTags: [Tag] = []) {
         self.filePath = filePath
         self.selectedTags = currentTags
-        self.allTags = allTags.isEmpty ? TagSelectorDialog.defaultAvailableTags() : allTags
+        // 合并侧边栏标签与默认标签，按名称去重（侧边栏标签优先）
+        var merged = allTags
+        let existingNames = Set(merged.map { $0.name })
+        for def in TagSelectorDialog.defaultAvailableTags() {
+            if !existingNames.contains(def.name) {
+                merged.append(def)
+            }
+        }
+        self.allTags = merged.isEmpty ? TagSelectorDialog.defaultAvailableTags() : merged
 
         let bodyView = NSView()
         // 使用闭包持有盒延迟注入 self 依赖（Swift 6 严格模式禁止 super.init 前捕获 self）
@@ -40,6 +48,12 @@ class TagSelectorDialog: FFModalSheet {
         box.closure = { [weak self] in
             guard let self = self else { return }
             _ = TagBridge.shared.setTags(self.selectedTags, path: self.filePath)
+            // 同步到侧边栏标签列表：通知 TagsSidebarDataSource 添加新标签
+            NotificationCenter.default.post(
+                name: NSNotification.Name("FileTagsDidChange"),
+                object: nil,
+                userInfo: ["tags": self.selectedTags]
+            )
         }
 
         setupBody(bodyView: bodyView)

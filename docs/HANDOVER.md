@@ -1,10 +1,10 @@
 # FlowFinder Native 项目交接文档
 
-> **交接日期：** 2026-07-29
-> **当前版本：** 0.6.7 (670)
+> **交接日期：** 2026-07-31
+> **当前版本：** 0.6.8 (680)
 > **仓库地址：** https://github.com/waltxao/FlowFinder
 > **分支：** main
-> **最新提交：** 46b619f（Merge branch 'feat/v0.6.7-full-redesign'）
+> **最新提交：** v0.6.8（侧边栏交互修复 + 主题切换稳定性提升）
 > **本地路径：** `/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native`
 
 ---

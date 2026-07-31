@@ -4,6 +4,35 @@
 
 ---
 
+## [0.6.8] — 2026-07-31
+
+> 侧边栏交互修复 + 主题切换稳定性提升
+
+### 🐛 Bug 修复
+
+#### 侧边栏
+- **收藏夹焦点框修复**：点击收藏夹文件夹时整个模块外不再出现蓝色焦点框。通过重写 `FFFNoDisclosureOutlineView.canBecomeKeyView` 返回 `false`，彻底阻止 NSOutlineView 获得键盘焦点，同时保留行选中高亮（`.sourceList` 样式）不变
+- **收藏夹完整显示**：移除收藏夹区域的外层 `NSScrollView` 容器，收藏夹高度根据文件夹数量自适应，所有文件夹完整列出无需滚动；标签模块随之下移，仅在触底时才出现滚动条
+- **标签同步修复**：修复 `FileListView` 和 `FileGridView` 中通知名称不匹配的问题（`FileListTagsChanged` → `FileTagsDidChange`），新增标签现在能自动同步到侧边栏标签模块
+- **标签药丸样式**：标签模块统一使用胶囊形状药丸 + 颜色圆点样式，背景为标签颜色的浅色底（非高亮 0.12 / 高亮 0.22 透明度），与收藏夹文件夹图标左边缘对齐
+
+#### 主题
+- **日间/夜间模式切换修复**：修复 `FFDesign.isDark` 依赖 `NSApp.effectiveAppearance`（延迟更新）导致主题切换时玻璃效果读取旧值的问题，改用 `ThemeManager.shared.resolvedIsDark`（基于已立即更新的 `currentMode`），确保切换时所有 `FFGlassView` 实例的 tint/噪声/高光/内阴影同步刷新
+- **夜间模式窗口外观修复**：修复 `MainWindowController` 中窗口外观被强制设为 `nil` 导致夜间模式无法生效的问题，改为跟随 `NSApp.appearance`
+
+#### 详情栏
+- **展开按钮修复**：修复详情栏展开按钮（chevron）被 `compactView` 和 `expandedView` 遮挡导致无法点击的问题，重新排列视图层级确保按钮可交互
+
+#### 右键菜单
+- **列表视图剪切按钮**：列表视图右键菜单补充缺失的「剪切」菜单项，与网格视图右键菜单完全一致
+- **移动到废纸篓红色标注**：右键菜单中「移动到废纸篓」菜单项文字标为红色，与访达行为一致
+
+#### 其他
+- **全局撤销栈**：修复 `UndoManager` 未正确集成到窗口响应链导致 Cmd+Z 无效的问题
+- **显示简介功能**：修复通知链不完整导致「显示简介」无法打开自定义文件信息窗口的问题
+
+---
+
 ## [0.6.0-alpha] — 2026-07-21
 
 > 🎉 FlowFinder 首个原生版本发布！从 Tauri + React 完整重构为 Swift & AppKit + Rust Core 架构。

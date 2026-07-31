@@ -55,7 +55,8 @@ enum FFDesign {
 
         // 边缘高光（液态玻璃折射感）
         static let highlightInset: CGFloat = 0.5          // 顶部高光线宽度
-        static let highlightAlphaLight: CGFloat = 0.45    // 浅色模式高光 alpha
+        // 修复亮色块: 降低 highlightAlphaLight 从 0.45 到 0.15，避免浅色模式顶部高光过亮
+        static let highlightAlphaLight: CGFloat = 0.15    // 浅色模式高光 alpha
         static let highlightAlphaDark: CGFloat = 0.06     // 深色模式高光 alpha
 
         // 内阴影（深度感）
@@ -65,8 +66,10 @@ enum FFDesign {
         static let innerShadowAlphaDark: CGFloat = 0.25
 
         // 玻璃 tint 底色（叠在原生材质之上，强化亚克力质感）
-        static let tintLight: NSColor = NSColor.white.withAlphaComponent(0.55)
-        static let tintDark: NSColor = NSColor.black.withAlphaComponent(0.42)
+        // 修复亮色块: 降低 tintLight alpha 从 0.55 到 0.25，避免浅色模式面板过亮
+        // 降低 tintDark alpha 从 0.42 到 0.35，避免深色模式面板过暗
+        static let tintLight: NSColor = NSColor.white.withAlphaComponent(0.25)
+        static let tintDark: NSColor = NSColor.black.withAlphaComponent(0.35)
 
         // 性能预算：NSGlassEffectView/NSVisualEffectView 实例数上限
         static let maxGlassInstances = 8
@@ -90,7 +93,10 @@ enum FFDesign {
 
     /// 当前是否深色（供玻璃层判断令牌）
     static var isDark: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // 使用 ThemeManager.resolvedIsDark 而非 NSApp.effectiveAppearance，
+        // 因为 applyMode 设置 NSApp.appearance 后 effectiveAppearance 可能延迟更新，
+        // 导致主题切换时 FFGlassView 刷新读取到旧的深浅色值。
+        ThemeManager.shared.resolvedIsDark
     }
 
     /// 当前噪声 alpha
