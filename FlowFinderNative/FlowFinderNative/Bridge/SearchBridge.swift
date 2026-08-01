@@ -1,6 +1,4 @@
 import Foundation
-import AppKit
-import QuickLook
 
 // MARK: - Duplicate Scan Bridge
 
@@ -125,71 +123,6 @@ public final class SearchBridge {
         }
     }
 
-    /// Search for files with advanced filters
-    /// - Parameters:
-    ///   - path: Root directory path
-    ///   - query: Search query string
-    ///   - filters: Search filter criteria
-    ///   - resultHandler: Called for each matching result
-    ///   - completion: Called when search completes or errors
-    public func searchWithFilters(
-        path: String,
-        query: String,
-        filters: FFSearchFilters,
-        resultHandler: @escaping (FFSearchResult) -> Void,
-        completion: @escaping (Error?) -> Void
-    ) {
-        ffiQueue.async {
-            // 使用 Unmanaged.passRetained 把 context 作为引用类型保留，
-            // 避免 &context 栈指针在异步回调时失效（use-after-free）。
-            let context = SearchContext(resultHandler: resultHandler)
-            let contextPtr = Unmanaged.passRetained(context).toOpaque()
-            defer {
-                Unmanaged<SearchContext>.fromOpaque(contextPtr).release()
-            }
-
-            // Build C-compatible filters
-            var cFilters = FFSearchFilters_C(
-                file_types: nil,
-                min_size: filters.minSize ?? 0,
-                max_size: filters.maxSize ?? 0,
-                modified_after: filters.modifiedAfter ?? 0,
-                modified_before: filters.modifiedBefore ?? 0,
-                has_file_types: filters.fileTypes != nil,
-                has_min_size: filters.minSize != nil,
-                has_max_size: filters.maxSize != nil,
-                has_modified_after: filters.modifiedAfter != nil,
-                has_modified_before: filters.modifiedBefore != nil
-            )
-
-            if let fileTypes = filters.fileTypes {
-                let cFileTypes = fileTypes.withCString { ptr in
-                    return strdup(ptr)
-                }
-                cFilters.file_types = cFileTypes
-            }
-
-            let result = path.withCString { cPath in
-                query.withCString { cQuery in
-                    withUnsafePointer(to: &cFilters) { cFiltersPtr in
-                        ff_search_with_filters(cPath, cQuery, cFiltersPtr, searchCallback, contextPtr)
-                    }
-                }
-            }
-
-            if cFilters.file_types != nil {
-                free(cFilters.file_types)
-            }
-
-            if result == 0 {
-                completion(nil)
-            } else {
-                let errorMessage = self.getLastError()
-                completion(CoreBridgeError.ffiError(errorMessage))
-            }
-        }
-    }
-
     private func getLastError() -> String {
         guard let cString = ff_last_error() else {
             return "Unknown error"
@@ -198,22 +131,6 @@ public final class SearchBridge {
         ff_free_string(UnsafeMutablePointer(mutating: cString))
         return message
     }
-}
-
-// MARK: - C-compatible Search Filters
-
-/// Internal C-compatible search filters structure
-private struct FFSearchFilters_C {
-    var file_types: UnsafeMutablePointer<CChar>?
-    var min_size: UInt64
-    var max_size: UInt64
-    var modified_after: Int64
-    var modified_before: Int64
-    var has_file_types: Bool
-    var has_min_size: Bool
-    var has_max_size: Bool
-    var has_modified_after: Bool
-    var has_modified_before: Bool
 }
 
 // MARK: - Callback Contexts

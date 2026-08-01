@@ -6,7 +6,6 @@ import Foundation
 public enum CoreBridgeError: Error, LocalizedError {
     case ffiError(String)
     case invalidPath(String)
-    case unknownError
     case rustCoreNotLoaded
     case stringConversionFailed
 
@@ -16,8 +15,6 @@ public enum CoreBridgeError: Error, LocalizedError {
             return "FFI Error: \(message)"
         case .invalidPath(let path):
             return "Invalid path: \(path)"
-        case .unknownError:
-            return "Unknown error occurred"
         case .rustCoreNotLoaded:
             return "Rust core library not loaded"
         case .stringConversionFailed:
@@ -111,20 +108,11 @@ private func thumbnailCallback(
 
     let context = userData.assumingMemoryBound(to: ThumbnailContext.self)
     let path = String(cString: thumbnailPath)
-    context.pointee.completion(path)
-}
-
-/// Callback for multiple thumbnails generation
-private func thumbnailsCallback(
-    _ thumbnailPath: UnsafePointer<CChar>?,
-    _ userData: UnsafeMutableRawPointer?
-) {
-    guard let thumbnailPath = thumbnailPath,
-          let userData = userData else { return }
-
-    let path = String(cString: thumbnailPath)
-    let context = userData.assumingMemoryBound(to: ThumbnailsContext.self)
-    context.pointee.paths.pointee.append(path)
+    // 确保 completion 始终在主线程回调（FFI 回调可能来自后台线程）
+    let completion = context.pointee.completion
+    DispatchQueue.main.async {
+        completion(path)
+    }
 }
 
 /// Callback for task list
@@ -155,20 +143,6 @@ private func volumeListCallback(
     context.pointee.volumes.pointee.append(volume)
 }
 
-/// Callback for volume info
-private func volumeInfoCallback(
-    _ volumeInfoPtr: UnsafeRawPointer?,
-    _ userData: UnsafeMutableRawPointer?
-) {
-    guard let volumeInfoPtr = volumeInfoPtr,
-          let userData = userData else { return }
-
-    let volumeInfo = volumeInfoPtr.assumingMemoryBound(to: FFVolumeInfo.self)
-    let volume = VolumeInfo(from: volumeInfo.pointee)
-    let volumes = userData.bindMemory(to: [VolumeInfo].self, capacity: 1)
-    volumes.pointee.append(volume)
-}
-
 // MARK: - Callback Contexts
 
 /// Context for collecting directory entries via callback
@@ -179,12 +153,6 @@ private struct EntryCollectorContext {
 /// Context for thumbnail generation callback
 private struct ThumbnailContext {
     let completion: (String?) -> Void
-}
-
-/// Context for multiple thumbnails generation callback
-private struct ThumbnailsContext {
-    let paths: UnsafeMutablePointer<[String]>
-    let completion: ([String]) -> Void
 }
 
 /// Context for task list callback
@@ -703,173 +671,6 @@ public final class CoreBridge {
         return Int(ffiResult)
     }
 
-    /// Parallel delete multiple files/directories (rayon-backed).
-    /// Directories are removed recursively.
-    ///
-    /// - Parameters:
-    ///   - paths: Array of paths to delete.
-    ///   - progress: Optional `(completed, total)` callback invoked from worker threads.
-    /// - Returns: Number of successfully deleted paths.
-    /// - Throws: `CoreBridgeError.ffiError` if FFI returns a negative error code.
-    func parallelDelete(paths: [String], progress: ((Int, Int) -> Void)? = nil) throws -> Int {
-        if paths.isEmpty { return 0 }
-
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        let cStringPtrs: [UnsafeMutablePointer<CChar>?] = paths.map { strdup($0) }
-        defer {
-            for p in cStringPtrs { if let p = p { free(p) } }
-        }
-
-        let progressBox = ProgressBox(handler: progress)
-        let progressCallback: FFBatchProgressCallback = { completed, total, _, userData in
-            guard let userData = userData else { return }
-            let box = Unmanaged<ProgressBox>.fromOpaque(userData).takeUnretainedValue()
-            box.handler?(completed, total)
-        }
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            let result = cStringPtrs.withUnsafeBufferPointer { buffer in
-                guard let baseAddress = buffer.baseAddress else { return Int32(0) }
-                return baseAddress.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: cStringPtrs.count) { reboundPtr in
-                    ff_parallel_delete(
-                        reboundPtr,
-                        cStringPtrs.count,
-                        progressBox.handler != nil ? progressCallback : CoreBridge.noopBatchProgress,
-                        Unmanaged.passUnretained(progressBox).toOpaque()
-                    )
-                }
-            }
-            ffiResult = result
-            // I3: capture ff_last_error() on this FFI thread so callers on
-            // the UI thread can retrieve partial-failure details ("N/M
-            // failed: …") via getLastError(). Only stored when non-empty so
-            // a fully-successful batch does not mask a later error.
-            let captured = self.captureLastErrorFFI()
-            if !captured.isEmpty {
-                self.lastErrorMessage.set(captured)
-            }
-        }
-
-        semaphore.wait()
-
-        guard ffiResult >= 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-        return Int(ffiResult)
-    }
-
-    // MARK: - Async File Operations
-
-    /// Copy a file asynchronously
-    /// - Parameters:
-    ///   - src: Source file path
-    ///   - dst: Destination file path
-    ///   - completion: Completion handler with optional error
-    func copyFileAsync(src: String, dst: String, completion: @escaping (CoreBridgeError?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try self?.copyFile(src: src, dst: dst)
-                completion(nil)
-            } catch let error as CoreBridgeError {
-                completion(error)
-            } catch {
-                completion(CoreBridgeError.unknownError)
-            }
-        }
-    }
-
-    /// Move a file asynchronously
-    /// - Parameters:
-    ///   - src: Source path
-    ///   - dst: Destination path
-    ///   - completion: Completion handler with optional error
-    func moveFileAsync(src: String, dst: String, completion: @escaping (CoreBridgeError?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try self?.moveFile(src: src, dst: dst)
-                completion(nil)
-            } catch let error as CoreBridgeError {
-                completion(error)
-            } catch {
-                completion(CoreBridgeError.unknownError)
-            }
-        }
-    }
-
-    /// Delete a file asynchronously
-    /// - Parameters:
-    ///   - path: File path to delete
-    ///   - completion: Completion handler with optional error
-    func deleteFileAsync(path: String, completion: @escaping (CoreBridgeError?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try self?.deleteFile(path: path)
-                completion(nil)
-            } catch let error as CoreBridgeError {
-                completion(error)
-            } catch {
-                completion(CoreBridgeError.unknownError)
-            }
-        }
-    }
-
-    /// Delete a directory asynchronously
-    /// - Parameters:
-    ///   - path: Directory path to delete
-    ///   - completion: Completion handler with optional error
-    func deleteDirectoryAsync(path: String, completion: @escaping (CoreBridgeError?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try self?.deleteDirectory(path: path)
-                completion(nil)
-            } catch let error as CoreBridgeError {
-                completion(error)
-            } catch {
-                completion(CoreBridgeError.unknownError)
-            }
-        }
-    }
-
-    /// Create a directory asynchronously
-    /// - Parameters:
-    ///   - path: Directory path to create
-    ///   - completion: Completion handler with optional error
-    func createDirectoryAsync(path: String, completion: @escaping (CoreBridgeError?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try self?.createDirectory(path: path)
-                completion(nil)
-            } catch let error as CoreBridgeError {
-                completion(error)
-            } catch {
-                completion(CoreBridgeError.unknownError)
-            }
-        }
-    }
-
-    /// Rename a file or directory asynchronously
-    /// - Parameters:
-    ///   - src: Source path
-    ///   - dst: Destination path
-    ///   - completion: Completion handler with optional error
-    func renameFileAsync(src: String, dst: String, completion: @escaping (CoreBridgeError?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try self?.renameFile(src: src, dst: dst)
-                completion(nil)
-            } catch let error as CoreBridgeError {
-                completion(error)
-            } catch {
-                completion(CoreBridgeError.unknownError)
-            }
-        }
-    }
-
     // MARK: - Cache Operations
 
     /// Initialize the L2 persistent (SQLite) directory cache.
@@ -922,25 +723,6 @@ public final class CoreBridge {
                 ff_cache_invalidate(cPath)
             }
             ffiResult = result
-        }
-
-        semaphore.wait()
-
-        guard ffiResult == 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-    }
-
-    /// Clear all directory caches (invalidate all)
-    /// - Throws: CoreBridgeError if operation fails
-    func clearAllCache() throws {
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-            ffiResult = ff_dir_cache_clear()
         }
 
         semaphore.wait()
@@ -1092,72 +874,6 @@ public final class CoreBridge {
         return Int(ffiResult)
     }
 
-    /// Organize files by date into folders
-    /// - Parameters:
-    ///   - path: Directory path
-    ///   - format: Date format string (e.g., "YYYY/MM/DD")
-    /// - Returns: Number of files moved
-    /// - Throws: CoreBridgeError if operation fails
-    func organizeByDate(path: String, format: String = "YYYY/MM/DD") throws -> Int {
-        guard !path.isEmpty else {
-            throw CoreBridgeError.invalidPath("Path is empty")
-        }
-
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            let result = path.withCString { cPath in
-                format.withCString { cFormat in
-                    ff_organize_by_date(cPath, cFormat)
-                }
-            }
-            ffiResult = result
-        }
-
-        semaphore.wait()
-
-        guard ffiResult >= 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-
-        return Int(ffiResult)
-    }
-
-    /// Organize files by file type into category folders
-    /// - Parameter path: Directory path
-    /// - Returns: Number of files moved
-    /// - Throws: CoreBridgeError if operation fails
-    func organizeByType(path: String) throws -> Int {
-        guard !path.isEmpty else {
-            throw CoreBridgeError.invalidPath("Path is empty")
-        }
-
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            let result = path.withCString { cPath in
-                ff_organize_by_type(cPath)
-            }
-            ffiResult = result
-        }
-
-        semaphore.wait()
-
-        guard ffiResult >= 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-
-        return Int(ffiResult)
-    }
-
     // MARK: - Thumbnail Generation (Sub-project 7)
 
     /// Generate a thumbnail for an image file
@@ -1187,57 +903,6 @@ public final class CoreBridge {
         }
     }
 
-    /// Generate thumbnails for multiple image files
-    /// - Parameters:
-    ///   - paths: Array of image file paths
-    ///   - maxSize: Maximum width/height of each thumbnail
-    ///   - completion: Called with array of thumbnail paths on success
-    /// - Throws: CoreBridgeError if operation fails
-    func generateThumbnails(paths: [String], maxSize: UInt32, completion: @escaping ([String]) -> Void) throws {
-        guard !paths.isEmpty else {
-            throw CoreBridgeError.invalidPath("Paths array is empty")
-        }
-
-        ffiQueue.async {
-            var thumbnailPaths: [String] = []
-            withUnsafeMutablePointer(to: &thumbnailPaths) { pathsPtr in
-                var context = ThumbnailsContext(paths: pathsPtr, completion: completion)
-
-                let cPaths = paths.map { strdup($0) }
-                // 安全解包 strdup 结果：OOM 时可能返回 nil。
-                // 保留 nil 项（FFI 侧应能容忍或返回错误），不强制解包避免崩溃。
-                let immutablePaths: [UnsafePointer<CChar>?] = cPaths.map {
-                    $0.map { UnsafePointer($0) }
-                }
-                let result = withUnsafeMutablePointer(to: &context) { contextPtr in
-                    immutablePaths.withUnsafeBufferPointer { buffer in
-                        guard let base = buffer.baseAddress else {
-                            // 理论上不可达（paths 已 guard 非空），但防御性处理。
-                            return Int32(-1)
-                        }
-                        return ff_generate_thumbnails(base, paths.count, maxSize, thumbnailsCallback, contextPtr)
-                    }
-                }
-
-            // Free allocated strings
-            for ptr in cPaths {
-                free(ptr)
-            }
-
-            if result != 0 {
-                _ = self.getLastError()
-                DispatchQueue.main.async {
-                    completion([])
-                }
-            } else {
-                DispatchQueue.main.async {
-                    completion(thumbnailPaths)
-                }
-            }
-        }
-    }
-    }
-
     // MARK: - Error Handling
 
     /// Get the last error message from the Rust core.
@@ -1249,7 +914,7 @@ public final class CoreBridge {
     /// UI thread returns nothing.
     ///
     /// To bridge that gap, the parallel batch methods (parallelCopy /
-    /// parallelMove / parallelDelete) capture `ff_last_error()` on the
+    /// parallelMove) capture `ff_last_error()` on the
     /// FFI thread right after the call and stash the result in
     /// `lastErrorMessage`. This getter prefers that captured value
     /// (read-once: it is cleared after being returned so subsequent calls
@@ -1293,58 +958,7 @@ public final class CoreBridge {
         return message
     }
 
-    /// Get the last error message (thread-safe)
-    /// - Returns: Last error message or "Unknown error"
-    func getLastErrorMessage() -> String {
-        return lastErrorMessage.get() ?? "Unknown error"
-    }
-
     // MARK: - Settings & Configuration (Sub-project 8)
-
-    /// Load all settings as a JSON string
-    /// - Returns: Settings JSON string
-    /// - Throws: CoreBridgeError if operation fails
-    func loadSettings() throws -> String {
-        var resultString: String = ""
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            guard let cString = ff_settings_load() else {
-                return
-            }
-            resultString = String(cString: cString)
-            ff_free_string(cString)
-        }
-
-        semaphore.wait()
-        return resultString
-    }
-
-    /// Save settings from a JSON string
-    /// - Parameter json: Settings JSON string
-    /// - Throws: CoreBridgeError if operation fails
-    func saveSettings(json: String) throws {
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            let result = json.withCString { cJson in
-                ff_settings_save(cJson)
-            }
-            ffiResult = result
-        }
-
-        semaphore.wait()
-
-        guard ffiResult == 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-    }
 
     /// Get a specific setting value by key
     /// - Parameter key: Setting key
@@ -1397,42 +1011,6 @@ public final class CoreBridge {
 
     // MARK: - Task Scheduler (Sub-project 9)
 
-    /// 提交一个新任务到调度器
-    /// - Parameters:
-    ///   - name: 任务类型名称（如 "Copy", "Move", "Delete", "Scan", "Index"）
-    ///   - description: 任务描述
-    ///   - priority: 任务优先级（0=Low, 1=Normal, 2=High）
-    /// - Returns: 任务 ID 字符串
-    /// - Throws: CoreBridgeError if operation fails
-    func submitTask(name: String, description: String, priority: Int32) throws -> String {
-        let semaphore = DispatchSemaphore(value: 0)
-        var ffiResult: Int32 = -1
-        var outTaskId: UnsafeMutablePointer<CChar>? = nil
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            name.withCString { cName in
-                description.withCString { cDesc in
-                    withUnsafeMutablePointer(to: &outTaskId) { outPtr in
-                        ffiResult = ff_task_submit(cName, cDesc, priority, outPtr)
-                    }
-                }
-            }
-        }
-
-        semaphore.wait()
-
-        guard ffiResult == 0, let taskIdPtr = outTaskId else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-
-        let taskId = String(cString: taskIdPtr)
-        ff_free_string(taskIdPtr)
-        return taskId
-    }
-
     /// 取消正在运行或等待中的任务
     /// - Parameter taskId: 任务 ID 字符串
     /// - Throws: CoreBridgeError if operation fails
@@ -1476,28 +1054,6 @@ public final class CoreBridge {
         return tasks
     }
 
-    /// Get task progress
-    /// - Parameter taskId: Task ID
-    /// - Returns: Progress value (0.0 to 1.0), or -1 if not found
-    func getTaskProgress(taskId: String) -> Double {
-        var progress: Double = -1.0
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            ffiResult = taskId.withCString { cTaskId in
-                withUnsafeMutablePointer(to: &progress) { progressPtr in
-                    ff_task_progress(cTaskId, progressPtr)
-                }
-            }
-        }
-
-        semaphore.wait()
-        return ffiResult == 0 ? progress : -1.0
-    }
-
     // MARK: - Volume Management (Sub-project 10)
 
     /// List all mounted volumes
@@ -1519,129 +1075,6 @@ public final class CoreBridge {
 
         semaphore.wait()
         return volumes
-    }
-
-    /// 获取指定卷的详细信息
-    /// - Parameter path: 卷路径
-    /// - Returns: VolumeInfo 对象
-    /// - Throws: CoreBridgeError if operation fails
-    func getVolumeInfo(path: String) throws -> VolumeInfo {
-        var ffiVolumeInfo = FFVolumeInfo(
-            name: nil, path: nil, fs_type: nil,
-            total_size: 0, free_size: 0, used_size: 0,
-            is_removable: false, is_ejectable: false, is_writable: false
-        )
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            ffiResult = path.withCString { cPath in
-                withUnsafeMutablePointer(to: &ffiVolumeInfo) { outInfo in
-                    ff_volume_info(cPath, outInfo)
-                }
-            }
-        }
-
-        semaphore.wait()
-
-        guard ffiResult == 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-
-        let volume = VolumeInfo(from: ffiVolumeInfo)
-
-        // 释放 Rust 分配的字符串
-        ff_free_string(ffiVolumeInfo.name)
-        ff_free_string(ffiVolumeInfo.path)
-        ff_free_string(ffiVolumeInfo.fs_type)
-
-        return volume
-    }
-
-    /// Perform health check on a volume
-    /// - Parameter path: Volume path
-    /// - Returns: Health check result JSON string
-    /// - Throws: CoreBridgeError if operation fails
-    func checkVolumeHealth(path: String) throws -> String {
-        var outResult: UnsafeMutablePointer<CChar>? = nil
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            ffiResult = path.withCString { cPath in
-                withUnsafeMutablePointer(to: &outResult) { outPtr in
-                    ff_volume_health_check(cPath, outPtr)
-                }
-            }
-        }
-
-        semaphore.wait()
-
-        guard ffiResult == 0, let resultPtr = outResult else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-
-        let resultString = String(cString: resultPtr)
-        ff_free_string(resultPtr)
-        return resultString
-    }
-
-    /// Eject a removable volume
-    /// - Parameter path: Volume path
-    /// - Throws: CoreBridgeError if operation fails
-    func ejectVolume(path: String) throws {
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            let result = path.withCString { cPath in
-                ff_volume_eject(cPath)
-            }
-            ffiResult = result
-        }
-
-        semaphore.wait()
-
-        guard ffiResult == 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
-    }
-
-    /// Mount a network or external volume
-    /// - Parameters:
-    ///   - path: Volume path or URL
-    ///   - options: Mount options
-    /// - Throws: CoreBridgeError if operation fails
-    func mountVolume(path: String, options: String = "") throws {
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            let result = path.withCString { cPath in
-                options.withCString { cOptions in
-                    ff_volume_mount(cPath, cOptions)
-                }
-            }
-            ffiResult = result
-        }
-
-        semaphore.wait()
-
-        guard ffiResult == 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
     }
 
     // MARK: - AI Tag Generation (Task 14)

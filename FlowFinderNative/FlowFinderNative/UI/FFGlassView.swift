@@ -327,18 +327,6 @@ class FFGlassView: NSView {
             instance.refreshAppearance()
         }
     }
-
-    // MARK: - 调试
-
-    #if DEBUG
-    /// 打印当前所有 panel 级实例的调试信息
-    static func debugPrintInstances() {
-        let instances = allInstances.allObjects
-        let panelCount = instances.filter { $0.level == .panel }.count
-        let componentCount = instances.filter { $0.level == .component }.count
-        FFLog.debug("FFGlassView 实例: panel=\(panelCount) / 预算 \(FFDesign.Glass.maxGlassInstances), component=\(componentCount)", log: FFLog.glass)
-    }
-    #endif
 }
 
 // MARK: - 全局共享噪声纹理

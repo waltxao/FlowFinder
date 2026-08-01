@@ -11,8 +11,6 @@ public class AppearanceSettingsView: NSView {
     private var systemButton: NSButton!
     private var descriptionLabel: NSTextField!
 
-    private var onModeChangedToken: ((AppearanceMode) -> Void)?
-
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupUI()
@@ -26,11 +24,7 @@ public class AppearanceSettingsView: NSView {
     }
 
     deinit {
-        // 解绑 ThemeManager 回调
-        if let token = ThemeManager.shared.onModeChanged, let myToken = onModeChangedToken {
-            _ = myToken  // 防止 unused warning
-            _ = token
-        }
+        // 回调使用 [weak self]，对象释放后自动失效，无需手动解绑
     }
 
     // MARK: - UI Setup
@@ -142,17 +136,13 @@ public class AppearanceSettingsView: NSView {
     // MARK: - Bindings
 
     private func setupBindings() {
-        // 任务 T2: 移除 @Published，改用 onModeChanged 回调
-        // 注意：onModeChanged 是单回调，需保留前一个回调链
+        // onModeChanged 是单回调，保留前一个回调链避免覆盖其他组件已注册的监听
         let previousCallback = ThemeManager.shared.onModeChanged
-        onModeChangedToken = { [weak self] mode in
+        ThemeManager.shared.onModeChanged = { [weak self] mode in
+            previousCallback?(mode)
             DispatchQueue.main.async {
                 self?.updateSelection()
             }
-        }
-        ThemeManager.shared.onModeChanged = { [weak self] mode in
-            previousCallback?(mode)
-            self?.onModeChangedToken?(mode)
         }
     }
 

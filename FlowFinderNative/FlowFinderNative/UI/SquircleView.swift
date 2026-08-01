@@ -61,13 +61,6 @@ public class SquircleView: NSView {
         }
     }
 
-    /// 移除超椭圆 mask
-    public func removeSquircleMask() {
-        maskLayer?.removeFromSuperlayer()
-        maskLayer = nil
-        layer?.mask = nil
-    }
-
     /// 生成超椭圆 CGPath
     /// - Parameters:
     ///   - rect: 绘制区域
@@ -122,36 +115,5 @@ public class SquircleView: NSView {
         if value > 0 { return 1 }
         if value < 0 { return -1 }
         return 0
-    }
-}
-
-/// 为任意 NSView 应用超椭圆圆角
-public extension NSView {
-    /// 应用超椭圆 mask
-    /// - Parameters:
-    ///   - cornerRadius: 圆角半径
-    ///   - factor: 超椭圆指数（默认 5.0）
-    func applySquircleCorners(cornerRadius: CGFloat, factor: CGFloat = 5.0) {
-        guard let layer = self.layer else {
-            self.wantsLayer = true
-            DispatchQueue.main.async { [weak self] in
-                self?.applySquircleCorners(cornerRadius: cornerRadius, factor: factor)
-            }
-            return
-        }
-
-        let bounds = self.bounds
-        if bounds.isEmpty {
-            // 延迟到 layout 后再应用
-            DispatchQueue.main.async { [weak self] in
-                self?.applySquircleCorners(cornerRadius: cornerRadius, factor: factor)
-            }
-            return
-        }
-
-        let path = SquircleView.squirclePath(in: bounds, radius: cornerRadius, factor: factor)
-        let shapeLayer = CAShapeLayer()
-        shapeLayer.path = path
-        layer.mask = shapeLayer
     }
 }

@@ -1,6 +1,5 @@
 import Cocoa
 import Combine
-import os.log
 
 // MARK: - FFDebug (file-based debug logger)
 
@@ -893,7 +892,7 @@ public class FileListView: NSView {
 
     @objc private func addTagMenu(_ sender: Any?) {
         guard let entry = clickedEntry else { return }
-        NotificationCenter.default.post(name: NSNotification.Name("FileListAddTag"), object: nil, userInfo: ["path": entry.path])
+        NotificationCenter.default.post(name: .fileListAddTag, object: nil, userInfo: ["path": entry.path])
     }
 
     @objc private func showInfoMenu(_ sender: Any?) {

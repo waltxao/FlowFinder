@@ -1,21 +1,5 @@
 import Foundation
 
-// MARK: - SidebarSection
-
-enum SidebarSection: Int, CaseIterable {
-    case favorites = 0
-    case tags = 1
-    case devices = 2
-
-    var title: String {
-        switch self {
-        case .favorites: return "我的收藏"
-        case .tags: return "标签"
-        case .devices: return "存储设备"
-        }
-    }
-}
-
 // MARK: - SidebarItem
 
 enum SidebarItem {

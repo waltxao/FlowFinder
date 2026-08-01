@@ -5,37 +5,6 @@ import AppKit
 /// 集中定义颜色/尺寸/玻璃材质令牌，作为硬编码值的单一来源。
 /// 使用 NSColor 系统色为主，避免 HTML 设计稿中违反单主色调规则的变量。
 enum FFDesign {
-    // MARK: - 间距与尺寸
-    static let sidebarWidth: CGFloat = 180
-    static let paneCornerRadius: CGFloat = 12
-    static let sectionCornerRadius: CGFloat = 10
-    static let rowHeight: CGFloat = 24
-    static let gridItemSize: CGFloat = 96
-    static let gridIconSize: CGFloat = 48
-
-    // MARK: - 工具栏高度
-    static let breadcrumbHeight: CGFloat = 28
-    static let toolbarRow2Height: CGFloat = 32
-    static let detailsBarCollapsedHeight: CGFloat = 36
-    static let detailsBarExpandedHeight: CGFloat = 120
-    static let taskbarHeight: CGFloat = 28
-
-    // MARK: - 颜色（委托 NSColor 系统色 + controlAccentColor）
-    static var accent: NSColor { .controlAccentColor }
-    static var selectionHighlight: NSColor {
-        NSColor(srgbRed: 0.039, green: 0.518, blue: 1.0, alpha: 1.0)
-    }
-
-    static let tagColors: [String: NSColor] = [
-        "red":    NSColor(red: 1.0,  green: 0.27, blue: 0.23, alpha: 1), // #ff453a
-        "orange": NSColor(red: 1.0,  green: 0.62, blue: 0.04, alpha: 1), // #ff9f0a
-        "yellow": NSColor(red: 1.0,  green: 0.84, blue: 0.04, alpha: 1), // #ffd60a
-        "green":  NSColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1), // #30d158
-        "blue":   NSColor(red: 0.04, green: 0.52, blue: 1.0,  alpha: 1), // #0a84ff
-        "purple": NSColor(red: 0.75, green: 0.35, blue: 0.95, alpha: 1), // #bf5af2
-        "gray":   NSColor(red: 0.56, green: 0.56, blue: 0.57, alpha: 1), // #8e8e93
-    ]
-
     // MARK: - 玻璃材质令牌（液态玻璃增强）
     enum Glass {
         /// 玻璃层级

@@ -147,16 +147,6 @@ public final class ThumbnailManager {
         }
     }
 
-    /// 同步获取缓存中的缩略图（不触发生成）
-    /// - Parameters:
-    ///   - path: 文件路径
-    ///   - size: 期望尺寸
-    /// - Returns: 缓存的图片（如果存在）
-    public func cacheImage(for path: String, size: CGSize = CGSize(width: 64, height: 64)) -> NSImage? {
-        let key = cacheKey(for: path, size: size)
-        return memoryCache.object(forKey: key)
-    }
-
     /// 任务 F11-7: 同步获取缓存中的工作区图标（不触发 NSWorkspace 调用）。
     /// 用于 tableView(_:viewFor:) / collectionView item 回调中即时取占位图标，
     /// 命中则同步显示，未命中则调用 fetchWorkspaceIcon 异步获取。
@@ -233,16 +223,6 @@ public final class ThumbnailManager {
         }
     }
 
-    /// 预生成缩略图（不返回结果，用于预热缓存）
-    /// - Parameters:
-    ///   - paths: 文件路径数组
-    ///   - size: 期望尺寸
-    public func prefetchThumbnails(paths: [String], size: CGSize = CGSize(width: 64, height: 64)) {
-        for path in paths {
-            generateThumbnail(path: path, size: size) { _ in }
-        }
-    }
-
     /// 取消指定路径的缩略图生成
     /// - Parameter path: 文件路径
     public func cancelGeneration(for path: String) {
@@ -252,25 +232,6 @@ public final class ThumbnailManager {
             activeRequests.removeValue(forKey: path)
         }
         lock.unlock()
-    }
-
-    /// 清除内存缓存
-    public func clearMemoryCache() {
-        memoryCache.removeAllObjects()
-        // 任务 F11-7: 同步清除工作区图标缓存，避免旧图标残留
-        workspaceIconCache.removeAllObjects()
-    }
-
-    /// 清除磁盘缓存
-    public func clearDiskCache() {
-        try? FileManager.default.removeItem(at: diskCacheURL)
-        try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
-    }
-
-    /// 清除所有缓存（内存 + 磁盘）
-    public func clearCache() {
-        clearMemoryCache()
-        clearDiskCache()
     }
 
     // MARK: - Private

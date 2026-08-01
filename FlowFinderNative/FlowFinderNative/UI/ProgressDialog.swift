@@ -26,10 +26,6 @@ class ProgressDialog: FFModalSheet {
     /// 由调用方在展示对话框前通过 `setTaskId(_:)` 注入，或在 init 时传入。
     private var taskId: String?
 
-    /// 上次进度更新时间戳（用于计算瞬时速度）
-    private var lastProgress: Double = 0
-    private var lastProgressTime: Date?
-
     /// 初始化
     /// - Parameters:
     ///   - title: 标题（例: "正在复制文件"）
@@ -197,11 +193,11 @@ class ProgressDialog: FFModalSheet {
         // 监听 TaskSchedulerManager.shared.activeTask 变更
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(taskProgressUpdated),
-                                               name: NSNotification.Name("TaskProgressUpdated"),
+                                               name: .taskProgressUpdated,
                                                object: nil)
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(taskCompleted),
-                                               name: NSNotification.Name("TaskCompleted"),
+                                               name: .taskCompleted,
                                                object: nil)
     }
 
@@ -236,20 +232,14 @@ class ProgressDialog: FFModalSheet {
             if progress > 0 {
                 if self.startTime == nil {
                     self.startTime = Date()
-                    self.lastProgress = progress
-                    self.lastProgressTime = Date()
                 }
-                let now = Date()
                 if let start = self.startTime {
-                    let elapsed = now.timeIntervalSince(start)
+                    let elapsed = Date().timeIntervalSince(start)
                     // progress 范围 0-100，总预估 = 已耗时 / (progress/100)
                     let totalEstimated = elapsed / (progress / 100.0)
                     let remaining = max(0, totalEstimated - elapsed)
                     self.etaLabel.stringValue = "剩余 \(self.formatDuration(remaining))"
                 }
-                // 防止进度倒退导致 startTime 重置
-                self.lastProgress = progress
-                self.lastProgressTime = now
             }
         }
     }
@@ -283,25 +273,4 @@ class ProgressDialog: FFModalSheet {
         }
     }
 
-    // MARK: - 公开更新方法
-
-    /// 手动更新进度（若不使用 NotificationCenter）
-    func updateProgress(currentFile: String,
-                        sourcePath: String,
-                        destPath: String,
-                        progress: Double,
-                        processedFiles: Int,
-                        totalFiles: Int,
-                        processedBytes: Int64,
-                        totalBytes: Int64) {
-        fileNameLabel.stringValue = currentFile
-        sourceLabel.stringValue = sourcePath
-        destLabel.stringValue = destPath
-        progressIndicator.doubleValue = progress
-        fileCountLabel.stringValue = "\(processedFiles) / \(totalFiles)"
-
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        byteCountLabel.stringValue = "\(formatter.string(fromByteCount: processedBytes)) / \(formatter.string(fromByteCount: totalBytes))"
-    }
 }

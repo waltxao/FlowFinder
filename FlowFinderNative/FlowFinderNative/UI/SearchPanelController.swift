@@ -1,5 +1,4 @@
 import Cocoa
-import Combine
 
 /// 搜索模式
 public enum SearchMode: Int, CaseIterable {

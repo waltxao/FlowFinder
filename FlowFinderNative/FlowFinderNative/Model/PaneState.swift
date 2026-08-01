@@ -67,9 +67,6 @@ public class PaneViewModel: ObservableObject {
     var isLoading: Bool { state.isLoading }
     var error: String? { state.error }
 
-    /// 选中条目（计算属性，用于 DetailsBar）
-    var selectedEntries: [FileEntry] { state.selectedFiles }
-
     /// 任务 F10-10: 当前目录的完整文件列表快照（已排序，未过滤）。
     /// 修复问题11辅助：applyFilter 此前基于 state.files 过滤，而 state.files 在搜索时
     /// 已被缩小为子集，导致用户删字回退搜索时无法恢复被过滤掉的项目。

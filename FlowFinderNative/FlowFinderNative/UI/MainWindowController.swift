@@ -169,8 +169,6 @@ public class MainWindowController: NSWindowController {
     private let devicePanelCollapsedHeight: CGFloat = 48
     /// 任务 F10-3: 设备行单行高度
     private let devicePanelRowHeight: CGFloat = 28
-    /// 任务 F10-3: 设备浮层宽度（贴窗口左下角，固定 200pt）
-    private let devicePanelWidth: CGFloat = 200
     /// 任务 F10-3: 设备浮层高度约束（折叠/展开时调整）
     private var devicePanelHeightConstraint: NSLayoutConstraint!
     /// 1.2 活动面板顶部 accent 色条（替代 borderWidth 方案）
@@ -902,7 +900,7 @@ public class MainWindowController: NSWindowController {
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleFileListAddTag(_:)),
-            name: NSNotification.Name("FileListAddTag"), object: nil
+            name: .fileListAddTag, object: nil
         )
         // F9-C: 订阅「显示简介」请求，弹出独立 FileInfoWindow
         NotificationCenter.default.addObserver(
@@ -913,7 +911,7 @@ public class MainWindowController: NSWindowController {
         // 修复问题3：侧边栏齿轮按钮发的 "OpenSettings" 通知无观察者，导致设置窗口打不开
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleOpenSettings(_:)),
-            name: NSNotification.Name("OpenSettings"), object: nil
+            name: .openSettings, object: nil
         )
         // 任务 F11-11: 注册侧边栏工具面板入口通知（C1）
         // 查重 -> 打开 DuplicateScanWindowController；批量重命名 -> 转发 menuBatchRename；

@@ -1,6 +1,5 @@
 import Cocoa
 import Combine
-import os.log
 
 // MARK: - FileGridCollectionViewItem
 
@@ -1082,7 +1081,7 @@ public class FileGridView: NSView {
 
     @objc private func addTagMenu(_ sender: Any?) {
         guard let entry = clickedEntry else { return }
-        NotificationCenter.default.post(name: NSNotification.Name("FileListAddTag"), object: nil,
+        NotificationCenter.default.post(name: .fileListAddTag, object: nil,
                                         userInfo: ["path": entry.path])
     }
 

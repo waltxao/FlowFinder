@@ -10,10 +10,6 @@ public final class TaskSchedulerManager: ObservableObject {
     @Published public private(set) var activeTask: TaskInfo?
     @Published public private(set) var allTasks: [TaskInfo] = []
 
-    /// 任务更新回调（主线程）
-    public var onTaskUpdated: ((TaskInfo?) -> Void)?
-    public var onTasksChanged: (([TaskInfo]) -> Void)?
-
     private var pollingTimer: DispatchSourceTimer?
     private let pollingQueue = DispatchQueue(label: "com.flowfinder.taskpolling", qos: .utility)
     private var pollingInterval: TimeInterval = 0.5
@@ -52,9 +48,6 @@ public final class TaskSchedulerManager: ObservableObject {
 
             self.allTasks = tasks
             self.activeTask = tasks.first(where: { $0.isActive })
-
-            self.onTaskUpdated?(self.activeTask)
-            self.onTasksChanged?(tasks)
         }
     }
 
@@ -69,15 +62,5 @@ public final class TaskSchedulerManager: ObservableObject {
         } catch {
             FFLog.error("TaskSchedulerManager: 取消任务失败: \(error.localizedDescription)", log: FFLog.task)
         }
-    }
-
-    /// 获取任务进度（0.0-1.0）
-    public var currentProgress: Double? {
-        return activeTask?.progress
-    }
-
-    /// 是否有活跃任务
-    public var hasActiveTask: Bool {
-        return activeTask != nil
     }
 }

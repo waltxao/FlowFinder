@@ -47,8 +47,26 @@ public final class ThemeManager: ObservableObject {
 
     public private(set) var currentMode: AppearanceMode = .light
 
-    /// 主题变更回调
-    public var onModeChanged: ((AppearanceMode) -> Void)?
+    /// 主题变更订阅者列表（多订阅者模式，避免单闭包互相覆盖）
+    private var modeChangedHandlers: [(AppearanceMode) -> Void] = []
+
+    /// 主题变更回调（已废弃，优先使用 NotificationCenter 监听 .appearanceChanged 通知）
+    ///
+    /// 历史问题：原实现为单闭包，多处赋值会互相覆盖（如 SidebarView 直接赋值
+    /// 覆盖了 AppearanceSettingsView / MainWindowController 已注册的回调）。
+    ///
+    /// 现改为多订阅者：`set` 时追加到 `modeChangedHandlers` 数组（不再覆盖），
+    /// `get` 始终返回 nil。同时通过 NotificationCenter 发送 `.appearanceChanged`
+    /// 通知，新代码应监听该通知而非使用此属性。
+    @available(*, deprecated, message: "使用 NotificationCenter 监听 .appearanceChanged 通知")
+    public var onModeChanged: ((AppearanceMode) -> Void)? {
+        get { nil }
+        set {
+            if let handler = newValue {
+                modeChangedHandlers.append(handler)
+            }
+        }
+    }
 
     private init() {
         loadSavedMode()
@@ -115,7 +133,22 @@ public final class ThemeManager: ObservableObject {
         // 刷新所有 FFGlassView 实例的玻璃令牌（噪声/高光/内阴影/tint）
         FFGlassView.refreshAllInstances()
 
-        onModeChanged?(mode)
+        notifyModeChanged(mode)
+    }
+
+    /// 通知所有订阅者主题已变更（闭包订阅者 + NotificationCenter）
+    /// - Parameter mode: 新的外观模式
+    private func notifyModeChanged(_ mode: AppearanceMode) {
+        // 遍历调用所有闭包订阅者（多订阅者，避免单闭包覆盖）
+        for handler in modeChangedHandlers {
+            handler(mode)
+        }
+        // 发送外观变更通知（推荐新代码使用 NotificationCenter 监听）
+        NotificationCenter.default.post(
+            name: .appearanceChanged,
+            object: nil,
+            userInfo: ["mode": mode]
+        )
     }
 
     /// 检查窗口是否使用了 NSGlassEffectView（兼容新旧两种架构）
@@ -192,7 +225,7 @@ public final class ThemeManager: ObservableObject {
             }
         }
         FFGlassView.refreshAllInstances()
-        onModeChanged?(currentMode)
+        notifyModeChanged(currentMode)
     }
 
     private func loadSavedMode() {

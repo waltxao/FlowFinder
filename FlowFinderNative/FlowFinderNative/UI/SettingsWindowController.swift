@@ -271,7 +271,7 @@ public class SettingsWindowController: NSWindowController {
         })
         fileOpsSection.addRow(.toggleRow(title: "显示隐藏文件", desc: "显示以 . 开头的文件和系统隐藏文件", state: UserDefaults.standard.bool(forKey: "show_hidden_files")) { state in
             UserDefaults.standard.set(state, forKey: "show_hidden_files")
-            NotificationCenter.default.post(name: NSNotification.Name("refreshHiddenFiles"), object: nil)
+            NotificationCenter.default.post(name: .refreshHiddenFiles, object: nil)
         })
         fileOpsSection.addRow(.toggleRow(title: "双击打开", desc: "双击文件时在默认应用中打开", state: true, action: nil).also { $0.setDisabled() })
         fileOpsSection.addRow(.toggleRow(title: "删除前确认", state: false, action: nil).also { $0.setDisabled() })

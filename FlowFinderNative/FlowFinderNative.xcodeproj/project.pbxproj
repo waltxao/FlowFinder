@@ -37,7 +37,6 @@
 		FF0000000000000000200029 /* QuickLookPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020002A; };
 		FF000000000000000020002B /* SMBManagerPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020002C; };
 		FF000000000000000020002D /* SearchPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020002E; };
-		FF000000000000000020002F /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200030; };
 		FF0000000000000000200031 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200032; };
 		FF0000000000000000200033 /* TaskPanelWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200034; };
 		FF0000000000000000200035 /* TaskProgressBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200036; };
@@ -62,6 +61,7 @@
 		FF0000000000000000200065 /* FFCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200066; };
 		FF0000000000000000200067 /* SquircleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200068; };
 		FF0000000000000000200069 /* ToolOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006A; };
+		FF000000000000000020006B /* FFFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006C; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -97,7 +97,6 @@
 		FF000000000000000020002A /* QuickLookPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLookPreviewView.swift; sourceTree = "<group>"; };
 		FF000000000000000020002C /* SMBManagerPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBManagerPanel.swift; sourceTree = "<group>"; };
 		FF000000000000000020002E /* SearchPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchPanelController.swift; sourceTree = "<group>"; };
-		FF0000000000000000200030 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		FF0000000000000000200032 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200034 /* TaskPanelWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskPanelWindowController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200036 /* TaskProgressBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskProgressBar.swift; sourceTree = "<group>"; };
@@ -122,6 +121,7 @@
 		FF0000000000000000200066 /* FFCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCommon.swift; sourceTree = "<group>"; };
 		FF0000000000000000200068 /* SquircleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquircleView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006A /* ToolOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOverlayView.swift; sourceTree = "<group>"; };
+		FF000000000000000020006C /* FFFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFFormat.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -184,7 +184,6 @@
 				FF000000000000000020002A /* QuickLookPreviewView.swift */,
 				FF000000000000000020002C /* SMBManagerPanel.swift */,
 				FF000000000000000020002E /* SearchPanelController.swift */,
-				FF0000000000000000200030 /* SearchView.swift */,
 				FF0000000000000000200032 /* SettingsWindowController.swift */,
 				FF0000000000000000200034 /* TaskPanelWindowController.swift */,
 				FF0000000000000000200036 /* TaskProgressBar.swift */,
@@ -202,6 +201,7 @@
 				FF0000000000000000200066 /* FFCommon.swift */,
 				FF0000000000000000200068 /* SquircleView.swift */,
 				FF000000000000000020006A /* ToolOverlayView.swift */,
+				FF000000000000000020006C /* FFFormat.swift */,
 		);
 		path = UI;
 		sourceTree = "<group>";
@@ -378,7 +378,6 @@
 				FF0000000000000000200029 /* QuickLookPreviewView.swift in Sources */,
 				FF000000000000000020002B /* SMBManagerPanel.swift in Sources */,
 				FF000000000000000020002D /* SearchPanelController.swift in Sources */,
-				FF000000000000000020002F /* SearchView.swift in Sources */,
 				FF0000000000000000200031 /* SettingsWindowController.swift in Sources */,
 				FF0000000000000000200033 /* TaskPanelWindowController.swift in Sources */,
 				FF0000000000000000200035 /* TaskProgressBar.swift in Sources */,
@@ -403,6 +402,7 @@
 				FF0000000000000000200065 /* FFCommon.swift in Sources */,
 				FF0000000000000000200067 /* SquircleView.swift in Sources */,
 				FF0000000000000000200069 /* ToolOverlayView.swift in Sources */,
+				FF000000000000000020006B /* FFFormat.swift in Sources */,
 		);
 		runOnlyForDeploymentPostprocessing = 0;
 	};

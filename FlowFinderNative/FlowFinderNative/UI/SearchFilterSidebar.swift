@@ -38,7 +38,7 @@ enum FileTypeFilter: String, CaseIterable {
 // MARK: - SearchFilterSidebar
 
 /// 搜索筛选侧边栏：搜索条件 + 文件类型 + 标签 三个 section
-/// 容器背景由外部 FFGlassView(.panel, .sidebar) 提供，section header 用 FFGlassView(.component) chip
+/// 容器背景由外部实体背景提供，section header 用实体背景 chip
 class SearchFilterSidebar: NSView {
 
     /// 当前筛选配置（外部读取）
@@ -46,16 +46,6 @@ class SearchFilterSidebar: NSView {
 
     /// 配置变更回调（触发重新搜索）
     var onConfigChanged: ((SearchFilterConfig) -> Void)?
-
-    /// 标签列表（外部设置）
-    var tags: [(name: String, color: String, count: Int)] = [] {
-        didSet { rebuildTagsSection() }
-    }
-
-    /// 文件类型计数（外部设置，按 FileTypeFilter 索引）
-    var fileTypeCounts: [FileTypeFilter: Int] = [:] {
-        didSet { rebuildFileTypesSection() }
-    }
 
     private let mainStack = NSStackView()
 
@@ -136,11 +126,9 @@ class SearchFilterSidebar: NSView {
         }
         let section = makeSection(title: "文件类型")
         for type in FileTypeFilter.allCases {
-            let count = fileTypeCounts[type] ?? 0
             let row = makeCheckRow(
                 title: type.rawValue,
                 icon: type.iconName,
-                count: count,
                 state: config.enabledTypes.contains(type)
             ) { [weak self] on in
                 if on {
@@ -171,29 +159,8 @@ class SearchFilterSidebar: NSView {
             existing.removeFromSuperview()
         }
         let section = makeSection(title: "标签")
-        if tags.isEmpty {
-            let emptyRow = SettingsRowView(title: "暂无标签")
-            emptyRow.title = "暂无标签"
-            // 标签文字颜色降级
-            section.addRow(emptyRow)
-        } else {
-            for tag in tags {
-                let row = makeCheckRow(
-                    title: tag.name,
-                    colorHex: tag.color,
-                    count: tag.count,
-                    state: config.enabledTags.contains(tag.name)
-                ) { [weak self] on in
-                    if on {
-                        self?.config.enabledTags.insert(tag.name)
-                    } else {
-                        self?.config.enabledTags.remove(tag.name)
-                    }
-                    self?.fireChange()
-                }
-                section.addRow(row)
-            }
-        }
+        let emptyRow = SettingsRowView(title: "暂无标签")
+        section.addRow(emptyRow)
         tagsSection = section
         mainStack.addArrangedSubview(section)
     }
@@ -318,16 +285,6 @@ class SearchFilterSidebar: NSView {
 
     private func fireChange() {
         onConfigChanged?(config)
-    }
-
-    /// 重置所有筛选条件
-    func reset() {
-        config = SearchFilterConfig()
-        // 重建所有 section 以反映新状态
-        mainStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        rebuildConditionsSection()
-        rebuildFileTypesSection()
-        rebuildTagsSection()
     }
 }
 

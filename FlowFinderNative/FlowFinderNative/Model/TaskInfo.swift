@@ -59,15 +59,6 @@ public struct TaskInfo: Identifiable, Equatable, Hashable {
         self.completedAt = completedAt
     }
 
-    /// Human-readable priority description
-    public var priorityDescription: String {
-        switch priority {
-        case .low: return "Low"
-        case .normal: return "Normal"
-        case .high: return "High"
-        }
-    }
-
     /// Human-readable status description
     public var statusDescription: String {
         switch status {
@@ -102,14 +93,4 @@ public struct TaskInfo: Identifiable, Equatable, Hashable {
         return formatter.string(from: createdAt)
     }
 
-    /// Duration string if task has started
-    public var duration: String? {
-        guard let started = startedAt else { return nil }
-        let endDate = completedAt ?? Date()
-        let interval = endDate.timeIntervalSince(started)
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.hour, .minute, .second]
-        formatter.unitsStyle = .abbreviated
-        return formatter.string(from: interval)
-    }
 }

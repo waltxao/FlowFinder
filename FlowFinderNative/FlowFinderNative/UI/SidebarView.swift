@@ -416,7 +416,7 @@ class SidebarView: NSView {
 
     /// 任务 T1: 打开设置窗口
     @objc private func openSettings() {
-        NotificationCenter.default.post(name: NSNotification.Name("OpenSettings"), object: nil)
+        NotificationCenter.default.post(name: .openSettings, object: nil)
     }
 
     /// v0.6.9: 点击工具按钮直接触发 ToolOverlayView 覆盖页（不再展开侧边栏内联面板）

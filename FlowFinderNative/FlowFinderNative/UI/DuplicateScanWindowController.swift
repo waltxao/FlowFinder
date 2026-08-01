@@ -338,7 +338,7 @@ public class DuplicateScanWindowController: NSWindowController {
         modeLabel.textColor = NSColor.labelColor
         modeLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        scanModeSegmented = NSSegmentedControl(labels: ["按内容", "按名称"], trackingMode: .selectOne, target: self, action: #selector(optionChanged))
+        scanModeSegmented = NSSegmentedControl(labels: ["按内容", "按名称"], trackingMode: .selectOne, target: self, action: nil)
         scanModeSegmented.controlSize = .small
         scanModeSegmented.selectedSegment = 0
         scanModeSegmented.translatesAutoresizingMaskIntoConstraints = false
@@ -473,10 +473,6 @@ public class DuplicateScanWindowController: NSWindowController {
     }
 
     // MARK: - Actions
-
-    @objc private func optionChanged() {
-        // 选项变更：当前仅记录，下次扫描生效
-    }
 
     @objc private func browseClicked() {
         let openPanel = NSOpenPanel()
