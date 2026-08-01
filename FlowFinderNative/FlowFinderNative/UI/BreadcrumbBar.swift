@@ -460,7 +460,7 @@ private class BreadcrumbSegmentButton: NSButton {
         self.imagePosition = isRoot ? .imageLeading : .imageOnly
         self.translatesAutoresizingMaskIntoConstraints = false
         self.wantsLayer = true
-        self.layer?.cornerRadius = 4
+        self.applySquircleCornerRadius(4)
         self.focusRingType = .none
         self.toolTip = absolutePath
 
@@ -568,7 +568,7 @@ private class BreadcrumbChevronButton: NSButton {
         self.imagePosition = .imageOnly
         self.translatesAutoresizingMaskIntoConstraints = false
         self.wantsLayer = true
-        self.layer?.cornerRadius = 3
+        self.applySquircleCornerRadius(3)
         self.focusRingType = .none
         self.contentTintColor = NSColor.tertiaryLabelColor
         self.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "同级目录")
@@ -633,7 +633,7 @@ private class BreadcrumbOverflowButton: NSButton {
         self.imagePosition = .imageOnly
         self.translatesAutoresizingMaskIntoConstraints = false
         self.wantsLayer = true
-        self.layer?.cornerRadius = 3
+        self.applySquircleCornerRadius(3)
         self.focusRingType = .none
         self.contentTintColor = NSColor.secondaryLabelColor
         // 使用 ellipsis 图标（...）

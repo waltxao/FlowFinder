@@ -417,11 +417,25 @@ public class FileListView: NSView {
                         || self.currentSortField != state.sortField
                         || self.currentSortAscending != state.sortAscending
                     if needReload {
+                        // 大目录优化：检测是否为纯追加（分页追加批次），仅当无分组、
+                        // 排序/分组维度未变、文件数增加时，使用增量 insertRows 避免全量重建
+                        let delta = state.files.count - self.lastFilesCount
+                        let isAppendOnly = delta > 0
+                            && self.currentGroupBy == state.groupBy
+                            && self.currentSortField == state.sortField
+                            && self.currentSortAscending == state.sortAscending
+                            && state.groupBy == "none"
+
                         self.lastFilesCount = state.files.count
                         self.currentGroupBy = state.groupBy
                         self.currentSortField = state.sortField
                         self.currentSortAscending = state.sortAscending
-                        self.reloadData()
+
+                        if isAppendOnly {
+                            self.appendDisplayRows(newCount: delta)
+                        } else {
+                            self.reloadData()
+                        }
                     }
                 }
                 .store(in: &cancellables)
@@ -436,6 +450,7 @@ public class FileListView: NSView {
 
     /// 任务 F10-8: 根据 viewModel.groupedFiles 重建 displayRows 映射。
     /// groupBy == "none" 时返回纯文件行（与原有行为一致，fileIndex 与行号一一对应）。
+    /// 大目录优化：使用字典预构建 path→index 映射，将 O(n²) 线性搜索降为 O(n)。
     private func rebuildDisplayRows() {
         guard let viewModel = viewModel else {
             displayRows = []
@@ -443,6 +458,14 @@ public class FileListView: NSView {
         }
         var rows: [FFDisplayRow] = []
         let groups = viewModel.groupedFiles
+
+        // 预构建 path → index 字典，避免循环内 firstIndex(where:) 的 O(n²) 搜索
+        var pathToIndex: [String: Int] = [:]
+        pathToIndex.reserveCapacity(viewModel.state.files.count)
+        for (i, entry) in viewModel.state.files.enumerated() {
+            pathToIndex[entry.path] = i
+        }
+
         for group in groups {
             // 分组标题行（仅当不止一个分组时才显示标题；"全部" 单分组且 groupBy==none 时不显示）
             let showHeader = !(groups.count == 1 && viewModel.state.groupBy == "none")
@@ -451,14 +474,46 @@ public class FileListView: NSView {
             }
             // 组内文件行（fileIndex 指向 viewModel.files 中的下标）
             for entry in group.entries {
-                if let idx = viewModel.state.files.firstIndex(where: { $0.path == entry.path }) {
+                if let idx = pathToIndex[entry.path] {
                     // v0.6.9: 预计算标签状态，避免 heightOfRow 高频 I/O
+                    // TagBridge 已有内存缓存，重复调用为 O(1)
                     let hasTags = !TagBridge.shared.getTags(path: entry.path).isEmpty
                     rows.append(FFDisplayRow(isHeader: false, key: group.key, fileIndex: idx, hasTags: hasTags))
                 }
             }
         }
         displayRows = rows
+    }
+
+    /// 大目录优化：分页追加时的增量行构建，避免全量 rebuildDisplayRows + reloadData。
+    /// 仅适用于 groupBy == "none"（无分组），新文件追加到 state.files 末尾的场景。
+    /// - Parameter newCount: 新增的文件数量
+    private func appendDisplayRows(newCount: Int) {
+        guard let viewModel = viewModel, newCount > 0 else { return }
+        let startIndex = viewModel.state.files.count - newCount
+        guard startIndex >= 0 else { return }
+
+        var newRows: [FFDisplayRow] = []
+        newRows.reserveCapacity(newCount)
+        for i in startIndex..<viewModel.state.files.count {
+            let entry = viewModel.state.files[i]
+            let hasTags = !TagBridge.shared.getTags(path: entry.path).isEmpty
+            newRows.append(FFDisplayRow(isHeader: false, key: "全部", fileIndex: i, hasTags: hasTags))
+        }
+
+        let insertStart = displayRows.count
+        displayRows.append(contentsOf: newRows)
+
+        // 增量插入行，而非全量 reloadData
+        isReloading = true
+        let indexSet = IndexSet(integersIn: insertStart..<(insertStart + newRows.count))
+        tableView.insertRows(at: indexSet, withAnimation: [])
+        restoreSelectionFromViewModel()
+        updateStickyHeader()
+        DispatchQueue.main.async { [weak self] in
+            self?.isReloading = false
+            self?.updateStickyHeader()
+        }
     }
 
     /// 任务 F10-7: 将 viewModel 的排序状态同步到 tableView.sortDescriptors

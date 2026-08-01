@@ -159,11 +159,11 @@ class DuplicatePreviewPanel: NSView {
         let card = FFGlassView(level: .component, cornerRadius: 4)
         card.translatesAutoresizingMaskIntoConstraints = false
 
-        // 色块缩略图（16x16，按文件类型着色）
-        let thumb = NSView()
+        // 色块缩略图（16x16，按文件类型着色），使用超椭圆
+        let thumb = SquircleMaskedView()
         thumb.wantsLayer = true
         thumb.layer?.backgroundColor = colorForFile(file.name).cgColor
-        thumb.layer?.cornerRadius = 3
+        thumb.squircleRadius = 3
         thumb.translatesAutoresizingMaskIntoConstraints = false
 
         let pathLabel = NSTextField(labelWithString: file.path)

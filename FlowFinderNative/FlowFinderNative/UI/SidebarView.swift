@@ -118,9 +118,9 @@ class SidebarView: NSView {
         brandIconView.image = NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
         brandIconView.imageScaling = .scaleProportionallyUpOrDown
         brandIconView.translatesAutoresizingMaskIntoConstraints = false
-        // 任务 F6: 应用图标 8pt 圆角矩形包裹（v0.6.5）
+        // 任务 F6: 应用图标 8pt 圆角矩形包裹（v0.6.5），使用超椭圆
         brandIconView.wantsLayer = true
-        brandIconView.layer?.cornerRadius = 8
+        brandIconView.applySquircleCornerRadius(8)
         brandIconView.layer?.masksToBounds = true
         brandIconView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         brandView.addSubview(brandIconView)

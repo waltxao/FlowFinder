@@ -10,7 +10,7 @@ public final class ThumbnailManager {
     private let generator = QLThumbnailGenerator.shared
     private let memoryCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 200  // 最多缓存 200 个缩略图
+        cache.countLimit = 500  // 大目录优化：200 → 500，提高缓存命中率
         return cache
     }()
 
@@ -21,7 +21,7 @@ public final class ThumbnailManager {
     /// key 为文件绝对路径，value 为已缩放到 iconPointSize 的多色非模板图标副本。
     private let workspaceIconCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 500  // 最多缓存 500 个工作区图标
+        cache.countLimit = 1000  // 大目录优化：500 → 1000，提高缓存命中率
         return cache
     }()
 

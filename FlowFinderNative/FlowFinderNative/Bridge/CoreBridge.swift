@@ -287,13 +287,10 @@ public final class CoreBridge {
 
         entries = ffiEntries
 
-        // Sort entries: directories first, then alphabetically
-        entries.sort { a, b in
-            if a.isDirectory != b.isDirectory {
-                return a.isDirectory && !b.isDirectory
-            }
-            return a.name.localizedStandardCompare(b.name) == .orderedAscending
-        }
+        // 大目录优化：移除此处冗余排序。
+        // PaneState.sortEntries 已包含"文件夹优先 + 用户排序字段"逻辑，
+        // 此处排序结果会被 PaneState 覆盖，造成 O(n log n) 浪费。
+        // 缓存写入（populateCache）不依赖排序顺序。
 
         return entries
     }

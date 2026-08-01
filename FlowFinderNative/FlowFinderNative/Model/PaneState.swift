@@ -202,6 +202,11 @@ public class PaneViewModel: ObservableObject {
 
     // MARK: - 任务 F10-8: 分组聚合（v0.6.6 仿访达）
 
+    /// 分组缓存：大目录下 groupedFiles 被多次访问（rebuildDisplayRows/sectionCount/headerCell），
+    /// 每次都全量遍历 state.files 分桶。缓存通过 groupBy+count+首尾路径签名检测失效。
+    private var _groupedFilesCache: [(key: String, entries: [FileEntry])]?
+    private var _groupedFilesCacheKey: String = ""
+
     /// 分组后的文件列表（按种类/日期/大小聚合）。
     /// - groupBy == "none" 时返回单个分组 "全部"，包含所有文件
     /// - 其余维度返回有序分组，组内顺序与 state.files 一致（state.files 已由 applySort 排序），
@@ -211,6 +216,19 @@ public class PaneViewModel: ObservableObject {
     /// 注意：返回值使用元组 (key, entries)，元组在 Swift 中无法直接作为 @Published
     /// 触发 UI 刷新，UI 层应通过监听 $state 变化后调用此计算属性获取最新分组。
     var groupedFiles: [(key: String, entries: [FileEntry])] {
+        // 大目录优化：签名缓存，避免多次访问时重复全量遍历
+        let cacheKey = "\(state.groupBy)|\(state.files.count)|\(state.files.first?.path ?? "")|\(state.files.last?.path ?? "")"
+        if cacheKey == _groupedFilesCacheKey, let cached = _groupedFilesCache {
+            return cached
+        }
+
+        let result = computeGroupedFiles()
+        _groupedFilesCache = result
+        _groupedFilesCacheKey = cacheKey
+        return result
+    }
+
+    private func computeGroupedFiles() -> [(key: String, entries: [FileEntry])] {
         guard state.groupBy != "none" else {
             return [(key: "全部", entries: state.files)]
         }
@@ -506,6 +524,10 @@ public class PaneViewModel: ObservableObject {
     /// 排序字段与方向通过参数传入（快照），避免读取 `state` 造成数据竞争。
     private func sortEntries(_ entries: [FileEntry], field: SortField, ascending: Bool) -> [FileEntry] {
         return entries.sorted { a, b in
+            // 文件夹始终排在最前（与 Finder 行为一致），不受升降序影响
+            if a.isDirectory != b.isDirectory {
+                return a.isDirectory && !b.isDirectory
+            }
             let comparison: Bool
             switch field {
             case .name:

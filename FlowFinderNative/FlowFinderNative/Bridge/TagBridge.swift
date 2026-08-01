@@ -15,10 +15,25 @@ public final class TagBridge {
     /// macOS 原生标签 xattr 名（Finder 可见）
     private let nativeXattrName = "com.apple.metadata:_kMDItemUserTags"
 
+    /// 标签内存缓存：大目录下避免对每个文件重复 getxattr 系统调用。
+    /// key 为文件路径，value 为标签数组。
+    /// 写操作时自动失效对应 key；外部文件变更可通过 invalidateCache 失效。
+    private let cache: NSCache<NSString, NSArray> = {
+        let c = NSCache<NSString, NSArray>()
+        c.countLimit = 5000
+        return c
+    }()
+
     private init() {}
 
     /// 获取文件的标签（合并自有与 macOS 原生两个来源，按标签名去重）
+    /// 优先查内存缓存，未命中才做 getxattr I/O
     public func getTags(path: String) -> [Tag] {
+        let cacheKey = NSString(string: path)
+        if let cached = cache.object(forKey: cacheKey) as? [Tag] {
+            return cached
+        }
+
         // 1. 读取自有标签（保留 id 与 hex 颜色），仅读一次
         let ownTags = readOwnTags(path: path) ?? []
 
@@ -38,7 +53,18 @@ public final class TagBridge {
             .sorted { $0.name < $1.name }
         result.append(contentsOf: nativeOnly)
 
+        cache.setObject(result as NSArray, forKey: cacheKey)
         return result
+    }
+
+    /// 失效指定路径的标签缓存（FSEvents 检测到文件变更时调用）
+    public func invalidateCache(path: String) {
+        cache.removeObject(forKey: NSString(string: path))
+    }
+
+    /// 失效全部缓存（导航到新目录或批量操作后调用）
+    public func invalidateAllCache() {
+        cache.removeAllObjects()
     }
 
     /// 设置文件的标签（覆盖），同时同步到自有与 macOS 原生两个位置
@@ -48,6 +74,9 @@ public final class TagBridge {
 
         // 2. 写入 macOS 原生格式（让 Finder 可见）
         let nativeOK = writeNativeTags(tags, path: path)
+
+        // 失效缓存（写入后旧缓存不再有效）
+        cache.removeObject(forKey: NSString(string: path))
 
         // 任一成功即视为成功（避免某一方写入失败导致整体不可用）
         return ownOK || nativeOK
