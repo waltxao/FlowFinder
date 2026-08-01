@@ -124,7 +124,7 @@ class PaneToolbar: NSView {
 
     private func setupRow2() {
         // 1.4 自定义搜索框：FFGlassView(.component) 容器 + 搜索图标 + 无边框文本框
-        searchContainer = FFGlassView(level: .component, cornerRadius: 4)
+        searchContainer = FFGlassView(level: .component, cornerRadius: 8)
         searchContainer.translatesAutoresizingMaskIntoConstraints = false
 
         let searchIcon = NSImageView()

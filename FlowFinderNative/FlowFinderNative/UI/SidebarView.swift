@@ -281,9 +281,8 @@ class SidebarView: NSView {
 
         let padding: CGFloat = 12
 
-        // 任务 F11-11: 底部工具面板（C1）
-        // 默认高度 0（收起），点击工具按钮后动画展开到 toolPanelExpandedHeight。
-        // 使用 NSVisualEffectView(.sidebar) 材质与收藏夹/标签区一致，圆角 8pt。
+        // v0.6.9: 工具面板已移除内联入口行，改为点击工具按钮直接弹出 ToolOverlayView
+        // toolPanelView 保留为高度 0 的占位（兼容现有约束），不再构建内容
         toolPanelView = NSVisualEffectView()
         toolPanelView.material = .sidebar
         toolPanelView.blendingMode = .behindWindow
@@ -293,7 +292,6 @@ class SidebarView: NSView {
         toolPanelView.layer?.cornerRadius = 8
         toolPanelView.layer?.masksToBounds = true
         addSubview(toolPanelView)
-        buildToolPanelContents()
 
         // 工具面板高度约束：初始 0（收起）
         toolPanelHeightConstraint = toolPanelView.heightAnchor.constraint(equalToConstant: 0)
@@ -444,110 +442,20 @@ class SidebarView: NSView {
         NotificationCenter.default.post(name: NSNotification.Name("OpenSettings"), object: nil)
     }
 
-    /// 任务 T1 / F11-11: 展开侧边栏底部工具面板（查重/批量重命名/AI 工具入口）（C1）
-    /// 点击工具按钮切换展开/收起，动画改变 toolPanelView 高度约束。
-    /// 再次点击收起。按钮 contentTintColor 随状态切换以提示当前激活态。
+    /// v0.6.9: 点击工具按钮直接触发 ToolOverlayView 覆盖页（不再展开侧边栏内联面板）
+    /// 通知 MainWindowController 在当前激活操作区显示工具选择覆盖页
     @objc private func toggleToolPanel() {
         isToolPanelExpanded.toggle()
-        let targetHeight: CGFloat = isToolPanelExpanded ? toolPanelExpandedHeight : 0
-
-        // 动画展开/收起高度约束（NSView.animator）
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
-            context.allowsImplicitAnimation = true
-            toolPanelHeightConstraint.animator().constant = targetHeight
-            toolPanelView.layoutSubtreeIfNeeded()
-        }, completionHandler: nil)
 
         // 切换按钮激活态外观：展开时强调色，收起时次级标签色
         toolBtn.contentTintColor = isToolPanelExpanded ? .controlAccentColor : .secondaryLabelColor
 
-        // 任务修复：通知 MainWindowController 隐藏/显示设备浮层（问题3）
-        // 工具面板与设备浮层为独立视图系统，展开工具面板时设备浮层需隐藏，通过通知解耦联动
+        // 通知 MainWindowController 显示/隐藏 ToolOverlayView + 设备浮层联动
         NotificationCenter.default.post(
             name: NSNotification.Name("SidebarToolPanelDidToggle"),
             object: nil,
             userInfo: ["isExpanded": isToolPanelExpanded]
         )
-    }
-
-    /// 任务 F11-11: 构建工具面板内容（三个入口行：查重 / 批量重命名 / AI 工具）（C1）
-    /// 每行：SF Symbol 图标 + 文字标签，点击发送对应 NotificationCenter 通知。
-    private func buildToolPanelContents() {
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 0
-        container.distribution = .fill
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.edgeInsets = NSEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
-        toolPanelView.addSubview(container)
-
-        NSLayoutConstraint.activate([
-            container.topAnchor.constraint(equalTo: toolPanelView.topAnchor),
-            container.leadingAnchor.constraint(equalTo: toolPanelView.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: toolPanelView.trailingAnchor),
-            container.bottomAnchor.constraint(equalTo: toolPanelView.bottomAnchor),
-        ])
-
-        // 三个入口项：(图标, 标题, 通知名)
-        let entries: [(icon: String, title: String, notification: Notification.Name)] = [
-            ("rectangle.dashed", "查重扫描", .sidebarDidRequestDedupScan),
-            ("pencil.and.list.rectangle", "批量重命名", .sidebarDidRequestBatchRename),
-            ("sparkles", "AI 自动打标签", .sidebarDidRequestAITools),
-        ]
-        for entry in entries {
-            let row = makeToolPanelEntry(icon: entry.icon, title: entry.title, notification: entry.notification)
-            container.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
-        }
-    }
-
-    /// 任务 F11-11: 创建单个工具面板入口行（图标 + 文字，点击发通知）（C1）
-    private func makeToolPanelEntry(icon: String, title: String, notification: Notification.Name) -> NSView {
-        let row = NSView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.wantsLayer = true
-        row.layer?.backgroundColor = NSColor.clear.cgColor
-        row.heightAnchor.constraint(equalToConstant: 36).isActive = true
-
-        let iconView = NSImageView()
-        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
-        iconView.contentTintColor = .secondaryLabelColor
-        iconView.imageScaling = .scaleProportionallyDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(iconView)
-
-        let label = NSTextField(labelWithString: title)
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.textColor = .labelColor
-        label.lineBreakMode = .byTruncatingTail
-        label.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 10),
-            iconView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 18),
-            iconView.heightAnchor.constraint(equalToConstant: 18),
-            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
-            label.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
-            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-        ])
-
-        // 点击发送对应通知（由 MainWindowController / 活动面板视图监听处理）
-        let click = NSClickGestureRecognizer(target: self, action: #selector(handleToolPanelEntryClick(_:)))
-        row.addGestureRecognizer(click)
-        // 用 identifier 携带通知名，回调时取出
-        row.identifier = NSUserInterfaceItemIdentifier(notification.rawValue)
-        return row
-    }
-
-    /// 任务 F11-11: 工具面板入口点击回调，根据 row.identifier 发送对应通知（C1）
-    @objc private func handleToolPanelEntryClick(_ sender: NSClickGestureRecognizer) {
-        guard let raw = sender.view?.identifier?.rawValue else { return }
-        let name = Notification.Name(raw)
-        NotificationCenter.default.post(name: name, object: nil)
     }
 
     @objc private func removeFavorite(_ sender: Any?) {

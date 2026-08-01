@@ -41,6 +41,8 @@ class FFGlassView: NSView {
     private var innerShadowLayer: CALayer?
     /// 原生玻璃视图（.panel 级，macOS 26+ 用 NSGlassEffectView，旧版用 NSVisualEffectView）
     private var nativeGlassView: NSView?
+    /// v0.6.9: 超椭圆圆角 mask 层
+    private var squircleMaskLayer: CAShapeLayer?
 
     // MARK: - 全局实例跟踪
 
@@ -89,9 +91,15 @@ class FFGlassView: NSView {
     private func setup() {
         wantsLayer = true
         layer = CALayer()
-        layer?.cornerRadius = cornerRadius
+        // v0.6.9: 使用超椭圆 mask 替代标准 cornerRadius
         layer?.masksToBounds = true
         layer?.backgroundColor = NSColor.clear.cgColor
+
+        // v0.6.9: 创建超椭圆 mask
+        let mask = CAShapeLayer()
+        mask.fillColor = NSColor.white.cgColor
+        layer?.mask = mask
+        squircleMaskLayer = mask
 
         switch level {
         case .window:
@@ -222,6 +230,9 @@ class FFGlassView: NSView {
     private func updateSublayerFrames() {
         let bounds = self.bounds
         guard !bounds.isEmpty else { return }
+
+        // v0.6.9: 更新超椭圆 mask 路径
+        squircleMaskLayer?.path = SquircleView.squirclePath(in: bounds, radius: cornerRadius)
 
         // tint / 噪声：填满
         tintLayer?.frame = bounds
