@@ -22,6 +22,9 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
     /// 记录插入 responder chain 前的 nextResponder，用于退出时恢复
     private var savedNextResponder: NSResponder?
 
+    /// v0.6.9 fix: 记录打开预览时的目标 window，避免关闭时 keyWindow 已切换导致 responder chain 残留
+    private weak var targetWindow: NSWindow?
+
     /// QLPreviewPanel 单例引用
     private var previewPanel: QLPreviewPanel? {
         QLPreviewPanel.shared()
@@ -95,6 +98,8 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
         guard let window = NSApp.keyWindow, let firstResponder = window.firstResponder else { return }
         // 避免重复插入
         if firstResponder.nextResponder === self { return }
+        // v0.6.9 fix: 记录目标 window，关闭时使用而非依赖 keyWindow（可能已切换）
+        targetWindow = window
         // 保存当前 nextResponder，稍后恢复
         savedNextResponder = firstResponder.nextResponder
         // 插入 self：firstResponder → self → 原 nextResponder
@@ -104,7 +109,8 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
 
     /// 从 responder chain 中移除 self
     private func removeFromResponderChain() {
-        guard let window = NSApp.keyWindow else { return }
+        // v0.6.9 fix: 使用记录的 targetWindow 而非 NSApp.keyWindow（可能已切换）
+        guard let window = targetWindow else { return }
         // 遍历 responder chain，找到指向 self 的 responder
         var responder: NSResponder? = window.firstResponder
         while let r = responder {
@@ -113,6 +119,7 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
                 r.nextResponder = savedNextResponder ?? self.nextResponder
                 self.nextResponder = nil
                 savedNextResponder = nil
+                targetWindow = nil
                 break
             }
             responder = r.nextResponder

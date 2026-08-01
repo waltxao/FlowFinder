@@ -72,7 +72,10 @@ public class ToolOverlayView: NSView {
         // 添加工具方块（每行 2 列）
         var rowViews: [NSView] = []
         for tool in tools {
-            let toolCard = makeToolCard(tool: tool)
+            let toolCard = ToolCardView(tool: tool) { [weak self] in
+                tool.action?()
+                self?.onClose?()
+            }
             rowViews.append(toolCard)
             if rowViews.count >= 2 {
                 gridContainer.addRow(with: rowViews)
@@ -112,72 +115,6 @@ public class ToolOverlayView: NSView {
         ])
     }
 
-    /// 创建单个工具方块
-    private func makeToolCard(tool: ToolItem) -> NSView {
-        let card = NSView()
-        card.wantsLayer = true
-        card.layer?.backgroundColor = NSColor.clear.cgColor
-        card.translatesAutoresizingMaskIntoConstraints = false
-
-        // 图标
-        let iconView = NSImageView()
-        iconView.image = NSImage(systemSymbolName: tool.icon, accessibilityDescription: tool.title)
-        iconView.contentTintColor = tool.isEnabled ? .controlAccentColor : .tertiaryLabelColor
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(iconView)
-
-        // 标题
-        let titleLabel = NSTextField(labelWithString: tool.title)
-        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .bold)
-        titleLabel.textColor = tool.isEnabled ? .labelColor : .tertiaryLabelColor
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(titleLabel)
-
-        // 介绍
-        let descLabel = NSTextField(labelWithString: tool.description)
-        descLabel.font = NSFont.systemFont(ofSize: 11)
-        descLabel.textColor = .secondaryLabelColor
-        descLabel.lineBreakMode = .byTruncatingTail
-        descLabel.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(descLabel)
-
-        NSLayoutConstraint.activate([
-            iconView.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
-            iconView.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 48),
-            iconView.heightAnchor.constraint(equalToConstant: 48),
-
-            titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 8),
-            titleLabel.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-
-            descLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
-            descLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
-            descLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
-            descLabel.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-        ])
-
-        // 点击手势（仅可用工具响应）
-        if tool.isEnabled, let action = tool.action {
-            let click = NSClickGestureRecognizer(target: self, action: #selector(toolCardClicked(_:)))
-            card.addGestureRecognizer(click)
-            card.identifier = NSUserInterfaceItemIdentifier(tool.title)
-            // 存储 action 到 associated object
-            objc_setAssociatedObject(card, &ToolOverlayView.actionKey, action, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        }
-
-        return card
-    }
-
-    /// 工具方块点击回调
-    @objc private func toolCardClicked(_ sender: NSClickGestureRecognizer) {
-        guard let card = sender.view else { return }
-        if let action = objc_getAssociatedObject(card, &ToolOverlayView.actionKey) as? () -> Void {
-            action()
-            onClose?()
-        }
-    }
-
     /// 关闭按钮点击
     @objc private func closeClicked() {
         onClose?()
@@ -191,7 +128,75 @@ public class ToolOverlayView: NSView {
         }
         super.keyDown(with: event)
     }
+}
 
-    // Associated object key
-    private static var actionKey: UInt8 = 0
+/// v0.6.9: 工具卡片视图子类，存储 action 闭包（替代 objc_setAssociatedObject 反模式）
+private class ToolCardView: NSView {
+
+    /// 点击回调
+    private let onTap: (() -> Void)?
+
+    init(tool: ToolOverlayView.ToolItem, onTap: @escaping () -> Void) {
+        self.onTap = tool.isEnabled ? onTap : nil
+        super.init(frame: .zero)
+        setupUI(tool: tool)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupUI(tool: ToolOverlayView.ToolItem) {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+
+        // 图标
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: tool.icon, accessibilityDescription: tool.title)
+        iconView.contentTintColor = tool.isEnabled ? .controlAccentColor : .tertiaryLabelColor
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView)
+
+        // 标题
+        let titleLabel = NSTextField(labelWithString: tool.title)
+        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .bold)
+        titleLabel.textColor = tool.isEnabled ? .labelColor : .tertiaryLabelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(titleLabel)
+
+        // 介绍
+        let descLabel = NSTextField(labelWithString: tool.description)
+        descLabel.font = NSFont.systemFont(ofSize: 11)
+        descLabel.textColor = .secondaryLabelColor
+        descLabel.lineBreakMode = .byTruncatingTail
+        descLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(descLabel)
+
+        NSLayoutConstraint.activate([
+            iconView.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 48),
+            iconView.heightAnchor.constraint(equalToConstant: 48),
+
+            titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 8),
+            titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+
+            descLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            descLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            descLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            descLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+        ])
+
+        // 点击手势（仅可用工具响应）
+        if onTap != nil {
+            let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
+            addGestureRecognizer(click)
+        }
+    }
+
+    @objc private func clicked() {
+        onTap?()
+    }
 }

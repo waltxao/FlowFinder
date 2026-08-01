@@ -88,16 +88,11 @@ class SidebarView: NSView {
     private var favoritesHeightConstraint: NSLayoutConstraint!
     private var tagsHeightConstraint: NSLayoutConstraint!
 
-    // 任务 F11-11: 侧边栏底部工具面板（C1）
-    // 点击工具按钮后从 toolBarRow 下方展开，含三个入口：查重 / 批量重命名 / AI 工具
-    private var toolPanelView: NSVisualEffectView!
-    private var toolPanelHeightConstraint: NSLayoutConstraint!
+    // v0.6.9: 侧边栏底部工具按钮，点击后在操作区弹出 ToolOverlayView 覆盖页
     /// 工具按钮引用（用于切换激活态 contentTintColor）
     private var toolBtn: NSButton!
     /// 工具面板当前是否展开
     private var isToolPanelExpanded: Bool = false
-    /// 工具面板展开高度（3 个入口行 * 36pt + 上下 padding 8*2）
-    private let toolPanelExpandedHeight: CGFloat = 124
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -281,22 +276,6 @@ class SidebarView: NSView {
 
         let padding: CGFloat = 12
 
-        // v0.6.9: 工具面板已移除内联入口行，改为点击工具按钮直接弹出 ToolOverlayView
-        // toolPanelView 保留为高度 0 的占位（兼容现有约束），不再构建内容
-        toolPanelView = NSVisualEffectView()
-        toolPanelView.material = .sidebar
-        toolPanelView.blendingMode = .behindWindow
-        toolPanelView.state = .active
-        toolPanelView.translatesAutoresizingMaskIntoConstraints = false
-        toolPanelView.wantsLayer = true
-        toolPanelView.layer?.cornerRadius = 8
-        toolPanelView.layer?.masksToBounds = true
-        addSubview(toolPanelView)
-
-        // 工具面板高度约束：初始 0（收起）
-        toolPanelHeightConstraint = toolPanelView.heightAnchor.constraint(equalToConstant: 0)
-        toolPanelHeightConstraint.priority = .required
-
         NSLayoutConstraint.activate([
             // 收藏夹标题（紧跟 brandView 下方，与收藏夹图标左对齐）
             favoritesTitleLabel.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: padding),
@@ -331,12 +310,6 @@ class SidebarView: NSView {
             toolBarRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             toolBarRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             toolBarRow.heightAnchor.constraint(equalToConstant: 28),
-
-            // 工具面板
-            toolPanelView.bottomAnchor.constraint(equalTo: toolBarRow.topAnchor, constant: -4),
-            toolPanelView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            toolPanelView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
-            toolPanelHeightConstraint,
         ])
 
         // 任务 F10-3: 卷挂载/卸载监听已迁移至 MainWindowController（设备浮层负责刷新）（v0.6.6）

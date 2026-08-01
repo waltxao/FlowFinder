@@ -41,22 +41,24 @@ public class SquircleView: NSView {
         }
     }
 
-    /// 应用超椭圆 mask
+    /// 应用超椭圆 mask（复用 maskLayer，仅更新 path，避免高频 layout 时反复创建销毁 layer）
     public func applySquircleMask() {
         let bounds = self.bounds
         if bounds.isEmpty { return }
 
-        // 如果已有 mask layer，先移除
-        maskLayer?.removeFromSuperlayer()
-
         let path = Self.squirclePath(in: bounds, radius: cornerRadius, factor: squircleFactor)
-        let shapeLayer = CAShapeLayer()
-        shapeLayer.path = path
-        shapeLayer.fillRule = .evenOdd
-        maskLayer = shapeLayer
 
-        // 应用 mask 到 layer
-        layer?.mask = shapeLayer
+        if maskLayer == nil {
+            // 首次调用：创建 mask layer
+            let shapeLayer = CAShapeLayer()
+            shapeLayer.path = path
+            shapeLayer.fillRule = .evenOdd
+            maskLayer = shapeLayer
+            layer?.mask = shapeLayer
+        } else {
+            // 后续调用：仅更新 path（避免 layer 创建/销毁开销）
+            maskLayer?.path = path
+        }
     }
 
     /// 移除超椭圆 mask

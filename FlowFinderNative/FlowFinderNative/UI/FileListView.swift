@@ -359,6 +359,8 @@ private struct FFDisplayRow {
     let isHeader: Bool
     let key: String
     let fileIndex: Int
+    /// v0.6.9: 预计算该文件是否有标签，避免 heightOfRow 高频调用 TagBridge I/O
+    var hasTags: Bool = false
 }
 
 /// NSTableView-based file list view with 4 columns (名称/修改日期/类型/大小)
@@ -451,7 +453,9 @@ public class FileListView: NSView {
             // 组内文件行（fileIndex 指向 viewModel.files 中的下标）
             for entry in group.entries {
                 if let idx = viewModel.state.files.firstIndex(where: { $0.path == entry.path }) {
-                    rows.append(FFDisplayRow(isHeader: false, key: group.key, fileIndex: idx))
+                    // v0.6.9: 预计算标签状态，避免 heightOfRow 高频 I/O
+                    let hasTags = !TagBridge.shared.getTags(path: entry.path).isEmpty
+                    rows.append(FFDisplayRow(isHeader: false, key: group.key, fileIndex: idx, hasTags: hasTags))
                 }
             }
         }
@@ -1615,14 +1619,11 @@ extension FileListView: NSTableViewDelegate {
         guard row < displayRows.count else { return 26 }
         let displayRow = displayRows[row]
         if displayRow.isHeader { return 24 }
-        // 动态行高：检查该文件是否有标签
-        guard displayRow.fileIndex < viewModel?.files.count ?? 0 else { return 26 }
-        let entry = viewModel!.files[displayRow.fileIndex]
-        // v0.6.9: 若关闭标签显示，始终使用单行高度
+        // v0.6.9: 使用预计算的 hasTags 避免高频 TagBridge I/O
+        // 若关闭标签显示，始终使用单行高度
         let showTags = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
         if !showTags { return 26 }
-        let tags = TagBridge.shared.getTags(path: entry.path)
-        return tags.isEmpty ? 26 : 48
+        return displayRow.hasTags ? 48 : 26
     }
 
     /// 返回自定义 FFTableRowView。标准 NSTableRowView.drawSelection 已能正确绘制
