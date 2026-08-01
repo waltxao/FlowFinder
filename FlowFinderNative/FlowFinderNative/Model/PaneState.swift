@@ -535,12 +535,29 @@ public class PaneViewModel: ObservableObject {
         applyFilter()
     }
 
+    // MARK: - v0.6.9: 显示配置过滤（隐藏文件 / 系统文件）
+
+    /// 根据 UserDefaults 中的显示配置过滤文件列表。
+    /// - showHiddenFiles == false → 过滤掉 isHidden 的文件
+    /// - showSystemFiles == false → 过滤掉 isSystemProtected 的文件
+    private func applyDisplayFilter(_ entries: [FileEntry]) -> [FileEntry] {
+        let showHidden = UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.showHiddenFiles)
+        let showSystem = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showSystemFiles) as? Bool ?? false
+        return entries.filter { entry in
+            if !showHidden && entry.isHidden { return false }
+            if !showSystem && entry.isSystemProtected { return false }
+            return true
+        }
+    }
+
     private func applyFilter() {
         // 任务 F11-11: 搜索/标签筛选变化为完整重载，取消挂起的分页追加任务（C5）
         // （loadDirectory 的初始分页走 applyFilterPaginated，不经过此处）
         cancelPagination()
         // 任务 F11-8: 综合应用标签筛选 + 搜索过滤，结果均基于 allFiles（原始列表）
         var filtered = allFiles
+        // v0.6.9: 显示配置过滤（隐藏文件 / 系统文件）
+        filtered = applyDisplayFilter(filtered)
         // 1. 标签筛选：仅保留含该标签的文件（TagBridge.getTags 检查是否含该标签）
         if let tagFilter = state.tagFilter {
             filtered = filtered.filter { entry in
@@ -586,6 +603,8 @@ public class PaneViewModel: ObservableObject {
 
         // 综合标签 + 搜索过滤（与 applyFilter 相同逻辑，结果为完整过滤列表）
         var filtered = allFiles
+        // v0.6.9: 显示配置过滤（隐藏文件 / 系统文件）
+        filtered = applyDisplayFilter(filtered)
         if let tagFilter = state.tagFilter {
             filtered = filtered.filter { entry in
                 if !entry.tags.isEmpty {

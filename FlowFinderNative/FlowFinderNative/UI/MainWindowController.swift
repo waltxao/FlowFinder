@@ -2,17 +2,32 @@ import Cocoa
 import Combine
 import QuickLook
 
+/// v0.6.9: 无分割线 NSSplitView 子类（用于侧边栏与操作区之间，divider 厚度为 0）
+private class FFNoDividerSplitView: NSSplitView {
+    override var dividerThickness: CGFloat {
+        return 0
+    }
+}
+
 /// 自定义 NSSplitView 子类：任务 R5 — divider 悬停高亮
-/// 悬停时左右卡片边缘显示 1pt accent 色边框，提示可拖动调整操作区横向大小
+/// v0.6.9: divider 厚度设为 0（移除可见分割线），拖动时显示渐变亮线
 private class FFSplitView: NSSplitView {
     private var dividerTrackingArea: NSTrackingArea?
     /// 悬停时是否高亮（由 mouseMoved 判断鼠标位置是否在 divider 附近 ±4pt）
     private var isHoveringDivider = false {
         didSet {
             if isHoveringDivider != oldValue {
-                updateSubviewBorderHighlight()
+                updateDividerLine()
             }
         }
+    }
+
+    /// 渐变亮线 layer（拖动时显示）
+    private var gradientLineLayer: CAGradientLayer?
+
+    /// v0.6.9: divider 厚度为 0（移除可见分割线，保留拖拽功能）
+    override var dividerThickness: CGFloat {
+        return 0
     }
 
     override func updateTrackingAreas() {
@@ -39,7 +54,6 @@ private class FFSplitView: NSSplitView {
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
-        // 鼠标进入后，mouseMoved 会判断是否在 divider 附近
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -47,21 +61,45 @@ private class FFSplitView: NSSplitView {
         isHoveringDivider = false
     }
 
-    /// 更新子视图边框高亮
-    private func updateSubviewBorderHighlight() {
+    /// v0.6.9: 拖动时显示从鼠标位置向上下渐变的亮线，移除操作区蓝色边框
+    private func updateDividerLine() {
         if isHoveringDivider {
-            for subview in subviews {
-                subview.layer?.borderWidth = 1
-                subview.layer?.borderColor = NSColor.controlAccentColor.cgColor
-            }
+            // 移除旧的亮线
+            gradientLineLayer?.removeFromSuperlayer()
+
+            // 创建渐变亮线
+            let gradientLayer = CAGradientLayer()
+            gradientLayer.colors = [
+                NSColor.clear.cgColor,
+                NSColor.controlAccentColor.cgColor,
+                NSColor.clear.cgColor
+            ]
+            gradientLayer.locations = [0, 0.5, 1]
+            gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
+            gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
+
+            // 亮线位置：divider 位置，宽度 2pt，高度为 splitView 全高
+            let dividerX = subviews.count >= 2 ? subviews[0].frame.maxX : 0
+            gradientLayer.frame = CGRect(x: dividerX - 1, y: 0, width: 2, height: self.bounds.height)
+
+            self.layer?.addSublayer(gradientLayer)
+            gradientLineLayer = gradientLayer
+
             // 鼠标变为双箭头调整光标
             NSCursor.resizeLeftRight.set()
         } else {
-            for subview in subviews {
-                subview.layer?.borderWidth = 0
-            }
+            // 移除亮线
+            gradientLineLayer?.removeFromSuperlayer()
+            gradientLineLayer = nil
             NSCursor.arrow.set()
         }
+    }
+
+    /// 拖动过程中更新亮线位置
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        // 拖动开始时确保亮线显示
+        updateDividerLine()
     }
 }
 
@@ -101,6 +139,8 @@ public class MainWindowController: NSWindowController {
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
+    /// v0.6.9: 工具选择覆盖页（点击侧边栏工具按钮后在操作区显示）
+    private var toolOverlayView: ToolOverlayView?
     /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
     /// 与侧边栏收藏夹/标签模块视觉分离，展开时显示所有设备不需滚动条
     private var devicePanel: NSView!
@@ -281,7 +321,8 @@ public class MainWindowController: NSWindowController {
         paneSplitView.addArrangedSubview(makeCardWrapper(for: rightPaneContainer))
 
         // Main Split View（侧边栏 + 操作区）
-        mainSplitView = NSSplitView()
+        // v0.6.9: 使用无分割线子类，移除侧边栏与操作区之间的可见分割线
+        mainSplitView = FFNoDividerSplitView()
         mainSplitView.isVertical = true
         mainSplitView.dividerStyle = .thin
         mainSplitView.translatesAutoresizingMaskIntoConstraints = false
@@ -458,20 +499,17 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
-    /// 任务 F2: 操作区撑满（仿访达），无圆角（v0.6.5）
-    /// 任务 F11-1: 操作区改为实体背景（日间#F5F5F5/夜间#2D2D2D），不再透明透出玻璃材质（v0.6.7）
+    /// v0.6.9: 超椭圆圆角 16pt + 1px 边框 + 实体背景覆盖工具栏
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
-        let container = NSView()
+        let container = SquircleView(cornerRadius: 16, squircleFactor: 5.0, autoUpdateMask: true)
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
-        // 任务 F11-1: 操作区实体背景（v0.6.7）
-        // 日间 #F5F5F5（访达浅灰白），夜间 #2D2D2D（访达深灰黑）
-        // 实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
+        // v0.6.9: 操作区实体背景（日间#F5F5F5/夜间#2D2D2D）
         container.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
-        // 任务 F2→v0.6.7-2: 恢复圆角卡片布局，左右操作区分别被圆角矩形包裹
-        container.layer?.cornerRadius = 8
-        container.layer?.masksToBounds = true
+        // v0.6.9: 1px 边框（日间浅灰/夜间深灰）
+        container.layer?.borderWidth = 1
+        container.layer?.borderColor = operationAreaBorderColor().cgColor
 
         // 1.2 活动面板顶部 accent 色条（2pt 高，初始隐藏，由 updateActivePaneVisual 切换）
         let accentBar = NSView()
@@ -529,6 +567,7 @@ public class MainWindowController: NSWindowController {
         }
 
         // DetailsBar（每面板一个，可展开/收起）
+        // v0.6.9: 详情栏改为液态玻璃浮层，覆盖在文件列表上方（不再占据容器底部空间）
         let detailsBar = ExpandableDetailsBar()
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
 
@@ -536,35 +575,46 @@ public class MainWindowController: NSWindowController {
         container.addSubview(toolbar)
         container.addSubview(listView)
         container.addSubview(gridView)
+        // v0.6.9: detailsBar 最后添加（视觉最上层），作为浮层覆盖
         container.addSubview(detailsBar)
 
         NSLayoutConstraint.activate([
-            // accentBar 贴顶部（任务 F2：无圆角，不再裁剪）
+            // accentBar 贴顶部
             accentBar.topAnchor.constraint(equalTo: container.topAnchor),
             accentBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             accentBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             accentBar.heightAnchor.constraint(equalToConstant: 2),
 
-            // 任务 F3: toolbar 占顶部 72pt（双行）
+            // toolbar 占顶部
             toolbar.topAnchor.constraint(equalTo: container.topAnchor),
             toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
+            // v0.6.9: 文件列表底部锚定 container 底部（不再锚定 detailsBar.topAnchor）
+            // 文件列表始终占满操作区全高，详情栏以浮层形式覆盖在上方
             listView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             listView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             listView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            listView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
+            listView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
             gridView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             gridView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             gridView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            gridView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
+            gridView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            detailsBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            detailsBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            detailsBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            // 高度由 ExpandableDetailsBar 内部 heightConstraint 控制（收起 28 / 展开 120）
+            // v0.6.9: 详情栏浮层定位——底部留 8pt 边距，左右各 8pt
+            detailsBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            detailsBar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            detailsBar.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            // 高度由 ExpandableDetailsBar 内部 heightConstraint 控制
         ])
+
+        // v0.6.9: 详情栏浮层添加阴影强化浮动层次
+        detailsBar.wantsLayer = true
+        detailsBar.layer?.shadowOpacity = 0.15
+        detailsBar.layer?.shadowRadius = 8
+        detailsBar.layer?.shadowOffset = CGSize(width: 0, height: -2)
+        detailsBar.layer?.shadowColor = NSColor.black.cgColor
 
         // 保存引用
         switch side {
@@ -599,11 +649,23 @@ public class MainWindowController: NSWindowController {
             : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
     }
 
-    /// 任务 F11-1: 刷新左右操作区容器背景色（主题切换时调用，v0.6.7）
+    /// v0.6.9: 操作区边框颜色（日间浅灰/夜间深灰）
+    private func operationAreaBorderColor() -> NSColor {
+        let isDark = ThemeManager.shared.resolvedIsDark
+        return isDark
+            ? NSColor(srgbRed: 0.227, green: 0.227, blue: 0.227, alpha: 1.0)  // #3A3A3A
+            : NSColor.separatorColor  // 系统分隔线色（约 #E5E5E5）
+    }
+
+    /// v0.6.9: 刷新左右操作区容器背景色和边框色（主题切换时调用）
     private func refreshOperationAreaBackgrounds() {
-        let color = operationAreaBackgroundColor().cgColor
-        leftPaneContainer?.layer?.backgroundColor = color
-        rightPaneContainer?.layer?.backgroundColor = color
+        let bgColor = operationAreaBackgroundColor().cgColor
+        let borderColor = operationAreaBorderColor().cgColor
+        leftPaneContainer?.layer?.backgroundColor = bgColor
+        rightPaneContainer?.layer?.backgroundColor = bgColor
+        // v0.6.9: 同步刷新边框颜色
+        leftPaneContainer?.layer?.borderColor = borderColor
+        rightPaneContainer?.layer?.borderColor = borderColor
         // 任务 F11-1: 设备栏浮层同步改为实体背景（与操作区一致）
         refreshDevicePanelBackground()
     }
@@ -861,6 +923,25 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleToolPanelToggle(_:)),
             name: NSNotification.Name("SidebarToolPanelDidToggle"), object: nil
         )
+        // v0.6.9: 文件夹显示配置变更通知
+        // 隐藏文件 / 系统文件切换需重新过滤文件列表（数据层）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleRefreshHiddenFiles),
+            name: .refreshHiddenFiles, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleRefreshSystemFiles),
+            name: .refreshSystemFiles, object: nil
+        )
+        // 文件标签 / 文件后缀切换仅需刷新视图显示（展示层）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleRefreshFileTagsDisplay),
+            name: .refreshFileTags, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleRefreshFileExtensionsDisplay),
+            name: .refreshFileExtensions, object: nil
+        )
     }
 
     /// 任务 F10-10: 处理 OpenSettings 通知，弹出设置窗口（修复问题3）
@@ -874,6 +955,117 @@ public class MainWindowController: NSWindowController {
         guard let isExpanded = notification.userInfo?["isExpanded"] as? Bool else { return }
         // 工具展开时隐藏设备浮层，收起时恢复显示
         devicePanel?.isHidden = isExpanded
+        // v0.6.9: 工具展开时在激活操作区显示工具选择覆盖页，收起时移除
+        if isExpanded {
+            showToolOverlay()
+        } else {
+            hideToolOverlay()
+        }
+    }
+
+    // MARK: - v0.6.9: 工具选择覆盖页
+
+    /// 在当前激活的操作区容器上覆盖显示工具选择页
+    private func showToolOverlay() {
+        // 若已存在则先移除
+        hideToolOverlay()
+
+        let tools: [ToolOverlayView.ToolItem] = [
+            ToolOverlayView.ToolItem(
+                icon: "rectangle.dashed",
+                title: "查重扫描",
+                description: "扫描当前目录中的重复文件",
+                isEnabled: true,
+                action: { [weak self] in
+                    self?.hideToolOverlay()
+                    DuplicateScanWindowController.shared.showWindow()
+                }
+            ),
+            ToolOverlayView.ToolItem(
+                icon: "pencil.line",
+                title: "批量重命名",
+                description: "批量重命名选中文件",
+                isEnabled: true,
+                action: { [weak self] in
+                    self?.hideToolOverlay()
+                    self?.menuBatchRename(nil)
+                }
+            ),
+            ToolOverlayView.ToolItem(
+                icon: "sparkles",
+                title: "AI 打标 Beta",
+                description: "自动为文件生成标签",
+                isEnabled: false,
+                action: nil
+            ),
+            ToolOverlayView.ToolItem(
+                icon: "tray.full",
+                title: "AI 整理 Beta",
+                description: "自动整理文件到子文件夹",
+                isEnabled: false,
+                action: nil
+            ),
+        ]
+
+        let overlay = ToolOverlayView(tools: tools)
+        overlay.onClose = { [weak self] in
+            self?.hideToolOverlay()
+            // 同步复位侧边栏工具按钮状态
+            NotificationCenter.default.post(
+                name: NSNotification.Name("SidebarToolPanelDidToggle"),
+                object: nil,
+                userInfo: ["isExpanded": false]
+            )
+        }
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        overlay.wantsLayer = true
+        overlay.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
+
+        let activeContainer = (activePane == .left ? leftPaneContainer : rightPaneContainer)!
+        activeContainer.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: activeContainer.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: activeContainer.bottomAnchor),
+            overlay.leadingAnchor.constraint(equalTo: activeContainer.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: activeContainer.trailingAnchor),
+        ])
+        toolOverlayView = overlay
+    }
+
+    /// 移除工具选择覆盖页
+    private func hideToolOverlay() {
+        toolOverlayView?.removeFromSuperview()
+        toolOverlayView = nil
+    }
+
+    // MARK: - v0.6.9: 文件夹显示配置变更处理
+
+    /// 隐藏文件显示/隐藏切换：重新过滤文件列表（数据层）
+    @objc private func handleRefreshHiddenFiles() {
+        refreshPane(.left)
+        refreshPane(.right)
+    }
+
+    /// 系统文件显示/隐藏切换：重新过滤文件列表（数据层）
+    @objc private func handleRefreshSystemFiles() {
+        refreshPane(.left)
+        refreshPane(.right)
+    }
+
+    /// 文件标签显示/隐藏切换：刷新视图（展示层）
+    @objc private func handleRefreshFileTagsDisplay() {
+        leftFileListView?.reloadData()
+        rightFileListView?.reloadData()
+        leftFileGridView?.reloadData()
+        rightFileGridView?.reloadData()
+    }
+
+    /// 文件后缀显示/隐藏切换：刷新视图（展示层）
+    @objc private func handleRefreshFileExtensionsDisplay() {
+        leftFileListView?.reloadData()
+        rightFileListView?.reloadData()
+        leftFileGridView?.reloadData()
+        rightFileGridView?.reloadData()
     }
 
     // MARK: - 任务 F11-11: 侧边栏工具面板入口通知处理（C1）
@@ -1014,6 +1206,17 @@ public class MainWindowController: NSWindowController {
 
     public override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
+
+        // v0.6.9: Escape 关闭工具选择覆盖页
+        if event.keyCode == 53 && toolOverlayView != nil {
+            hideToolOverlay()
+            NotificationCenter.default.post(
+                name: NSNotification.Name("SidebarToolPanelDidToggle"),
+                object: nil,
+                userInfo: ["isExpanded": false]
+            )
+            return
+        }
 
         // 仅 Cmd 修饰（不含 Shift/Option/Control）
         let isPureCommand = modifiers.contains(.command)
@@ -1380,6 +1583,11 @@ extension MainWindowController: PaneToolbarDelegate {
             return
         }
         menuBatchRename(nil)
+    }
+
+    // v0.6.9: 文件夹配置菜单"新建文件夹"回调
+    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar) {
+        menuNewFolder(nil)
     }
 }
 

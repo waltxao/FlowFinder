@@ -96,10 +96,8 @@ class ExpandableDetailsBar: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // 1.6 玻璃背景：FFGlassView(.panel, .sidebar, cornerRadius: 8)
-        // 任务 F10-11: 材质对齐 .sidebar（与侧边栏统一），修正此前 .headerView 导致的材质不统一
-        // 详情栏作为底部信息条，与侧边栏同属"辅助信息区"，应使用同一材质层次（v0.6.6）
-        let glassBackground = FFGlassView(level: .panel, cornerRadius: 8, material: .sidebar)
+        // v0.6.9: 玻璃背景浮层，圆角 12pt（超椭圆由 SquircleView 处理，此处用 FFGlassView 提供材质）
+        let glassBackground = FFGlassView(level: .panel, cornerRadius: 12, material: .sidebar)
         glassBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glassBackground)
 

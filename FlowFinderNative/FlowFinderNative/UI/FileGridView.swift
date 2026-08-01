@@ -10,6 +10,11 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     /// 设为 internal 以便 FileGridView.beginInlineRename() 访问。
     var nameLabel: NSTextField!
     private var pathLabel: NSTextField!
+    /// 标签药丸容器（横向排列，位于文件名下方）
+    private var tagPillContainer: NSStackView!
+
+    /// 标签移除回调（tagName, path），由 FileGridView 设置
+    var onRemoveTag: ((String, String) -> Void)?
 
     /// 任务 F10-9: 记录该 item 当前显示文件的完整路径（F8 遗漏修复，v0.6.6）。
     /// 用于缩略图异步回调时校验 item 仍显示同一文件（避免旧请求覆盖新 item），
@@ -26,7 +31,9 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     var entry: FileEntry? {
         didSet {
             guard let entry = entry else { return }
-            nameLabel.stringValue = entry.name
+            // v0.6.9: 根据 showFileExtensions 设置决定是否显示文件后缀
+            let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
+            nameLabel.stringValue = showExtensions ? entry.name : entry.displayName
             pathLabel.stringValue = entry.path
             // 任务 F11-7: 复位缩略图标志（item 重新绑定文件）
             didReceiveThumbnail = false
@@ -102,6 +109,9 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             } else {
                 nameLabel.textColor = NSColor.labelColor
             }
+
+            // 配置标签药丸（文件名下方）
+            configureTagPills()
         }
     }
 
@@ -122,10 +132,13 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         // 重置选中背景（防止复用 item 残留选中样式）
         view.layer?.backgroundColor = NSColor.clear.cgColor
         view.layer?.cornerRadius = 0
+        // 清除旧标签药丸
+        tagPillContainer?.arrangedSubviews.forEach { $0.removeFromSuperview() }
     }
 
     override func loadView() {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 120))
+        // 高度从 120 增至 140，为标签药丸行预留空间
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 140))
         view.wantsLayer = true
 
         thumbnailImageView = NSImageView()
@@ -143,9 +156,17 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         pathLabel.isHidden = true
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        // 标签药丸容器（横向排列，位于文件名下方）
+        tagPillContainer = NSStackView()
+        tagPillContainer.orientation = .horizontal
+        tagPillContainer.alignment = .centerY
+        tagPillContainer.spacing = 4
+        tagPillContainer.translatesAutoresizingMaskIntoConstraints = false
+
         view.addSubview(thumbnailImageView)
         view.addSubview(nameLabel)
         view.addSubview(pathLabel)
+        view.addSubview(tagPillContainer)
 
         NSLayoutConstraint.activate([
             thumbnailImageView.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
@@ -156,7 +177,13 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             nameLabel.topAnchor.constraint(equalTo: thumbnailImageView.bottomAnchor, constant: 4),
             nameLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
             nameLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
-            nameLabel.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -4),
+
+            // 标签药丸位于文件名下方 4pt，水平居中
+            tagPillContainer.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
+            tagPillContainer.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 4),
+            tagPillContainer.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -4),
+            tagPillContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            tagPillContainer.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -4),
         ])
 
         self.view = view
@@ -171,6 +198,123 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 : NSColor.clear.cgColor
             view.layer?.cornerRadius = isSelected ? 8 : 0
         }
+    }
+
+    // MARK: - Tag Pills（标签药丸）
+
+    /// 配置标签药丸（文件名下方显示，最多 3 个 + "+N"）
+    /// 药丸不响应左键点击，右键可弹出移除标签菜单
+    private func configureTagPills() {
+        guard let entry = entry else { return }
+        // v0.6.9: 根据 showFileTags 设置决定是否显示标签药丸
+        let showTags = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
+        if !showTags {
+            tagPillContainer.isHidden = true
+            return
+        }
+        // 清除旧药丸
+        tagPillContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        let tags = TagBridge.shared.getTags(path: entry.path)
+        if tags.isEmpty {
+            tagPillContainer.isHidden = true
+            return
+        }
+        tagPillContainer.isHidden = false
+        for tag in tags.prefix(3) {
+            if let pill = makeTagPill(tag: tag) {
+                tagPillContainer.addArrangedSubview(pill)
+            }
+        }
+        if tags.count > 3 {
+            if let countPill = makeCountPill(count: tags.count - 3) {
+                tagPillContainer.addArrangedSubview(countPill)
+            }
+        }
+        // 右键菜单：移除标签
+        let tagMenu = NSMenu()
+        tagMenu.autoenablesItems = false
+        for tag in tags {
+            let item = NSMenuItem(title: "移除「\(tag.name)」", action: #selector(removeTagFromGrid(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["tagName": tag.name, "path": entry.path]
+            tagMenu.addItem(item)
+        }
+        tagPillContainer.menu = tagMenu
+    }
+
+    /// 右键移除标签回调
+    @objc private func removeTagFromGrid(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let tagName = info["tagName"],
+              let path = info["path"] else { return }
+        onRemoveTag?(tagName, path)
+    }
+
+    /// 创建单个标签药丸（与 FileListView 样式一致）
+    private func makeTagPill(tag: Tag) -> NSView? {
+        let pill = NSView()
+        pill.wantsLayer = true
+        let tagColor = NSColor(hex: tag.color) ?? .systemBlue
+        pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
+        pill.layer?.cornerRadius = 9
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = (NSColor(hex: tag.color) ?? .systemBlue).cgColor
+        dot.layer?.cornerRadius = 4
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(dot)
+
+        let label = NSTextField(labelWithString: tag.name)
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.lineBreakMode = .byTruncatingTail
+        label.cell?.wraps = false
+        label.cell?.truncatesLastVisibleLine = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        pill.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            pill.heightAnchor.constraint(equalToConstant: 18),
+            dot.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 8),
+            dot.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+        ])
+        return pill
+    }
+
+    /// 创建 "+N" 计数药丸（无圆点，仅文字）
+    private func makeCountPill(count: Int) -> NSView? {
+        let pill = NSView()
+        pill.wantsLayer = true
+        if #available(macOS 14.0, *) {
+            pill.layer?.backgroundColor = NSColor.secondarySystemFill.cgColor
+        } else {
+            pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        }
+        pill.layer?.cornerRadius = 9
+        pill.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: "+\(count)")
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            pill.heightAnchor.constraint(equalToConstant: 18),
+            label.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+        ])
+        return pill
     }
 }
 
@@ -426,7 +570,7 @@ public class FileGridView: NSView {
         // NSCollectionViewGridLayout 不支持补充视图，无法渲染分组标题。
         // FlowLayout 横向排列填满一行后换行，与网格视觉效果一致，且支持 headerReferenceSize。
         let layout = NSCollectionViewFlowLayout()
-        layout.itemSize = NSSize(width: 120, height: 120)
+        layout.itemSize = NSSize(width: 120, height: 140)
         layout.minimumInteritemSpacing = 8
         layout.minimumLineSpacing = 8
         layout.sectionInset = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
@@ -1031,6 +1175,13 @@ extension FileGridView: NSCollectionViewDataSource {
         guard let item = collectionView.makeItem(withIdentifier: NSUserInterfaceItemIdentifier("GridItem"), for: indexPath) as? FileGridCollectionViewItem else {
             // 安全回退：类型转换失败时返回空 item，避免崩溃
             return NSCollectionViewItem()
+        }
+        // 设置标签移除回调（在 entry 设置前设置，确保菜单可用时回调已就绪）
+        item.onRemoveTag = { [weak self] tagName, path in
+            _ = TagBridge.shared.removeTagByName(tagName, path: path)
+            self?.reloadData()
+            let updatedTags = TagBridge.shared.getTags(path: path)
+            NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": updatedTags])
         }
         // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
         let flatIdx = flatIndex(for: indexPath)

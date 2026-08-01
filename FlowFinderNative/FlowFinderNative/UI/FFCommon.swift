@@ -47,6 +47,10 @@ extension Notification.Name {
     static let refreshHiddenFiles = Notification.Name("refreshHiddenFiles")
     static let toggleDualPane = Notification.Name("ToggleDualPane")
     static let appearanceChanged = Notification.Name("AppearanceChanged")
+    // v0.6.9: 文件夹显示配置变更通知
+    static let refreshFileTags = Notification.Name("refreshFileTags")
+    static let refreshFileExtensions = Notification.Name("refreshFileExtensions")
+    static let refreshSystemFiles = Notification.Name("refreshSystemFiles")
 
     // 任务相关
     static let taskProgressUpdated = Notification.Name("TaskProgressUpdated")
@@ -73,4 +77,8 @@ enum FFUserDefaultsKeys {
     static let sidebarTags = "SidebarTags"
     static let sidebarFavorites = "SidebarFavorites"
     static let themeMode = "theme_mode"
+    // v0.6.9: 文件夹显示配置
+    static let showFileTags = "show_file_tags"
+    static let showFileExtensions = "show_file_extensions"
+    static let showSystemFiles = "show_system_files"
 }

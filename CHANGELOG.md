@@ -4,6 +4,46 @@
 
 ---
 
+## [0.6.9] — 2026-08-01
+
+> UI 细节精细化修复 + QuickLook 预览修复
+
+### ✨ 新增
+
+#### 超椭圆圆角系统
+- **SquircleView 工具类**：新建 `SquircleView.swift`，通过 `CGPath` 绘制超椭圆（superellipse）路径实现 iOS 风格的平滑圆角，替代标准 `cornerRadius`。应用到操作区容器（16pt）、详情栏浮层（12pt）、搜索框组件（8pt）等所有圆角位置
+
+#### 文件夹显示配置菜单
+- **文件夹配置按钮**：搜索栏后方的工具菜单改为文件夹显示配置菜单（`slider.horizontal.3` 图标），包含显示/隐藏隐藏文件、文件标签、文件后缀、系统文件四项开关，菜单文案根据当前状态动态切换并带勾选标记
+- **新建文件夹**：菜单底部保留新建文件夹入口
+- **显示配置联动**：`showHiddenFiles`/`showSystemFiles` 在数据层过滤文件列表（PaneState.applyDisplayFilter），`showFileTags`/`showFileExtensions` 在展示层控制视图刷新
+
+#### 工具选择覆盖页
+- **ToolOverlayView**：新建 `ToolOverlayView.swift`，点击侧边栏工具按钮后在当前激活操作区覆盖显示工具选择页。大方块网格布局（2列），每个工具包含 48pt 大图标 + 名称 + 介绍，右上角关闭按钮，Esc 键可关闭。查重扫描和批量重命名可用，AI 打标/AI 整理标记为 Beta 置灰
+
+### 🐛 Bug 修复
+
+#### QuickLook 预览
+- **QuickLook 完全不可用修复**：`QuickLookPreviewPanel` 基类从 `NSObject` 改为 `NSResponder`，实现 `QLPreviewPanelController` informal protocol 方法（`acceptsPreviewPanelControl`/`beginPreviewPanelControl`/`endPreviewPanelControl`），通过 responder chain 插入/移除使 QLPreviewPanel 能正确找到 controller。空格键预览、方向键切换、Esc 关闭、再次空格切换均已修复
+
+#### 侧边栏
+- **收藏夹间距修复**：「我的收藏」标题与收藏夹文件夹列表间距从 12pt 改为 4pt，与标签区间距一致
+- **收藏夹对齐修复**：收藏夹文件夹图标最左边缘与「我的收藏」标题文字最左边缘对齐，消除缩进
+
+#### 操作区
+- **背景覆盖修复**：操作区白色背景（夜间黑色）正确覆盖顶部工具栏区域（导航栏 + 搜索框 + 路径栏）
+- **1px 边框**：操作区增加 1px 边框（日间浅灰 `NSColor.separatorColor` / 夜间深灰 `#3A3A3A`）
+- **分割线移除**：移除侧边栏与操作区之间、两个操作区之间的分割线（`dividerThickness` 返回 0）
+- **拖动渐变亮线**：拖动调整操作区宽度时，仅在鼠标位置显示从中心向两端渐变的垂直亮线（`CAGradientLayer`），不再显示操作区蓝色边框
+
+#### 详情栏
+- **浮层化改造**：详情栏从操作区容器内部底部改为浮层覆盖在文件列表上方，文件列表始终占满操作区全高，不因详情栏展开而缩短。四周留 8pt 边距，增加阴影（`shadowOpacity = 0.15`、`shadowRadius = 8`）强化浮动层次，圆角 12pt
+
+#### 文件名布局
+- **双行布局**：列表视图和网格视图中，有标签的文件显示双行（上方文件名、下方标签药丸），无标签文件单行显示。列表视图动态行高（有标签 48pt / 无标签 26pt），关闭标签显示时统一单行高度
+
+---
+
 ## [0.6.8] — 2026-07-31
 
 > 侧边栏交互修复 + 主题切换稳定性提升

@@ -48,6 +48,18 @@ private class FFFNoDisclosureOutlineView: NSOutlineView {
     override var canBecomeKeyView: Bool {
         return false
     }
+    // 消除 cell 左侧额外偏移，使图标最左边缘与标题文字最左边缘对齐
+    override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+        var frame = super.frameOfCell(atColumn: column, row: row)
+        // NSOutlineView 默认在第一列左侧有约 6-8pt 偏移（即使 indentationPerLevel=0）
+        // 将 cell frame 的 origin.x 移到最左边缘，宽度补偿
+        if column == 0 {
+            let offsetX = frame.origin.x
+            frame.origin.x = 0
+            frame.size.width += offsetX
+        }
+        return frame
+    }
 }
 
 // MARK: - SidebarView
@@ -293,8 +305,8 @@ class SidebarView: NSView {
             favoritesTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             favoritesTitleLabel.heightAnchor.constraint(equalToConstant: 16),
 
-            // 收藏夹内容（标题下方 12pt 间距，无卡片背景，高度自适应全部列出）
-            favoritesOutlineView.topAnchor.constraint(equalTo: favoritesTitleLabel.bottomAnchor, constant: 12),
+            // 收藏夹内容（标题下方 4pt 间距，与标签区一致，无卡片背景，高度自适应全部列出）
+            favoritesOutlineView.topAnchor.constraint(equalTo: favoritesTitleLabel.bottomAnchor, constant: 4),
             favoritesOutlineView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             favoritesOutlineView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             favoritesHeightConstraint,
@@ -383,6 +395,8 @@ class SidebarView: NSView {
         ov.rowHeight = 28
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
+        // 消除 cell 间额外间距
+        ov.intercellSpacing = .zero
         // 选中样式：sourceList（访达侧边栏半透明高亮）
         ov.selectionHighlightStyle = .sourceList
         ov.backgroundColor = NSColor.clear

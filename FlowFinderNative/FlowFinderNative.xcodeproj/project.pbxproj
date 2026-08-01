@@ -60,6 +60,8 @@
 		FF0000000000000000200057 /* ProgressDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200058; };
 		FF0000000000000000200063 /* FFLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200064; };
 		FF0000000000000000200065 /* FFCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200066; };
+		FF0000000000000000200067 /* SquircleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200068; };
+		FF0000000000000000200069 /* ToolOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006A; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -118,6 +120,8 @@
 		FF0000000000000000200058 /* ProgressDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressDialog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200064 /* FFLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200066 /* FFCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCommon.swift; sourceTree = "<group>"; };
+		FF0000000000000000200068 /* SquircleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquircleView.swift; sourceTree = "<group>"; };
+		FF000000000000000020006A /* ToolOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOverlayView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -196,6 +200,8 @@
 				FF0000000000000000200056 /* ConnectServerDialog.swift */,
 				FF0000000000000000200058 /* ProgressDialog.swift */,
 				FF0000000000000000200066 /* FFCommon.swift */,
+				FF0000000000000000200068 /* SquircleView.swift */,
+				FF000000000000000020006A /* ToolOverlayView.swift */,
 		);
 		path = UI;
 		sourceTree = "<group>";
@@ -395,6 +401,8 @@
 				FF0000000000000000200057 /* ProgressDialog.swift in Sources */,
 				FF0000000000000000200063 /* FFLog.swift in Sources */,
 				FF0000000000000000200065 /* FFCommon.swift in Sources */,
+				FF0000000000000000200067 /* SquircleView.swift in Sources */,
+				FF0000000000000000200069 /* ToolOverlayView.swift in Sources */,
 		);
 		runOnlyForDeploymentPostprocessing = 0;
 	};
@@ -527,7 +535,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 680;
+				CURRENT_PROJECT_VERSION = 690;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -551,7 +559,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.8;
+				MARKETING_VERSION = 0.6.9;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
@@ -572,7 +580,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 680;
+				CURRENT_PROJECT_VERSION = 690;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -596,7 +604,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.8;
+				MARKETING_VERSION = 0.6.9;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",

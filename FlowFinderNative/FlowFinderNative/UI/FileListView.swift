@@ -1074,15 +1074,19 @@ public class FileListView: NSView {
         if let window = window { alert.beginSheetModal(for: window) { _ in } }
     }
 
-    // MARK: - C12: Inline Tag Pills（名称列内联标签药丸）
+    // MARK: - C12: Inline Tag Pills（名称列双行标签药丸）
 
-    /// 名称列 cell 内联标签药丸配置：
-    /// - 名称列 cell 结构：[文件图标] [文件名] [标签药丸容器]
-    /// - 药丸容器使用 NSStackView 横向排列，最多 3 个药丸 + "+N"
-    /// - 文件名设置 defaultLow 水平压缩阻力，让药丸有空间
-    /// - 药丸容器 trailing 对齐 cell trailing
+    /// 名称列 cell 双行标签药丸配置：
+    /// - 名称列 cell 结构（双行）：
+    ///   上行：[文件图标] [文件名]
+    ///   下行：[标签药丸容器]（横向排列，最多 3 个药丸 + "+N"）
+    /// - 无标签时药丸容器隐藏，行高保持单行高度（26pt）
+    /// - 有标签时药丸容器显示在文件名下方，行高增加（48pt）
+    /// - 药丸不响应左键点击（仅显示），右键可弹出移除标签菜单
     private func configureInlineTagPills(in cellView: NSTableCellView, entry: FileEntry) {
         guard let textField = cellView.textField else { return }
+        // v0.6.9: 根据 showFileTags 设置决定是否显示标签药丸
+        let showTags = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
         let containerID = "inlineTagPillContainer"
         // 复用已存在的容器（cell 复用时避免重复创建）
         var pillContainer: NSStackView? = nil
@@ -1092,33 +1096,29 @@ public class FileListView: NSView {
                 break
             }
         }
+        // v0.6.9: 若关闭标签显示，隐藏药丸容器并返回
+        if !showTags {
+            pillContainer?.isHidden = true
+            return
+        }
         if pillContainer == nil {
-            // 首次创建：
-            // 1) 移除 textField 的 trailing 约束（初始共享 setup 添加的）
-            // 2) 让 textField 可被压缩，给药丸留空间
-            // 3) 创建药丸容器，trailing 对齐 cell trailing
-            cellView.removeConstraints(cellView.constraints.filter {
-                ($0.firstItem === textField && $0.firstAttribute == .trailing)
-                    || ($0.secondItem === textField && $0.secondAttribute == .trailing)
-            })
-            textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
+            // 双行布局：药丸容器位于文件名下方（而非右侧）
             let stack = NSStackView()
             stack.identifier = NSUserInterfaceItemIdentifier(containerID)
             stack.orientation = .horizontal
             stack.alignment = .centerY
             stack.spacing = 4
             stack.translatesAutoresizingMaskIntoConstraints = false
-            // 任务 F5: 降低 hugging 让药丸不被推向右边缘
             stack.setHuggingPriority(.defaultLow, for: .horizontal)
             stack.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             cellView.addSubview(stack)
             NSLayoutConstraint.activate([
-                // 任务 F5: 药丸紧贴文件名后 8pt（硬约束，避免被推向右边缘裁切）
-                stack.leadingAnchor.constraint(equalTo: textField.trailingAnchor, constant: 8),
-                // 允许药丸溢出到后续列（用户要求"可以被后面的列遮挡"）
-                stack.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: 0),
-                stack.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                // 药丸与文件名左对齐（紧跟图标之后）
+                stack.leadingAnchor.constraint(equalTo: textField.leadingAnchor),
+                // 允许药丸溢出到后续列
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: -4),
+                // 药丸位于文件名下方 4pt
+                stack.topAnchor.constraint(equalTo: textField.bottomAnchor, constant: 4),
             ])
             pillContainer = stack
         }
@@ -1143,7 +1143,7 @@ public class FileListView: NSView {
                     pillContainer?.addArrangedSubview(countPill)
                 }
             }
-            // 设置右键菜单用于移除标签
+            // 设置右键菜单用于移除标签（现有功能，保留）
             let tagMenu = NSMenu()
             tagMenu.autoenablesItems = false
             for tag in tags {
@@ -1476,7 +1476,9 @@ extension FileListView: NSTableViewDelegate {
 
         switch tableColumn?.identifier.rawValue {
         case "name":
-            cellView.textField?.stringValue = entry.name
+            // v0.6.9: 根据 showFileExtensions 设置决定是否显示文件后缀
+            let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
+            cellView.textField?.stringValue = showExtensions ? entry.name : entry.displayName
             // 隐藏文件灰色，系统保护文件红色
             if entry.isSystemProtected {
                 cellView.textField?.textColor = NSColor.systemRed
@@ -1486,6 +1488,7 @@ extension FileListView: NSTableViewDelegate {
                 cellView.textField?.textColor = NSColor.labelColor
             }
             // 使用 Auto Layout 约束布局 imageView，避免手动 frame 冲突
+            // 双行布局：图标和文件名在上方行，标签药丸在下方行
             if cellView.imageView == nil {
                 let iv = NSImageView()
                 iv.imageScaling = .scaleProportionallyDown
@@ -1497,18 +1500,21 @@ extension FileListView: NSTableViewDelegate {
                 let leadingC = iv.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4)
                 NSLayoutConstraint.activate([
                     leadingC,
-                    iv.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                    // 双行布局：图标顶部对齐（上方留 4pt 边距）
+                    iv.topAnchor.constraint(equalTo: cellView.topAnchor, constant: 4),
                     iv.widthAnchor.constraint(equalToConstant: 18),
                     iv.heightAnchor.constraint(equalToConstant: 18),
                 ])
                 cellView.nameLeadingConstraint = leadingC
-                // 更新 textField 的 leading 约束到 imageView 之后
+                // 更新 textField 的 leading 和垂直约束
                 if let tf = cellView.textField {
-                    // 移除旧的 leading 约束并添加新的
+                    // 移除旧的 leading 和 centerY 约束，改为双行布局
                     cellView.removeConstraints(cellView.constraints.filter {
-                        $0.firstItem === tf && $0.firstAttribute == .leading
+                        $0.firstItem === tf && ($0.firstAttribute == .leading || $0.firstAttribute == .centerY)
                     })
                     tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 4).isActive = true
+                    // 双行布局：文件名顶部对齐（上方留 4pt 边距，与图标一致）
+                    tf.topAnchor.constraint(equalTo: cellView.topAnchor, constant: 4).isActive = true
                 }
             }
             // 任务 F11-5: 分组内文件缩进（仿访达）。
@@ -1604,9 +1610,19 @@ extension FileListView: NSTableViewDelegate {
     }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        // 任务 F10-8 / F11-5: 分组标题行高度 24（仿访达，留出标题+计数徽章+底部分隔线空间），文件行高度 26
+        // 任务 F10-8 / F11-5: 分组标题行高度 24（仿访达，留出标题+计数徽章+底部分隔线空间）
+        // 双行布局：有标签的文件行高度 48（文件名行 + 标签药丸行），无标签 26
         guard row < displayRows.count else { return 26 }
-        return displayRows[row].isHeader ? 24 : 26
+        let displayRow = displayRows[row]
+        if displayRow.isHeader { return 24 }
+        // 动态行高：检查该文件是否有标签
+        guard displayRow.fileIndex < viewModel?.files.count ?? 0 else { return 26 }
+        let entry = viewModel!.files[displayRow.fileIndex]
+        // v0.6.9: 若关闭标签显示，始终使用单行高度
+        let showTags = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
+        if !showTags { return 26 }
+        let tags = TagBridge.shared.getTags(path: entry.path)
+        return tags.isEmpty ? 26 : 48
     }
 
     /// 返回自定义 FFTableRowView。标准 NSTableRowView.drawSelection 已能正确绘制

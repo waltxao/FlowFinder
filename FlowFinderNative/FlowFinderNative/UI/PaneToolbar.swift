@@ -13,16 +13,13 @@ protocol PaneToolbarDelegate: AnyObject {
     func paneToolbar(_ toolbar: PaneToolbar, didChangeGroupBy groupBy: String)
     func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: ViewMode)
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String)
-    // 任务 D15: 工具菜单触发回调
-    func paneToolbarDidClickDedupScan(_ toolbar: PaneToolbar)
-    func paneToolbarDidClickBatchRename(_ toolbar: PaneToolbar)
+    // v0.6.9: 文件夹显示配置菜单回调
+    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar)
 }
 
-// MARK: - 任务 D15: PaneToolbarDelegate 默认实现
-// 为新增方法提供默认空实现，保证现有实现类（如 MainWindowController）不破坏
+// MARK: - PaneToolbarDelegate 默认实现
 extension PaneToolbarDelegate {
-    func paneToolbarDidClickDedupScan(_ toolbar: PaneToolbar) {}
-    func paneToolbarDidClickBatchRename(_ toolbar: PaneToolbar) {}
+    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar) {}
 }
 
 // MARK: - PaneToolbar
@@ -195,8 +192,8 @@ class PaneToolbar: NSView {
         toolsSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolsSeparator.heightAnchor.constraint(equalToConstant: 16).isActive = true
 
-        // 任务 D15: 工具按钮（点击弹出下拉菜单）
-        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showToolsMenu))
+        // v0.6.9: 文件夹显示配置按钮（替代原工具菜单）
+        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu))
 
         let row2 = NSStackView(views: [
             searchContainer,
@@ -311,49 +308,101 @@ class PaneToolbar: NSView {
 
     // MARK: - 任务 D15/D17: 工具菜单
 
-    /// 点击工具按钮弹出下拉菜单
-    @objc private func showToolsMenu() {
+    /// v0.6.9: 点击文件夹配置按钮弹出显示配置菜单
+    @objc private func showFolderOptionsMenu() {
         let menu = NSMenu()
 
-        // 查重扫描
-        let dedupItem = NSMenuItem(title: "查重扫描", action: #selector(dedupScanClicked), keyEquivalent: "")
-        dedupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
-        dedupItem.target = self
-        menu.addItem(dedupItem)
+        // 读取当前显示配置状态
+        let showHidden = UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.showHiddenFiles)
+        let showTags = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
+        let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
+        let showSystem = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showSystemFiles) as? Bool ?? false
+
+        // 显示/隐藏隐藏文件（文案根据当前状态切换）
+        let hiddenItem = NSMenuItem(
+            title: showHidden ? "隐藏隐藏文件" : "显示隐藏文件",
+            action: #selector(toggleShowHidden),
+            keyEquivalent: ""
+        )
+        hiddenItem.target = self
+        hiddenItem.state = showHidden ? .on : .off
+        menu.addItem(hiddenItem)
+
+        // 显示/隐藏文件标签
+        let tagsItem = NSMenuItem(
+            title: showTags ? "隐藏文件标签" : "显示文件标签",
+            action: #selector(toggleShowTags),
+            keyEquivalent: ""
+        )
+        tagsItem.target = self
+        tagsItem.state = showTags ? .on : .off
+        menu.addItem(tagsItem)
+
+        // 显示/隐藏文件后缀
+        let extensionsItem = NSMenuItem(
+            title: showExtensions ? "隐藏文件后缀" : "显示文件后缀",
+            action: #selector(toggleShowExtensions),
+            keyEquivalent: ""
+        )
+        extensionsItem.target = self
+        extensionsItem.state = showExtensions ? .on : .off
+        menu.addItem(extensionsItem)
+
+        // 显示/隐藏系统文件
+        let systemItem = NSMenuItem(
+            title: showSystem ? "隐藏系统文件" : "显示系统文件",
+            action: #selector(toggleShowSystemFiles),
+            keyEquivalent: ""
+        )
+        systemItem.target = self
+        systemItem.state = showSystem ? .on : .off
+        menu.addItem(systemItem)
 
         menu.addItem(.separator())
 
-        // AI 打标 Beta（任务 D17: 置灰不可点击）
-        let aiTagItem = NSMenuItem(title: "AI 打标 Beta", action: nil, keyEquivalent: "")
-        aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
-        aiTagItem.isEnabled = false
-        menu.addItem(aiTagItem)
+        // 新建文件夹
+        let newFolderItem = NSMenuItem(
+            title: "新建文件夹",
+            action: #selector(newFolderClicked),
+            keyEquivalent: ""
+        )
+        newFolderItem.target = self
+        newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
+        menu.addItem(newFolderItem)
 
-        // AI 整理 Beta（任务 D17: 置灰不可点击）
-        let aiOrganizeItem = NSMenuItem(title: "AI 整理 Beta", action: nil, keyEquivalent: "")
-        aiOrganizeItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)
-        aiOrganizeItem.isEnabled = false
-        menu.addItem(aiOrganizeItem)
-
-        menu.addItem(.separator())
-
-        // 批量重命名
-        let renameItem = NSMenuItem(title: "批量重命名", action: #selector(batchRenameClicked), keyEquivalent: "")
-        renameItem.image = NSImage(systemSymbolName: "pencil.and.list.rectangle", accessibilityDescription: "批量重命名")
-        renameItem.target = self
-        menu.addItem(renameItem)
-
-        // 在按钮下方弹出菜单（y 略大于按钮高度，菜单会自动向下展开）
+        // 在按钮下方弹出菜单
         let location = NSPoint(x: 0, y: toolsButton.bounds.height + 2)
         menu.popUp(positioning: nil, at: location, in: toolsButton)
     }
 
-    @objc private func dedupScanClicked() {
-        delegate?.paneToolbarDidClickDedupScan(self)
+    // MARK: - v0.6.9: 显示配置切换回调
+
+    @objc private func toggleShowHidden() {
+        let current = UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.showHiddenFiles)
+        UserDefaults.standard.set(!current, forKey: FFUserDefaultsKeys.showHiddenFiles)
+        NotificationCenter.default.post(name: .refreshHiddenFiles, object: nil)
     }
 
-    @objc private func batchRenameClicked() {
-        delegate?.paneToolbarDidClickBatchRename(self)
+    @objc private func toggleShowTags() {
+        let current = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
+        UserDefaults.standard.set(!current, forKey: FFUserDefaultsKeys.showFileTags)
+        NotificationCenter.default.post(name: .refreshFileTags, object: nil)
+    }
+
+    @objc private func toggleShowExtensions() {
+        let current = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
+        UserDefaults.standard.set(!current, forKey: FFUserDefaultsKeys.showFileExtensions)
+        NotificationCenter.default.post(name: .refreshFileExtensions, object: nil)
+    }
+
+    @objc private func toggleShowSystemFiles() {
+        let current = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showSystemFiles) as? Bool ?? false
+        UserDefaults.standard.set(!current, forKey: FFUserDefaultsKeys.showSystemFiles)
+        NotificationCenter.default.post(name: .refreshSystemFiles, object: nil)
+    }
+
+    @objc private func newFolderClicked() {
+        delegate?.paneToolbarDidClickNewFolder(self)
     }
 }
 
