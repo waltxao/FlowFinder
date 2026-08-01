@@ -181,11 +181,11 @@ public class SMBManagerPanel: NSView {
 
     /// 空状态视图
     private func makeEmptyState() -> NSView {
-        let container = NSView()
+        let container = SquircleMaskedView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.3).cgColor
-        container.layer?.cornerRadius = 8
+        container.squircleRadius = 8
 
         let icon = NSImageView()
         icon.image = NSImage(systemSymbolName: "network.slash", accessibilityDescription: nil)
@@ -265,7 +265,7 @@ public class SMBManagerPanel: NSView {
         statusPill.alignment = .center
         statusPill.wantsLayer = true
         statusPill.layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.15).cgColor
-        statusPill.layer?.cornerRadius = 7
+        statusPill.applySquircleCornerRadius(7)
         statusPill.translatesAutoresizingMaskIntoConstraints = false
         statusPill.widthAnchor.constraint(equalToConstant: 48).isActive = true
         statusPill.heightAnchor.constraint(equalToConstant: 14).isActive = true

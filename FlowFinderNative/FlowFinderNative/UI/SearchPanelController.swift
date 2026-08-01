@@ -333,10 +333,10 @@ public class SearchPanelController: NSWindowController {
     /// - Parameter cornerRadius: 圆角（默认 0；卡片样式传 8/10 等）
     /// - Returns: isOpaque=true 的 NSView，背景色为系统动态 controlBackgroundColor。
     private func makeSolidContainer(cornerRadius: CGFloat = 0) -> NSView {
-        let view = NSView()
+        let view = SquircleMaskedView()
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        view.layer?.cornerRadius = cornerRadius
+        view.squircleRadius = cornerRadius
         view.layer?.masksToBounds = cornerRadius > 0
         return view
     }

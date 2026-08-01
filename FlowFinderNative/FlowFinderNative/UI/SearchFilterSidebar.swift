@@ -220,7 +220,7 @@ class SearchFilterSidebar: NSView {
             pill.alignment = .center
             pill.wantsLayer = true
             pill.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
-            pill.layer?.cornerRadius = 7
+            pill.applySquircleCornerRadius(7)
             pill.translatesAutoresizingMaskIntoConstraints = false
             pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 18).isActive = true
             pill.heightAnchor.constraint(equalToConstant: 14).isActive = true

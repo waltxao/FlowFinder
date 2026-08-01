@@ -749,10 +749,10 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         cell.imageView = nil
 
         // 药丸容器（圆角背景）
-        let pillContainer = NSView()
+        let pillContainer = SquircleMaskedView()
         pillContainer.wantsLayer = true
         pillContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        pillContainer.layer?.cornerRadius = 12  // 胶囊圆角
+        pillContainer.squircleRadius = 12  // 胶囊圆角（超椭圆）
         pillContainer.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(pillContainer)
 
@@ -1668,15 +1668,15 @@ private class TagFlowView: NSView {
         let tagColor = NSColor(hex: tag.color) ?? .systemBlue
 
         // 药丸容器：胶囊形，内容自适应宽度
-        let pill = NSView()
+        let pill = SquircleMaskedView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.identifier = NSUserInterfaceItemIdentifier(tag.id)
         pill.wantsLayer = true
         // 浅色底（标签色的淡色版本），高亮态加深
         let bgAlpha: CGFloat = isHighlighted ? 0.25 : 0.15
         pill.layer?.backgroundColor = tagColor.withAlphaComponent(bgAlpha).cgColor
-        // 胶囊形：圆角 = 高度的一半，形成左右半圆
-        pill.layer?.cornerRadius = pillHeight / 2
+        // 胶囊形：圆角 = 高度的一半，形成左右半圆（超椭圆）
+        pill.squircleRadius = pillHeight / 2
 
         // 圆点（8x8，tag.color）
         let dot = NSView()

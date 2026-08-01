@@ -59,8 +59,8 @@ class DuplicateGroupView: NSView {
         headerView.action = #selector(toggleExpand)
         headerView.translatesAutoresizingMaskIntoConstraints = false
         headerView.wantsLayer = true
-        headerView.layer?.cornerRadius = 6
         headerView.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.4).cgColor
+        headerView.applySquircleCornerRadius(6)
         addSubview(headerView)
 
         // 组头内容：展开箭头 + 图标 + 组名 + 计数药丸 + 可释放空间
@@ -146,7 +146,7 @@ class DuplicateGroupView: NSView {
         pill.alignment = .center
         pill.wantsLayer = true
         pill.layer?.backgroundColor = bgColor.cgColor
-        pill.layer?.cornerRadius = 7
+        pill.applySquircleCornerRadius(7)
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 18).isActive = true
         pill.heightAnchor.constraint(equalToConstant: 14).isActive = true

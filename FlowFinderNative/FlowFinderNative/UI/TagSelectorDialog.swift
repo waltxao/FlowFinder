@@ -181,10 +181,10 @@ class TagSelectorDialog: FFModalSheet {
 
     /// 已选药丸：圆点 + 名 + X 移除按钮
     private func makeSelectedPill(tag: Tag) -> NSView {
-        let pill = NSView()
+        let pill = SquircleMaskedView()
         pill.wantsLayer = true
         pill.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.7).cgColor
-        pill.layer?.cornerRadius = 11
+        pill.squircleRadius = 11
         pill.translatesAutoresizingMaskIntoConstraints = false
 
         let dot = NSView()
@@ -235,7 +235,7 @@ class TagSelectorDialog: FFModalSheet {
         let pill = NSButton()
         pill.wantsLayer = true
         pill.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.4).cgColor
-        pill.layer?.cornerRadius = 11
+        pill.applySquircleCornerRadius(11)
         pill.isBordered = false
         pill.font = .systemFont(ofSize: 11)
         pill.title = "  • \(tag.name)"

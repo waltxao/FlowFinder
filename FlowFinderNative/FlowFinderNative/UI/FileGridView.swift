@@ -130,14 +130,15 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         thumbnailImageView.image = nil
         // 重置选中背景（防止复用 item 残留选中样式）
         view.layer?.backgroundColor = NSColor.clear.cgColor
-        view.layer?.cornerRadius = 0
+        // squircle 圆角：0 时自动移除 mask（SquircleMaskedView）
+        (view as? SquircleMaskedView)?.squircleRadius = 0
         // 清除旧标签药丸
         tagPillContainer?.arrangedSubviews.forEach { $0.removeFromSuperview() }
     }
 
     override func loadView() {
         // 高度从 120 增至 140，为标签药丸行预留空间
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 140))
+        let view = SquircleMaskedView(frame: NSRect(x: 0, y: 0, width: 120, height: 140))
         view.wantsLayer = true
 
         thumbnailImageView = NSImageView()
@@ -195,7 +196,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             view.layer?.backgroundColor = isSelected
                 ? NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
                 : NSColor.clear.cgColor
-            view.layer?.cornerRadius = isSelected ? 8 : 0
+            // squircle 圆角（选中 8，未选中 0 自动移除 mask）
+            (view as? SquircleMaskedView)?.squircleRadius = isSelected ? 8 : 0
         }
     }
 
@@ -252,11 +254,11 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
     /// 创建单个标签药丸（与 FileListView 样式一致）
     private func makeTagPill(tag: Tag) -> NSView? {
-        let pill = NSView()
+        let pill = SquircleMaskedView()
         pill.wantsLayer = true
         let tagColor = NSColor(hex: tag.color) ?? .systemBlue
         pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
-        pill.layer?.cornerRadius = 9
+        pill.squircleRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
 
@@ -292,14 +294,14 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
     /// 创建 "+N" 计数药丸（无圆点，仅文字）
     private func makeCountPill(count: Int) -> NSView? {
-        let pill = NSView()
+        let pill = SquircleMaskedView()
         pill.wantsLayer = true
         if #available(macOS 14.0, *) {
             pill.layer?.backgroundColor = NSColor.secondarySystemFill.cgColor
         } else {
             pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         }
-        pill.layer?.cornerRadius = 9
+        pill.squircleRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: "+\(count)")

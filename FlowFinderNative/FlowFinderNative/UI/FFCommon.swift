@@ -31,6 +31,11 @@ extension Notification.Name {
 
     // 标签相关
     static let fileListAddTag = Notification.Name("FileListAddTag")
+
+    // SMB 网络卷断连重连
+    static let smbVolumeDisconnected = Notification.Name("SMBVolumeDisconnected")
+    static let smbVolumeReconnected = Notification.Name("SMBVolumeReconnected")
+    static let smbVolumeReconnectFailed = Notification.Name("SMBVolumeReconnectFailed")
 }
 
 // MARK: - FFUserDefaultsKeys

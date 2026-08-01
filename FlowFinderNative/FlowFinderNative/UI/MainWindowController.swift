@@ -686,13 +686,13 @@ public class MainWindowController: NSWindowController {
     /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
     /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
     private func createDevicePanel() -> NSView {
-        let panel = NSView()
+        let panel = SquircleMaskedView()
         panel.translatesAutoresizingMaskIntoConstraints = false
         panel.wantsLayer = true
         // 任务 F11-1: 设备栏浮层改为实体背景（与操作区一致，v0.6.7）
         // 此前为半透明 controlBackgroundColor(0.8)，现统一为操作区实体色，保留 8pt 圆角卡片样式
         panel.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
-        panel.layer?.cornerRadius = 8
+        panel.squircleRadius = 8
         panel.layer?.masksToBounds = true
 
         // 设备栏头部（汇总信息 + 折叠箭头，复用 SidebarView 的 DeviceHeaderView）

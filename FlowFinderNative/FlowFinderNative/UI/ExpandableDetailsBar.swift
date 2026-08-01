@@ -562,10 +562,10 @@ class ExpandableDetailsBar: NSView {
 
     private func makeTagPill(tag: Tag) -> NSView {
         let pillHeight: CGFloat = 18
-        let pill = NSView()
+        let pill = SquircleMaskedView()
         pill.wantsLayer = true
         pill.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
-        pill.layer?.cornerRadius = pillHeight / 2
+        pill.squircleRadius = pillHeight / 2
         pill.translatesAutoresizingMaskIntoConstraints = false
 
         let dot = NSView()

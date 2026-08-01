@@ -1165,12 +1165,12 @@ public class FileListView: NSView {
     /// - 文字 11pt
     /// - 左右内边距 8pt，圆点与文字间距 4pt
     private func makeTagPill(tag: Tag) -> NSView? {
-        let pill = NSView()
+        let pill = SquircleMaskedView()
         pill.wantsLayer = true
         // 任务 F5: 药丸背景带标签色浅色，提高对比度
         let tagColor = NSColor(hex: tag.color) ?? .systemBlue
         pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
-        pill.layer?.cornerRadius = 9
+        pill.squircleRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
         // 设置最小宽度约束，保证至少显示 4 个字符（防止药丸在空间不足时塌缩）
         pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
@@ -1211,7 +1211,7 @@ public class FileListView: NSView {
 
     /// 创建 "+N" 计数药丸（无圆点，仅文字）
     private func makeCountPill(count: Int) -> NSView? {
-        let pill = NSView()
+        let pill = SquircleMaskedView()
         pill.wantsLayer = true
         // 任务 F5: 计数药丸背景用次级填充色（macOS 14+），旧系统回退 controlBackgroundColor
         if #available(macOS 14.0, *) {
@@ -1219,7 +1219,7 @@ public class FileListView: NSView {
         } else {
             pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         }
-        pill.layer?.cornerRadius = 9
+        pill.squircleRadius = 9
         pill.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: "+\(count)")

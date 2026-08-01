@@ -511,10 +511,10 @@ private final class TagPillsContainerView: NSView {
     }
 
     private func makePill(tag: Tag) -> NSView {
-        let pill = NSView()
+        let pill = SquircleMaskedView()
         pill.wantsLayer = true
         pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        pill.layer?.cornerRadius = pillHeight / 2  // 胶囊圆角
+        pill.squircleRadius = pillHeight / 2  // 胶囊圆角
 
         let dot = NSView()
         dot.wantsLayer = true
