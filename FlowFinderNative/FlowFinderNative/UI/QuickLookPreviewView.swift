@@ -3,7 +3,13 @@ import QuickLook
 import Quartz
 
 /// QuickLook 预览面板：使用原生 QLPreviewPanel 单例
-public class QuickLookPreviewPanel: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+/// 实现 QLPreviewPanelController（informal protocol）、DataSource、Delegate
+///
+/// QLPreviewPanel 通过 responder chain 自动查找 controller：
+/// 1. 将 self 插入 responder chain
+/// 2. 调用 panel.updateController() 让面板发现 controller
+/// 3. 面板调用 acceptsPreviewPanelControl → beginPreviewPanelControl
+public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
     public static let shared = QuickLookPreviewPanel()
 
@@ -13,6 +19,9 @@ public class QuickLookPreviewPanel: NSObject, QLPreviewPanelDataSource, QLPrevie
     /// 当前预览的索引
     private var currentIndex: Int = 0
 
+    /// 记录插入 responder chain 前的 nextResponder，用于退出时恢复
+    private var savedNextResponder: NSResponder?
+
     /// QLPreviewPanel 单例引用
     private var previewPanel: QLPreviewPanel? {
         QLPreviewPanel.shared()
@@ -20,6 +29,10 @@ public class QuickLookPreviewPanel: NSObject, QLPreviewPanelDataSource, QLPrevie
 
     private override init() {
         super.init()
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
     // MARK: - Public API
@@ -35,8 +48,19 @@ public class QuickLookPreviewPanel: NSObject, QLPreviewPanelDataSource, QLPrevie
         guard let panel = previewPanel else { return }
 
         if panel.isVisible {
+            // 关闭预览
             panel.orderOut(nil)
+            panel.dataSource = nil
+            panel.delegate = nil
+            removeFromResponderChain()
         } else {
+            // 将 self 插入 responder chain，使 QLPreviewPanel 能找到 controller
+            insertIntoResponderChain()
+
+            // 强制面板重新搜索 responder chain，找到 self 作为 controller
+            panel.updateController()
+
+            // 设置数据源和代理
             panel.dataSource = self
             panel.delegate = self
             panel.currentPreviewItemIndex = self.currentIndex
@@ -46,7 +70,12 @@ public class QuickLookPreviewPanel: NSObject, QLPreviewPanelDataSource, QLPrevie
 
     /// 关闭 QuickLook 预览
     public func close() {
-        previewPanel?.orderOut(nil)
+        if let panel = previewPanel {
+            panel.orderOut(nil)
+            panel.dataSource = nil
+            panel.delegate = nil
+        }
+        removeFromResponderChain()
     }
 
     /// 更新预览文件列表（不改变显示状态）
@@ -57,6 +86,56 @@ public class QuickLookPreviewPanel: NSObject, QLPreviewPanelDataSource, QLPrevie
         self.previewFiles = files
         self.currentIndex = max(0, min(currentIndex, max(0, files.count - 1)))
         previewPanel?.reloadData()
+    }
+
+    // MARK: - Responder Chain 管理
+
+    /// 将 self 插入 key window 的 responder chain
+    private func insertIntoResponderChain() {
+        guard let window = NSApp.keyWindow, let firstResponder = window.firstResponder else { return }
+        // 避免重复插入
+        if firstResponder.nextResponder === self { return }
+        // 保存当前 nextResponder，稍后恢复
+        savedNextResponder = firstResponder.nextResponder
+        // 插入 self：firstResponder → self → 原 nextResponder
+        self.nextResponder = firstResponder.nextResponder
+        firstResponder.nextResponder = self
+    }
+
+    /// 从 responder chain 中移除 self
+    private func removeFromResponderChain() {
+        guard let window = NSApp.keyWindow else { return }
+        // 遍历 responder chain，找到指向 self 的 responder
+        var responder: NSResponder? = window.firstResponder
+        while let r = responder {
+            if r.nextResponder === self {
+                // 跳过 self，恢复原链
+                r.nextResponder = savedNextResponder ?? self.nextResponder
+                self.nextResponder = nil
+                savedNextResponder = nil
+                break
+            }
+            responder = r.nextResponder
+        }
+    }
+
+    // MARK: - QLPreviewPanelController (Informal Protocol via NSObject category)
+
+    /// 告知 QuickLook 面板：self 愿意成为 controller
+    public override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        return true
+    }
+
+    /// 开始控制 QuickLook 面板时调用：设置数据源和代理
+    public override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+    }
+
+    /// 结束控制 QuickLook 面板时调用：清理数据源和代理
+    public override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
     }
 
     // MARK: - QLPreviewPanelDataSource
