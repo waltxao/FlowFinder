@@ -350,6 +350,10 @@ class SidebarView: NSView {
         // 监听标签数据源刷新通知，更新标签显示
         NotificationCenter.default.addObserver(self, selector: #selector(refreshTagDisplay), name: NSNotification.Name("SidebarTagsDidRefresh"), object: nil)
 
+        // v0.6.9: 监听工具面板状态同步通知（覆盖页关闭时由 MainWindowController 回传状态）
+        // 避免 isToolPanelExpanded 与实际显示状态不同步导致需点击两次才能重新打开
+        NotificationCenter.default.addObserver(self, selector: #selector(handleToolPanelStateSync(_:)), name: NSNotification.Name("SidebarToolPanelDidToggle"), object: nil)
+
         // 监听主题变更，更新品牌图标背景色
         ThemeManager.shared.onModeChanged = { [weak self] _ in
             self?.brandIconView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
@@ -456,6 +460,17 @@ class SidebarView: NSView {
             object: nil,
             userInfo: ["isExpanded": isToolPanelExpanded]
         )
+    }
+
+    /// v0.6.9: 同步工具面板状态（覆盖页通过关闭按钮/Esc 关闭时，MainWindowController 回传 isExpanded=false）
+    /// 避免 isToolPanelExpanded 与实际显示状态不同步，导致下次点击需 toggle 两次才能重新打开
+    @objc private func handleToolPanelStateSync(_ notification: Notification) {
+        guard let isExpanded = notification.userInfo?["isExpanded"] as? Bool else { return }
+        // 仅同步状态不同步的情况（覆盖页关闭时回传 false）
+        if isToolPanelExpanded != isExpanded {
+            isToolPanelExpanded = isExpanded
+            toolBtn.contentTintColor = isToolPanelExpanded ? .controlAccentColor : .secondaryLabelColor
+        }
     }
 
     @objc private func removeFavorite(_ sender: Any?) {
