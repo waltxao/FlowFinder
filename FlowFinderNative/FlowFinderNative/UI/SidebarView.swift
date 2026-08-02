@@ -283,8 +283,8 @@ class SidebarView: NSView {
             favoritesTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             favoritesTitleLabel.heightAnchor.constraint(equalToConstant: 16),
 
-            // 收藏夹内容（标题下方 12pt 间距，避免标题与首项重叠，无卡片背景，高度自适应全部列出）
-            favoritesOutlineView.topAnchor.constraint(equalTo: favoritesTitleLabel.bottomAnchor, constant: 12),
+            // 收藏夹内容（标题下方 4pt 间距，避免标题与首项重叠，无卡片背景，高度自适应全部列出）
+            favoritesOutlineView.topAnchor.constraint(equalTo: favoritesTitleLabel.bottomAnchor, constant: 4),
             favoritesOutlineView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             favoritesOutlineView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             favoritesHeightConstraint,
@@ -371,8 +371,8 @@ class SidebarView: NSView {
         ov.rowHeight = 28
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
-        // 行间距：水平无间距，垂直 4pt 间距，保证行间留白
-        ov.intercellSpacing = NSSize(width: 0, height: 4)
+        // 行间距：水平无间距，垂直 2pt，贴近访达侧边栏紧凑节奏
+        ov.intercellSpacing = NSSize(width: 0, height: 2)
         // 选中样式：regular（实心高亮，确保收藏夹选中高亮框正确显示）
         ov.selectionHighlightStyle = .regular
         ov.backgroundColor = NSColor.clear
@@ -564,9 +564,11 @@ class SidebarView: NSView {
     // 任务 F10-3: 设备刷新逻辑（refreshDevices/updateDeviceHeight）已迁移至 MainWindowController 浮层（v0.6.6）
 
     private func updateFavoritesHeight() {
-        // 仅收藏夹行（28pt），无卡片内边距
+        // 收藏夹行高 28pt + 垂直行距 2pt（intercellSpacing.height），末行无行距
         let rowHeight: CGFloat = 28
-        let height = CGFloat(favoritesDataSource.favoriteCount) * rowHeight
+        let interSpacing: CGFloat = 2
+        let count = favoritesDataSource.favoriteCount
+        let height = CGFloat(count) * rowHeight + CGFloat(max(count - 1, 0)) * interSpacing
         favoritesHeightConstraint.constant = max(height, 28)
     }
 
