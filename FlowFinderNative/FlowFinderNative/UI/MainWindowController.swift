@@ -1829,14 +1829,13 @@ extension MainWindowController {
                     }
 
                     // 注册撤销（仅当至少一个成功；best-effort）
+                    // 问题 9：粘贴操作注册撤销（复制→删除目标；移动→移回源）
                     if success > 0 {
                         if isMove {
                             let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
                             self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                                 // undo: 移回原位
-                                for (src, dst) in pairs {
-                                    try? CoreBridge.shared.moveFile(src: dst, dst: src)
-                                }
+                                ctrl.undoMoveBack(pairs: pairs)
                                 // 注册 redo：再次移动
                                 ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
                                     for (src, dst) in pairs {
@@ -1846,17 +1845,13 @@ extension MainWindowController {
                                     ctrl2.refreshPane(.right)
                                 }
                                 ctrl.undoManager?.setActionName("移动 \(success) 个项目")
-                                ctrl.refreshPane(.left)
-                                ctrl.refreshPane(.right)
                             }
                             self.ffUndoManager.setActionName("移动 \(success) 个项目")
                         } else {
                             let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
                             self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                                 // undo: 删除复制项
-                                for (_, dst) in pairs {
-                                    try? CoreBridge.shared.deleteFile(path: dst)
-                                }
+                                ctrl.undoDeleteCopied(dstPaths: dstPaths)
                                 // 注册 redo：重新复制
                                 ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
                                     for (src, dst) in pairs {
@@ -1866,8 +1861,6 @@ extension MainWindowController {
                                     ctrl2.refreshPane(.right)
                                 }
                                 ctrl.undoManager?.setActionName("复制 \(success) 个项目")
-                                ctrl.refreshPane(.left)
-                                ctrl.refreshPane(.right)
                             }
                             self.ffUndoManager.setActionName("复制 \(success) 个项目")
                         }
@@ -1887,6 +1880,34 @@ extension MainWindowController {
                     self?.taskProgressBar.hide()
                     self?.hideProgressBar(animated: true)
                 }
+            }
+        }
+    }
+
+    // MARK: - 撤销辅助（问题 9）
+
+    /// 撤销"移动"：把文件移回源位置
+    func undoMoveBack(pairs: [(src: String, dst: String)]) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for pair in pairs {
+                try? CoreBridge.shared.moveFile(src: pair.dst, dst: pair.src)
+            }
+            DispatchQueue.main.async {
+                self?.refreshPane(.left)
+                self?.refreshPane(.right)
+            }
+        }
+    }
+
+    /// 撤销"复制"：删除刚粘贴的目标文件
+    func undoDeleteCopied(dstPaths: [String]) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for dst in dstPaths {
+                try? CoreBridge.shared.deleteFile(path: dst)
+            }
+            DispatchQueue.main.async {
+                self?.refreshPane(.left)
+                self?.refreshPane(.right)
             }
         }
     }
