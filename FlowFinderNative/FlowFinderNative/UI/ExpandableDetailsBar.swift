@@ -183,8 +183,22 @@ class ExpandableDetailsBar: NSView {
         configureValue(typeField)
         configureValue(sizeField)
         configureValue(locationField)
-        locationField.lineBreakMode = .byTruncatingMiddle
-        locationField.cell?.wraps = false
+        // 问题 9：路径多行完整显示（换行而非截断），蓝色链接色区分可交互
+        locationField.lineBreakMode = .byWordWrapping
+        locationField.maximumNumberOfLines = 3
+        locationField.cell?.wraps = true
+        locationField.cell?.truncatesLastVisibleLine = false
+        locationField.textColor = NSColor.systemBlue
+        locationField.font = NSFont.systemFont(ofSize: 10)
+        // 点击跳转所在文件夹
+        let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(locationClicked))
+        locationField.addGestureRecognizer(clickGesture)
+        // 右键复制路径菜单
+        let locationMenu = NSMenu()
+        let copyItem = NSMenuItem(title: "复制路径", action: #selector(copyLocationPath), keyEquivalent: "")
+        copyItem.target = self
+        locationMenu.addItem(copyItem)
+        locationField.menu = locationMenu
         configureValue(createdField)
         configureValue(modifiedField)
 
@@ -325,6 +339,9 @@ class ExpandableDetailsBar: NSView {
             // 两列容器最小宽度，确保信息完整显示
             column1.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             column2.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            // 问题 9：限制第一列最大宽度（容器 60%），防止路径字段撑宽第一列
+            // 把第二列（标签/文件说明/来源）挤出到右缘截断
+            column1.widthAnchor.constraint(lessThanOrEqualTo: columnsContainer.widthAnchor, multiplier: 0.60),
 
             heightConstraint,
         ])
@@ -434,7 +451,8 @@ class ExpandableDetailsBar: NSView {
     }
 
     private func applyExpandedState(animated: Bool) {
-        heightConstraint.constant = isExpanded ? expandedHeight : collapsedHeight
+        let newHeight = isExpanded ? computedExpandedHeight() : collapsedHeight
+        heightConstraint.constant = newHeight
         compactView.isHidden = isExpanded
         expandedView.isHidden = !isExpanded
 
@@ -457,6 +475,38 @@ class ExpandableDetailsBar: NSView {
         } else {
             performLayout()
         }
+    }
+
+    /// 展开态高度：基础 192pt（图标 96 + 两列信息约 6 行）+ 文件类型专属信息高度
+    /// 图片/视频信息行多时按行数扩展，确保完整显示（问题 9 根因：固定 210 截断图片信息）
+    private func computedExpandedHeight() -> CGFloat {
+        var extra: CGFloat = 0
+        if let entry = entry {
+            let infoRows = gatherFileInfo(entry: entry).count
+            let rowsInTwoCols = (infoRows + 1) / 2
+            if rowsInTwoCols > 4 {
+                // 基准容纳 4 行（两列），超出部分每行 +16pt
+                extra = CGFloat(rowsInTwoCols - 4) * 16
+            }
+        }
+        return 192 + extra
+    }
+
+    // MARK: - 路径交互（问题 9：点击跳转 / 右键复制）
+
+    /// 点击路径：在访达中显示该文件所在文件夹（NSWorkspace 打开父目录并选中）
+    @objc private func locationClicked() {
+        guard let path = entry?.path else { return }
+        let parent = (path as NSString).deletingLastPathComponent
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        _ = parent  // 保留：activateFileViewerSelecting 已在 Finder 中显示父目录并选中文件
+    }
+
+    /// 右键复制路径到剪贴板
+    @objc private func copyLocationPath() {
+        guard let path = entry?.path else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
     }
 
     // MARK: - Refresh
@@ -533,6 +583,10 @@ class ExpandableDetailsBar: NSView {
 
         // 文件类型专属信息（分辨率 / EXIF / 时长 / 编码 等）
         updateFileTypeSpecificInfo(entry: entry)
+        // 动态高度：信息行数变化时更新展开高度（行数多时更高，避免截断）
+        if isExpanded {
+            heightConstraint.constant = computedExpandedHeight()
+        }
 
         if isExpanded { loadThumbnail() }
     }
@@ -843,6 +897,11 @@ class ExpandableDetailsBar: NSView {
         let url = URL(fileURLWithPath: entry.path)
         let ext = entry.fileExtension.lowercased()
 
+        // .app 是 bundle（isDir=true），必须先于 isDirectory 分支判断，
+        // 否则永远命中目录分支、版本号永远不显示（问题 9 根因）
+        if ext == "app" || entry.path.hasSuffix(".app") {
+            return gatherAppInfo(path: entry.path)
+        }
         if entry.isDirectory {
             return gatherFolderInfo(path: entry.path)
         }
@@ -854,10 +913,6 @@ class ExpandableDetailsBar: NSView {
         }
         if isAudioExtension(ext) {
             return gatherAudioInfo(url: url)
-        }
-        // .app 是 bundle，个别路径下 fileExtension 可能为空，追加路径后缀兜底
-        if ext == "app" || entry.path.hasSuffix(".app") {
-            return gatherAppInfo(path: entry.path)
         }
         if isDocumentExtension(ext) {
             return gatherDocumentInfo(url: url, ext: ext)
