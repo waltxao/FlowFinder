@@ -764,8 +764,9 @@ public class FileListView: NSView {
             self?.updateStickyHeader()
         }
 
-        // 注册为拖拽目标
-        registerForDraggedTypes([.fileURL])
+        // 注册 tableView 为拖拽目标（NSTableViewDataSource 的 validateDrop/acceptDrop
+        // 方法要求 tableView 自身注册拖拽类型，在父 NSView 上注册不会触发回调）
+        tableView.registerForDraggedTypes([.fileURL])
 
         // 启用拖拽源（通过 tableView）
         tableView.setDraggingSourceOperationMask([.copy, .move, .delete], forLocal: false)
