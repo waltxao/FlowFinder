@@ -1517,11 +1517,11 @@ private func loadAllSidebarTags() -> [Tag] {
 
 extension FileGridView {
     public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        return isMoveOperation(sender) ? .move : .copy
+        return isMoveOperation(sender, destPath: viewModel?.currentPath) ? .move : .copy
     }
 
     public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        return isMoveOperation(sender) ? .move : .copy
+        return isMoveOperation(sender, destPath: viewModel?.currentPath) ? .move : .copy
     }
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -1535,7 +1535,7 @@ extension FileGridView {
         let destPath = viewModel?.currentPath ?? ""
         guard !destPath.isEmpty else { return false }
 
-        let isMove = isMoveOperation(sender)
+        let isMove = isMoveOperation(sender, destPath: destPath)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let srcs = urls.map { $0.path }
@@ -1645,23 +1645,24 @@ extension FileGridView {
         return true
     }
 
-    /// 判断是否为移动操作（同卷 + 未按 Cmd）
-    private func isMoveOperation(_ sender: NSDraggingInfo) -> Bool {
-        // Cmd 键切换为复制
-        if sender.draggingSourceOperationMask.contains(.copy) &&
-           !sender.draggingSourceOperationMask.contains(.move) {
-            return false
-        }
+    /// 判断是否为移动操作（访达语义）：
+    /// 同盘 + 无修饰键 = 移动；同盘 + ⌘ = 复制
+    /// 跨盘 + 无修饰键 = 复制；跨盘 + ⌘ = 移动
+    /// - Parameter destPath: 真实拖放目标路径（网格目标即当前目录，默认取 viewModel?.currentPath）
+    private func isMoveOperation(_ sender: NSDraggingInfo, destPath: String? = nil) -> Bool {
+        // 直接读取当前按键状态（比依赖 draggingSourceOperationMask 的间接过滤更可靠）
+        // 注意：若 validateDrop 回调中 NSApp.currentEvent 为 nil，回退到 Cmd 未按下（默认行为）
+        let commandPressed = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
 
-        // 检查源和目标是否在同一卷
-        guard let destPath = viewModel?.currentPath else { return false }
+        // 源与目标卷判定
+        let dest = destPath ?? viewModel?.currentPath
+        guard let dest = dest, !dest.isEmpty else { return false }
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              let srcPath = urls.first?.path else { return false }
+        let sameVolume = isSameVolume(srcPath: srcPath, destPath: dest)
 
-        if let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
-           let srcPath = urls.first?.path {
-            return isSameVolume(srcPath: srcPath, destPath: destPath)
-        }
-
-        return false
+        // ⌘ 按下时反转默认行为（复制↔移动切换，访达语义）
+        return commandPressed ? !sameVolume : sameVolume
     }
 
     /// 检查两个路径是否在同一卷（通过 statfs）

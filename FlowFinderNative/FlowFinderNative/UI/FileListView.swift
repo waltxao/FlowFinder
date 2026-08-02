@@ -1723,6 +1723,17 @@ extension FileListView: NSTableViewDelegate {
         guard let items = info.draggingPasteboard.pasteboardItems, !items.isEmpty else { return [] }
         for item in items {
             guard item.types.contains(.fileURL) else { continue }
+            // 计算本次判定使用的目标路径（拖到文件夹行上 → 该文件夹；否则 → 当前目录）
+            var destPath = viewModel?.currentPath ?? ""
+            if dropOperation == .on, row < displayRows.count {
+                let displayRow = displayRows[row]
+                if !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 {
+                    let entry = viewModel!.files[displayRow.fileIndex]
+                    if entry.isDirectory {
+                        destPath = entry.path
+                    }
+                }
+            }
             // 判断目标位置：.on 拖到文件夹行上 → 移入文件夹；.above 拖到行间/空白 → 移到当前目录
             if dropOperation == .on, row < displayRows.count {
                 let displayRow = displayRows[row]
@@ -1730,14 +1741,14 @@ extension FileListView: NSTableViewDelegate {
                     let entry = viewModel!.files[displayRow.fileIndex]
                     // 仅文件夹行允许 .on（移入文件夹）；文件行/标题行回退为 .above
                     if entry.isDirectory {
-                        return isMoveOperation(info) ? .move : .copy
+                        return isMoveOperation(info, destPath: destPath) ? .move : .copy
                     }
                 }
                 // 拖到文件行/标题行上 → 改为 .above，避免歧义
                 tableView.setDropRow(row, dropOperation: .above)
-                return isMoveOperation(info) ? .move : .copy
+                return isMoveOperation(info, destPath: destPath) ? .move : .copy
             }
-            return isMoveOperation(info) ? .move : .copy
+            return isMoveOperation(info, destPath: destPath) ? .move : .copy
         }
         return []
     }
@@ -1767,7 +1778,7 @@ extension FileListView: NSTableViewDelegate {
         }
         guard !destPath.isEmpty else { return false }
 
-        let isMove = isMoveOperation(info)
+        let isMove = isMoveOperation(info, destPath: destPath)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let srcs = urls.map { $0.path }
@@ -2098,23 +2109,24 @@ extension FileListView: NSDraggingSource {
 }
 
 extension FileListView {
-    /// 判断是否为移动操作（同卷 + 未按 Cmd）
-    private func isMoveOperation(_ sender: NSDraggingInfo) -> Bool {
-        // Cmd 键切换为复制
-        if sender.draggingSourceOperationMask.contains(.copy) &&
-           !sender.draggingSourceOperationMask.contains(.move) {
-            return false
-        }
+    /// 判断是否为移动操作（访达语义）：
+    /// 同盘 + 无修饰键 = 移动；同盘 + ⌘ = 复制
+    /// 跨盘 + 无修饰键 = 复制；跨盘 + ⌘ = 移动
+    /// - Parameter destPath: 真实拖放目标路径（拖到文件夹行时为该文件夹路径，否则当前目录）
+    private func isMoveOperation(_ sender: NSDraggingInfo, destPath: String? = nil) -> Bool {
+        // 直接读取当前按键状态（比依赖 draggingSourceOperationMask 的间接过滤更可靠）
+        // 注意：若 validateDrop 回调中 NSApp.currentEvent 为 nil，回退到 Cmd 未按下（默认行为）
+        let commandPressed = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
 
-        // 检查源和目标是否在同一卷
-        guard let destPath = viewModel?.currentPath else { return false }
+        // 源与目标卷判定
+        let dest = destPath ?? viewModel?.currentPath
+        guard let dest = dest, !dest.isEmpty else { return false }
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              let srcPath = urls.first?.path else { return false }
+        let sameVolume = isSameVolume(srcPath: srcPath, destPath: dest)
 
-        if let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
-           let srcPath = urls.first?.path {
-            return isSameVolume(srcPath: srcPath, destPath: destPath)
-        }
-
-        return false
+        // ⌘ 按下时反转默认行为（复制↔移动切换，访达语义）
+        return commandPressed ? !sameVolume : sameVolume
     }
 
     /// 检查两个路径是否在同一卷（通过 statfs）
