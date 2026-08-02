@@ -258,6 +258,18 @@ class SettingsSectionView: NSView {
             row.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor),
         ])
     }
+
+    /// 添加一个任意内容视图（全宽嵌入，与 addRow 行为一致）
+    /// 用于自带完整布局的内容块（如 AppearanceSettingsView 三态主题切换器），
+    /// 避免塞入 SettingsRowView.controlContainer（无宽度约束）导致塌缩。
+    func addContentView(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        rowsStack.addArrangedSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor),
+        ])
+    }
 }
 
 // MARK: - 控件工厂便捷方法
@@ -339,6 +351,10 @@ extension SettingsRowView {
         textField.stringValue = value
         textField.controlSize = .small
         textField.preferredMaxLayoutWidth = 160
+        // 修复 T8：值为空时 NSTextField 的 intrinsic width 塌缩到接近 0，
+        // 嵌入无宽度约束的 controlContainer 后输入框窄到无法使用。
+        // 给一个可用的最小宽度。
+        textField.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
         if let action = action {
             textField.target = SettingsActionTarget.shared
             textField.action = #selector(SettingsActionTarget.textFieldChanged(_:))

@@ -275,6 +275,11 @@ public class SettingsWindowController: NSWindowController {
         let query = sender.stringValue.lowercased().trimmingCharacters(in: .whitespaces)
         // 过滤当前分区行
         for entry in currentRows {
+            // 无行的分区（如外观主题区的全宽内容视图）不参与行级过滤，保持可见
+            guard !entry.rows.isEmpty else {
+                entry.section.isHidden = false
+                continue
+            }
             var hasVisibleRow = false
             for row in entry.rows {
                 let match = query.isEmpty
@@ -412,15 +417,17 @@ public class SettingsWindowController: NSWindowController {
     private func buildAppearanceSection() -> NSView {
         let container = makeScrollContainer()
 
-        // 主题切换 section（保留现有 AppearanceSettingsView 三态切换器）
+        // 主题切换 section：AppearanceSettingsView 自带标题/三个主题按钮/说明文字，
+        // 作为全宽内容嵌入分区卡片。
+        // 修复 T8：原实现把 appearanceView 塞进 SettingsRowView 的 controlContainer
+        // （controlContainer 无宽度约束，且 appearanceView 无 intrinsic size），
+        // 导致整个外观分区塌缩为空白/按钮溢出。改为全宽 content 布局后，
+        // 在任何窗口宽度下都能完整显示 3 个 100×100 按钮。
         let themeSection = SettingsSectionView(title: "主题", iconName: "circle.lefthalf.filled")
         let appearanceView = AppearanceSettingsView(frame: .zero)
         appearanceView.translatesAutoresizingMaskIntoConstraints = false
-        // AppearanceSettingsView 自带标题，此处嵌入行视图
-        let themeRow = SettingsRowView(title: "外观模式", desc: "选择浅色、深色或跟随系统")
-        themeRow.setControl(appearanceView)
-        themeSection.addRow(themeRow)
-        registerForSearch(themeSection, rows: [themeRow])
+        themeSection.addContentView(appearanceView)
+        registerForSearch(themeSection, rows: [])
 
         // 强调色 section
         let accentSection = SettingsSectionView(title: "强调色", iconName: "paintpalette")
@@ -538,6 +545,10 @@ public class SettingsWindowController: NSWindowController {
         registerForSearch(configSection, rows: [domainRow, autoReconnectRow])
 
         // 服务器列表（使用现有 SMBManagerPanel，直接添加到堆栈，全宽显示）
+        // 修复 T8：SMBManagerPanel 无 intrinsic size，原实现仅 heightAnchor >= 220，
+        // 嵌入 centerX 对齐的垂直 stack 后宽度歧义 → 分区空白。
+        // 宽度现由 constrainStackInScroll 对每个 arranged subview 的 leading/trailing
+        // 钉到 stack 边缘统一处理（全宽），此处仅保留最小高度。
         let smbPanel = SMBManagerPanel(frame: .zero)
         smbPanel.translatesAutoresizingMaskIntoConstraints = false
         // 为 SMBManagerPanel 设置最小高度
@@ -720,9 +731,11 @@ public class SettingsWindowController: NSWindowController {
         scrollView.drawsBackground = false
         scrollView.wantsLayer = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        // 留出内容边距（顶部 20pt）
+        // 边距改由 constrainStackInScroll 中 stack.top/bottom 常量提供。
+        // 修复 T8：contentInsets 与 autolayout documentView 叠加时顶部 20pt 内容会被
+        // 裁到可视区外/首行偏移，故移除 contentInsets 改用显式约束。
         scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsets(top: 20, left: 0, bottom: 20, right: 0)
+        scrollView.contentInsets = NSEdgeInsets()
         return scrollView
     }
 
@@ -732,10 +745,21 @@ public class SettingsWindowController: NSWindowController {
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: clipView.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(equalTo: clipView.trailingAnchor, constant: -24),
-            stack.topAnchor.constraint(equalTo: clipView.topAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: clipView.bottomAnchor),
+            stack.topAnchor.constraint(equalTo: clipView.topAnchor, constant: 20),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: clipView.bottomAnchor, constant: -20),
             stack.widthAnchor.constraint(equalTo: clipView.widthAnchor, constant: -48),
         ])
+
+        // 修复 T8（根因）：NSStackView 垂直方向默认 .centerX 对齐，对无 intrinsic size 的
+        // 分区视图（SettingsSectionView / SMBManagerPanel / 自定义内容视图）宽度产生歧义，
+        // 约束求解后可能塌缩为 0 宽 → 分区"空白"。
+        // 显式将每个 arranged subview 的 leading/trailing 钉到 stack 边缘，撑满整行宽度。
+        for view in stack.arrangedSubviews {
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            ])
+        }
     }
 
     // MARK: - Public API
