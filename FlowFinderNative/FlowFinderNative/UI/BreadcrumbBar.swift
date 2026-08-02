@@ -162,10 +162,17 @@ class BreadcrumbBar: NSView {
         return result
     }
 
-    /// 计算机名称（用于根路径段显示）。无法获取时回退为 "Macintosh HD"。
+    /// 计算机名称（用于根路径段显示）。
+    /// 优先使用根卷的 volumeName（如 "Macintosh HD"），回退到主机名，再回退到字面量。
     private func computerName() -> String {
+        // 1. 优先读取根卷名称（与 Finder 侧边栏一致）
+        if let volName = try? URL(fileURLWithPath: "/")
+            .resourceValues(forKeys: [.volumeNameKey]).volumeName,
+           !volName.isEmpty {
+            return volName
+        }
+        // 2. 回退到主机名
         if let name = Host.current().name {
-            // Host.name 通常返回 "xxx.local"，取点之前部分
             let short = name.split(separator: ".").first.map(String.init) ?? name
             if !short.isEmpty { return short }
         }

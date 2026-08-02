@@ -1288,7 +1288,8 @@ class DeviceHeaderView: NSView {
             formatter.countStyle = .file
             let freeStr = formatter.string(fromByteCount: Int64(free))
             let totalStr = formatter.string(fromByteCount: Int64(total))
-            summaryLabel.stringValue = "\(freeStr) 可用，共 \(totalStr)"
+            // 紧凑格式：避免侧边栏宽度不足时截断
+            summaryLabel.stringValue = "\(freeStr) 可用 / \(totalStr)"
         }
         updateArrow(isCollapsed: isCollapsed)
     }
@@ -1655,6 +1656,8 @@ private class TagFlowView: NSView {
             // 药丸宽度由内容自适应，高度固定，左边缘贴 listContainer leading
             pill.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
             pill.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor).isActive = true
+            // 大目录优化：限制药丸不超过容器宽度，使长标签名以省略号截断而非被裁剪
+            pill.trailingAnchor.constraint(lessThanOrEqualTo: listContainer.trailingAnchor).isActive = true
         }
     }
 
