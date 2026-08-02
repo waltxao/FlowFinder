@@ -1161,6 +1161,90 @@ public class FileListView: NSView {
         return identifier?.rawValue ?? "left"
     }
 
+    // MARK: - 拖拽撤销辅助（无限撤销/重做闭环）
+
+    /// 撤销"拖拽移动"：把文件移回源位置，并同步注册 redo（redoDragMove）。
+    /// redoDragMove 处理器内又会注册反向 undo（= undoDragMove），从而形成无限撤销/重做闭环：
+    /// 撤销→重做→撤销→重做…可无限进行。文件操作经 undoRedoQueue 串行化，排队在上一操作之后，避免竞态。
+    func undoDragMove(pairs: [(src: String, dst: String)], counterpart: PaneViewModel?, actionName: String) {
+        // 必须先注册 redo 再排队文件操作：registerUndo 在撤销会话内（isUndoing）会路由到 redo 栈，
+        // 而文件操作异步执行，需先建立 redo 栈再排队，否则重做栈可能为空。
+        undoManager?.registerUndo(withTarget: self) { [weak counterpart] view in
+            view.redoDragMove(pairs: pairs, counterpart: counterpart, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self, weak counterpart] in
+            for (src, dst) in pairs {
+                try? CoreBridge.shared.moveFile(src: dst, dst: src)
+            }
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+                counterpart?.refresh()
+            }
+        }
+    }
+
+    /// 重做"拖拽移动"：把文件再次移动到目标位置（与初始移动相同）。
+    /// 处理器内同步注册反向 undo（undoDragMove，路由到 undo 栈，isRedoing == true），
+    /// 从而形成无限撤销/重做闭环。
+    func redoDragMove(pairs: [(src: String, dst: String)], counterpart: PaneViewModel?, actionName: String) {
+        // 先注册反向 undo 再排队文件操作：registerUndo 在重做会话内（isRedoing）路由到 undo 栈。
+        undoManager?.registerUndo(withTarget: self) { [weak counterpart] view in
+            view.undoDragMove(pairs: pairs, counterpart: counterpart, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self, weak counterpart] in
+            for (src, dst) in pairs {
+                try? CoreBridge.shared.moveFile(src: src, dst: dst)
+            }
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+                counterpart?.refresh()
+            }
+        }
+    }
+
+    /// 撤销"拖拽复制"：删除复制项，并同步注册 redo（redoDragCopy）。
+    /// redoDragCopy 处理器内又会注册反向 undo（= undoDragCopy），从而形成无限撤销/重做闭环：
+    /// 撤销→重做→撤销→重做…可无限进行。文件操作经 undoRedoQueue 串行化，排队在上一操作之后，避免竞态。
+    func undoDragCopy(pairs: [(src: String, dst: String)], counterpart: PaneViewModel?, actionName: String) {
+        // 必须先注册 redo 再排队文件操作：registerUndo 在撤销会话内（isUndoing）会路由到 redo 栈，
+        // 而文件操作异步执行，需先建立 redo 栈再排队，否则重做栈可能为空。
+        undoManager?.registerUndo(withTarget: self) { [weak counterpart] view in
+            view.redoDragCopy(pairs: pairs, counterpart: counterpart, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self, weak counterpart] in
+            for (_, dst) in pairs {
+                try? CoreBridge.shared.deleteFile(path: dst)
+            }
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+                counterpart?.refresh()
+            }
+        }
+    }
+
+    /// 重做"拖拽复制"：重新复制目标文件（与初始复制相同）。
+    /// 处理器内同步注册反向 undo（undoDragCopy，路由到 undo 栈，isRedoing == true），
+    /// 从而形成无限撤销/重做闭环。
+    func redoDragCopy(pairs: [(src: String, dst: String)], counterpart: PaneViewModel?, actionName: String) {
+        // 先注册反向 undo 再排队文件操作：registerUndo 在重做会话内（isRedoing）路由到 undo 栈。
+        undoManager?.registerUndo(withTarget: self) { [weak counterpart] view in
+            view.undoDragCopy(pairs: pairs, counterpart: counterpart, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self, weak counterpart] in
+            for (src, dst) in pairs {
+                try? CoreBridge.shared.copyFile(src: src, dst: dst)
+            }
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+                counterpart?.refresh()
+            }
+        }
+    }
+
     private func showError(error: Error) {
         let alert = NSAlert()
         alert.messageText = "错误"
@@ -1885,7 +1969,6 @@ extension FileListView: NSTableViewDelegate {
                     let name = (src as NSString).lastPathComponent
                     return (destPath as NSString).appendingPathComponent(name)
                 }
-                let dstPaths = normalDstPaths + keepBothPairs.map { $0.dst }
                 let undoPairs = zip(srcs, normalDstPaths).map { (src: $0, dst: $1) } + keepBothPairs
 
                 DispatchQueue.main.async {
@@ -1900,100 +1983,28 @@ extension FileListView: NSTableViewDelegate {
                     }
 
                     // 注册撤销（通过 viewModel?.undoManager 访问 per-window UndoManager）
-                    if success > 0, let vm = self?.viewModel, let undoManager = vm.undoManager {
-                        let counterpart = self?.counterpartViewModel
+                    if success > 0, let view = self, let vm = view.viewModel, let undoManager = vm.undoManager {
+                        let counterpart = view.counterpartViewModel
                         if isMove {
                             let pairs = undoPairs
-                            undoManager.registerUndo(withTarget: vm) { [weak counterpart] targetVM in
-                                // undo: 移回原位（经 undoRedoQueue 串行执行，完成后主线程刷新）
-                                MainWindowController.undoRedoQueue.async {
-                                    for (src, dst) in pairs {
-                                        try? CoreBridge.shared.moveFile(src: dst, dst: src)
-                                    }
-                                    DispatchQueue.main.async {
-                                        targetVM.refresh()
-                                        counterpart?.refresh()
-                                    }
-                                }
-                                // 注册 redo：再次移动。必须在 undo 处理器内同步注册，
-                                // 以保证 registerUndo 路由到 redo 栈（isUndoing == true）。
-                                targetVM.undoManager?.registerUndo(withTarget: targetVM) { [weak counterpart] vm2 in
-                                    // 对称注册：redo 处理器内同步注册反向 undo（路由到 undo 栈，isRedoing == true）
-                                    vm2.undoManager?.registerUndo(withTarget: vm2) { [weak counterpart] vm3 in
-                                        // 反向 undo = 再移回原位（经 undoRedoQueue 串行执行）
-                                        MainWindowController.undoRedoQueue.async {
-                                            for (src, dst) in pairs {
-                                                try? CoreBridge.shared.moveFile(src: dst, dst: src)
-                                            }
-                                            DispatchQueue.main.async {
-                                                vm3.refresh()
-                                                counterpart?.refresh()
-                                            }
-                                        }
-                                        vm3.undoManager?.setActionName("移动 \(success) 个项目")
-                                    }
-                                    // redo 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态
-                                    MainWindowController.undoRedoQueue.async {
-                                        for (src, dst) in pairs {
-                                            try? CoreBridge.shared.moveFile(src: src, dst: dst)
-                                        }
-                                        // redo 文件操作完成后再刷新界面（主线程）
-                                        DispatchQueue.main.async {
-                                            vm2.refresh()
-                                            counterpart?.refresh()
-                                        }
-                                    }
-                                    vm2.undoManager?.setActionName("移动 \(success) 个项目")
-                                }
-                                targetVM.undoManager?.setActionName("移动 \(success) 个项目")
+                            let actionName = "移动 \(success) 个项目"
+                            // 注册撤销：移回原位。undoDragMove 会同步注册 redo（redoDragMove），
+                            // 而 redoDragMove 处理器内又会注册反向 undo（= undoDragMove），
+                            // 从而形成无限撤销/重做闭环。
+                            undoManager.registerUndo(withTarget: view) { [weak counterpart] targetView in
+                                targetView.undoDragMove(pairs: pairs, counterpart: counterpart, actionName: actionName)
                             }
-                            undoManager.setActionName("移动 \(success) 个项目")
+                            undoManager.setActionName(actionName)
                         } else {
                             let pairs = undoPairs
-                            undoManager.registerUndo(withTarget: vm) { [weak counterpart] targetVM in
-                                // undo: 删除复制项（经 undoRedoQueue 串行执行，完成后主线程刷新）
-                                MainWindowController.undoRedoQueue.async {
-                                    for (_, dst) in pairs {
-                                        try? CoreBridge.shared.deleteFile(path: dst)
-                                    }
-                                    DispatchQueue.main.async {
-                                        targetVM.refresh()
-                                        counterpart?.refresh()
-                                    }
-                                }
-                                // 注册 redo：重新复制。必须在 undo 处理器内同步注册，
-                                // 以保证 registerUndo 路由到 redo 栈（isUndoing == true）。
-                                targetVM.undoManager?.registerUndo(withTarget: targetVM) { [weak counterpart] vm2 in
-                                    // 对称注册：redo 处理器内同步注册反向 undo（路由到 undo 栈，isRedoing == true）
-                                    vm2.undoManager?.registerUndo(withTarget: vm2) { [weak counterpart] vm3 in
-                                        // 反向 undo = 再删除复制项（经 undoRedoQueue 串行执行）
-                                        MainWindowController.undoRedoQueue.async {
-                                            for (_, dst) in pairs {
-                                                try? CoreBridge.shared.deleteFile(path: dst)
-                                            }
-                                            DispatchQueue.main.async {
-                                                vm3.refresh()
-                                                counterpart?.refresh()
-                                            }
-                                        }
-                                        vm3.undoManager?.setActionName("复制 \(success) 个项目")
-                                    }
-                                    // redo 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态
-                                    MainWindowController.undoRedoQueue.async {
-                                        for (src, dst) in pairs {
-                                            try? CoreBridge.shared.copyFile(src: src, dst: dst)
-                                        }
-                                        // redo 文件操作完成后再刷新界面（主线程）
-                                        DispatchQueue.main.async {
-                                            vm2.refresh()
-                                            counterpart?.refresh()
-                                        }
-                                    }
-                                    vm2.undoManager?.setActionName("复制 \(success) 个项目")
-                                }
-                                targetVM.undoManager?.setActionName("复制 \(success) 个项目")
+                            let actionName = "复制 \(success) 个项目"
+                            // 注册撤销：删除复制项。undoDragCopy 会同步注册 redo（redoDragCopy），
+                            // 而 redoDragCopy 处理器内又会注册反向 undo（= undoDragCopy），
+                            // 从而形成无限撤销/重做闭环。
+                            undoManager.registerUndo(withTarget: view) { [weak counterpart] targetView in
+                                targetView.undoDragCopy(pairs: pairs, counterpart: counterpart, actionName: actionName)
                             }
-                            undoManager.setActionName("复制 \(success) 个项目")
+                            undoManager.setActionName(actionName)
                         }
                     }
 

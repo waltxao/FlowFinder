@@ -543,9 +543,29 @@ public class BatchRenameWindowController: NSWindowController {
     ) {
         guard let vm = paneViewModel, let undoManager = vm.undoManager else { return }
         let count = items.count
+        let actionName = "批量重命名 \(count) 个项目"
 
-        undoManager.registerUndo(withTarget: vm) { [weak vm] vm in
-            // 撤销：反向 rename（从新路径改回旧名）
+        // 注册撤销：反向 rename（从新路径改回旧名）。undoBatchRename 会同步注册 redo（redoBatchRename），
+        // 而 redoBatchRename 处理器内又会注册反向 undo（= undoBatchRename），
+        // 从而形成无限撤销/重做闭环。
+        undoManager.registerUndo(withTarget: self) { [weak self] ctrl in
+            ctrl.undoBatchRename(items: items, reverseItems: reverseItems, actionName: actionName)
+        }
+        undoManager.setActionName(actionName)
+    }
+
+    /// 撤销"批量重命名"：从新路径改回旧名，并同步注册 redo（redoBatchRename）。
+    /// redoBatchRename 处理器内又会注册反向 undo（= undoBatchRename），从而形成无限撤销/重做闭环：
+    /// 撤销→重做→撤销→重做…可无限进行。文件操作经 undoRedoQueue 串行化，排队在上一操作之后，避免竞态。
+    private func undoBatchRename(items: [(String, String)], reverseItems: [(String, String)], actionName: String) {
+        guard let undoManager = paneViewModel?.undoManager else { return }
+        // 必须先注册 redo 再排队文件操作：registerUndo 在撤销会话内（isUndoing）会路由到 redo 栈，
+        // 而文件操作异步执行，需先建立 redo 栈再排队，否则重做栈可能为空。
+        undoManager.registerUndo(withTarget: self) { [weak self] ctrl in
+            ctrl.redoBatchRename(items: items, reverseItems: reverseItems, actionName: actionName)
+        }
+        undoManager.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self] in
             for (newPath, oldName) in reverseItems {
                 let dir = (newPath as NSString).deletingLastPathComponent
                 let restorePath = (dir as NSString).appendingPathComponent(oldName)
@@ -555,23 +575,36 @@ public class BatchRenameWindowController: NSWindowController {
                 let dir = (firstNew as NSString).deletingLastPathComponent
                 try? CoreBridge.shared.invalidateCache(path: dir)
             }
-            // 注册 redo：再次执行批量重命名
-            vm.undoManager?.registerUndo(withTarget: vm) { vm2 in
-                for (oldPath, newName) in items {
-                    let dir = (oldPath as NSString).deletingLastPathComponent
-                    let newPath = (dir as NSString).appendingPathComponent(newName)
-                    try? CoreBridge.shared.renameFile(src: oldPath, dst: newPath)
-                }
-                if let firstOld = items.first?.0 {
-                    let dir = (firstOld as NSString).deletingLastPathComponent
-                    try? CoreBridge.shared.invalidateCache(path: dir)
-                }
-                vm2.refresh()
+            DispatchQueue.main.async {
+                self?.paneViewModel?.refresh()
             }
-            vm.undoManager?.setActionName("批量重命名 \(count) 个项目")
-            vm.refresh()
         }
-        undoManager.setActionName("批量重命名 \(count) 个项目")
+    }
+
+    /// 重做"批量重命名"：再次从旧名改到新名（与初始重命名相同）。
+    /// 处理器内同步注册反向 undo（undoBatchRename，路由到 undo 栈，isRedoing == true），
+    /// 从而形成无限撤销/重做闭环。
+    private func redoBatchRename(items: [(String, String)], reverseItems: [(String, String)], actionName: String) {
+        guard let undoManager = paneViewModel?.undoManager else { return }
+        // 先注册反向 undo 再排队文件操作：registerUndo 在重做会话内（isRedoing）路由到 undo 栈。
+        undoManager.registerUndo(withTarget: self) { [weak self] ctrl in
+            ctrl.undoBatchRename(items: items, reverseItems: reverseItems, actionName: actionName)
+        }
+        undoManager.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self] in
+            for (oldPath, newName) in items {
+                let dir = (oldPath as NSString).deletingLastPathComponent
+                let newPath = (dir as NSString).appendingPathComponent(newName)
+                try? CoreBridge.shared.renameFile(src: oldPath, dst: newPath)
+            }
+            if let firstOld = items.first?.0 {
+                let dir = (firstOld as NSString).deletingLastPathComponent
+                try? CoreBridge.shared.invalidateCache(path: dir)
+            }
+            DispatchQueue.main.async {
+                self?.paneViewModel?.refresh()
+            }
+        }
     }
 
     // MARK: - Helpers

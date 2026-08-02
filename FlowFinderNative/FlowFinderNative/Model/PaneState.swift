@@ -396,42 +396,16 @@ public class PaneViewModel: ObservableObject {
             let parentDir = (trashedItems[0].originalPath as NSString).deletingLastPathComponent
             try? CoreBridge.shared.invalidateCache(path: parentDir)
 
-            // 注册撤销：从废纸篓恢复（moveItem 回原路径）
+            // 注册撤销：从废纸篓恢复（moveItem 回原路径）。undoTrashRestore 会同步注册 redo（redoTrashRestore），
+            // 而 redoTrashRestore 处理器内又会注册反向 undo（= undoTrashRestore），
+            // 从而形成无限撤销/重做闭环。
             let items = trashedItems
             let originalDir = items.first.map { ($0.originalPath as NSString).deletingLastPathComponent } ?? ""
+            let actionName = "删除 \(items.count) 个项目"
             undoManager?.registerUndo(withTarget: self) { vm in
-                var restoreFailed = 0
-                for (originalPath, trashURL) in items {
-                    do {
-                        try FileManager.default.moveItem(at: trashURL, to: URL(fileURLWithPath: originalPath))
-                    } catch {
-                        // I3: 原路径已被占用等原因导致恢复失败，记录并反馈
-                        restoreFailed += 1
-                    }
-                }
-                // 失效缓存以反映恢复
-                if let firstPath = items.first?.originalPath {
-                    let dir = (firstPath as NSString).deletingLastPathComponent
-                    try? CoreBridge.shared.invalidateCache(path: dir)
-                }
-                // 注册 redo：重新移入废纸篓
-                vm.undoManager?.registerUndo(withTarget: vm) { vm2 in
-                    for (originalPath, _) in items {
-                        try? FileManager.default.trashItem(at: URL(fileURLWithPath: originalPath), resultingItemURL: nil)
-                    }
-                    vm2.loadDirectory()
-                }
-                vm.undoManager?.setActionName("删除 \(items.count) 个项目")
-                if restoreFailed > 0 {
-                    vm.state.error = "\(restoreFailed) 个项目无法恢复（原路径已被占用）"
-                }
-                // I4: 仅当 VM 仍在原目录时才刷新（用户可能已导航离开），
-                // 文件已恢复到原位置，用户导航回去后自然可见。
-                if vm.state.path == originalDir {
-                    vm.loadDirectory()
-                }
+                vm.undoTrashRestore(items: items, originalDir: originalDir, actionName: actionName)
             }
-            undoManager?.setActionName("删除 \(trashedItems.count) 个项目")
+            undoManager?.setActionName(actionName)
 
             state.selectedFiles.removeAll()
             loadDirectory()
@@ -440,6 +414,56 @@ public class PaneViewModel: ObservableObject {
         if failedCount > 0 {
             state.error = "\(failedCount) 个项目删除失败"
         }
+    }
+
+    // MARK: - 删除撤销辅助（无限撤销/重做闭环）
+
+    /// 撤销"删除"：从废纸篓恢复文件（moveItem 回原路径），并同步注册 redo（redoTrashRestore）。
+    /// redoTrashRestore 处理器内又会注册反向 undo（= undoTrashRestore），从而形成无限撤销/重做闭环：
+    /// 撤销→重做→撤销→重做…可无限进行。trashItem/moveItem 须在主线程调用（deleteSelected 已在主线程）。
+    func undoTrashRestore(items: [(originalPath: String, trashURL: URL)], originalDir: String, actionName: String) {
+        // 必须先注册 redo 再执行恢复：registerUndo 在撤销会话内（isUndoing）会路由到 redo 栈，
+        // 否则重做栈可能为空，撤销后无法重做。
+        undoManager?.registerUndo(withTarget: self) { vm in
+            vm.redoTrashRestore(items: items, actionName: actionName)
+        }
+        var restoreFailed = 0
+        for (originalPath, trashURL) in items {
+            do {
+                try FileManager.default.moveItem(at: trashURL, to: URL(fileURLWithPath: originalPath))
+            } catch {
+                // I3: 原路径已被占用等原因导致恢复失败，记录并反馈
+                restoreFailed += 1
+            }
+        }
+        // 失效缓存以反映恢复
+        if let firstPath = items.first?.originalPath {
+            let dir = (firstPath as NSString).deletingLastPathComponent
+            try? CoreBridge.shared.invalidateCache(path: dir)
+        }
+        if restoreFailed > 0 {
+            state.error = "\(restoreFailed) 个项目无法恢复（原路径已被占用）"
+        }
+        // I4: 仅当 VM 仍在原目录时才刷新（用户可能已导航离开），
+        // 文件已恢复到原位置，用户导航回去后自然可见。
+        if state.path == originalDir {
+            loadDirectory()
+        }
+    }
+
+    /// 重做"删除"：把文件重新移入废纸篓（与初始删除相同）。
+    /// 处理器内同步注册反向 undo（undoTrashRestore，路由到 undo 栈，isRedoing == true），
+    /// 从而形成无限撤销/重做闭环。
+    func redoTrashRestore(items: [(originalPath: String, trashURL: URL)], actionName: String) {
+        // 先注册反向 undo 再执行移入废纸篓：registerUndo 在重做会话内（isRedoing）路由到 undo 栈。
+        undoManager?.registerUndo(withTarget: self) { vm in
+            let originalDir = items.first.map { ($0.originalPath as NSString).deletingLastPathComponent } ?? ""
+            vm.undoTrashRestore(items: items, originalDir: originalDir, actionName: actionName)
+        }
+        for (originalPath, _) in items {
+            try? FileManager.default.trashItem(at: URL(fileURLWithPath: originalPath), resultingItemURL: nil)
+        }
+        loadDirectory()
     }
 
     func renameFile(_ oldPath: String, to newName: String) {
