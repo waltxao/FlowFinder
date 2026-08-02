@@ -1754,20 +1754,30 @@ extension MainWindowController {
         let destPath = activePaneViewModel.currentPath
         let srcs = clipboardItems
 
+        // 任务 10：冲突预检与解决（替换/保留两者/跳过）
+        let conflictPlan = ConflictResolver.resolveConflicts(
+            srcPaths: srcs,
+            destDir: destPath,
+            window: window
+        )
+        guard !conflictPlan.isEmpty else { return }
+
         // 任务 F11-9：粘贴也属于复制/移动操作，展示底部进度栏反馈
         let operationName: String
         switch operation {
         case .copy: operationName = "复制"
         case .cut: operationName = "移动"
         }
-        let totalCount = srcs.count
+        let totalCount = conflictPlan.count
         taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
         showProgressBar(animated: true)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
-                let total = srcs.count
-                let success: Int
+                let total = conflictPlan.count
+                let srcs = conflictPlan.normalSrcs
+                let allSrcs = srcs + conflictPlan.keepBoth.map { $0.src }
+                var success: Int
                 let isMove: Bool
                 switch operation {
                 case .copy:
@@ -1799,12 +1809,30 @@ extension MainWindowController {
                     }
                 }
 
+                // 保留两者：逐项以改名后的目标名复制/移动（批量接口目标名取 lastPathComponent，无法表达改名）
+                var keepBothDstPaths: [String] = []
+                for pair in conflictPlan.keepBoth {
+                    let dstFull = (destPath as NSString).appendingPathComponent(pair.dstName)
+                    do {
+                        switch operation {
+                        case .copy:
+                            try CoreBridge.shared.copyFile(src: pair.src, dst: dstFull)
+                        case .cut:
+                            try CoreBridge.shared.moveFile(src: pair.src, dst: dstFull)
+                        }
+                        success += 1
+                        keepBothDstPaths.append(dstFull)
+                    } catch {
+                        // 单项失败：不计入 success，下方按 partial failure 统一提示
+                    }
+                }
+
                 // I2: invalidate cache so the refresh sees the new state.
                 // Destination always changes; for a move each source parent
                 // directory also changes (items left those dirs). Best-effort.
                 try? CoreBridge.shared.invalidateCache(path: destPath)
                 if isMove {
-                    let sourceDirs = Set(srcs.map { ($0 as NSString).deletingLastPathComponent })
+                    let sourceDirs = Set(allSrcs.map { ($0 as NSString).deletingLastPathComponent })
                     for dir in sourceDirs where !dir.isEmpty {
                         try? CoreBridge.shared.invalidateCache(path: dir)
                     }
@@ -1816,11 +1844,12 @@ extension MainWindowController {
                 // own failure path. Appended to the user-facing alert.
                 let partialDetail = (success < total) ? CoreBridge.shared.getLastError() : ""
 
-                // 计算 dst 路径用于撤销注册（best-effort：假设 srcs 都成功）
-                let dstPaths = srcs.map { src -> String in
+                // 计算 dst 路径用于撤销注册（best-effort：假设都成功）
+                var dstPaths = srcs.map { src -> String in
                     let name = (src as NSString).lastPathComponent
                     return (destPath as NSString).appendingPathComponent(name)
                 }
+                dstPaths.append(contentsOf: keepBothDstPaths)
 
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
@@ -1836,7 +1865,7 @@ extension MainWindowController {
                     // 问题 9：粘贴操作注册撤销（复制→删除目标；移动→移回源）
                     if success > 0 {
                         if isMove {
-                            let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
+                            let pairs = zip(allSrcs, dstPaths).map { (src: $0, dst: $1) }
                             self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                                 // undo: 移回原位（经 undoRedoQueue 串行执行）
                                 ctrl.undoMoveBack(pairs: pairs)
@@ -1859,7 +1888,7 @@ extension MainWindowController {
                             }
                             self.ffUndoManager.setActionName("移动 \(success) 个项目")
                         } else {
-                            let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
+                            let pairs = zip(allSrcs, dstPaths).map { (src: $0, dst: $1) }
                             self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                                 // undo: 删除复制项（经 undoRedoQueue 串行执行）
                                 ctrl.undoDeleteCopied(dstPaths: dstPaths)

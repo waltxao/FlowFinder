@@ -10,6 +10,7 @@
 		FF0000010000000000000001 /* FlowFinderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000110000000000000011; };
 		FF0000020000000000000002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000120000000000000012; };
 		FF0000040000000000000004 /* FileListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000140000000000000014; };
+		FF0000A0000000000000000A /* ConflictResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000B0000000000000000B; };
 		FF0000050000000000000005 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000150000000000000015; };
 		FF0000060000000000000006 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000160000000000000016; };
 		FF0000070000000000000007 /* FileEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000170000000000000017; };
@@ -69,6 +70,7 @@
 		FF0000110000000000000011 /* FlowFinderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowFinderApp.swift; sourceTree = "<group>"; };
 		FF0000120000000000000012 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		FF0000140000000000000014 /* FileListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileListView.swift; sourceTree = "<group>"; };
+		FF0000B0000000000000000B /* ConflictResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConflictResolver.swift; sourceTree = "<group>"; };
 		FF0000150000000000000015 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		FF0000160000000000000016 /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
 		FF0000170000000000000017 /* FileEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileEntry.swift; sourceTree = "<group>"; };
@@ -168,6 +170,7 @@
 			isa = PBXGroup;
 			children = (
 				FF0000140000000000000014 /* FileListView.swift */,
+				FF0000B0000000000000000B /* ConflictResolver.swift */,
 				FF0000150000000000000015 /* SidebarView.swift */,
 				FF000000000000000020003A /* BreadcrumbBar.swift */,
 				FF000000000000000020005A /* FFScroller.swift */,
@@ -353,6 +356,7 @@
 				FF0000010000000000000001 /* FlowFinderApp.swift in Sources */,
 				FF0000020000000000000002 /* AppDelegate.swift in Sources */,
 				FF0000040000000000000004 /* FileListView.swift in Sources */,
+				FF0000A0000000000000000A /* ConflictResolver.swift in Sources */,
 				FF0000050000000000000005 /* SidebarView.swift in Sources */,
 				FF0000060000000000000006 /* MainWindowController.swift in Sources */,
 				FF0000070000000000000007 /* FileEntry.swift in Sources */,

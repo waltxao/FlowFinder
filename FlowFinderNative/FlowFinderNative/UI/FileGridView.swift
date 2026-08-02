@@ -1577,15 +1577,41 @@ extension FileGridView {
 
         let isMove = isMoveOperation(sender, destPath: destPath)
 
+        // 任务 10：冲突预检与解决（替换/保留两者/跳过）
+        let conflictPlan = ConflictResolver.resolveConflicts(
+            srcPaths: urls.map { $0.path },
+            destDir: destPath,
+            window: window
+        )
+        guard !conflictPlan.isEmpty else { return true }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let srcs = urls.map { $0.path }
-            let total = srcs.count
+            let srcs = conflictPlan.normalSrcs
+            let allSrcs = srcs + conflictPlan.keepBoth.map { $0.src }
+            let total = allSrcs.count
             do {
-                let success: Int
+                var success: Int
                 if isMove {
                     success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath)
                 } else {
                     success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath)
+                }
+
+                // 保留两者：逐项以改名后的目标名复制/移动（批量接口目标名取 lastPathComponent，无法表达改名）
+                var keepBothDstPaths: [String] = []
+                for pair in conflictPlan.keepBoth {
+                    let dstFull = (destPath as NSString).appendingPathComponent(pair.dstName)
+                    do {
+                        if isMove {
+                            try CoreBridge.shared.moveFile(src: pair.src, dst: dstFull)
+                        } else {
+                            try CoreBridge.shared.copyFile(src: pair.src, dst: dstFull)
+                        }
+                        success += 1
+                        keepBothDstPaths.append(dstFull)
+                    } catch {
+                        // 单项失败：不计入 success，下方按 partial failure 统一提示
+                    }
                 }
 
                 // I2: invalidate cache so the refresh reflects the new state.
@@ -1593,7 +1619,7 @@ extension FileGridView {
                 // directory also changes (items left those dirs). Best-effort.
                 try? CoreBridge.shared.invalidateCache(path: destPath)
                 if isMove {
-                    let sourceDirs = Set(srcs.map { ($0 as NSString).deletingLastPathComponent })
+                    let sourceDirs = Set(allSrcs.map { ($0 as NSString).deletingLastPathComponent })
                     for dir in sourceDirs where !dir.isEmpty {
                         try? CoreBridge.shared.invalidateCache(path: dir)
                     }
@@ -1603,11 +1629,12 @@ extension FileGridView {
                 // (getLastError is read-once) before the async UI refresh.
                 let partialDetail = (success < total) ? CoreBridge.shared.getLastError() : ""
 
-                // 计算 dst 路径用于撤销注册（best-effort：假设 srcs 都成功）
-                let dstPaths = srcs.map { src -> String in
+                // 计算 dst 路径用于撤销注册（best-effort：假设都成功）
+                var dstPaths = srcs.map { src -> String in
                     let name = (src as NSString).lastPathComponent
                     return (destPath as NSString).appendingPathComponent(name)
                 }
+                dstPaths.append(contentsOf: keepBothDstPaths)
 
                 DispatchQueue.main.async {
                     self?.viewModel?.refresh()
@@ -1616,7 +1643,7 @@ extension FileGridView {
                     // （仅 move 操作会改变源目录；copy 不改变源，但为安全起见也刷新对侧）
                     if let counterpartPath = self?.counterpartViewModel?.currentPath,
                        !counterpartPath.isEmpty,
-                       srcs.contains(where: { ($0 as NSString).deletingLastPathComponent == counterpartPath }) {
+                       allSrcs.contains(where: { ($0 as NSString).deletingLastPathComponent == counterpartPath }) {
                         self?.counterpartViewModel?.refresh()
                     }
 
@@ -1624,7 +1651,7 @@ extension FileGridView {
                     if success > 0, let vm = self?.viewModel, let undoManager = vm.undoManager {
                         let counterpart = self?.counterpartViewModel
                         if isMove {
-                            let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
+                            let pairs = zip(allSrcs, dstPaths).map { (src: $0, dst: $1) }
                             undoManager.registerUndo(withTarget: vm) { [weak counterpart] targetVM in
                                 // undo: 移回原位
                                 for (src, dst) in pairs {
@@ -1645,7 +1672,7 @@ extension FileGridView {
                             }
                             undoManager.setActionName("移动 \(success) 个项目")
                         } else {
-                            let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
+                            let pairs = zip(allSrcs, dstPaths).map { (src: $0, dst: $1) }
                             undoManager.registerUndo(withTarget: vm) { [weak counterpart] targetVM in
                                 // undo: 删除复制项
                                 for (_, dst) in pairs {
