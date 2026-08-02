@@ -43,10 +43,11 @@ private class FFFNoDisclosureOutlineView: NSOutlineView {
     override func frameOfOutlineCell(atRow row: Int) -> NSRect {
         return .zero  // 返回零矩形，系统不绘制展开三角形
     }
-    // 彻底禁用焦点环：阻止 outlineView 成为 key view，
-    // 消除点击收藏夹项目时整个模块外出现的蓝色边框（focusRingType=.none 在部分场景下仍会绘制）
+    // 恢复 canBecomeKeyView=true：使 outlineView 能成为 key view，
+    // NSTableRowView 选中绘制走标准强调蓝色（而非 de-emphasized 灰色），
+    // 解决"高亮未完全包裹内容/颜色过淡"问题。焦点环由 focusRingType=.none 抑制。
     override var canBecomeKeyView: Bool {
-        return false
+        return true
     }
     // 消除 cell 左侧额外偏移，使图标最左边缘与标题文字最左边缘对齐
     override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
@@ -93,6 +94,10 @@ class SidebarView: NSView {
     private var toolBtn: NSButton!
     /// 工具面板当前是否展开
     private var isToolPanelExpanded: Bool = false
+
+    // MARK: - 收藏夹布局常量（updateFavoritesHeight 与 makeOutlineView 共享，避免魔法数字重复）
+    private let favoritesRowHeight: CGFloat = 28
+    private let favoritesRowSpacing: CGFloat = 2
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -368,11 +373,11 @@ class SidebarView: NSView {
         ov.allowsMultipleSelection = false
         ov.headerView = nil  // 无表头
         // 收藏夹项目行高 28pt
-        ov.rowHeight = 28
+        ov.rowHeight = favoritesRowHeight
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
-        // 行间距：水平无间距，垂直 2pt，贴近访达侧边栏紧凑节奏
-        ov.intercellSpacing = NSSize(width: 0, height: 2)
+        // 行间距：水平无间距，垂直 2pt 间距，保证行间留白
+        ov.intercellSpacing = NSSize(width: 0, height: favoritesRowSpacing)
         // 选中样式：regular（实心高亮，确保收藏夹选中高亮框正确显示）
         ov.selectionHighlightStyle = .regular
         ov.backgroundColor = NSColor.clear
@@ -564,12 +569,10 @@ class SidebarView: NSView {
     // 任务 F10-3: 设备刷新逻辑（refreshDevices/updateDeviceHeight）已迁移至 MainWindowController 浮层（v0.6.6）
 
     private func updateFavoritesHeight() {
-        // 收藏夹行高 28pt + 垂直行距 2pt（intercellSpacing.height），末行无行距
-        let rowHeight: CGFloat = 28
-        let interSpacing: CGFloat = 2
+        // 收藏夹行高 + 垂直行距（intercellSpacing.height），末行无行距
         let count = favoritesDataSource.favoriteCount
-        let height = CGFloat(count) * rowHeight + CGFloat(max(count - 1, 0)) * interSpacing
-        favoritesHeightConstraint.constant = max(height, 28)
+        let height = CGFloat(count) * favoritesRowHeight + CGFloat(max(count - 1, 0)) * favoritesRowSpacing
+        favoritesHeightConstraint.constant = max(height, favoritesRowHeight)
     }
 
     /// 根据 tagFlowView 报告的理想高度调整标签区高度
