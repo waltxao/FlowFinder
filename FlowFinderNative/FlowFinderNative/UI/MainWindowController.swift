@@ -192,7 +192,7 @@ public class MainWindowController: NSWindowController {
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
-    /// v0.7.0: 工具浮动面板（替代设备栏位置显示，2×2 网格大方块布局）
+    /// v0.7.0: 工具浮动面板（替代设备栏位置显示，3×3 网格大方块布局）
     /// 与 devicePanel 同处侧边栏左下角区域，互斥显示（isHidden 切换）
     private var toolPanelView: ToolPanelView?
     /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
@@ -1031,12 +1031,12 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - v0.7.0: 工具浮动面板
 
-    /// 创建工具浮动面板（2×2 网格大方块布局）
+    /// 创建工具浮动面板（3×3 网格大方块布局）
     /// 包含 4 个工具项，点击工具或 ❌ 时通过 onClose 回调关闭面板并恢复设备栏
     private func createToolPanel() -> ToolPanelView {
         let tools: [ToolOverlayView.ToolItem] = [
             ToolOverlayView.ToolItem(
-                icon: "rectangle.dashed",
+                icon: "doc.on.doc",
                 title: "查重扫描",
                 description: "扫描当前目录中的重复文件",
                 isEnabled: true,
@@ -1050,7 +1050,19 @@ public class MainWindowController: NSWindowController {
                 description: "批量重命名选中文件",
                 isEnabled: true,
                 action: { [weak self] in
-                    self?.menuBatchRename(nil)
+                    guard let self = self else { return }
+                    let selected = self.activePaneViewModel.selectedFiles
+                    guard selected.count >= 2 else {
+                        // 与侧边栏/工具栏入口一致：选中不足 2 个时明确提示，不再静默无反应
+                        let alert = NSAlert()
+                        alert.messageText = "批量重命名"
+                        alert.informativeText = "请至少选中 2 个文件后再使用批量重命名。"
+                        alert.alertStyle = .informational
+                        alert.addButton(withTitle: "好")
+                        if let window = self.window { alert.beginSheetModal(for: window) { _ in } }
+                        return
+                    }
+                    self.menuBatchRename(nil)
                 }
             ),
             ToolOverlayView.ToolItem(

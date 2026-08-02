@@ -50,26 +50,26 @@ public class ToolOverlayView: NSView {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         backgroundView.addSubview(titleLabel)
 
-        // 关闭按钮
+        // 关闭按钮（灰色 × 图标）
         let closeButton = NSButton()
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
-        closeButton.title = "❌"
-        closeButton.font = NSFont.systemFont(ofSize: 18)
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭")
+        closeButton.imagePosition = .imageOnly
         closeButton.contentTintColor = .secondaryLabelColor
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         backgroundView.addSubview(closeButton)
 
-        // 工具方块网格容器（2列）
+        // 工具方块网格容器（3列）
         let gridContainer = NSGridView()
         gridContainer.translatesAutoresizingMaskIntoConstraints = false
         gridContainer.rowSpacing = 16
         gridContainer.columnSpacing = 16
         backgroundView.addSubview(gridContainer)
 
-        // 添加工具方块（每行 2 列）
+        // 添加工具方块（每行 3 列）
         var rowViews: [NSView] = []
         for tool in tools {
             let toolCard = ToolCardView(tool: tool) { [weak self] in
@@ -77,7 +77,7 @@ public class ToolOverlayView: NSView {
                 self?.onClose?()
             }
             rowViews.append(toolCard)
-            if rowViews.count >= 2 {
+            if rowViews.count >= 3 {
                 gridContainer.addRow(with: rowViews)
                 rowViews = []
             }
@@ -205,7 +205,7 @@ private class ToolCardView: NSView {
 
 /// 工具浮动面板视图
 /// 点击侧边栏工具按钮后，隐藏设备栏，在设备栏原位显示此面板
-/// 2×2 网格大方块布局，每个工具包含大图标 + 名称，右上角关闭按钮
+/// 3×3 网格大方块布局（末行不足 3 个补灰色占位方块），每个工具包含大图标 + 名称，右上角关闭按钮
 /// 宽度 = 侧边栏宽度，高度根据工具数量自适应
 public class ToolPanelView: NSView {
 
@@ -214,6 +214,9 @@ public class ToolPanelView: NSView {
 
     /// 工具项列表
     private let tools: [ToolOverlayView.ToolItem]
+
+    /// 网格容器（3×N 布局；提升为存储属性以便 layout() 中设置列宽）
+    private var gridContainer: NSGridView!
 
     /// 初始化
     /// - Parameter tools: 工具项列表
@@ -239,40 +242,43 @@ public class ToolPanelView: NSView {
             glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // 关闭按钮（右上角，16pt，tertiary label color）
+        // 关闭按钮（右上角，灰色 × 图标）
         let closeButton = NSButton()
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
-        closeButton.title = "❌"
-        closeButton.font = NSFont.systemFont(ofSize: 16)
-        closeButton.contentTintColor = .tertiaryLabelColor
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭")
+        closeButton.imagePosition = .imageOnly
+        closeButton.contentTintColor = .secondaryLabelColor
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
-        // 网格容器：NSGridView 2×2 布局，每行 2 列
-        let gridContainer = NSGridView()
+        // 网格容器：NSGridView 3×N 布局，每行 3 列（末行不足补占位）
+        gridContainer = NSGridView()
         gridContainer.translatesAutoresizingMaskIntoConstraints = false
         gridContainer.rowSpacing = 12
         gridContainer.columnSpacing = 12
         addSubview(gridContainer)
 
-        // 构建工具卡片，每行 2 列
+        // 构建工具卡片，每行 3 列，不足 3 个补灰色占位方块
         var rowViews: [NSView] = []
-        for tool in tools {
+        for (idx, tool) in tools.enumerated() {
             let card = ToolPanelCardView(tool: tool) { [weak self] in
                 tool.action?()
                 self?.onClose?()
             }
             rowViews.append(card)
-            if rowViews.count >= 2 {
+            if rowViews.count >= 3 {
                 gridContainer.addRow(with: rowViews)
                 rowViews = []
             }
         }
-        // 处理剩余卡片（奇数个工具时）
+        // 末行不足 3 个时补占位（灰色方块，无交互）
         if !rowViews.isEmpty {
+            while rowViews.count < 3 {
+                rowViews.append(makePlaceholderCard())
+            }
             gridContainer.addRow(with: rowViews)
         }
 
@@ -301,6 +307,27 @@ public class ToolPanelView: NSView {
     /// 关闭按钮点击
     @objc private func closeClicked() {
         onClose?()
+    }
+
+    /// 灰色占位方块（3×3 网格末行补齐，无交互）
+    private func makePlaceholderCard() -> NSView {
+        let placeholder = NSView()
+        placeholder.wantsLayer = true
+        placeholder.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+        placeholder.layer?.cornerRadius = 8
+        placeholder.translatesAutoresizingMaskIntoConstraints = false
+        return placeholder
+    }
+
+    /// 3 列等分网格宽度：NSGridView 默认列宽由内容自适应，卡片无 intrinsic size 会塌缩到 0，
+    /// 导致点击区域不可命中（问题 6/7 根因）。每次布局时显式设置列宽。
+    public override func layout() {
+        super.layout()
+        let availableWidth = bounds.width - 24  // 左右内边距各 12
+        let colWidth = max((availableWidth - 2 * 12) / 3, 40)  // 列间距 12
+        for i in 0..<gridContainer.numberOfColumns {
+            gridContainer.column(at: i).width = colWidth
+        }
     }
 }
 
