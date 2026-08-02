@@ -126,10 +126,6 @@ class PaneToolbar: NSView {
         // 1.4 自定义搜索框：FFGlassView(.component) 容器 + 搜索图标 + 无边框文本框
         searchContainer = FFGlassView(level: .component, cornerRadius: 8)
         searchContainer.translatesAutoresizingMaskIntoConstraints = false
-        // 修复圆角灰边：FFGlassView .component 级为纯 CALayer（tint+noise+highlight+innerShadow），
-        // 默认不设置 masksToBounds 导致装饰层以方形绘制、超出 8pt 圆角范围，在搜索框圆角与
-        // 方形之间的缝隙露出工具栏玻璃背景，形成可见的灰色方块。启用裁剪将装饰层限定在圆角内。
-        searchContainer.layer?.masksToBounds = true
 
         let searchIcon = NSImageView()
         searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")

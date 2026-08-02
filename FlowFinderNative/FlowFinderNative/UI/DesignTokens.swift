@@ -43,10 +43,19 @@ enum FFDesign {
         // 性能预算：NSGlassEffectView/NSVisualEffectView 实例数上限
         static let maxGlassInstances = 8
 
-        // 圆角（按层级）
+        // 圆角（按层级）——统一更大圆角：面板 16 / 组件 10（替代现 10/8 混合）
         static let cornerRadiusWindow: CGFloat = 12
-        static let cornerRadiusPanel: CGFloat = 10
-        static let cornerRadiusComponent: CGFloat = 8
+        static let cornerRadiusPanel: CGFloat = 16
+        static let cornerRadiusComponent: CGFloat = 10
+
+        // 液态玻璃描边（1pt 细亮线，Apple Liquid Glass 规范）
+        static let borderLight: NSColor = NSColor.white.withAlphaComponent(0.50)  // 日间亮边
+        static let borderDark: NSColor = NSColor.white.withAlphaComponent(0.12)   // 夜间弱亮边
+
+        // 液态玻璃底部阴影（与背景分离的深度层次）
+        static let shadowOpacity: Float = 0.15
+        static let shadowRadius: CGFloat = 10
+        static let shadowOffset: CGSize = CGSize(width: 0, height: 2)
 
         /// 按层级取默认圆角
         static func defaultCornerRadius(for level: Level) -> CGFloat {
@@ -86,5 +95,10 @@ enum FFDesign {
     /// 当前 tint
     static var glassTint: NSColor {
         isDark ? Glass.tintDark : Glass.tintLight
+    }
+
+    /// 当前描边色（液态玻璃亮线，深浅色自适应）
+    static var glassBorder: NSColor {
+        isDark ? Glass.borderDark : Glass.borderLight
     }
 }

@@ -104,6 +104,20 @@ class FFGlassView: NSView {
         layer?.backgroundColor = NSColor.clear.cgColor
         // 不设置 masksToBounds：子视图不应被裁剪，仅背景层需要圆角
 
+        // 液态玻璃描边 + 底部阴影：仅 .panel/.component 级
+        // （.window 级是透明容器，由窗口控制器独立持有 NSGlassEffectView，不加描边/阴影）
+        if level != .window {
+            // 液态玻璃描边：1pt 细亮线（Apple Liquid Glass 规范），颜色随主题刷新
+            layer?.borderWidth = 1
+            layer?.borderColor = FFDesign.glassBorder.cgColor
+
+            // 液态玻璃底部阴影：与背景分离的深度层次（面板/组件级）
+            layer?.shadowColor = NSColor.black.cgColor
+            layer?.shadowOpacity = FFDesign.Glass.shadowOpacity
+            layer?.shadowRadius = FFDesign.Glass.shadowRadius
+            layer?.shadowOffset = FFDesign.Glass.shadowOffset
+        }
+
         switch level {
         case .window:
             // 窗口级玻璃由窗口控制器持有独立的 NSGlassEffectView，FFGlassView 不接管。
@@ -288,10 +302,18 @@ class FFGlassView: NSView {
 
         // 更新 cornerRadius（bounds 变化时确保圆角正确）
         layer?.cornerRadius = cornerRadius
+        // 阴影路径跟随圆角（避免阴影呈方形）
+        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
 
-        // tint / 噪声：填满
+        // tint / 噪声：填满，且跟随圆角裁剪（消除圆角外方形灰边根因）
         tintLayer?.frame = bounds
         noiseLayer?.frame = bounds
+        // 装饰层自身加圆角 + 裁剪：父层 masksToBounds=false 不裁剪 sublayer，
+        // 需在装饰层上单独设置 cornerRadius 与 masksToBounds，使方形角不再从圆角外露出。
+        for layer in [tintLayer, noiseLayer] {
+            layer?.cornerRadius = cornerRadius
+            layer?.masksToBounds = true
+        }
 
         // 高光：沿圆角矩形顶部弧线
         if let highlight = highlightLayer {
@@ -378,6 +400,8 @@ class FFGlassView: NSView {
         highlightLayer?.opacity = Float(FFDesign.highlightAlpha)
         // 内阴影 alpha
         innerShadowLayer?.shadowOpacity = Float(FFDesign.innerShadowAlpha)
+        // 描边色随主题刷新
+        layer?.borderColor = FFDesign.glassBorder.cgColor
         // 强制重新布局以更新路径（dark/light 下圆角不变，但保险起见）
         needsLayout = true
     }
