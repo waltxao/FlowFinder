@@ -398,7 +398,7 @@ public class SettingsWindowController: NSWindowController {
 
         let stack = NSStackView(views: [startupSection, fileOpsSection])
         stack.orientation = .vertical
-        stack.spacing = 20
+        stack.spacing = 12
         stack.detachesHiddenViews = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.documentView = stack
@@ -438,34 +438,9 @@ public class SettingsWindowController: NSWindowController {
         accentSection.addRow(accentRow)
         registerForSearch(accentSection, rows: [accentRow])
 
-        // 显示 section
-        let displaySection = SettingsSectionView(title: "显示", iconName: "textformat.size")
-        let iconSizeValue = UserDefaults.standard.double(forKey: "sidebar_icon_size")
-        let iconSizeRow = SettingsRowView.sliderRow(
-            title: "侧边栏图标大小",
-            desc: "调整侧边栏图标的显示尺寸",
-            minValue: 0, maxValue: 2,
-            value: iconSizeValue
-        ) { val in
-            UserDefaults.standard.set(val, forKey: "sidebar_icon_size")
-        }
-        displaySection.addRow(iconSizeRow)
-
-        let reduceTransparencyRow = SettingsRowView.toggleRow(
-            title: "减少透明度",
-            desc: "降低界面透明效果以提升可读性（辅助功能）",
-            state: UserDefaults.standard.bool(forKey: "reduce_transparency"),
-            action: { state in
-                UserDefaults.standard.set(state, forKey: "reduce_transparency")
-                FFGlassView.refreshAllInstances()
-            }
-        )
-        displaySection.addRow(reduceTransparencyRow)
-        registerForSearch(displaySection, rows: [iconSizeRow, reduceTransparencyRow])
-
-        let stack = NSStackView(views: [themeSection, accentSection, displaySection])
+        let stack = NSStackView(views: [themeSection, accentSection])
         stack.orientation = .vertical
-        stack.spacing = 20
+        stack.spacing = 12
         stack.detachesHiddenViews = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.documentView = stack
@@ -491,17 +466,6 @@ public class SettingsWindowController: NSWindowController {
         )
         sortSection.addRow(folderFirstRow)
 
-        let showExtRow = SettingsRowView.toggleRow(
-            title: "显示文件扩展名",
-            desc: "在文件名后显示类型扩展名",
-            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true,
-            action: { state in
-                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.showFileExtensions)
-                NotificationCenter.default.post(name: .refreshFileExtensions, object: nil)
-            }
-        )
-        sortSection.addRow(showExtRow)
-
         let keepSelectionRow = SettingsRowView.toggleRow(
             title: "保留选择位置",
             desc: "刷新后保持已选文件",
@@ -511,47 +475,11 @@ public class SettingsWindowController: NSWindowController {
             }
         )
         sortSection.addRow(keepSelectionRow)
+        registerForSearch(sortSection, rows: [folderFirstRow, keepSelectionRow])
 
-        let showTagsRow = SettingsRowView.toggleRow(
-            title: "显示文件标签",
-            desc: "在文件列表中显示标签颜色圆点",
-            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true,
-            action: { state in
-                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.showFileTags)
-                NotificationCenter.default.post(name: .refreshFileTags, object: nil)
-            }
-        )
-        sortSection.addRow(showTagsRow)
-
-        let hideSystemRow = SettingsRowView.toggleRow(
-            title: "隐藏系统文件",
-            desc: "隐藏 .DS_Store 等系统文件",
-            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showSystemFiles) as? Bool ?? false,
-            action: { state in
-                // showSystemFiles=false 表示隐藏，存储时取反
-                UserDefaults.standard.set(!state, forKey: FFUserDefaultsKeys.showSystemFiles)
-                NotificationCenter.default.post(name: .refreshSystemFiles, object: nil)
-            }
-        )
-        sortSection.addRow(hideSystemRow)
-        registerForSearch(sortSection, rows: [folderFirstRow, showExtRow, keepSelectionRow, showTagsRow, hideSystemRow])
-
-        // 缓存 section
-        let cacheSection = SettingsSectionView(title: "缓存", iconName: "internaldrive")
-        let cacheSizeRow = SettingsRowView.sliderRow(
-            title: "缩略图缓存大小",
-            desc: "控制缩略图缓存占用磁盘空间上限",
-            minValue: 0, maxValue: 3,
-            value: UserDefaults.standard.double(forKey: "thumbnail_cache_size")
-        ) { val in
-            UserDefaults.standard.set(val, forKey: "thumbnail_cache_size")
-        }
-        cacheSection.addRow(cacheSizeRow)
-        registerForSearch(cacheSection, rows: [cacheSizeRow])
-
-        let stack = NSStackView(views: [sortSection, cacheSection])
+        let stack = NSStackView(views: [sortSection])
         stack.orientation = .vertical
-        stack.spacing = 20
+        stack.spacing = 12
         stack.detachesHiddenViews = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.documentView = stack
@@ -572,7 +500,7 @@ public class SettingsWindowController: NSWindowController {
 
         let stack = NSStackView(views: [tagSection])
         stack.orientation = .vertical
-        stack.spacing = 20
+        stack.spacing = 12
         stack.detachesHiddenViews = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.documentView = stack
@@ -607,17 +535,7 @@ public class SettingsWindowController: NSWindowController {
             }
         )
         configSection.addRow(autoReconnectRow)
-
-        let timeoutRow = SettingsRowView.sliderRow(
-            title: "连接超时",
-            desc: "SMB 连接超时时间（秒）",
-            minValue: 0, maxValue: 3,
-            value: UserDefaults.standard.double(forKey: "smb_timeout_level")
-        ) { val in
-            UserDefaults.standard.set(val, forKey: "smb_timeout_level")
-        }
-        configSection.addRow(timeoutRow)
-        registerForSearch(configSection, rows: [domainRow, autoReconnectRow, timeoutRow])
+        registerForSearch(configSection, rows: [domainRow, autoReconnectRow])
 
         // 服务器列表（使用现有 SMBManagerPanel，直接添加到堆栈，全宽显示）
         let smbPanel = SMBManagerPanel(frame: .zero)
@@ -627,7 +545,7 @@ public class SettingsWindowController: NSWindowController {
 
         let stack = NSStackView(views: [configSection, smbPanel])
         stack.orientation = .vertical
-        stack.spacing = 20
+        stack.spacing = 12
         stack.detachesHiddenViews = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.documentView = stack
@@ -714,7 +632,7 @@ public class SettingsWindowController: NSWindowController {
 
         let stack = NSStackView(views: [fileShortcutSection, viewShortcutSection, otherShortcutSection])
         stack.orientation = .vertical
-        stack.spacing = 20
+        stack.spacing = 12
         stack.detachesHiddenViews = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.documentView = stack
@@ -784,7 +702,7 @@ public class SettingsWindowController: NSWindowController {
 
         let stack = NSStackView(views: [aboutSection])
         stack.orientation = .vertical
-        stack.spacing = 20
+        stack.spacing = 12
         stack.detachesHiddenViews = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.documentView = stack
