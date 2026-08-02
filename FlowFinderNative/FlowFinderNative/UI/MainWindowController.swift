@@ -174,7 +174,8 @@ public class MainWindowController: NSWindowController {
 
     /// 撤销/重做文件操作串行队列：保证 undo 与 redo 的文件操作按序执行，
     /// 避免快速 ⌘Z→⌘⇧Z 时 redo 文件操作与仍在飞行的 undo 文件操作重叠（问题 9）。
-    private static let undoRedoQueue = DispatchQueue(label: "FlowFinder.UndoRedo.Serial")
+    /// internal 访问：FileListView/FileGridView 的拖拽撤销也需经此队列串行化。
+    internal static let undoRedoQueue = DispatchQueue(label: "FlowFinder.UndoRedo.Serial")
 
     // MARK: - Properties
 
@@ -1408,19 +1409,29 @@ public class MainWindowController: NSWindowController {
                     let pairs = copiedPairs
                     let activeSide = self.activePane
                     self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
-                        // undo: 删除复制的文件
-                        for (_, dst) in pairs {
-                            try? CoreBridge.shared.deleteFile(path: dst)
-                        }
-                        // 注册 redo：重新复制
+                        // undo: 删除复制的文件（经 undoRedoQueue 串行执行，完成后刷新）
+                        ctrl.undoDeleteCopied(dstPaths: pairs.map { $0.dst })
+                        // 注册 redo：重新复制。必须在 undo 处理器内同步注册，
+                        // 以保证 registerUndo 路由到 redo 栈（isUndoing == true）。
                         ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
-                            for (src, dst) in pairs {
-                                try? CoreBridge.shared.copyFile(src: src, dst: dst)
+                            // 对称注册：redo 处理器内同步注册反向 undo（路由到 undo 栈，isRedoing == true）
+                            ctrl2.undoManager?.registerUndo(withTarget: ctrl2) { ctrl3 in
+                                ctrl3.undoDeleteCopied(dstPaths: pairs.map { $0.dst })
+                                ctrl3.undoManager?.setActionName("复制 \(pairs.count) 个项目")
                             }
-                            ctrl2.refreshPane(activeSide)
+                            // redo 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态
+                            Self.undoRedoQueue.async {
+                                for (src, dst) in pairs {
+                                    try? CoreBridge.shared.copyFile(src: src, dst: dst)
+                                }
+                                // redo 文件操作完成后再刷新界面（主线程）
+                                DispatchQueue.main.async {
+                                    ctrl2.refreshPane(activeSide)
+                                }
+                            }
+                            ctrl2.undoManager?.setActionName("复制 \(pairs.count) 个项目")
                         }
                         ctrl.undoManager?.setActionName("复制 \(pairs.count) 个项目")
-                        ctrl.refreshPane(activeSide)
                     }
                     self.ffUndoManager.setActionName("复制 \(pairs.count) 个项目")
                 }
@@ -1877,6 +1888,12 @@ extension MainWindowController {
                                 // 以保证 registerUndo 路由到 redo 栈（isUndoing == true）。
                                 // 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态。
                                 ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
+                                    // 对称注册：redo 处理器内同步注册反向 undo（路由到 undo 栈，isRedoing == true）
+                                    ctrl2.undoManager?.registerUndo(withTarget: ctrl2) { ctrl3 in
+                                        ctrl3.undoMoveBack(pairs: pairs)
+                                        ctrl3.undoManager?.setActionName("移动 \(success) 个项目")
+                                    }
+                                    // redo 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态
                                     Self.undoRedoQueue.async {
                                         for (src, dst) in pairs {
                                             try? CoreBridge.shared.moveFile(src: src, dst: dst)
@@ -1887,6 +1904,7 @@ extension MainWindowController {
                                             ctrl2.refreshPane(.right)
                                         }
                                     }
+                                    ctrl2.undoManager?.setActionName("移动 \(success) 个项目")
                                 }
                                 ctrl.undoManager?.setActionName("移动 \(success) 个项目")
                             }
@@ -1900,6 +1918,12 @@ extension MainWindowController {
                                 // 以保证 registerUndo 路由到 redo 栈（isUndoing == true）。
                                 // 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态。
                                 ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
+                                    // 对称注册：redo 处理器内同步注册反向 undo（路由到 undo 栈，isRedoing == true）
+                                    ctrl2.undoManager?.registerUndo(withTarget: ctrl2) { ctrl3 in
+                                        ctrl3.undoDeleteCopied(dstPaths: dstPaths)
+                                        ctrl3.undoManager?.setActionName("复制 \(success) 个项目")
+                                    }
+                                    // redo 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态
                                     Self.undoRedoQueue.async {
                                         for (src, dst) in pairs {
                                             try? CoreBridge.shared.copyFile(src: src, dst: dst)
@@ -1910,6 +1934,7 @@ extension MainWindowController {
                                             ctrl2.refreshPane(.right)
                                         }
                                     }
+                                    ctrl2.undoManager?.setActionName("复制 \(success) 个项目")
                                 }
                                 ctrl.undoManager?.setActionName("复制 \(success) 个项目")
                             }
@@ -2222,38 +2247,59 @@ extension MainWindowController {
                     let undoItems = movedOrCopied
                     if isMove {
                         self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
-                            // undo: 移回原位
-                            for (src, dst) in undoItems {
-                                try? CoreBridge.shared.moveFile(src: dst, dst: src)
-                            }
-                            // 注册 redo：再次移动
+                            // undo: 移回原位（经 undoRedoQueue 串行执行）
+                            ctrl.undoMoveBack(pairs: undoItems)
+                            // 注册 redo：再次移动。必须在 undo 处理器内同步注册，
+                            // 以保证 registerUndo 路由到 redo 栈（isUndoing == true）。
+                            // 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态。
                             ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
-                                for (src, dst) in undoItems {
-                                    try? CoreBridge.shared.moveFile(src: src, dst: dst)
+                                // 对称注册：redo 处理器内同步注册反向 undo（路由到 undo 栈，isRedoing == true）
+                                ctrl2.undoManager?.registerUndo(withTarget: ctrl2) { ctrl3 in
+                                    ctrl3.undoMoveBack(pairs: undoItems)
+                                    ctrl3.undoManager?.setActionName("移动 \(undoItems.count) 个项目")
                                 }
-                                ctrl2.refreshPane(sourceSide)
-                                ctrl2.refreshPane(destSide)
+                                // redo 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态
+                                Self.undoRedoQueue.async {
+                                    for (src, dst) in undoItems {
+                                        try? CoreBridge.shared.moveFile(src: src, dst: dst)
+                                    }
+                                    // redo 文件操作完成后再刷新界面（主线程）
+                                    DispatchQueue.main.async {
+                                        ctrl2.refreshPane(sourceSide)
+                                        ctrl2.refreshPane(destSide)
+                                    }
+                                }
+                                ctrl2.undoManager?.setActionName("移动 \(undoItems.count) 个项目")
                             }
                             ctrl.undoManager?.setActionName("移动 \(undoItems.count) 个项目")
-                            ctrl.refreshPane(sourceSide)
-                            ctrl.refreshPane(destSide)
                         }
                         self.ffUndoManager.setActionName("移动 \(undoItems.count) 个项目")
                     } else {
                         self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
-                            // undo: 删除复制项
-                            for (_, dst) in undoItems {
-                                try? CoreBridge.shared.deleteFile(path: dst)
-                            }
-                            // 注册 redo：重新复制
+                            // undo: 删除复制项（经 undoRedoQueue 串行执行）
+                            ctrl.undoDeleteCopied(dstPaths: undoItems.map { $0.dst })
+                            // 注册 redo：重新复制。必须在 undo 处理器内同步注册，
+                            // 以保证 registerUndo 路由到 redo 栈（isUndoing == true）。
+                            // 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态。
                             ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
-                                for (src, dst) in undoItems {
-                                    try? CoreBridge.shared.copyFile(src: src, dst: dst)
+                                // 对称注册：redo 处理器内同步注册反向 undo（路由到 undo 栈，isRedoing == true）
+                                ctrl2.undoManager?.registerUndo(withTarget: ctrl2) { ctrl3 in
+                                    ctrl3.undoDeleteCopied(dstPaths: undoItems.map { $0.dst })
+                                    ctrl3.undoManager?.setActionName("复制 \(undoItems.count) 个项目")
                                 }
-                                ctrl2.refreshPane(destSide)
+                                // redo 文件操作经 undoRedoQueue 串行化，排队在 undo 操作之后，避免竞态
+                                Self.undoRedoQueue.async {
+                                    for (src, dst) in undoItems {
+                                        try? CoreBridge.shared.copyFile(src: src, dst: dst)
+                                    }
+                                    // redo 文件操作完成后再刷新界面（主线程）
+                                    DispatchQueue.main.async {
+                                        ctrl2.refreshPane(destSide)
+                                    }
+                                }
+                                ctrl2.undoManager?.setActionName("复制 \(undoItems.count) 个项目")
                             }
                             ctrl.undoManager?.setActionName("复制 \(undoItems.count) 个项目")
-                            ctrl.refreshPane(destSide)
                         }
                         self.ffUndoManager.setActionName("复制 \(undoItems.count) 个项目")
                     }
