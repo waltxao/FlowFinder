@@ -1810,7 +1810,8 @@ extension MainWindowController {
                 }
 
                 // 保留两者：逐项以改名后的目标名复制/移动（批量接口目标名取 lastPathComponent，无法表达改名）
-                var keepBothDstPaths: [String] = []
+                // 仅记录成功项为 (src, dst) 对，保持 src/dst 严格对齐，避免部分失败时 zip 静默截断
+                var keepBothPairs: [(src: String, dst: String)] = []
                 for pair in conflictPlan.keepBoth {
                     let dstFull = (destPath as NSString).appendingPathComponent(pair.dstName)
                     do {
@@ -1821,7 +1822,7 @@ extension MainWindowController {
                             try CoreBridge.shared.moveFile(src: pair.src, dst: dstFull)
                         }
                         success += 1
-                        keepBothDstPaths.append(dstFull)
+                        keepBothPairs.append((src: pair.src, dst: dstFull))
                     } catch {
                         // 单项失败：不计入 success，下方按 partial failure 统一提示
                     }
@@ -1844,12 +1845,15 @@ extension MainWindowController {
                 // own failure path. Appended to the user-facing alert.
                 let partialDetail = (success < total) ? CoreBridge.shared.getLastError() : ""
 
-                // 计算 dst 路径用于撤销注册（best-effort：假设都成功）
-                var dstPaths = srcs.map { src -> String in
+                // 计算 dst 路径用于撤销注册（best-effort：假设都成功）。
+                // 保留两者项仅计入成功者，normalDstPaths 与 keepBothPairs 顺序对齐，
+                // undoPairs 由 src 列表 + 成功项组成，避免单项失败时 zip 错配 src↔dst
+                let normalDstPaths = srcs.map { src -> String in
                     let name = (src as NSString).lastPathComponent
                     return (destPath as NSString).appendingPathComponent(name)
                 }
-                dstPaths.append(contentsOf: keepBothDstPaths)
+                let dstPaths = normalDstPaths + keepBothPairs.map { $0.dst }
+                let undoPairs = zip(srcs, normalDstPaths).map { (src: $0, dst: $1) } + keepBothPairs
 
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
@@ -1865,7 +1869,7 @@ extension MainWindowController {
                     // 问题 9：粘贴操作注册撤销（复制→删除目标；移动→移回源）
                     if success > 0 {
                         if isMove {
-                            let pairs = zip(allSrcs, dstPaths).map { (src: $0, dst: $1) }
+                            let pairs = undoPairs
                             self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                                 // undo: 移回原位（经 undoRedoQueue 串行执行）
                                 ctrl.undoMoveBack(pairs: pairs)
@@ -1888,7 +1892,7 @@ extension MainWindowController {
                             }
                             self.ffUndoManager.setActionName("移动 \(success) 个项目")
                         } else {
-                            let pairs = zip(allSrcs, dstPaths).map { (src: $0, dst: $1) }
+                            let pairs = undoPairs
                             self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
                                 // undo: 删除复制项（经 undoRedoQueue 串行执行）
                                 ctrl.undoDeleteCopied(dstPaths: dstPaths)
