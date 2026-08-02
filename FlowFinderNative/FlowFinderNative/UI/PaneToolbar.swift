@@ -171,9 +171,9 @@ class PaneToolbar: NSView {
             searchContainer.heightAnchor.constraint(equalToConstant: 24),
         ])
         searchContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        // 弹性：搜索框 hugging 设为最低（1），row2 中任何剩余宽度都分配给搜索框，
-        // 右侧图标簇（排序/分组/视图切换/显示设置）因默认 hugging 更高而保持固有宽度并贴最右。
-        searchContainer.setContentHuggingPriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
+        // 搜索框 hugging 设为默认低（250）：与 spacer（1）配合，剩余宽度优先给 spacer 保证图标贴右，
+        // 搜索框在满足最小宽 120 的基础上适度变宽（用户确认的"搜索框变宽+图标贴右"双目标）
+        searchContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         sortPopup = NSPopUpButton()
         sortPopup.addItems(withTitles: SortField.allCases.map { $0.rawValue })
@@ -205,12 +205,20 @@ class PaneToolbar: NSView {
         // 模板色自动适配浅/深色，与其他导航按钮视觉统一
         toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu))
 
+        // 弹性 spacer：占据搜索框与图标簇之间的剩余空间，
+        // 使右侧图标簇（排序/分组/视图切换/显示设置）恒贴操作区最右端。
+        let flexibleSpacer = NSView()
+        flexibleSpacer.translatesAutoresizingMaskIntoConstraints = false
+        flexibleSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
+        flexibleSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         let row2 = NSStackView(views: [
             searchContainer,
             sortPopup,
             groupPopup,
             listViewButton, gridViewButton,
             toolsSeparator,
+            flexibleSpacer,
             toolsButton,
         ])
         row2.orientation = .horizontal
@@ -227,6 +235,8 @@ class PaneToolbar: NSView {
             row2.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             row2.heightAnchor.constraint(equalToConstant: 32),
         ])
+        // spacer 最小宽度 8pt，确保搜索框与图标簇之间始终有间隔
+        flexibleSpacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 8).isActive = true
     }
 
     // MARK: - Button Factory
