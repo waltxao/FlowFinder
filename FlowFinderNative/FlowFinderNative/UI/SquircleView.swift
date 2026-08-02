@@ -61,16 +61,22 @@ public class SquircleView: NSView {
         }
     }
 
-    /// 生成超椭圆 CGPath
+    /// 生成超椭圆圆角路径
+    ///
+    /// 正确实现：直边沿 rect 边界延伸，仅在四个角用超椭圆曲线段连接。
+    /// 之前的实现用 `a = width/2 - r` 创建完整超椭圆，导致整个形状从四边
+    /// 向内收缩 r 像素，大量裁剪内容。此版本修复该缺陷。
+    ///
     /// - Parameters:
     ///   - rect: 绘制区域
     ///   - radius: 圆角半径
-    ///   - factor: 超椭圆指数
+    ///   - factor: 超椭圆指数（默认 5.0，iOS 风格）
     /// - Returns: 超椭圆路径
     public static func squirclePath(in rect: CGRect, radius: CGFloat, factor: CGFloat = 5.0) -> CGPath {
+        let w = rect.width
+        let h = rect.height
         // 确保半径不超过宽高的一半
-        let maxRadius = min(rect.width, rect.height) / 2.0
-        let r = min(radius, maxRadius)
+        let r = min(radius, w / 2.0, h / 2.0)
 
         // 如果半径为 0，直接返回矩形路径
         if r <= 0 {
@@ -78,34 +84,67 @@ public class SquircleView: NSView {
         }
 
         let path = CGMutablePath()
+        let origin = rect.origin
+        let segments = 30  // 每个角的采样点数
 
-        // 超椭圆中心点
-        let cx = rect.midX
-        let cy = rect.midY
-        // 超椭圆半轴
-        let a = rect.width / 2.0 - r
-        let b = rect.height / 2.0 - r
-
-        // 生成超椭圆路径点
-        // 使用参数方程：x = a * sign(cos(t)) * |cos(t)|^(2/n), y = b * sign(sin(t)) * |sin(t)|^(2/n)
-        // 加上圆角部分的偏移
-        let segments = 120
-        var points: [CGPoint] = []
-        points.reserveCapacity(segments + 1)
-
-        for i in 0...segments {
-            let t = CGFloat(i) / CGFloat(segments) * 2.0 * .pi
-            let cosT = cos(t)
-            let sinT = sin(t)
-
-            // 超椭圆公式
-            let x = a * Self.sign(cosT) * pow(abs(cosT), 2.0 / factor) + cx
-            let y = b * Self.sign(sinT) * pow(abs(sinT), 2.0 / factor) + cy
-
-            points.append(CGPoint(x: x, y: y))
+        // 辅助：生成一个角的超椭圆曲线段
+        // 圆角中心 (cx, cy)，半径 r，从角度 startAngle 到 endAngle
+        // 超椭圆参数方程：x = cx + r * sign(cos(t)) * |cos(t)|^(2/factor)
+        //                 y = cy + r * sign(sin(t)) * |sin(t)|^(2/factor)
+        func cornerPoints(cx: CGFloat, cy: CGFloat, r: CGFloat,
+                          startAngle: CGFloat, endAngle: CGFloat) -> [CGPoint] {
+            var pts: [CGPoint] = []
+            for i in 0...segments {
+                let t = startAngle + (endAngle - startAngle) * CGFloat(i) / CGFloat(segments)
+                let cosT = cos(t)
+                let sinT = sin(t)
+                let x = cx + r * Self.sign(cosT) * pow(abs(cosT), 2.0 / factor)
+                let y = cy + r * Self.sign(sinT) * pow(abs(sinT), 2.0 / factor)
+                pts.append(CGPoint(x: x, y: y))
+            }
+            return pts
         }
 
-        path.addLines(between: points)
+        // 四个角的圆角中心：
+        // 左上 (r, 0+r)，右上 (w-r, r)，右下 (w-r, h-r)，左下 (r, h-r)
+        // 角度（标准数学坐标系，y轴向上；但 CGPath y轴向下，需要翻转）
+
+        // 左上角：从 (0, r) 到 (r, 0)
+        // 在 CGPath 坐标系中，角中心 (r, r)，角度从 π 到 3π/2
+        let tlPoints = cornerPoints(cx: origin.x + r, cy: origin.y + r, r: r,
+                                     startAngle: .pi, endAngle: 3.0 * .pi / 2.0)
+
+        // 右上角：从 (w, r) 到 (w-r, 0)
+        // 角中心 (w-r, r)，角度从 3π/2 到 2π
+        let trPoints = cornerPoints(cx: origin.x + w - r, cy: origin.y + r, r: r,
+                                     startAngle: 3.0 * .pi / 2.0, endAngle: 2.0 * .pi)
+
+        // 右下角：从 (w-r, h) 到 (w, h-r)
+        // 角中心 (w-r, h-r)，角度从 0 到 π/2
+        let brPoints = cornerPoints(cx: origin.x + w - r, cy: origin.y + h - r, r: r,
+                                     startAngle: 0, endAngle: .pi / 2.0)
+
+        // 左下角：从 (0, h-r) 到 (r, h)
+        // 角中心 (r, h-r)，角度从 π/2 到 π
+        let blPoints = cornerPoints(cx: origin.x + r, cy: origin.y + h - r, r: r,
+                                     startAngle: .pi / 2.0, endAngle: .pi)
+
+        // 构建路径：从左上角第一个点开始，顺时针
+        // 左上角曲线
+        path.addLines(between: tlPoints)
+        // 顶边直线（从左上角终点到右上角起点）
+        path.addLine(to: trPoints[0])
+        // 右上角曲线
+        path.addLines(between: trPoints)
+        // 右边直线
+        path.addLine(to: brPoints[0])
+        // 右下角曲线
+        path.addLines(between: brPoints)
+        // 底边直线
+        path.addLine(to: blPoints[0])
+        // 左下角曲线
+        path.addLines(between: blPoints)
+        // 闭合（回到左上角起点）
         path.closeSubpath()
 
         return path
