@@ -547,7 +547,16 @@ class ExpandableDetailsBar: NSView {
             return
         }
         for tag in tags {
-            tagsContainer.addArrangedSubview(makeTagPill(tag: tag))
+            let pill = makeTagPill(tag: tag)
+            // 每个药丸独立右键菜单：右键任意位置 → "移除标签"（仅移除该文件的此标签）
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            let item = NSMenuItem(title: "移除标签", action: #selector(removeTagFromDetailsBar(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["tagName": tag.name, "path": path]
+            menu.addItem(item)
+            pill.menu = menu
+            tagsContainer.addArrangedSubview(pill)
         }
     }
 
@@ -601,6 +610,22 @@ class ExpandableDetailsBar: NSView {
             pill.heightAnchor.constraint(equalToConstant: pillHeight),
         ])
         return pill
+    }
+
+    /// 右键药丸移除标签（详情栏，按名称移除，兼容原生标签随机 id）
+    /// 移除后刷新详情栏标签显示并通知文件列表刷新
+    @objc private func removeTagFromDetailsBar(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let tagName = info["tagName"],
+              let path = info["path"] else { return }
+        _ = TagBridge.shared.removeTagByName(tagName, path: path)
+        // 刷新详情栏标签药丸显示
+        updateTags(path: path)
+        // 更新标签文本字段（药丸容器下方的文本兜底）
+        let tags = TagBridge.shared.getTags(path: path)
+        tagsField.stringValue = tags.isEmpty ? "无" : tags.map { $0.name }.joined(separator: ", ")
+        // 通知文件列表刷新（文件列表中的内联药丸需同步更新）
+        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": tags])
     }
 
     // MARK: - (权限字段已在 1.6 重设计中移除，如需恢复可参考 git 历史)

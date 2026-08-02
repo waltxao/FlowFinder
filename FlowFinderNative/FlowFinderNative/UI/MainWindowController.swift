@@ -192,8 +192,9 @@ public class MainWindowController: NSWindowController {
     private var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
-    /// v0.6.9: 工具选择覆盖页（点击侧边栏工具按钮后在操作区显示）
-    private var toolOverlayView: ToolOverlayView?
+    /// v0.7.0: 工具浮动面板（替代设备栏位置显示，2×2 网格大方块布局）
+    /// 与 devicePanel 同处侧边栏左下角区域，互斥显示（isHidden 切换）
+    private var toolPanelView: ToolPanelView?
     /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
     /// 与侧边栏收藏夹/标签模块视觉分离，展开时显示所有设备不需滚动条
     private var devicePanel: NSView!
@@ -449,6 +450,23 @@ public class MainWindowController: NSWindowController {
             devicePanel.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor, constant: -8),
             devicePanelHeightConstraint,
         ])
+
+        // v0.7.0: 创建工具浮动面板（与 devicePanel 同位置，互斥显示）
+        // 点击侧边栏工具按钮时隐藏设备栏、显示此面板；再次点击或 ❌ 关闭时反向切换
+        toolPanelView = createToolPanel()
+        toolPanelView?.translatesAutoresizingMaskIntoConstraints = false
+        toolPanelView?.wantsLayer = true
+        toolPanelView?.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
+        toolPanelView?.isHidden = true
+        if let toolPanel = toolPanelView {
+            mainContainer.addSubview(toolPanel)
+            NSLayoutConstraint.activate([
+                // 与 devicePanel 完全相同的位置约束
+                toolPanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
+                toolPanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -44),
+                toolPanel.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor, constant: -8),
+            ])
+        }
 
         // 任务 F10-3: 监听卷挂载/卸载通知，刷新设备浮层（迁移自 SidebarView）
         let workspaceNC = NSWorkspace.shared.notificationCenter
@@ -869,8 +887,11 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 任务 F11-1: 刷新设备栏浮层背景色（主题切换时调用，v0.6.7）
+    /// v0.7.0: 同时刷新工具浮动面板背景色
     private func refreshDevicePanelBackground() {
-        devicePanel?.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
+        let bgColor = operationAreaBackgroundColor().cgColor
+        devicePanel?.layer?.backgroundColor = bgColor
+        toolPanelView?.layer?.backgroundColor = bgColor
     }
 
     deinit {
@@ -1000,27 +1021,26 @@ public class MainWindowController: NSWindowController {
         SettingsWindowController.shared.showWindow()
     }
 
-    /// 问题3续修复：工具面板展开时隐藏设备浮层，收起时恢复
-    /// 工具面板与设备浮层同处侧边栏左下角区域，展开工具面板会覆盖设备浮层，需联动隐藏避免视觉重叠
+    /// v0.7.0: 工具面板展开时隐藏设备浮层并显示工具面板，收起时反向切换
+    /// 工具面板与设备浮层同处侧边栏左下角区域，互斥显示（isHidden 切换）
     @objc private func handleToolPanelToggle(_ notification: Notification) {
         guard let isExpanded = notification.userInfo?["isExpanded"] as? Bool else { return }
-        // 工具展开时隐藏设备浮层，收起时恢复显示
-        devicePanel?.isHidden = isExpanded
-        // v0.6.9: 工具展开时在激活操作区显示工具选择覆盖页，收起时移除
         if isExpanded {
-            showToolOverlay()
+            // 展开：隐藏设备栏，显示工具面板
+            devicePanel?.isHidden = true
+            toolPanelView?.isHidden = false
         } else {
-            hideToolOverlay()
+            // 收起：隐藏工具面板，恢复设备栏
+            toolPanelView?.isHidden = true
+            devicePanel?.isHidden = false
         }
     }
 
-    // MARK: - v0.6.9: 工具选择覆盖页
+    // MARK: - v0.7.0: 工具浮动面板
 
-    /// 在当前激活的操作区容器上覆盖显示工具选择页
-    private func showToolOverlay() {
-        // 若已存在则先移除
-        hideToolOverlay()
-
+    /// 创建工具浮动面板（2×2 网格大方块布局）
+    /// 包含 4 个工具项，点击工具或 ❌ 时通过 onClose 回调关闭面板并恢复设备栏
+    private func createToolPanel() -> ToolPanelView {
         let tools: [ToolOverlayView.ToolItem] = [
             ToolOverlayView.ToolItem(
                 icon: "rectangle.dashed",
@@ -1028,7 +1048,6 @@ public class MainWindowController: NSWindowController {
                 description: "扫描当前目录中的重复文件",
                 isEnabled: true,
                 action: { [weak self] in
-                    self?.hideToolOverlay()
                     DuplicateScanWindowController.shared.showWindow()
                 }
             ),
@@ -1038,7 +1057,6 @@ public class MainWindowController: NSWindowController {
                 description: "批量重命名选中文件",
                 isEnabled: true,
                 action: { [weak self] in
-                    self?.hideToolOverlay()
                     self?.menuBatchRename(nil)
                 }
             ),
@@ -1058,35 +1076,17 @@ public class MainWindowController: NSWindowController {
             ),
         ]
 
-        let overlay = ToolOverlayView(tools: tools)
-        overlay.onClose = { [weak self] in
-            self?.hideToolOverlay()
-            // 同步复位侧边栏工具按钮状态
+        let panel = ToolPanelView(tools: tools)
+        panel.onClose = { [weak self] in
+            // 通过通知触发 handleToolPanelToggle 隐藏工具面板并恢复设备栏
+            // 同时同步复位侧边栏工具按钮状态
             NotificationCenter.default.post(
                 name: NSNotification.Name("SidebarToolPanelDidToggle"),
                 object: nil,
                 userInfo: ["isExpanded": false]
             )
         }
-        overlay.translatesAutoresizingMaskIntoConstraints = false
-        overlay.wantsLayer = true
-        overlay.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
-
-        let activeContainer = (activePane == .left ? leftPaneContainer : rightPaneContainer)!
-        activeContainer.addSubview(overlay)
-        NSLayoutConstraint.activate([
-            overlay.topAnchor.constraint(equalTo: activeContainer.topAnchor),
-            overlay.bottomAnchor.constraint(equalTo: activeContainer.bottomAnchor),
-            overlay.leadingAnchor.constraint(equalTo: activeContainer.leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: activeContainer.trailingAnchor),
-        ])
-        toolOverlayView = overlay
-    }
-
-    /// 移除工具选择覆盖页
-    private func hideToolOverlay() {
-        toolOverlayView?.removeFromSuperview()
-        toolOverlayView = nil
+        return panel
     }
 
     // MARK: - v0.6.9: 文件夹显示配置变更处理
@@ -1258,9 +1258,8 @@ public class MainWindowController: NSWindowController {
     public override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
 
-        // v0.6.9: Escape 关闭工具选择覆盖页
-        if event.keyCode == 53 && toolOverlayView != nil {
-            hideToolOverlay()
+        // v0.7.0: Escape 关闭工具浮动面板
+        if event.keyCode == 53, let panel = toolPanelView, !panel.isHidden {
             NotificationCenter.default.post(
                 name: NSNotification.Name("SidebarToolPanelDidToggle"),
                 object: nil,

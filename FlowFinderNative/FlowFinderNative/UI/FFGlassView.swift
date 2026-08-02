@@ -8,8 +8,8 @@ import os.log
 /// 替换现有 `GlassSectionMaskView`，作为所有面板/对话框/子组件玻璃背景的统一入口。
 /// 三层全玻璃架构：
 /// - `.window`：透传，FFGlassView 不接管（窗口级玻璃由 MainWindowController 等窗口控制器持有）
-/// - `.panel`：NSGlassEffectView/NSVisualEffectView + tint + 噪声 + 顶部高光 + 内阴影
-/// - `.component`：纯 CALayer（tint + 圆角 + 高光 + 内阴影），不创建 NSGlassEffectView
+/// - `.panel`：NSGlassEffectView(macOS 26+, .regular)/NSVisualEffectView(旧版) + tint + 噪声 + 顶部高光 + 内阴影
+/// - `.component`：NSGlassEffectView(macOS 26+, .clear)/纯 CALayer(旧版) + tint + 圆角 + 高光 + 内阴影
 class FFGlassView: NSView {
 
     // MARK: - 玻璃样式（macOS 26+ NSGlassEffectView.Style 的平台无关映射）
@@ -18,6 +18,16 @@ class FFGlassView: NSView {
     /// 使用自定义枚举避免在类型注解中直接引用 macOS 26+ API
     enum GlassStyle {
         case clear
+        case regular
+    }
+
+    /// 将 GlassStyle 映射到原生 NSGlassEffectView.Style（macOS 26+）
+    @available(macOS 26.0, *)
+    private func nativeGlassStyle() -> NSGlassEffectView.Style {
+        switch glassStyle {
+        case .clear:   return .clear
+        case .regular: return .regular
+        }
     }
 
     // MARK: - 配置
@@ -25,7 +35,7 @@ class FFGlassView: NSView {
     let level: FFDesign.Glass.Level
     /// 仅 macOS<26 回退路径使用（.panel 级）
     let material: NSVisualEffectView.Material?
-    /// 仅 macOS 26+ 使用（.panel 级），通过 GlassStyle 映射到 NSGlassEffectView.Style
+    /// 仅 macOS 26+ 使用（.panel 级），通过 GlassStyle 映射到 NSGlassEffectView.Style；默认 .regular
     let glassStyle: GlassStyle
     let cornerRadius: CGFloat
 
@@ -39,7 +49,7 @@ class FFGlassView: NSView {
     private var highlightLayer: CAShapeLayer?
     /// 内阴影层（底部）
     private var innerShadowLayer: CALayer?
-    /// 原生玻璃视图（.panel 级，macOS 26+ 用 NSGlassEffectView，旧版用 NSVisualEffectView）
+    /// 原生玻璃视图（.panel 和 .component 级；macOS 26+ 用 NSGlassEffectView，旧版 .panel 用 NSVisualEffectView，旧版 .component 为 nil）
     private var nativeGlassView: NSView?
 
     // MARK: - 全局实例跟踪
@@ -61,11 +71,11 @@ class FFGlassView: NSView {
     ///   - level: 玻璃层级
     ///   - cornerRadius: 圆角（nil 时按 level 取默认值）
     ///   - material: 仅 macOS<26 回退路径使用（.panel 级），如 .sidebar/.headerView/.sheet
-    ///   - glassStyle: 仅 macOS 26+ 使用（.panel 级），默认 .clear
+    ///   - glassStyle: 仅 macOS 26+ 使用（.panel 级），默认 .regular（更好可读性，符合 Apple HIG）
     init(level: FFDesign.Glass.Level,
          cornerRadius: CGFloat? = nil,
          material: NSVisualEffectView.Material? = nil,
-         glassStyle: GlassStyle = .clear) {
+         glassStyle: GlassStyle = .regular) {
         self.level = level
         self.material = material
         self.glassStyle = glassStyle
@@ -108,7 +118,7 @@ class FFGlassView: NSView {
             }
             #endif
         case .component:
-            // 纯 CALayer，无原生玻璃
+            // NSGlassEffectView(macOS 26+) 或纯 CALayer（旧版）
             setupComponentGlass()
             FFGlassView.allInstances.add(self)
         }
@@ -116,35 +126,58 @@ class FFGlassView: NSView {
 
     /// `.panel` 级：原生玻璃 + tint + 噪声 + 高光 + 内阴影
     ///
-    /// 实现说明：曾尝试 macOS 26+ 用 NSGlassEffectView(style: .clear) 替代 NSVisualEffectView，
-    /// 但 .clear style 在液态玻璃中几乎完全透明（仅有微弱模糊），导致侧边栏/工具栏/详情栏等
-    /// panel 级组件肉眼看是"透明"的，无法辨识边界（与 MainWindowController 窗口级 .clear
-    /// 透明问题同源）。因此 panel 级统一走 NSVisualEffectView 路径，由调用方通过 material
-    /// 参数指定材质（.sidebar/.headerView/.sheet 等），在所有 macOS 版本上稳定可见。
-    /// 液态玻璃增强（噪声/高光/内阴影/tint）仍由下方 CALayer 叠加层提供，保留设计语言。
+    /// macOS 26+ 使用原生 NSGlassEffectView（.regular style），提供标准液态玻璃效果。
+    /// 早期实现曾尝试 .clear style，但在液态玻璃中几乎完全透明（仅有微弱模糊），
+    /// 导致侧边栏/工具栏/详情栏等 panel 级组件无法辨识边界。改用 .regular style 后
+    /// 可读性显著提升，符合 Apple HIG 对 panel 级组件的建议。
+    /// macOS < 26 回退到 NSVisualEffectView，由调用方通过 material 参数指定材质
+    /// （.sidebar/.headerView/.sheet 等），在旧版系统上稳定可见。
+    /// 液态玻璃增强（噪声/高光/内阴影/tint）由 CALayer 叠加层提供，保留设计语言一致性。
     private func setupPanelGlass() {
-        let visualEffect = NSVisualEffectView()
-        visualEffect.material = material ?? .headerView
-        visualEffect.blendingMode = .behindWindow
-        visualEffect.state = .active
-        // 修复主题反转: NSVisualEffectView 必须显式设置 appearance 以跟随 NSApp.appearance，
-        // 否则 state = .active 时它会跟随系统外观而非应用强制外观，导致浅色/深色模式反转。
-        visualEffect.appearance = NSApp.appearance
-        // NSVisualEffectView 圆角跟随 FFGlassView 的 cornerRadius
-        visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = cornerRadius
-        visualEffect.layer?.masksToBounds = true  // 仅裁剪玻璃效果本身，不影响 FFGlassView 的子视图
-        visualEffect.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(visualEffect)
-        NSLayoutConstraint.activate([
-            visualEffect.leadingAnchor.constraint(equalTo: leadingAnchor),
-            visualEffect.trailingAnchor.constraint(equalTo: trailingAnchor),
-            visualEffect.topAnchor.constraint(equalTo: topAnchor),
-            visualEffect.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        nativeGlassView = visualEffect
+        if #available(macOS 26.0, *) {
+            // macOS 26+: 使用原生 NSGlassEffectView（.regular style，更好可读性）
+            let glassView = NSGlassEffectView()
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+            glassView.style = nativeGlassStyle()
+            glassView.cornerRadius = cornerRadius
+            glassView.contentView = nil  // 不嵌入内容视图，叠加层由 FFGlassView 的 layer 管理
+            // 显式设置 appearance 以跟随 NSApp.appearance，避免浅色/深色模式反转
+            glassView.appearance = NSApp.appearance
 
-        // 2. CALayer 叠加层（顺序：tint → 噪声 → 高光 → 内阴影）
+            addSubview(glassView)
+            NSLayoutConstraint.activate([
+                glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                glassView.topAnchor.constraint(equalTo: topAnchor),
+                glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            nativeGlassView = glassView
+        } else {
+            // macOS < 26: 回退到 NSVisualEffectView
+            let visualEffect = NSVisualEffectView()
+            visualEffect.material = material ?? .headerView
+            visualEffect.blendingMode = .behindWindow
+            visualEffect.state = .active
+            // 修复主题反转: NSVisualEffectView 必须显式设置 appearance 以跟随 NSApp.appearance，
+            // 否则 state = .active 时它会跟随系统外观而非应用强制外观，导致浅色/深色模式反转。
+            visualEffect.appearance = NSApp.appearance
+            // NSVisualEffectView 圆角跟随 FFGlassView 的 cornerRadius
+            visualEffect.wantsLayer = true
+            visualEffect.layer?.cornerRadius = cornerRadius
+            visualEffect.layer?.masksToBounds = true  // 仅裁剪玻璃效果本身，不影响 FFGlassView 的子视图
+            visualEffect.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(visualEffect)
+            NSLayoutConstraint.activate([
+                visualEffect.leadingAnchor.constraint(equalTo: leadingAnchor),
+                visualEffect.trailingAnchor.constraint(equalTo: trailingAnchor),
+                visualEffect.topAnchor.constraint(equalTo: topAnchor),
+                visualEffect.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            nativeGlassView = visualEffect
+        }
+
+        // CALayer 叠加层（顺序：tint → 噪声 → 高光 → 内阴影）
+        // 在 macOS 26+ 和旧版系统上均叠加，保持跨版本视觉设计一致性
         let tint = CALayer()
         tint.backgroundColor = FFDesign.glassTint.cgColor
         layer?.addSublayer(tint)
@@ -164,8 +197,37 @@ class FFGlassView: NSView {
         innerShadowLayer = inner
     }
 
-    /// `.component` 级：纯 CALayer
+    /// `.component` 级：原生玻璃（macOS 26+）或纯 CALayer（旧版） + tint + 噪声 + 高光 + 内阴影
+    ///
+    /// macOS 26+ 使用 NSGlassEffectView(.clear style)，为悬浮在内容之上的子组件
+    /// （按钮、搜索框、卡片等）提供轻量液态玻璃效果。.clear style 适合 component 级，
+    /// 因为组件通常浮在已有玻璃背景之上，不需要额外的材质不透明度。
+    /// macOS < 26 回退到纯 CALayer 路径（tint + 圆角 + 高光 + 内阴影），不创建原生玻璃视图。
     private func setupComponentGlass() {
+        if #available(macOS 26.0, *) {
+            // macOS 26+: 使用原生 NSGlassEffectView（.clear style，适合悬浮组件）
+            let glassView = NSGlassEffectView()
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+            glassView.style = .clear
+            glassView.cornerRadius = cornerRadius
+            glassView.contentView = nil  // 不嵌入内容视图，叠加层由 FFGlassView 的 layer 管理
+            // 显式设置 appearance 以跟随 NSApp.appearance
+            glassView.appearance = NSApp.appearance
+
+            addSubview(glassView)
+            NSLayoutConstraint.activate([
+                glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                glassView.topAnchor.constraint(equalTo: topAnchor),
+                glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            nativeGlassView = glassView
+        }
+        // macOS < 26: 无原生玻璃视图，仅使用下方 CALayer 叠加层
+
+        // CALayer 叠加层（顺序：tint → 噪声 → 高光 → 内阴影）
+        // 在 macOS 26+ 和旧版系统上均叠加，保持跨版本视觉设计一致性
+
         // tint 背景
         let tint = CALayer()
         tint.backgroundColor = FFDesign.glassTint.cgColor
@@ -298,9 +360,15 @@ class FFGlassView: NSView {
     /// 主题变更时刷新噪声/高光/内阴影令牌
     /// 由 `ThemeManager.onModeChanged` 统一调用
     func refreshAppearance() {
-        // 修复主题反转: 更新 NSVisualEffectView 的 appearance 以跟随 NSApp.appearance
-        if let glassView = nativeGlassView as? NSVisualEffectView {
+        // macOS 26+: 更新 NSGlassEffectView 的 appearance
+        // NSGlassEffectView 自动响应系统外观变化，但显式设置 appearance 确保跟随 NSApp.appearance
+        if #available(macOS 26.0, *), let glassView = nativeGlassView as? NSGlassEffectView {
             glassView.appearance = NSApp.appearance
+            // tintColor 更新可在此处扩展（当前为 nil，使用系统默认玻璃色调）
+        }
+        // macOS < 26: 更新 NSVisualEffectView 的 appearance 以跟随 NSApp.appearance
+        if let visualEffect = nativeGlassView as? NSVisualEffectView {
+            visualEffect.appearance = NSApp.appearance
         }
         // tint
         tintLayer?.backgroundColor = FFDesign.glassTint.cgColor

@@ -200,3 +200,163 @@ private class ToolCardView: NSView {
         onTap?()
     }
 }
+
+// MARK: - v0.7.0: 工具浮动面板（替代设备栏位置显示）
+
+/// 工具浮动面板视图
+/// 点击侧边栏工具按钮后，隐藏设备栏，在设备栏原位显示此面板
+/// 2×2 网格大方块布局，每个工具包含大图标 + 名称，右上角关闭按钮
+/// 宽度 = 侧边栏宽度，高度根据工具数量自适应
+public class ToolPanelView: NSView {
+
+    /// 关闭回调（点击 ❌ 或工具卡片时触发）
+    public var onClose: (() -> Void)?
+
+    /// 工具项列表
+    private let tools: [ToolOverlayView.ToolItem]
+
+    /// 初始化
+    /// - Parameter tools: 工具项列表
+    public init(tools: [ToolOverlayView.ToolItem]) {
+        self.tools = tools
+        super.init(frame: .zero)
+        setupUI()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupUI() {
+        wantsLayer = true
+        // 背景色由调用方（MainWindowController）设置，与设备栏一致
+        layer?.cornerRadius = 8
+
+        // 关闭按钮（右上角，16pt，tertiary label color）
+        let closeButton = NSButton()
+        closeButton.bezelStyle = .inline
+        closeButton.isBordered = false
+        closeButton.title = "❌"
+        closeButton.font = NSFont.systemFont(ofSize: 16)
+        closeButton.contentTintColor = .tertiaryLabelColor
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(closeButton)
+
+        // 网格容器：NSGridView 2×2 布局，每行 2 列
+        let gridContainer = NSGridView()
+        gridContainer.translatesAutoresizingMaskIntoConstraints = false
+        gridContainer.rowSpacing = 12
+        gridContainer.columnSpacing = 12
+        addSubview(gridContainer)
+
+        // 构建工具卡片，每行 2 列
+        var rowViews: [NSView] = []
+        for tool in tools {
+            let card = ToolPanelCardView(tool: tool) { [weak self] in
+                tool.action?()
+                self?.onClose?()
+            }
+            rowViews.append(card)
+            if rowViews.count >= 2 {
+                gridContainer.addRow(with: rowViews)
+                rowViews = []
+            }
+        }
+        // 处理剩余卡片（奇数个工具时）
+        if !rowViews.isEmpty {
+            gridContainer.addRow(with: rowViews)
+        }
+
+        // 设置行高（80pt 大方块）和列宽（自适应填充）
+        for i in 0..<gridContainer.numberOfRows {
+            gridContainer.row(at: i).height = 80
+        }
+        // NSGridCell.Placement 只有 .center, .leading, .trailing, .fill, .none（旧SDK）
+        // 使用 .center 即可，列宽由内容自适应
+
+        NSLayoutConstraint.activate([
+            // 关闭按钮：右上角 8pt 内边距
+            closeButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            closeButton.widthAnchor.constraint(equalToConstant: 24),
+            closeButton.heightAnchor.constraint(equalToConstant: 24),
+
+            // 网格：关闭按钮下方 4pt，左右 12pt 内边距，底部 12pt
+            gridContainer.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 4),
+            gridContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            gridContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            gridContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+        ])
+    }
+
+    /// 关闭按钮点击
+    @objc private func closeClicked() {
+        onClose?()
+    }
+}
+
+/// v0.7.0: 工具面板卡片视图（紧凑大方块布局）
+/// 每个卡片：大图标（28pt SF Symbol）+ 名称（11pt），居中排列
+private class ToolPanelCardView: NSView {
+
+    /// 点击回调
+    private let onTap: (() -> Void)?
+
+    init(tool: ToolOverlayView.ToolItem, onTap: @escaping () -> Void) {
+        self.onTap = tool.isEnabled ? onTap : nil
+        super.init(frame: .zero)
+        setupUI(tool: tool)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupUI(tool: ToolOverlayView.ToolItem) {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+
+        // 图标（28pt SF Symbol）
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: tool.icon, accessibilityDescription: tool.title)
+        iconView.contentTintColor = tool.isEnabled ? .controlAccentColor : .tertiaryLabelColor
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView)
+
+        // 名称/描述（11pt）
+        let descLabel = NSTextField(labelWithString: tool.title)
+        descLabel.font = NSFont.systemFont(ofSize: 11)
+        descLabel.textColor = tool.isEnabled ? .labelColor : .tertiaryLabelColor
+        descLabel.alignment = .center
+        descLabel.lineBreakMode = .byTruncatingTail
+        descLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(descLabel)
+
+        NSLayoutConstraint.activate([
+            // 图标：顶部 10pt 内边距，水平居中，28×28pt
+            iconView.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 28),
+            iconView.heightAnchor.constraint(equalToConstant: 28),
+
+            // 名称：图标下方 6pt，左右 4pt 内边距
+            descLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 6),
+            descLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            descLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+        ])
+
+        // 点击手势（仅可用工具响应）
+        if onTap != nil {
+            let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
+            addGestureRecognizer(click)
+        }
+    }
+
+    @objc private func clicked() {
+        onTap?()
+    }
+}

@@ -1194,6 +1194,14 @@ public class FileListView: NSView {
             // 最多显示 3 个药丸，超出显示 "+N"
             for tag in tags.prefix(3) {
                 if let pill = makeTagPill(tag: tag) {
+                    // 每个药丸独立右键菜单：右键任意位置 → "移除标签"（仅移除该文件的此标签）
+                    let menu = NSMenu()
+                    menu.autoenablesItems = false
+                    let item = NSMenuItem(title: "移除标签", action: #selector(removeTagByNameFromPill(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = ["tagName": tag.name, "path": entry.path]
+                    menu.addItem(item)
+                    pill.menu = menu
                     pillContainer?.addArrangedSubview(pill)
                 }
             }
@@ -1202,16 +1210,6 @@ public class FileListView: NSView {
                     pillContainer?.addArrangedSubview(countPill)
                 }
             }
-            // 设置右键菜单用于移除标签（现有功能，保留）
-            let tagMenu = NSMenu()
-            tagMenu.autoenablesItems = false
-            for tag in tags {
-                let item = NSMenuItem(title: "移除「\(tag.name)」", action: #selector(removeTagByNameFromPill(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = ["tagName": tag.name, "path": entry.path]
-                tagMenu.addItem(item)
-            }
-            pillContainer?.menu = tagMenu
         }
     }
 

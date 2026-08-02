@@ -237,6 +237,7 @@ class SidebarView: NSView {
         tagFlowView.onTagDeleted = { [weak self] tagId in
             self?.tagsDataSource.removeTag(id: tagId)
             self?.tagFlowView.updateTags(self?.tagsDataSource.allTags() ?? [])
+            self?.updateTagsHeight()
         }
         // 任务 F11-8: 标签点击 -> 发送通知，由 MainWindowController 设置当前活动面板的 tagFilter（问题3）
         tagFlowView.onTagSelected = { [weak self] tag in
@@ -1729,6 +1730,16 @@ private class TagFlowView: NSView {
 
     @objc private func handleDeleteTag(_ sender: NSMenuItem) {
         guard let tagId = sender.representedObject as? String else { return }
+        // 查找标签名用于确认对话框
+        guard let tag = tags.first(where: { $0.id == tagId }) else { return }
+        // 确认对话框（删除标签不可撤销，将从所有文件中移除）
+        let alert = NSAlert()
+        alert.messageText = "删除标签"
+        alert.informativeText = "此操作将从所有文件中移除「\(tag.name)」标签，且不可撤销。确定继续？"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
         onTagDeleted?(tagId)
     }
 

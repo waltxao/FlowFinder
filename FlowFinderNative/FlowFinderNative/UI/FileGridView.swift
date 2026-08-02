@@ -224,6 +224,14 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         tagPillContainer.isHidden = false
         for tag in tags.prefix(3) {
             if let pill = makeTagPill(tag: tag) {
+                // 每个药丸独立右键菜单：右键任意位置 → "移除标签"（仅移除该文件的此标签）
+                let menu = NSMenu()
+                menu.autoenablesItems = false
+                let item = NSMenuItem(title: "移除标签", action: #selector(removeTagFromGrid(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["tagName": tag.name, "path": entry.path]
+                menu.addItem(item)
+                pill.menu = menu
                 tagPillContainer.addArrangedSubview(pill)
             }
         }
@@ -232,16 +240,6 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 tagPillContainer.addArrangedSubview(countPill)
             }
         }
-        // 右键菜单：移除标签
-        let tagMenu = NSMenu()
-        tagMenu.autoenablesItems = false
-        for tag in tags {
-            let item = NSMenuItem(title: "移除「\(tag.name)」", action: #selector(removeTagFromGrid(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = ["tagName": tag.name, "path": entry.path]
-            tagMenu.addItem(item)
-        }
-        tagPillContainer.menu = tagMenu
     }
 
     /// 右键移除标签回调
