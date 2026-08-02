@@ -13,7 +13,7 @@ private class FFNoDividerSplitView: NSSplitView {
 /// v0.6.9: divider 厚度设为 0（移除可见分割线），拖动时显示渐变亮线
 private class FFSplitView: NSSplitView {
     private var dividerTrackingArea: NSTrackingArea?
-    /// 悬停时是否高亮（由 mouseMoved 判断鼠标位置是否在 divider 附近 ±4pt）
+    /// 悬停时是否高亮（由 mouseMoved 判断鼠标位置是否在 divider 附近 ±6pt）
     private var isHoveringDivider = false {
         didSet {
             if isHoveringDivider != oldValue {
@@ -25,7 +25,12 @@ private class FFSplitView: NSSplitView {
     /// 渐变亮线 layer（拖动时显示，复用避免重复创建）
     private var gradientLineLayer: CAGradientLayer?
 
-    /// v0.6.9: divider 厚度为 0（移除可见分割线，保留拖拽功能）
+    /// v0.6.9 fix: 手动拖拽状态（dividerThickness=0 时 NSSplitView 内置拖拽不生效）
+    private var isDragging = false
+    private var dragStartX: CGFloat = 0
+    private var dragStartWidth: CGFloat = 0
+
+    /// v0.6.9: divider 厚度为 0（移除可见分割线，间隙由卡片边距提供）
     override var dividerThickness: CGFloat {
         return 0
     }
@@ -49,7 +54,7 @@ private class FFSplitView: NSSplitView {
         super.mouseMoved(with: event)
         let loc = convert(event.locationInWindow, from: nil)
         let dividerX = subviews.count >= 2 ? subviews[0].frame.maxX : 0
-        isHoveringDivider = abs(loc.x - dividerX) <= 4
+        isHoveringDivider = abs(loc.x - dividerX) <= 6
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -57,60 +62,95 @@ private class FFSplitView: NSSplitView {
         isHoveringDivider = false
     }
 
-    /// v0.6.9: 拖动时显示从鼠标位置向上下渐变的亮线，移除操作区蓝色边框
+    /// 创建渐变亮线 layer（复用，避免重复创建）
+    private func createGradientLine() {
+        guard gradientLineLayer == nil else { return }
+        let gradientLayer = CAGradientLayer()
+        gradientLayer.colors = [
+            NSColor.clear.cgColor,
+            NSColor.controlAccentColor.cgColor,
+            NSColor.clear.cgColor
+        ]
+        gradientLayer.locations = [0, 0.5, 1]
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        self.layer?.addSublayer(gradientLayer)
+        gradientLineLayer = gradientLayer
+    }
+
+    /// v0.6.9: 悬停或拖动时显示从上到下渐变的亮线
     private func updateDividerLine() {
-        if isHoveringDivider {
-            // 复用 gradientLineLayer，仅更新 frame，避免每次拖动重建 layer
-            if gradientLineLayer == nil {
-                let gradientLayer = CAGradientLayer()
-                gradientLayer.colors = [
-                    NSColor.clear.cgColor,
-                    NSColor.controlAccentColor.cgColor,
-                    NSColor.clear.cgColor
-                ]
-                gradientLayer.locations = [0, 0.5, 1]
-                gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
-                gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
-                self.layer?.addSublayer(gradientLayer)
-                gradientLineLayer = gradientLayer
-            }
+        if isHoveringDivider || isDragging {
+            createGradientLine()
             // 亮线位置：跟随 divider 实时位置，宽度 2pt，高度为 splitView 全高
             let dividerX = subviews.count >= 2 ? subviews[0].frame.maxX : 0
             gradientLineLayer?.frame = CGRect(x: dividerX - 1, y: 0, width: 2, height: self.bounds.height)
             gradientLineLayer?.isHidden = false
-
-            // 鼠标变为双箭头调整光标
             NSCursor.resizeLeftRight.set()
         } else {
-            // 隐藏亮线
             gradientLineLayer?.isHidden = true
             NSCursor.arrow.set()
         }
     }
 
-    /// 拖动开始时确保亮线显示
+    /// v0.6.9 fix: 手动检测 divider 附近的点击并启动拖拽
+    /// dividerThickness=0 时 NSSplitView 内置 hit-test 无法识别 divider 区域
     override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-        updateDividerLine()
-    }
-
-    /// v0.6.9 fix: 拖动过程中实时更新亮线位置（跟随 divider 移动）
-    override func mouseDragged(with event: NSEvent) {
-        super.mouseDragged(with: event)
-        // 拖动时 divider 位置实时变化，更新亮线位置
-        if isHoveringDivider || gradientLineLayer?.isHidden == false {
-            let dividerX = subviews.count >= 2 ? subviews[0].frame.maxX : 0
+        let point = convert(event.locationInWindow, from: nil)
+        let dividerX = subviews.count >= 2 ? subviews[0].frame.maxX : 0
+        // 拖拽热区：divider 附近 ±6pt
+        if abs(point.x - dividerX) <= 6 {
+            isDragging = true
+            dragStartX = point.x
+            dragStartWidth = subviews.count >= 2 ? subviews[0].frame.width : 0
+            // 立即显示亮线
+            createGradientLine()
+            gradientLineLayer?.isHidden = false
             gradientLineLayer?.frame = CGRect(x: dividerX - 1, y: 0, width: 2, height: self.bounds.height)
+            NSCursor.resizeLeftRight.set()
+            // 不调用 super.mouseDown：手动处理拖拽，避免 NSSplitView 因 dividerThickness=0 忽略事件
+        } else {
+            super.mouseDown(with: event)
         }
     }
 
-    /// 拖动结束后隐藏亮线
+    /// v0.6.9 fix: 手动拖拽 divider，亮线实时跟随 divider 位置
+    override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+
+        if isDragging && subviews.count >= 2 {
+            let deltaX = point.x - dragStartX
+            let newWidth = dragStartWidth + deltaX
+            // 最小/最大宽度约束
+            let minWidth: CGFloat = 200
+            let maxWidth = max(minWidth, bounds.width - 200)
+            let clampedWidth = max(minWidth, min(maxWidth, newWidth))
+            // 实时更新 divider 位置
+            setPosition(clampedWidth, ofDividerAt: 0)
+            // 亮线跟随 divider 实时位置
+            let dividerX = subviews[0].frame.maxX
+            createGradientLine()
+            gradientLineLayer?.isHidden = false
+            gradientLineLayer?.frame = CGRect(x: dividerX - 1, y: 0, width: 2, height: self.bounds.height)
+        } else {
+            super.mouseDragged(with: event)
+        }
+    }
+
+    /// v0.6.9 fix: 拖拽结束后归位亮线，根据鼠标位置决定是否隐藏
     override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-        // 拖动结束后检查鼠标是否仍在 divider 附近，否则隐藏亮线
+        if isDragging {
+            isDragging = false
+            // 亮线归位到 divider 最终位置
+            let dividerX = subviews.count >= 2 ? subviews[0].frame.maxX : 0
+            gradientLineLayer?.frame = CGRect(x: dividerX - 1, y: 0, width: 2, height: self.bounds.height)
+        } else {
+            super.mouseUp(with: event)
+        }
+        // 检查鼠标是否仍在 divider 附近，否则隐藏亮线
         let loc = convert(event.locationInWindow, from: nil)
         let dividerX = subviews.count >= 2 ? subviews[0].frame.maxX : 0
-        if abs(loc.x - dividerX) > 4 {
+        if abs(loc.x - dividerX) > 6 {
             isHoveringDivider = false
         }
     }
@@ -501,10 +541,10 @@ public class MainWindowController: NSWindowController {
         content.translatesAutoresizingMaskIntoConstraints = false
         wrapper.addSubview(content)
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 8),
-            content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 8),
-            content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -8),
-            content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -8),
+            content.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 4),
+            content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 4),
+            content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -4),
+            content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -4),
         ])
         return wrapper
     }
@@ -1295,7 +1335,7 @@ public class MainWindowController: NSWindowController {
         let currentPath = selected.first?.path
         let currentIndex = paths.firstIndex(of: currentPath ?? "") ?? 0
 
-        QuickLookPreviewPanel.shared.togglePreview(files: paths, currentIndex: currentIndex)
+        QuickLookPreviewPanel.shared.togglePreview(files: paths, currentIndex: currentIndex, targetWindow: self.window)
     }
 
     // MARK: - Open Key (Cmd+O / Cmd+Down)

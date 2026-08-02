@@ -44,29 +44,27 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
     /// - Parameters:
     ///   - files: 可预览的文件路径数组
     ///   - currentIndex: 当前选中的文件索引
-    public func togglePreview(files: [String], currentIndex: Int) {
+    ///   - targetWindow: 目标窗口（用于插入 responder chain，nil 时回退到 keyWindow）
+    public func togglePreview(files: [String], currentIndex: Int, targetWindow: NSWindow? = nil) {
         self.previewFiles = files
         self.currentIndex = max(0, min(currentIndex, max(0, files.count - 1)))
 
         guard let panel = previewPanel else { return }
 
         if panel.isVisible {
-            // 关闭预览
-            panel.orderOut(nil)
-            panel.dataSource = nil
-            panel.delegate = nil
-            removeFromResponderChain()
+            // v0.6.9 fix: 面板已可见时更新文件列表和索引，而非关闭
+            panel.currentPreviewItemIndex = self.currentIndex
+            panel.reloadData()
         } else {
             // 将 self 插入 responder chain，使 QLPreviewPanel 能找到 controller
-            insertIntoResponderChain()
+            insertIntoResponderChain(targetWindow: targetWindow)
 
             // 强制面板重新搜索 responder chain，找到 self 作为 controller
             panel.updateController()
 
-            // 设置数据源和代理
+            // 设置数据源和代理（beginPreviewPanelControl 中也会设置并设置 currentPreviewItemIndex）
             panel.dataSource = self
             panel.delegate = self
-            panel.currentPreviewItemIndex = self.currentIndex
             panel.makeKeyAndOrderFront(nil)
         }
     }
@@ -93,13 +91,14 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
 
     // MARK: - Responder Chain 管理
 
-    /// 将 self 插入 key window 的 responder chain
-    private func insertIntoResponderChain() {
-        guard let window = NSApp.keyWindow, let firstResponder = window.firstResponder else { return }
+    /// 将 self 插入指定 window 的 responder chain
+    /// - Parameter targetWindow: 目标窗口，nil 时回退到 NSApp.keyWindow
+    private func insertIntoResponderChain(targetWindow: NSWindow?) {
+        guard let window = targetWindow ?? NSApp.keyWindow, let firstResponder = window.firstResponder else { return }
         // 避免重复插入
         if firstResponder.nextResponder === self { return }
         // v0.6.9 fix: 记录目标 window，关闭时使用而非依赖 keyWindow（可能已切换）
-        targetWindow = window
+        self.targetWindow = window
         // 保存当前 nextResponder，稍后恢复
         savedNextResponder = firstResponder.nextResponder
         // 插入 self：firstResponder → self → 原 nextResponder
@@ -133,10 +132,12 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
         return true
     }
 
-    /// 开始控制 QuickLook 面板时调用：设置数据源和代理
+    /// 开始控制 QuickLook 面板时调用：设置数据源、代理和当前预览索引
     public override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
         panel.dataSource = self
         panel.delegate = self
+        // v0.6.9 fix: 在面板就绪后设置当前预览索引（此前在 togglePreview 中过早设置导致索引不生效）
+        panel.currentPreviewItemIndex = self.currentIndex
     }
 
     /// 结束控制 QuickLook 面板时调用：清理数据源和代理

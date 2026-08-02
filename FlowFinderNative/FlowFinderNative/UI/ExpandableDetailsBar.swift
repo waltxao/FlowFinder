@@ -95,10 +95,16 @@ class ExpandableDetailsBar: NSView {
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        // 匹配 glassBackground 的 12pt 圆角，使阴影（由 MainWindowController 设置）也呈圆角
+        layer?.cornerRadius = 12
 
         // v0.6.9: 玻璃背景浮层，圆角 12pt（超椭圆由 SquircleView 处理，此处用 FFGlassView 提供材质）
         let glassBackground = FFGlassView(level: .panel, cornerRadius: 12, material: .sidebar)
         glassBackground.translatesAutoresizingMaskIntoConstraints = false
+        // 修复圆角灰边：FFGlassView 默认不设置 masksToBounds，导致 tint/noise/highlight/innerShadow
+        // 等装饰子层以方形绘制、超出 12pt 圆角范围，在圆角与方形之间的缝隙露出父容器实体背景
+        // （#F5F5F5 / #2D2D2D），形成可见的灰色方块。启用裁剪将装饰层限定在圆角内。
+        glassBackground.layer?.masksToBounds = true
         addSubview(glassBackground)
 
         // compact 视图（收起态）

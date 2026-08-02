@@ -733,10 +733,7 @@ extension SearchPanelController: NSTableViewDelegate {
         case "modified":
             if result.modified > 0 {
                 let date = Date(timeIntervalSince1970: TimeInterval(result.modified))
-                let formatter = DateFormatter()
-                formatter.dateStyle = .medium
-                formatter.timeStyle = .short
-                cellView.textField?.stringValue = formatter.string(from: date)
+                cellView.textField?.stringValue = FFFormat.date(date)
             } else {
                 cellView.textField?.stringValue = "—"
             }

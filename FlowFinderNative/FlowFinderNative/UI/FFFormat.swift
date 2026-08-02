@@ -10,11 +10,27 @@ public enum FFFormat {
         return f
     }()
 
-    /// 共享的 DateFormatter（dateStyle = .medium, timeStyle = .short）
-    private static let dateFormatter: DateFormatter = {
+    /// 共享的长日期格式：2026年8月2日 14:30
+    private static let longDateFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日 HH:mm"
+        return f
+    }()
+
+    /// 共享的短日期格式：2026/8/2
+    private static let shortDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy/M/d"
+        return f
+    }()
+
+    /// 共享的仅日期格式：2026年8月2日
+    private static let dateOnlyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日"
         return f
     }()
 
@@ -23,8 +39,18 @@ public enum FFFormat {
         return byteFormatter.string(fromByteCount: Int64(bytes))
     }
 
-    /// 格式化日期
+    /// 格式化日期（长格式：2026年8月2日 14:30）
     public static func date(_ date: Date) -> String {
-        return dateFormatter.string(from: date)
+        return longDateFormatter.string(from: date)
+    }
+
+    /// 格式化日期（短格式：2026/8/2）
+    public static func dateShort(_ date: Date) -> String {
+        return shortDateFormatter.string(from: date)
+    }
+
+    /// 格式化日期（仅日期：2026年8月2日）
+    public static func dateOnly(_ date: Date) -> String {
+        return dateOnlyFormatter.string(from: date)
     }
 }

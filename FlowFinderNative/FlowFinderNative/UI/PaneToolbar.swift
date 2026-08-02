@@ -126,6 +126,10 @@ class PaneToolbar: NSView {
         // 1.4 自定义搜索框：FFGlassView(.component) 容器 + 搜索图标 + 无边框文本框
         searchContainer = FFGlassView(level: .component, cornerRadius: 8)
         searchContainer.translatesAutoresizingMaskIntoConstraints = false
+        // 修复圆角灰边：FFGlassView .component 级为纯 CALayer（tint+noise+highlight+innerShadow），
+        // 默认不设置 masksToBounds 导致装饰层以方形绘制、超出 8pt 圆角范围，在搜索框圆角与
+        // 方形之间的缝隙露出工具栏玻璃背景，形成可见的灰色方块。启用裁剪将装饰层限定在圆角内。
+        searchContainer.layer?.masksToBounds = true
 
         let searchIcon = NSImageView()
         searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")
@@ -192,8 +196,9 @@ class PaneToolbar: NSView {
         toolsSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolsSeparator.heightAnchor.constraint(equalToConstant: 16).isActive = true
 
-        // v0.6.9: 文件夹显示配置按钮（替代原工具菜单）
-        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu))
+        // v0.6.9: 文件夹显示配置按钮（替代原工具菜单），使用"眼睛+齿轮"合成图标
+        toolsButton = createNavButton(systemSymbol: "eye", action: #selector(showFolderOptionsMenu))
+        toolsButton.image = makeDisplaySettingsIcon()
 
         let row2 = NSStackView(views: [
             searchContainer,
@@ -249,6 +254,36 @@ class PaneToolbar: NSView {
         button.widthAnchor.constraint(equalToConstant: 28).isActive = true
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return button
+    }
+
+    /// 合成"眼睛 + 齿轮"图标，用于文件夹显示配置按钮。
+    /// 主体为 eye SF Symbol（14pt），右下角叠加 gearshape 小徽章（8pt，带圆形背景）。
+    private func makeDisplaySettingsIcon() -> NSImage {
+        let size = NSSize(width: 20, height: 20)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        // 主体：眼睛图标（14pt，居中偏上）
+        let eyeConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        let eyeImage = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)!
+        NSColor.labelColor.setFill()
+        eyeImage.withSymbolConfiguration(eyeConfig)!.draw(in: NSRect(x: 0, y: 4, width: 16, height: 12))
+
+        // 右下角小齿轮徽章（8pt）
+        let gearConfig = NSImage.SymbolConfiguration(pointSize: 8, weight: .medium)
+        let gearImage = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)!
+
+        // 徽章圆形背景（提高齿轮在眼睛图标上的可辨识度）
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 11, y: 0, width: 9, height: 9)).fill()
+
+        // 齿轮图标
+        NSColor.labelColor.setFill()
+        gearImage.withSymbolConfiguration(gearConfig)!.draw(in: NSRect(x: 12, y: 1, width: 7, height: 7))
+
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
     }
 
     // MARK: - Public API

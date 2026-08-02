@@ -115,9 +115,7 @@ class DuplicatePreviewPanel: NSView {
         metaStack.addArrangedSubview(makeMetaRow(label: "大小", value: formatSize(firstFile.size)))
         if firstFile.modified > 0 {
             let date = Date(timeIntervalSince1970: TimeInterval(firstFile.modified))
-            let formatter = DateFormatter()
-            formatter.dateStyle = .medium
-            metaStack.addArrangedSubview(makeMetaRow(label: "修改", value: formatter.string(from: date)))
+            metaStack.addArrangedSubview(makeMetaRow(label: "修改", value: FFFormat.dateOnly(date)))
         }
         metaStack.addArrangedSubview(makeMetaRow(label: "重复数", value: "\(group.files.count) 个"))
 

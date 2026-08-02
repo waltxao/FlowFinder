@@ -247,18 +247,14 @@ public class FileInfoWindowController: NSWindowController {
 
         // 6. 元信息（大小、日期）
         if let attrs = try? fm.attributesOfItem(atPath: filePath) {
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateStyle = .medium
-            dateFormatter.timeStyle = .short
-
             if let created = attrs[.creationDate] as? Date {
-                createdValueLabel.stringValue = dateFormatter.string(from: created)
+                createdValueLabel.stringValue = FFFormat.date(created)
             } else {
                 createdValueLabel.stringValue = "—"
             }
 
             if let modified = attrs[.modificationDate] as? Date {
-                modifiedValueLabel.stringValue = dateFormatter.string(from: modified)
+                modifiedValueLabel.stringValue = FFFormat.date(modified)
             } else {
                 modifiedValueLabel.stringValue = "—"
             }

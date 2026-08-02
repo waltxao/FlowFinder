@@ -87,10 +87,7 @@ public struct TaskInfo: Identifiable, Equatable, Hashable {
 
     /// Formatted creation date
     public var formattedCreatedAt: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: createdAt)
+        return FFFormat.date(createdAt)
     }
 
 }

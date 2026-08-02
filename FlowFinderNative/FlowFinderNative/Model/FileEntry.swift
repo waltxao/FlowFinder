@@ -92,18 +92,12 @@ public struct FileEntry: Identifiable, Equatable, Hashable {
 
     /// Formatted modification date string
     public var formattedModificationDate: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: modificationDate)
+        return FFFormat.date(modificationDate)
     }
 
     /// Formatted creation date string
     public var formattedCreationDate: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: creationDate)
+        return FFFormat.date(creationDate)
     }
 
     /// Sort-friendly name (directories first, then alphabetically)

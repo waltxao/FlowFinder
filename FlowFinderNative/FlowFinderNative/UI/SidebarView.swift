@@ -282,8 +282,8 @@ class SidebarView: NSView {
             favoritesTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             favoritesTitleLabel.heightAnchor.constraint(equalToConstant: 16),
 
-            // 收藏夹内容（标题下方 4pt 间距，与标签区一致，无卡片背景，高度自适应全部列出）
-            favoritesOutlineView.topAnchor.constraint(equalTo: favoritesTitleLabel.bottomAnchor, constant: 4),
+            // 收藏夹内容（标题下方 12pt 间距，避免标题与首项重叠，无卡片背景，高度自适应全部列出）
+            favoritesOutlineView.topAnchor.constraint(equalTo: favoritesTitleLabel.bottomAnchor, constant: 12),
             favoritesOutlineView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             favoritesOutlineView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             favoritesHeightConstraint,
@@ -370,10 +370,10 @@ class SidebarView: NSView {
         ov.rowHeight = 28
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
-        // 消除 cell 间额外间距
-        ov.intercellSpacing = .zero
-        // 选中样式：sourceList（访达侧边栏半透明高亮）
-        ov.selectionHighlightStyle = .sourceList
+        // 行间距：水平无间距，垂直 4pt 间距，保证行间留白
+        ov.intercellSpacing = NSSize(width: 0, height: 4)
+        // 选中样式：regular（实心高亮，确保收藏夹选中高亮框正确显示）
+        ov.selectionHighlightStyle = .regular
         ov.backgroundColor = NSColor.clear
         // 禁止默认选中，避免启动时出现高亮
         ov.allowsEmptySelection = true
