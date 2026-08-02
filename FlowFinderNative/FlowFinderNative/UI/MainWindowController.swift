@@ -1834,33 +1834,35 @@ extension MainWindowController {
                         if isMove {
                             let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
                             self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
-                                // undo: 移回原位
-                                ctrl.undoMoveBack(pairs: pairs)
-                                // 注册 redo：再次移动
-                                ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
-                                    for (src, dst) in pairs {
-                                        try? CoreBridge.shared.moveFile(src: src, dst: dst)
+                                // undo: 移回原位（后台执行，完成后回调再注册 redo）
+                                ctrl.undoMoveBack(pairs: pairs) {
+                                    // 注册 redo：再次移动（在 undo 文件操作完成后注册，避免竞态）
+                                    ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
+                                        for (src, dst) in pairs {
+                                            try? CoreBridge.shared.moveFile(src: src, dst: dst)
+                                        }
+                                        ctrl2.refreshPane(.left)
+                                        ctrl2.refreshPane(.right)
                                     }
-                                    ctrl2.refreshPane(.left)
-                                    ctrl2.refreshPane(.right)
+                                    ctrl.undoManager?.setActionName("移动 \(success) 个项目")
                                 }
-                                ctrl.undoManager?.setActionName("移动 \(success) 个项目")
                             }
                             self.ffUndoManager.setActionName("移动 \(success) 个项目")
                         } else {
                             let pairs = zip(srcs, dstPaths).map { (src: $0, dst: $1) }
                             self.ffUndoManager.registerUndo(withTarget: self) { ctrl in
-                                // undo: 删除复制项
-                                ctrl.undoDeleteCopied(dstPaths: dstPaths)
-                                // 注册 redo：重新复制
-                                ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
-                                    for (src, dst) in pairs {
-                                        try? CoreBridge.shared.copyFile(src: src, dst: dst)
+                                // undo: 删除复制项（后台执行，完成后回调再注册 redo）
+                                ctrl.undoDeleteCopied(dstPaths: dstPaths) {
+                                    // 注册 redo：重新复制（在 undo 文件操作完成后注册，避免竞态）
+                                    ctrl.undoManager?.registerUndo(withTarget: ctrl) { ctrl2 in
+                                        for (src, dst) in pairs {
+                                            try? CoreBridge.shared.copyFile(src: src, dst: dst)
+                                        }
+                                        ctrl2.refreshPane(.left)
+                                        ctrl2.refreshPane(.right)
                                     }
-                                    ctrl2.refreshPane(.left)
-                                    ctrl2.refreshPane(.right)
+                                    ctrl.undoManager?.setActionName("复制 \(success) 个项目")
                                 }
-                                ctrl.undoManager?.setActionName("复制 \(success) 个项目")
                             }
                             self.ffUndoManager.setActionName("复制 \(success) 个项目")
                         }
@@ -1887,7 +1889,8 @@ extension MainWindowController {
     // MARK: - 撤销辅助（问题 9）
 
     /// 撤销"移动"：把文件移回源位置
-    func undoMoveBack(pairs: [(src: String, dst: String)]) {
+    /// - Parameter completion: 后台文件操作完成且刷新 UI 后在主线程回调（用于延迟注册 redo，避免 ⌘Z→⌘⇧Z 竞态）
+    func undoMoveBack(pairs: [(src: String, dst: String)], completion: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             for pair in pairs {
                 try? CoreBridge.shared.moveFile(src: pair.dst, dst: pair.src)
@@ -1895,12 +1898,15 @@ extension MainWindowController {
             DispatchQueue.main.async {
                 self?.refreshPane(.left)
                 self?.refreshPane(.right)
+                // 先刷新再回调，保证 redo 注册时 UI 已是最新状态
+                completion?()
             }
         }
     }
 
     /// 撤销"复制"：删除刚粘贴的目标文件
-    func undoDeleteCopied(dstPaths: [String]) {
+    /// - Parameter completion: 后台文件操作完成且刷新 UI 后在主线程回调（用于延迟注册 redo，避免 ⌘Z→⌘⇧Z 竞态）
+    func undoDeleteCopied(dstPaths: [String], completion: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             for dst in dstPaths {
                 try? CoreBridge.shared.deleteFile(path: dst)
@@ -1908,6 +1914,8 @@ extension MainWindowController {
             DispatchQueue.main.async {
                 self?.refreshPane(.left)
                 self?.refreshPane(.right)
+                // 先刷新再回调，保证 redo 注册时 UI 已是最新状态
+                completion?()
             }
         }
     }
