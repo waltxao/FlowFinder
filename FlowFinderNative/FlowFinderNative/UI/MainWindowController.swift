@@ -1848,9 +1848,12 @@ extension MainWindowController {
                                         for (src, dst) in pairs {
                                             try? CoreBridge.shared.moveFile(src: src, dst: dst)
                                         }
+                                        // redo 文件操作完成后再刷新界面（主线程）
+                                        DispatchQueue.main.async {
+                                            ctrl2.refreshPane(.left)
+                                            ctrl2.refreshPane(.right)
+                                        }
                                     }
-                                    ctrl2.refreshPane(.left)
-                                    ctrl2.refreshPane(.right)
                                 }
                                 ctrl.undoManager?.setActionName("移动 \(success) 个项目")
                             }
@@ -1868,9 +1871,12 @@ extension MainWindowController {
                                         for (src, dst) in pairs {
                                             try? CoreBridge.shared.copyFile(src: src, dst: dst)
                                         }
+                                        // redo 文件操作完成后再刷新界面（主线程）
+                                        DispatchQueue.main.async {
+                                            ctrl2.refreshPane(.left)
+                                            ctrl2.refreshPane(.right)
+                                        }
                                     }
-                                    ctrl2.refreshPane(.left)
-                                    ctrl2.refreshPane(.right)
                                 }
                                 ctrl.undoManager?.setActionName("复制 \(success) 个项目")
                             }
