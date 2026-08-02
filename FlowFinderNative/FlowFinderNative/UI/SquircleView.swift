@@ -146,72 +146,43 @@ public class SquircleView: NSView {
 
 // MARK: - SquircleMaskedView
 
-/// 可动态更新超椭圆 mask 的 NSView 子类
-/// 适用于需要超椭圆圆角但尺寸可能变化的视图（如标签药丸、容器、按钮等）
-/// 替代标准 `layer?.cornerRadius`，在 layout 时自动更新 mask path
+/// 带圆角的 NSView 子类
+/// 使用 layer.cornerRadius 实现圆角背景，不使用 CAShapeLayer mask，
+/// 避免裁剪子视图内容（文字、图标等）。
+/// 适用于标签药丸、缩略图容器、卡片等需要圆角背景的视图。
 public class SquircleMaskedView: NSView {
 
-    /// 超椭圆圆角半径（设为高度的一半即为胶囊形）
-    /// 设为 0 时自动移除 mask，恢复完整矩形（无圆角裁剪），便于动态切换圆角/无圆角
+    /// 圆角半径（设为高度的一半即为胶囊形）
+    /// 设为 0 时移除圆角，恢复完整矩形
     public var squircleRadius: CGFloat = 0 {
         didSet {
-            if squircleRadius <= 0 {
-                // 半径为 0：移除 mask 并清空缓存，使子视图不再被裁剪
-                layer?.mask = nil
-                maskLayer = nil
-            }
             needsLayout = true
         }
     }
 
-    /// 超椭圆指数（n 越大越接近矩形，n=2 为标准椭圆，n≈5 为 iOS 风格）
+    /// 保留兼容性（实际不再使用超椭圆 mask）
     public var squircleFactor: CGFloat = 5.0
-
-    /// mask layer 缓存（复用，避免高频 layout 时反复创建销毁）
-    private var maskLayer: CAShapeLayer?
 
     public override func layout() {
         super.layout()
         guard squircleRadius > 0, !bounds.isEmpty else { return }
-
-        let path = SquircleView.squirclePath(in: bounds, radius: squircleRadius, factor: squircleFactor)
-
-        if maskLayer == nil {
-            wantsLayer = true
-            let shapeLayer = CAShapeLayer()
-            shapeLayer.path = path
-            maskLayer = shapeLayer
-            layer?.mask = shapeLayer
-        } else {
-            maskLayer?.path = path
-        }
+        wantsLayer = true
+        // 使用 cornerRadius 圆角背景，不裁剪子视图
+        layer?.cornerRadius = squircleRadius
     }
 }
 
 // MARK: - NSView Extension
 
 extension NSView {
-    /// 应用超椭圆圆角（适用于 NSTextField/NSButton 等无法替换为 SquircleMaskedView 的控件）
-    /// 在下一个布局周期应用 mask，确保 bounds 已确定。对于固定尺寸的标签药丸等小组件足够使用。
+    /// 应用圆角（使用 layer.cornerRadius，不使用 mask，避免裁剪子视图内容）
     /// - Parameters:
     ///   - radius: 圆角半径
-    ///   - factor: 超椭圆指数（默认 5.0，iOS 风格）
+    ///   - factor: 保留兼容性参数（实际不使用）
     func applySquircleCornerRadius(_ radius: CGFloat, factor: CGFloat = 5.0) {
         guard radius > 0 else { return }
         wantsLayer = true
-        // 移除标准 cornerRadius，改用超椭圆 mask
-        layer?.cornerRadius = 0
-        // 在下一个布局周期应用 mask（确保 bounds 已确定）
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, !self.bounds.isEmpty else { return }
-            let path = SquircleView.squirclePath(in: self.bounds, radius: radius, factor: factor)
-            if let existing = self.layer?.mask as? CAShapeLayer {
-                existing.path = path
-            } else {
-                let mask = CAShapeLayer()
-                mask.path = path
-                self.layer?.mask = mask
-            }
-        }
+        // 使用 cornerRadius 圆角背景，不使用 mask
+        layer?.cornerRadius = radius
     }
 }
