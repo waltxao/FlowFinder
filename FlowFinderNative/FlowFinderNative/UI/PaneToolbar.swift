@@ -60,7 +60,7 @@ class PaneToolbar: NSView {
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
-        layer?.masksToBounds = true
+        // 不设置 masksToBounds：避免裁剪工具栏内容（按钮、搜索框等）
 
         // 1.9 工具栏玻璃背景：FFGlassView(.panel, .headerView, cornerRadius: 0)
         // 与窗口玻璃形成层次感（工具栏玻璃比窗口背景略亮）

@@ -11,9 +11,6 @@ public class SquircleView: NSView {
     /// 圆角半径
     private let cornerRadius: CGFloat
 
-    /// mask layer 缓存
-    private var maskLayer: CAShapeLayer?
-
     /// 是否在 layout 时自动更新 mask
     private var autoUpdateMask: Bool
 
@@ -41,24 +38,14 @@ public class SquircleView: NSView {
         }
     }
 
-    /// 应用超椭圆 mask（复用 maskLayer，仅更新 path，避免高频 layout 时反复创建销毁 layer）
+    /// 应用圆角（使用标准 cornerRadius，不使用 mask，避免裁剪子视图内容）
     public func applySquircleMask() {
         let bounds = self.bounds
         if bounds.isEmpty { return }
 
-        let path = Self.squirclePath(in: bounds, radius: cornerRadius, factor: squircleFactor)
-
-        if maskLayer == nil {
-            // 首次调用：创建 mask layer
-            let shapeLayer = CAShapeLayer()
-            shapeLayer.path = path
-            shapeLayer.fillRule = .evenOdd
-            maskLayer = shapeLayer
-            layer?.mask = shapeLayer
-        } else {
-            // 后续调用：仅更新 path（避免 layer 创建/销毁开销）
-            maskLayer?.path = path
-        }
+        // 使用标准 cornerRadius 圆角背景
+        // 不使用 mask：mask 会裁剪所有子视图内容，导致大量内容被遮挡
+        layer?.cornerRadius = cornerRadius
     }
 
     /// 生成超椭圆圆角路径

@@ -41,8 +41,6 @@ class FFGlassView: NSView {
     private var innerShadowLayer: CALayer?
     /// 原生玻璃视图（.panel 级，macOS 26+ 用 NSGlassEffectView，旧版用 NSVisualEffectView）
     private var nativeGlassView: NSView?
-    /// v0.6.9: 超椭圆圆角 mask 层
-    private var squircleMaskLayer: CAShapeLayer?
 
     // MARK: - 全局实例跟踪
 
@@ -91,15 +89,10 @@ class FFGlassView: NSView {
     private func setup() {
         wantsLayer = true
         layer = CALayer()
-        // v0.6.9: 使用超椭圆 mask 替代标准 cornerRadius
-        layer?.masksToBounds = true
+        // 使用标准 cornerRadius 圆角背景（不使用 mask，避免裁剪子视图内容）
+        layer?.cornerRadius = cornerRadius
         layer?.backgroundColor = NSColor.clear.cgColor
-
-        // v0.6.9: 创建超椭圆 mask
-        let mask = CAShapeLayer()
-        mask.fillColor = NSColor.white.cgColor
-        layer?.mask = mask
-        squircleMaskLayer = mask
+        // 不设置 masksToBounds：子视图不应被裁剪，仅背景层需要圆角
 
         switch level {
         case .window:
@@ -137,10 +130,10 @@ class FFGlassView: NSView {
         // 修复主题反转: NSVisualEffectView 必须显式设置 appearance 以跟随 NSApp.appearance，
         // 否则 state = .active 时它会跟随系统外观而非应用强制外观，导致浅色/深色模式反转。
         visualEffect.appearance = NSApp.appearance
-        // NSVisualEffectView 无 cornerRadius 属性，圆角由外层 layer.cornerRadius 控制
+        // NSVisualEffectView 圆角跟随 FFGlassView 的 cornerRadius
         visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = 0
-        visualEffect.layer?.masksToBounds = true
+        visualEffect.layer?.cornerRadius = cornerRadius
+        visualEffect.layer?.masksToBounds = true  // 仅裁剪玻璃效果本身，不影响 FFGlassView 的子视图
         visualEffect.translatesAutoresizingMaskIntoConstraints = false
         addSubview(visualEffect)
         NSLayoutConstraint.activate([
@@ -231,8 +224,8 @@ class FFGlassView: NSView {
         let bounds = self.bounds
         guard !bounds.isEmpty else { return }
 
-        // v0.6.9: 更新超椭圆 mask 路径
-        squircleMaskLayer?.path = SquircleView.squirclePath(in: bounds, radius: cornerRadius)
+        // 更新 cornerRadius（bounds 变化时确保圆角正确）
+        layer?.cornerRadius = cornerRadius
 
         // tint / 噪声：填满
         tintLayer?.frame = bounds

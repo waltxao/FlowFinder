@@ -264,11 +264,11 @@ public class DuplicateScanWindowController: NSWindowController {
     /// 工具栏/操作栏/任务栏/选项条使用 controlBackgroundColor（比 windowBackgroundColor 略亮，
     /// 与系统 NSBox/工具栏视觉一致）；卡片式预览面板同理。
     private func makeSolidContainer(cornerRadius: CGFloat = 0) -> NSView {
-        let view = SquircleMaskedView()
+        let view = NSView()
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        view.squircleRadius = cornerRadius
-        view.layer?.masksToBounds = cornerRadius > 0
+        view.layer?.cornerRadius = cornerRadius
+        // 不设置 masksToBounds：避免裁剪容器内内容
         return view
     }
 

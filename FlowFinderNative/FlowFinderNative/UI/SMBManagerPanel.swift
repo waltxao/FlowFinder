@@ -181,11 +181,11 @@ public class SMBManagerPanel: NSView {
 
     /// 空状态视图
     private func makeEmptyState() -> NSView {
-        let container = SquircleMaskedView()
+        let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.3).cgColor
-        container.squircleRadius = 8
+        container.layer?.cornerRadius = 8
 
         let icon = NSImageView()
         icon.image = NSImage(systemSymbolName: "network.slash", accessibilityDescription: nil)

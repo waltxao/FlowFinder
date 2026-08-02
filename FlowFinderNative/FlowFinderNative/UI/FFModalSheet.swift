@@ -102,12 +102,12 @@ class FFModalSheet: NSWindow {
 
         // 任务 F11-2: 实体背景容器（替代 FFGlassView .panel .sheet 玻璃背景，v0.6.7）
         // 保留 12pt 圆角以维持 sheet 视觉风格；背景色为系统动态 windowBackgroundColor。
-        let container = SquircleMaskedView()
+        let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        container.squircleRadius = 12
-        container.layer?.masksToBounds = true
+        container.layer?.cornerRadius = 12
+        // 不设置 masksToBounds：避免裁剪 sheet 内容
         self.contentView = container
 
         setupHeader(title: title)
