@@ -859,7 +859,8 @@ class ExpandableDetailsBar: NSView {
         if isAudioExtension(ext) {
             return gatherAudioInfo(url: url)
         }
-        if ext == "app" {
+        // .app 是 bundle，个别路径下 fileExtension 可能为空，追加路径后缀兜底
+        if ext == "app" || entry.path.hasSuffix(".app") {
             return gatherAppInfo(path: entry.path)
         }
         if isDocumentExtension(ext) {
@@ -873,23 +874,38 @@ class ExpandableDetailsBar: NSView {
     private func gatherImageInfo(url: URL, path: String) -> [(String, String)] {
         var result: [(String, String)] = []
 
-        // 使用 ImageIO 一次性读取所有图片属性（分辨率 / 色彩空间 / 色彩深度 / EXIF）
+        // 使用 ImageIO 一次性读取所有图片属性（分辨率 / DPI / 色彩空间 / 色彩深度 / EXIF）
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else {
             return result
         }
 
-        // 分辨率
-        if let w = props[kCGImagePropertyPixelWidth] as? Int,
-           let h = props[kCGImagePropertyPixelHeight] as? Int {
-            result.append(("分辨率", "\(w) × \(h)"))
+        // 分辨率 + 打印/显示尺寸（按 DPI 换算厘米，访达同款）
+        // 用 NSNumber 显式取值，兼容 HEIC/WebP 等属性结构（比 as? Int 桥接更稳）
+        let width = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue
+        let height = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue
+        if let w = width, let h = height, w > 0, h > 0 {
+            result.append(("分辨率", "\(w) × \(h) 像素"))
+            // DPI 缺省按 72 计算（访达默认行为）；有元数据则用之
+            let dpiW = (props[kCGImagePropertyDPIWidth] as? NSNumber)?.doubleValue ?? 72
+            let dpiH = (props[kCGImagePropertyDPIHeight] as? NSNumber)?.doubleValue ?? 72
+            let cmW = Double(w) / max(dpiW, 1) * 2.54
+            let cmH = Double(h) / max(dpiH, 1) * 2.54
+            result.append(("尺寸", String(format: "%.1f × %.1f 厘米", cmW, cmH)))
         }
-        // 色彩空间（kCGImagePropertyColorSpace 在新版 SDK 中不可用，使用字符串字面量）
+
+        // 文件大小（访达图片详情必显示）
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+           let size = attrs[.size] as? NSNumber {
+            result.append(("文件大小", ByteCountFormatter.string(fromByteCount: size.int64Value, countStyle: .file)))
+        }
+
+        // 色彩空间（kCGImagePropertyColorSpace 在新版 SDK 中不可用，使用字符串字面量兜底）
         if let cs = props["ColorSpace" as CFString] as? String, !cs.isEmpty {
             result.append(("色彩空间", cs))
         }
-        // 色彩深度（kCGImagePropertyBitsPerSample 同上）
-        if let bps = props["BitsPerSample" as CFString] as? Int, bps > 0 {
+        // 色彩深度（同上）
+        if let bps = (props["BitsPerSample" as CFString] as? NSNumber)?.intValue, bps > 0 {
             result.append(("色彩深度", "\(bps) 位"))
         }
 
@@ -905,15 +921,14 @@ class ExpandableDetailsBar: NSView {
 
         // EXIF 字典：焦距 / 光圈 / ISO
         if let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
-            if let focal = exif[kCGImagePropertyExifFocalLength] as? Double {
+            if let focal = (exif[kCGImagePropertyExifFocalLength] as? NSNumber)?.doubleValue {
                 result.append(("焦距", "\(Int(focal)) mm"))
             }
-            if let aperture = exif[kCGImagePropertyExifFNumber] as? Double {
+            if let aperture = (exif[kCGImagePropertyExifFNumber] as? NSNumber)?.doubleValue {
                 result.append(("光圈", "f/\(String(format: "%.1f", aperture))"))
             }
-            if let isoArray = exif[kCGImagePropertyExifISOSpeedRatings] as? [Int],
-               let iso = isoArray.first {
-                result.append(("ISO", "ISO \(iso)"))
+            if let isoArray = exif[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber], let iso = isoArray.first {
+                result.append(("ISO", "ISO \(iso.intValue)"))
             }
         }
 
