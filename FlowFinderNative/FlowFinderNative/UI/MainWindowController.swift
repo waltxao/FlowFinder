@@ -1,6 +1,7 @@
 import Cocoa
 import Combine
 import QuickLook
+import Quartz
 
 /// v0.6.9: 无分割线 NSSplitView 子类（用于侧边栏与操作区之间，divider 厚度为 0）
 private class FFNoDividerSplitView: NSSplitView {
@@ -2458,3 +2459,25 @@ enum PaneSide {
 // 显式遵循才能将 MainWindowController 实例赋值给 window.delegate。
 // windowDidBecomeKey/ResignKey/BecomeMain/ResignMain 等回调已在类内实现（见类内 MARK 区）。
 extension MainWindowController: NSWindowDelegate {}
+
+// MARK: - QLPreviewPanelController（常驻 responder，问题 8 修复）
+
+/// 常驻实现 QLPreviewPanelController informal protocol：
+/// MainWindowController 位于 window 的 responder chain（window → windowController），
+/// QLPreviewPanel 显示时沿链自动找到本控制器，无需临时插入/移除 responder。
+extension MainWindowController {
+    public override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        return true
+    }
+
+    public override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = QuickLookPreviewPanel.shared
+        panel.delegate = QuickLookPreviewPanel.shared
+        panel.currentPreviewItemIndex = QuickLookPreviewPanel.shared.currentIndex
+    }
+
+    public override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+    }
+}
