@@ -623,7 +623,7 @@ public class FileListView: NSView {
         scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         // 任务 S1: 强制使用自定义细滚动条
         scrollView.verticalScroller = FFScroller()
@@ -646,9 +646,8 @@ public class FileListView: NSView {
         //   cellView.layer.backgroundColor 已在 tableView(_:viewFor:row:) 中设为 .clear，
         //   不会遮挡 rowView 的标准选中绘制。
         // 不显式赋值，使用 NSTableView 默认 selectionHighlightStyle = .regular
-        // 注意：不设置 columnAutoresizingStyle（macOS 27 SDK 已移除 .noColumnResizing 成员）。
-        // 默认值即不自动调整列宽；配合下方各列的 width/minWidth/userResizingMask，
-        // 并移除 sizeToFit() 调用，确保第 5 列（标签）可见且用户可手动拖宽列分隔条。
+        // 列宽模式：sequentialColumnAutoresizingStyle（四列按比例伸缩，无横向滚动条）。
+        // 用户仍可手动拖拽列头分隔条调整各列宽度。
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.rowHeight = 26
         // 任务 F11-1: tableView 实体背景（v0.6.7）
@@ -667,9 +666,9 @@ public class FileListView: NSView {
         tableView.dataSource = self
         tableView.delegate = self
 
-        // 任务 F10-6: 列宽自动调整占满操作区（v0.6.6）
-        // 最后一列自动填充剩余宽度，调整操作区 divider 时列宽自动响应
-        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        // 四列按比例伸缩：任何窗口宽度下列宽总和 = 操作区可用宽，永不出现横向滚动条。
+        // 名称列初始占比最大（240/540 ≈ 44%），窗口变化时获得最多增量，视觉上名称列弹性最大（仿访达）。
+        tableView.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
 
         // 列顺序：名称 → 修改日期 → 类型 → 大小（匹配 macOS Finder）
         // 名称列（带图标）— 用户可手动拖宽
