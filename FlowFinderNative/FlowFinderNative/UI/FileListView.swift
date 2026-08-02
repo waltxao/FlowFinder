@@ -414,6 +414,11 @@ public class FileListView: NSView {
     private weak var renamingTextField: NSTextField?
     private var renameCancelled: Bool = false
 
+    // 问题 7 根因修复：拖拽过程中持续捕获修饰键（用于 ⌘ 判断，访达语义）。
+    // validateDrop/acceptDrop 回调中 NSApp.currentEvent 不可靠（可能为 nil 或非拖拽事件），
+    // 故在 draggingUpdated 及各拖拽回调中双保险写入。
+    private var lastDragModifierFlags: NSEvent.ModifierFlags = []
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
@@ -1752,6 +1757,11 @@ extension FileListView: NSTableViewDelegate {
     /// 替代被 tableView 子视图拦截、永不触发的 NSView 层
     /// draggingEntered/draggingUpdated/performDragOperation。
     public func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        // 双保险：tableView 是实际注册的拖拽目标，validateDrop 回调的 NSApp.currentEvent
+        // 通常就是拖拽事件，将其修饰键写入 lastDragModifierFlags（与 draggingUpdated 双写）
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
         // 检查拖拽内容是否包含文件 URL
         guard let items = info.draggingPasteboard.pasteboardItems, !items.isEmpty else { return [] }
         for item in items {
@@ -1790,6 +1800,10 @@ extension FileListView: NSTableViewDelegate {
     /// 保留原 performDragOperation 的异步执行 / 撤销注册 / 跨面板刷新 / 部分失败提示逻辑，
     /// 并新增“拖到文件夹行上 → 移入该文件夹”的目标判定。
     public func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        // 双保险：与 validateDrop 一致，落下前再捕获一次最新修饰键
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
         guard let viewModel = viewModel else { return false }
 
         // 解析拖拽的文件路径
@@ -2142,14 +2156,27 @@ extension FileListView: NSDraggingSource {
 }
 
 extension FileListView {
+    /// 拖拽进行中捕获修饰键（见 isMoveOperation）。注意：FileListView 本身可能收不到
+    /// draggingUpdated（tableView 才是实际注册的拖拽目标），因此 validateDrop/acceptDrop
+    /// 中也会双保险写入 lastDragModifierFlags。
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
+        return []
+    }
+
+    public override func draggingEnded(_ sender: NSDraggingInfo) {
+        lastDragModifierFlags = []
+    }
+
     /// 判断是否为移动操作（访达语义）：
     /// 同盘 + 无修饰键 = 移动；同盘 + ⌘ = 复制
     /// 跨盘 + 无修饰键 = 复制；跨盘 + ⌘ = 移动
     /// - Parameter destPath: 真实拖放目标路径（拖到文件夹行时为该文件夹路径，否则当前目录）
     private func isMoveOperation(_ sender: NSDraggingInfo, destPath: String? = nil) -> Bool {
-        // 直接读取当前按键状态（比依赖 draggingSourceOperationMask 的间接过滤更可靠）
-        // 注意：若 validateDrop 回调中 NSApp.currentEvent 为 nil，回退到 Cmd 未按下（默认行为）
-        let commandPressed = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+        // 读取拖拽过程中捕获的修饰键（比 NSApp.currentEvent 在回调中可靠）
+        let commandPressed = lastDragModifierFlags.contains(.command)
 
         // 源与目标卷判定
         let dest = destPath ?? viewModel?.currentPath

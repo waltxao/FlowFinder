@@ -434,6 +434,10 @@ public class FileGridView: NSView {
     // state.selectedFiles 变更 -> @Published 发射形成循环（与 FileListView.isReloading 对称）
     private var isReloading: Bool = false
 
+    // 问题 7 根因修复：拖拽过程中持续捕获修饰键（用于 ⌘ 判断，访达语义）。
+    // 在 draggingEntered/draggingUpdated 中持续写入，draggingEnded 复位。
+    private var lastDragModifierFlags: NSEvent.ModifierFlags = []
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
@@ -1537,14 +1541,30 @@ private func loadAllSidebarTags() -> [Tag] {
 
 extension FileGridView {
     public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // 捕获当前修饰键（问题 7 根因修复：回调中直接读 NSApp.currentEvent 不可靠）
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
         return isMoveOperation(sender, destPath: viewModel?.currentPath) ? .move : .copy
     }
 
     public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // 持续捕获修饰键，支持拖拽过程中实时切换 ⌘
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
         return isMoveOperation(sender, destPath: viewModel?.currentPath) ? .move : .copy
     }
 
+    public override func draggingEnded(_ sender: NSDraggingInfo) {
+        lastDragModifierFlags = []
+    }
+
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        // 双保险：落下前再捕获一次最新修饰键
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
         let pasteboard = sender.draggingPasteboard
 
         guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
@@ -1670,9 +1690,8 @@ extension FileGridView {
     /// 跨盘 + 无修饰键 = 复制；跨盘 + ⌘ = 移动
     /// - Parameter destPath: 真实拖放目标路径（网格目标即当前目录，默认取 viewModel?.currentPath）
     private func isMoveOperation(_ sender: NSDraggingInfo, destPath: String? = nil) -> Bool {
-        // 直接读取当前按键状态（比依赖 draggingSourceOperationMask 的间接过滤更可靠）
-        // 注意：若 validateDrop 回调中 NSApp.currentEvent 为 nil，回退到 Cmd 未按下（默认行为）
-        let commandPressed = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+        // 读取拖拽过程中捕获的修饰键（比 NSApp.currentEvent 在回调中可靠）
+        let commandPressed = lastDragModifierFlags.contains(.command)
 
         // 源与目标卷判定
         let dest = destPath ?? viewModel?.currentPath
