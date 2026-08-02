@@ -388,8 +388,21 @@ private final class FFGridSectionHeaderView: NSView {
 
 /// 自定义 NSCollectionView 子类：覆盖拖拽源操作掩码，支持同卷移动/跨卷复制
 private class DraggingCollectionView: NSCollectionView {
+    /// 空格键触发 QuickLook 通知（collectionView 为 first responder 时，空格被 NSCollectionView
+    /// 默认 keyDown/interpretKeyEvents 消耗，需在此拦截转发给 FileGridView.keyDown 同款逻辑）
+    var onSpaceKey: (() -> Void)?
+
     override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         return [.copy, .move, .delete]
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags
+        if event.keyCode == 49 && modifiers.isEmpty {
+            onSpaceKey?()
+            return
+        }
+        super.keyDown(with: event)
     }
 }
 
@@ -577,6 +590,13 @@ public class FileGridView: NSView {
         layout.headerReferenceSize = NSSize(width: 0, height: 24)
 
         collectionView = DraggingCollectionView()
+        // 任务 T5: QuickLook 空格键修复（网格视图）。collectionView 是 first responder 时空格被
+        // NSCollectionView 消耗，不会冒泡到 FileGridView.keyDown → 在 DraggingCollectionView 拦截转发。
+        // side 动态取 self.getSide()（identifier 由 MainWindowController 在 init 之后设置）。
+        (collectionView as? DraggingCollectionView)?.onSpaceKey = { [weak self] in
+            guard let self = self else { return }
+            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: nil, userInfo: ["side": self.getSide()])
+        }
         collectionView.collectionViewLayout = layout
         // 任务 F11-1: collectionView 实体背景（v0.6.7）
         // 配合操作区容器实体背景，不再透明。实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）

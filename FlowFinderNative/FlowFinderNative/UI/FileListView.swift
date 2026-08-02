@@ -1,6 +1,29 @@
 import Cocoa
 import Combine
 
+// MARK: - FFQuickLookTableView
+
+/// 拦截空格键的 NSTableView 子类：
+/// first responder 是 NSTableView 时，空格键事件到达 tableView.keyDown 即被
+/// interpretKeyEvents 消耗，不会冒泡到 FileListView.keyDown——QuickLook 无法触发
+/// （问题 6 根因）。此子类在 keyDown 拦截空格并发送通知转发给 MainWindowController。
+final class FFQuickLookTableView: NSTableView {
+    /// 空格键触发 QuickLook 通知（userInfo 携带 side）
+    var onSpaceKey: ((String) -> Void)?
+    /// 当前所属面板标识（left/right）
+    var side: String = "left"
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags
+        if event.keyCode == 49 && modifiers.isEmpty {
+            // 空格：发送通知触发 QuickLook（不消费事件，让 FileListView.keyDown 兜底链路也走）
+            onSpaceKey?(side)
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
 // MARK: - FFDebug (file-based debug logger)
 
 /// 文件日志工具：写入 /tmp/ff-debug.log，不依赖系统日志
@@ -630,7 +653,17 @@ public class FileListView: NSView {
         scrollView.horizontalScroller = FFScroller()
         scrollView.scrollerStyle = .overlay
 
-        tableView = NSTableView()
+        // 任务 T5: QuickLook 空格键修复。
+        // first responder 是 NSTableView 时，空格事件被 tableView 的 keyDown/interpretKeyEvents 消耗，
+        // 不会冒泡到 FileListView.keyDown → 改用 FFQuickLookTableView 子类在 keyDown 拦截空格并转发通知。
+        // 注意：side 不能在此刻用 getSide() 固定——identifier 由 MainWindowController 在 init 之后才设置，
+        // 故在 onSpaceKey 回调中动态取 self.getSide()。
+        let qlTableView = FFQuickLookTableView()
+        qlTableView.onSpaceKey = { [weak self] _ in
+            guard let self = self else { return }
+            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: nil, userInfo: ["side": self.getSide()])
+        }
+        tableView = qlTableView
         tableView.allowsMultipleSelection = true
         tableView.allowsEmptySelection = true
         // 任务 F10-7: 启用列拖动重排（访达风格，用户可拖动列头调整列顺序）
