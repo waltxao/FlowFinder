@@ -1,18 +1,24 @@
 import Cocoa
+import ImageIO
+import UniformTypeIdentifiers
+import AVFoundation
+import PDFKit
 
 // MARK: - ExpandableDetailsBar
 
 /// 可展开的文件详情面板
 ///
-/// 收起状态（高度 28pt）：
-///   - 左侧：选中文件的高清预览图标（24x24，`NSWorkspace.shared.icon(forFile:)`）
+/// 收起状态（高度 54pt）：
+///   - 左侧：选中文件的高清预览图标（32x32，`NSWorkspace.shared.icon(forFile:)`）
 ///   - 中间：文件名 + 大小（单行，13pt medium）
 ///   - 右侧：展开按钮（chevron.up SF Symbol）
 ///
-/// 展开状态（高度 120pt）：
-///   - 左侧：大尺寸预览图标（48x48，异步加载 QuickLook 缩略图）
-///   - 右侧网格：名称 / 类型 / 大小 / 创建日期 / 修改日期 / 权限
-///   - 底部：完整路径 + 标签（药丸样式）
+/// 展开状态（高度 210pt）：
+///   - 左侧：大尺寸预览图标（96x96，异步加载 QuickLook 缩略图，垂直居中）
+///   - 右侧两列信息：
+///     - 第一列：种类 / 大小 / 位置 / 创建日期 / 修改日期
+///     - 第二列：标签（药丸，可点击筛选 / 右键移除）/ 文件说明（双击编辑）/ 文件来源
+///   - 底部：文件类型专属信息（分辨率 / 色彩空间 / EXIF / 时长 / 编码 等）
 ///
 /// 接口：
 ///   - `update(with entry: FileEntry?)` 更新显示的文件信息
@@ -23,8 +29,8 @@ class ExpandableDetailsBar: NSView {
 
     /// 收起态高度 36pt + 状态栏 18pt = 54pt
     private let collapsedHeight: CGFloat = 54
-    /// 展开态高度 120pt + 状态栏 18pt = 138pt
-    private let expandedHeight: CGFloat = 138
+    /// 展开态高度 192pt + 状态栏 18pt = 210pt
+    private let expandedHeight: CGFloat = 210
     /// 状态栏高度
     private let statusBarHeight: CGFloat = 18
 
@@ -66,6 +72,12 @@ class ExpandableDetailsBar: NSView {
     private let modifiedField = NSTextField(labelWithString: "")
     private let tagsField = NSTextField(labelWithString: "")
     private let tagsContainer = NSStackView()
+
+    // 第二列字段：文件说明 / 文件来源
+    private let descriptionField = NSTextField(labelWithString: "")
+    private let sourceField = NSTextField(labelWithString: "")
+    /// 文件类型专属信息容器（展开态底部，两列下方）
+    private let fileTypeInfoContainer = NSStackView()
 
     /// 当前正在请求缩略图的路径（用于避免过期回调覆盖）
     private var thumbnailLoadPath: String?
@@ -136,41 +148,106 @@ class ExpandableDetailsBar: NSView {
 
         // expanded 视图（展开态）
         expandedView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(expandedView)
+
+        // 展开态内容：垂直堆叠（内容行 + 文件类型信息）
+        let expandedStack = NSStackView()
+        expandedStack.orientation = .vertical
+        expandedStack.spacing = 8
+        expandedStack.alignment = .leading
+        expandedStack.translatesAutoresizingMaskIntoConstraints = false
+        expandedView.addSubview(expandedStack)
+
+        // 内容行：图标 + 两列信息
+        let contentRow = NSStackView()
+        contentRow.orientation = .horizontal
+        contentRow.spacing = 12
+        contentRow.alignment = .top
+        contentRow.translatesAutoresizingMaskIntoConstraints = false
+
         bigIconView.imageScaling = .scaleProportionallyUpOrDown
         bigIconView.translatesAutoresizingMaskIntoConstraints = false
-        expandedView.addSubview(bigIconView)
+        contentRow.addArrangedSubview(bigIconView)
 
-        // 属性网格（2 列 x 3 行）：种类/大小/位置 | 创建/修改/标签
-        let grid = NSView()
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        expandedView.addSubview(grid)
+        // 两列信息容器
+        let columnsContainer = NSStackView()
+        columnsContainer.orientation = .horizontal
+        columnsContainer.spacing = 16
+        columnsContainer.alignment = .top
+        columnsContainer.translatesAutoresizingMaskIntoConstraints = false
+        columnsContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let typeLabel = makeLabel("种类")
+        // 第一列：种类 / 大小 / 位置 / 创建日期 / 修改日期
+        let column1 = NSStackView()
+        column1.orientation = .vertical
+        column1.spacing = 4
+        column1.alignment = .leading
+        column1.translatesAutoresizingMaskIntoConstraints = false
+
         configureValue(typeField)
-        let sizeLabel = makeLabel("大小")
         configureValue(sizeField)
-        let locationLabel = makeLabel("位置")
         configureValue(locationField)
         locationField.lineBreakMode = .byTruncatingMiddle
-        let createdLabel = makeLabel("创建")
+        locationField.cell?.wraps = false
         configureValue(createdField)
-        let modifiedLabel = makeLabel("修改")
         configureValue(modifiedField)
-        let tagsLabel = makeLabel("标签")
-        configureValue(tagsField)
 
-        for v in [typeLabel, typeField, sizeLabel, sizeField, locationLabel, locationField,
-                  createdLabel, createdField, modifiedLabel, modifiedField, tagsLabel, tagsField] {
-            grid.addSubview(v)
-        }
+        column1.addArrangedSubview(makeInfoRow(label: makeLabel("种类"), value: typeField))
+        column1.addArrangedSubview(makeInfoRow(label: makeLabel("大小"), value: sizeField))
+        column1.addArrangedSubview(makeInfoRow(label: makeLabel("位置"), value: locationField))
+        column1.addArrangedSubview(makeInfoRow(label: makeLabel("创建日期"), value: createdField))
+        column1.addArrangedSubview(makeInfoRow(label: makeLabel("修改日期"), value: modifiedField))
 
-        // 标签容器（药丸，作为"标签"字段的视觉化补充，叠在网格下方）
+        // 第二列：标签 / 文件说明 / 文件来源
+        let column2 = NSStackView()
+        column2.orientation = .vertical
+        column2.spacing = 4
+        column2.alignment = .leading
+        column2.translatesAutoresizingMaskIntoConstraints = false
+
+        // 标签容器（药丸，横向排列，单击筛选 / 右键移除）
         tagsContainer.orientation = .horizontal
         tagsContainer.spacing = 4
-        tagsContainer.alignment = .leading
+        tagsContainer.alignment = .centerY
         tagsContainer.translatesAutoresizingMaskIntoConstraints = false
-        expandedView.addSubview(tagsContainer)
-        addSubview(expandedView)
+        tagsContainer.heightAnchor.constraint(equalToConstant: 18).isActive = true
+
+        // 文件说明：可编辑文本字段（双击进入编辑，回车保存至 UserDefaults）
+        descriptionField.font = NSFont.systemFont(ofSize: 10)
+        descriptionField.textColor = NSColor.labelColor
+        descriptionField.isEditable = false
+        descriptionField.isSelectable = true
+        descriptionField.isBezeled = false
+        descriptionField.drawsBackground = false
+        descriptionField.lineBreakMode = .byTruncatingTail
+        descriptionField.maximumNumberOfLines = 1
+        descriptionField.cell?.truncatesLastVisibleLine = true
+        descriptionField.cell?.wraps = false
+        descriptionField.translatesAutoresizingMaskIntoConstraints = false
+        descriptionField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        descriptionField.delegate = self
+        let descGesture = NSClickGestureRecognizer(target: self, action: #selector(beginEditingDescription))
+        descGesture.numberOfClicksRequired = 2
+        descriptionField.addGestureRecognizer(descGesture)
+
+        configureValue(sourceField)
+
+        column2.addArrangedSubview(makeInfoRow(label: makeLabel("标签"), value: tagsContainer))
+        column2.addArrangedSubview(makeInfoRow(label: makeLabel("文件说明"), value: descriptionField))
+        column2.addArrangedSubview(makeInfoRow(label: makeLabel("文件来源"), value: sourceField))
+
+        columnsContainer.addArrangedSubview(column1)
+        columnsContainer.addArrangedSubview(column2)
+        contentRow.addArrangedSubview(columnsContainer)
+
+        // 文件类型专属信息容器（内容行下方）
+        fileTypeInfoContainer.orientation = .vertical
+        fileTypeInfoContainer.spacing = 4
+        fileTypeInfoContainer.alignment = .leading
+        fileTypeInfoContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        expandedStack.addArrangedSubview(contentRow)
+        expandedStack.addArrangedSubview(fileTypeInfoContainer)
 
         // 顶部细分隔线
         let separator = NSBox()
@@ -239,59 +316,19 @@ class ExpandableDetailsBar: NSView {
             expandedView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             expandedView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -statusBarHeight),
 
-            bigIconView.leadingAnchor.constraint(equalTo: expandedView.leadingAnchor),
-            bigIconView.topAnchor.constraint(equalTo: expandedView.topAnchor),
-            bigIconView.widthAnchor.constraint(equalToConstant: 48),
-            bigIconView.heightAnchor.constraint(equalToConstant: 48),
+            // expandedStack 填满 expandedView
+            expandedStack.leadingAnchor.constraint(equalTo: expandedView.leadingAnchor),
+            expandedStack.trailingAnchor.constraint(equalTo: expandedView.trailingAnchor),
+            expandedStack.topAnchor.constraint(equalTo: expandedView.topAnchor),
+            expandedStack.bottomAnchor.constraint(lessThanOrEqualTo: expandedView.bottomAnchor),
 
-            grid.leadingAnchor.constraint(equalTo: bigIconView.trailingAnchor, constant: 12),
-            grid.topAnchor.constraint(equalTo: expandedView.topAnchor),
-            grid.trailingAnchor.constraint(equalTo: expandedView.trailingAnchor, constant: -28),
+            // 大图标 96×96
+            bigIconView.widthAnchor.constraint(equalToConstant: 96),
+            bigIconView.heightAnchor.constraint(equalToConstant: 96),
 
-            // 左列：种类 / 大小 / 位置
-            typeLabel.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
-            typeLabel.topAnchor.constraint(equalTo: grid.topAnchor),
-            typeField.leadingAnchor.constraint(equalTo: typeLabel.trailingAnchor, constant: 4),
-            typeField.centerYAnchor.constraint(equalTo: typeLabel.centerYAnchor),
-            typeField.trailingAnchor.constraint(equalTo: grid.centerXAnchor, constant: -8),
-
-            sizeLabel.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
-            sizeLabel.topAnchor.constraint(equalTo: typeLabel.bottomAnchor, constant: 4),
-            sizeField.leadingAnchor.constraint(equalTo: sizeLabel.trailingAnchor, constant: 4),
-            sizeField.centerYAnchor.constraint(equalTo: sizeLabel.centerYAnchor),
-            sizeField.trailingAnchor.constraint(equalTo: grid.centerXAnchor, constant: -8),
-
-            locationLabel.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
-            locationLabel.topAnchor.constraint(equalTo: sizeLabel.bottomAnchor, constant: 4),
-            locationField.leadingAnchor.constraint(equalTo: locationLabel.trailingAnchor, constant: 4),
-            locationField.centerYAnchor.constraint(equalTo: locationLabel.centerYAnchor),
-            locationField.trailingAnchor.constraint(equalTo: grid.centerXAnchor, constant: -8),
-            grid.bottomAnchor.constraint(greaterThanOrEqualTo: locationLabel.bottomAnchor),
-
-            // 右列：创建 / 修改 / 标签
-            createdLabel.leadingAnchor.constraint(equalTo: grid.centerXAnchor, constant: 8),
-            createdLabel.topAnchor.constraint(equalTo: grid.topAnchor),
-            createdField.leadingAnchor.constraint(equalTo: createdLabel.trailingAnchor, constant: 4),
-            createdField.centerYAnchor.constraint(equalTo: createdLabel.centerYAnchor),
-            createdField.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
-
-            modifiedLabel.leadingAnchor.constraint(equalTo: grid.centerXAnchor, constant: 8),
-            modifiedLabel.topAnchor.constraint(equalTo: createdLabel.bottomAnchor, constant: 4),
-            modifiedField.leadingAnchor.constraint(equalTo: modifiedLabel.trailingAnchor, constant: 4),
-            modifiedField.centerYAnchor.constraint(equalTo: modifiedLabel.centerYAnchor),
-            modifiedField.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
-
-            tagsLabel.leadingAnchor.constraint(equalTo: grid.centerXAnchor, constant: 8),
-            tagsLabel.topAnchor.constraint(equalTo: modifiedLabel.bottomAnchor, constant: 4),
-            tagsField.leadingAnchor.constraint(equalTo: tagsLabel.trailingAnchor, constant: 4),
-            tagsField.centerYAnchor.constraint(equalTo: tagsLabel.centerYAnchor),
-            tagsField.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
-
-            // 标签药丸容器（展开态下方）
-            tagsContainer.leadingAnchor.constraint(equalTo: expandedView.leadingAnchor),
-            tagsContainer.topAnchor.constraint(equalTo: bigIconView.bottomAnchor, constant: 6),
-            tagsContainer.trailingAnchor.constraint(lessThanOrEqualTo: expandedView.trailingAnchor),
-            tagsContainer.heightAnchor.constraint(lessThanOrEqualToConstant: 20),
+            // 两列容器最小宽度，确保信息完整显示
+            column1.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            column2.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
 
             heightConstraint,
         ])
@@ -309,7 +346,8 @@ class ExpandableDetailsBar: NSView {
         f.translatesAutoresizingMaskIntoConstraints = false
         f.setContentHuggingPriority(.required, for: .horizontal)
         f.setContentCompressionResistancePriority(.required, for: .horizontal)
-        f.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        // 44pt 宽度容纳 4 字标签（创建日期 / 文件说明 / 文件来源）
+        f.widthAnchor.constraint(equalToConstant: 44).isActive = true
         return f
     }
 
@@ -319,8 +357,29 @@ class ExpandableDetailsBar: NSView {
         f.lineBreakMode = .byTruncatingTail
         f.maximumNumberOfLines = 1
         f.cell?.truncatesLastVisibleLine = true
+        f.cell?.wraps = false
         f.translatesAutoresizingMaskIntoConstraints = false
         f.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    }
+
+    /// 创建一行信息：固定宽度标签 + 可扩展值视图（水平排列）
+    private func makeInfoRow(label: NSTextField, value: NSView) -> NSStackView {
+        value.translatesAutoresizingMaskIntoConstraints = false
+        value.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [label, value])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    /// 创建已配置的值文本标签（用于文件类型专属信息行）
+    private func makeValueField(_ text: String = "") -> NSTextField {
+        let f = NSTextField(labelWithString: text)
+        configureValue(f)
+        return f
     }
 
     // MARK: - Public API
@@ -436,7 +495,9 @@ class ExpandableDetailsBar: NSView {
             setPlaceholderIcon(symbol: "tray.full.fill")
         }
 
-        // expanded 字段：种类 / 大小 / 位置 / 创建 / 修改 / 标签
+        // expanded 字段：种类 / 大小 / 位置 / 创建日期 / 修改日期
+        // 第二列：标签 / 文件说明 / 文件来源
+        // 底部：文件类型专属信息
         // 任务 F11-6: bigIconView 已在 setPlaceholderIcon/setRealFileIcon 中与 smallIconView 同步设置
         guard let entry = entry, selectedCount <= 1 else {
             let placeholder = selectedCount > 1 ? "已选中 \(selectedCount) 项" : "未选择文件"
@@ -446,6 +507,9 @@ class ExpandableDetailsBar: NSView {
             createdField.stringValue = ""
             modifiedField.stringValue = ""
             tagsField.stringValue = ""
+            descriptionField.stringValue = ""
+            sourceField.stringValue = ""
+            clearFileTypeSpecificInfo()
             // bigIconView 已在上方 compact 分支的 setPlaceholderIcon 中同步，此处无需重复设置
             clearTags()
             showNoTagsPlaceholder()
@@ -455,14 +519,24 @@ class ExpandableDetailsBar: NSView {
         typeField.stringValue = entry.kindDescription
         sizeField.stringValue = entry.formattedSize
         locationField.stringValue = entry.path
+        locationField.toolTip = entry.path
         createdField.stringValue = entry.formattedCreationDate
         modifiedField.stringValue = entry.formattedModificationDate
         // bigIconView 已在上方 setRealFileIcon 中同步设置真实文件图标
 
+        // 文件说明（从 UserDefaults 读取，双击可编辑）
+        descriptionField.stringValue = getFileDescription(path: entry.path)
+
+        // 文件来源（kMDItemWhereFroms xattr，Finder "下载来源"信息）
+        sourceField.stringValue = getWhereFrom(path: entry.path)
+
         updateTags(path: entry.path)
-        // 标签字段文本（药丸容器在下方可视化展示，此处为文本兜底）
+        // 标签字段文本（保留为属性但不显示，药丸容器为可视化主体）
         let tags = TagBridge.shared.getTags(path: entry.path)
         tagsField.stringValue = tags.isEmpty ? "无" : tags.map { $0.name }.joined(separator: ", ")
+
+        // 文件类型专属信息（分辨率 / EXIF / 时长 / 编码 等）
+        updateFileTypeSpecificInfo(entry: entry)
 
         if isExpanded { loadThumbnail() }
     }
@@ -473,9 +547,9 @@ class ExpandableDetailsBar: NSView {
     /// SF Symbol 默认为模板图像，通过 contentTintColor 染为灰色（tertiaryLabelColor）
     /// - Parameter symbol: SF Symbol 名称（如 "folder" / "doc.on.doc"）
     private func setPlaceholderIcon(symbol: String) {
-        // 问题6: 使用 SymbolConfiguration 让小图标(24pt)与大图标(36pt light)视觉更协调分明
+        // 小图标(24pt)与大图标(64pt light)视觉协调，适配 96×96 展开态图标视图
         let config = NSImage.SymbolConfiguration(pointSize: 24, weight: .regular)
-        let bigConfig = NSImage.SymbolConfiguration(pointSize: 36, weight: .light)
+        let bigConfig = NSImage.SymbolConfiguration(pointSize: 64, weight: .light)
 
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         smallIconView.image = image?.withSymbolConfiguration(config)
@@ -501,7 +575,7 @@ class ExpandableDetailsBar: NSView {
         bigIconView.contentTintColor = nil
 
         // 缓存命中：同步显示
-        let iconPointSize: CGFloat = 48
+        let iconPointSize: CGFloat = 96
         if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: iconPointSize) {
             iconLoadPath = nil
             smallIconView.image = cached
@@ -528,7 +602,7 @@ class ExpandableDetailsBar: NSView {
         thumbnailLoadPath = path
         ThumbnailManager.shared.generateThumbnail(
             path: path,
-            size: CGSize(width: 48, height: 48)
+            size: CGSize(width: 96, height: 96)
         ) { [weak self] image in
             guard let self = self, let image = image else { return }
             // 防止过期回调覆盖当前显示
@@ -579,13 +653,17 @@ class ExpandableDetailsBar: NSView {
         let pillHeight: CGFloat = 18
         let pill = SquircleMaskedView()
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
+        // 标签色浅色背景，与文件列表药丸风格一致
+        let tagColor = NSColor(hex: tag.color) ?? .systemBlue
+        pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
         pill.squircleRadius = pillHeight / 2
         pill.translatesAutoresizingMaskIntoConstraints = false
+        // 存储标签名用于单击筛选
+        pill.identifier = NSUserInterfaceItemIdentifier(tag.name)
 
         let dot = NSView()
         dot.wantsLayer = true
-        dot.layer?.backgroundColor = (NSColor(hex: tag.color) ?? .systemBlue).cgColor
+        dot.layer?.backgroundColor = tagColor.cgColor
         dot.layer?.cornerRadius = 4
         dot.translatesAutoresizingMaskIntoConstraints = false
         pill.addSubview(dot)
@@ -594,10 +672,16 @@ class ExpandableDetailsBar: NSView {
         label.font = NSFont.systemFont(ofSize: 10)
         label.textColor = NSColor.labelColor
         label.lineBreakMode = .byTruncatingTail
+        label.cell?.wraps = false
+        label.cell?.truncatesLastVisibleLine = true
         label.setContentHuggingPriority(.required, for: .horizontal)
-        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
         pill.addSubview(label)
+
+        // 单击：发送通知，按标签筛选文件列表（与侧边栏标签点击行为一致）
+        let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(tagPillClicked(_:)))
+        pill.addGestureRecognizer(clickGesture)
 
         NSLayoutConstraint.activate([
             dot.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 6),
@@ -606,10 +690,21 @@ class ExpandableDetailsBar: NSView {
             dot.heightAnchor.constraint(equalToConstant: 7),
             label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 5),
             label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
-            pill.trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -6),
             pill.heightAnchor.constraint(equalToConstant: pillHeight),
         ])
         return pill
+    }
+
+    /// 单击标签药丸：发送 sidebarDidSelectTag 通知，按标签筛选当前面板文件列表
+    /// 再次点击同一标签可取消筛选（由 PaneState.setTagFilter 内部处理）
+    @objc private func tagPillClicked(_ gesture: NSClickGestureRecognizer) {
+        guard let pill = gesture.view, let tagName = pill.identifier?.rawValue else { return }
+        guard let path = entry?.path else { return }
+        let tags = TagBridge.shared.getTags(path: path)
+        if let tag = tags.first(where: { $0.name == tagName }) {
+            NotificationCenter.default.post(name: .sidebarDidSelectTag, object: tag, userInfo: nil)
+        }
     }
 
     /// 右键药丸移除标签（详情栏，按名称移除，兼容原生标签随机 id）
@@ -628,5 +723,425 @@ class ExpandableDetailsBar: NSView {
         NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": tags])
     }
 
+    // MARK: - 文件说明（UserDefaults 存储）
+
+    /// 从 UserDefaults 读取文件说明（以文件路径为 key）
+    private func getFileDescription(path: String) -> String {
+        let dict = UserDefaults.standard.dictionary(forKey: "fileDescriptions") ?? [:]
+        return dict[path] as? String ?? ""
+    }
+
+    /// 保存文件说明到 UserDefaults
+    private func setFileDescription(path: String, description: String) {
+        var dict = UserDefaults.standard.dictionary(forKey: "fileDescriptions") ?? [:]
+        dict[path] = description
+        UserDefaults.standard.set(dict, forKey: "fileDescriptions")
+    }
+
+    /// 双击文件说明文本字段，进入编辑模式
+    @objc private func beginEditingDescription() {
+        guard entry != nil else { return }
+        descriptionField.isEditable = true
+        descriptionField.isBezeled = true
+        descriptionField.drawsBackground = true
+        descriptionField.backgroundColor = NSColor.textBackgroundColor
+        window?.makeFirstResponder(descriptionField)
+        descriptionField.selectText(nil)
+    }
+
+    // MARK: - 文件来源（kMDItemWhereFroms）
+
+    /// 读取文件的"来源"信息（macOS 下载文件时写入的 xattr）
+    /// 格式为 plist 数组，通常包含下载 URL 和引用页 URL
+    private func getWhereFrom(path: String) -> String {
+        let xattrName = "com.apple.metadata:kMDItemWhereFroms"
+        let length = getxattr(path, xattrName, nil, 0, 0, 0)
+        guard length > 0 else { return "—" }
+
+        var buffer = [UInt8](repeating: 0, count: length)
+        let result = getxattr(path, xattrName, &buffer, length, 0, 0)
+        guard result > 0 else { return "—" }
+        let data = Data(buffer)
+
+        // 尝试解析为 plist 数组
+        if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
+            if let array = plist as? [String] {
+                if let first = array.first {
+                    // 仅显示域名部分，完整 URL 在 tooltip 中
+                    if let url = URL(string: first), let host = url.host {
+                        return host
+                    }
+                    return first
+                }
+            }
+            if let array = plist as? [Any] {
+                let strings = array.map { String(describing: $0) }
+                if let first = strings.first {
+                    if let url = URL(string: first), let host = url.host {
+                        return host
+                    }
+                    return first
+                }
+            }
+        }
+        return "—"
+    }
+
+    // MARK: - 文件类型专属信息
+
+    /// 清除文件类型专属信息容器中的所有子视图
+    private func clearFileTypeSpecificInfo() {
+        for v in fileTypeInfoContainer.arrangedSubviews {
+            fileTypeInfoContainer.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+    }
+
+    /// 根据文件类型更新专属信息（分辨率 / EXIF / 时长 / 编码 等）
+    /// 使用两列布局，将信息行均分到左右两列以节省垂直空间
+    private func updateFileTypeSpecificInfo(entry: FileEntry) {
+        clearFileTypeSpecificInfo()
+
+        let infoRows = gatherFileInfo(entry: entry)
+        guard !infoRows.isEmpty else { return }
+
+        // 均分到两列
+        let half = (infoRows.count + 1) / 2
+        let leftRows = Array(infoRows[..<half])
+        let rightRows = Array(infoRows[half...])
+
+        let leftCol = NSStackView()
+        leftCol.orientation = .vertical
+        leftCol.spacing = 4
+        leftCol.alignment = .leading
+        leftCol.translatesAutoresizingMaskIntoConstraints = false
+
+        let rightCol = NSStackView()
+        rightCol.orientation = .vertical
+        rightCol.spacing = 4
+        rightCol.alignment = .leading
+        rightCol.translatesAutoresizingMaskIntoConstraints = false
+
+        for (label, value) in leftRows {
+            leftCol.addArrangedSubview(makeInfoRow(label: makeLabel(label), value: makeValueField(value)))
+        }
+        for (label, value) in rightRows {
+            rightCol.addArrangedSubview(makeInfoRow(label: makeLabel(label), value: makeValueField(value)))
+        }
+
+        let columnsStack = NSStackView()
+        columnsStack.orientation = .horizontal
+        columnsStack.spacing = 16
+        columnsStack.alignment = .top
+        columnsStack.translatesAutoresizingMaskIntoConstraints = false
+        columnsStack.addArrangedSubview(leftCol)
+        if !rightRows.isEmpty {
+            columnsStack.addArrangedSubview(rightCol)
+        }
+
+        fileTypeInfoContainer.addArrangedSubview(columnsStack)
+    }
+
+    /// 收集文件类型专属信息行，返回 [(标签, 值)] 数组
+    private func gatherFileInfo(entry: FileEntry) -> [(String, String)] {
+        let url = URL(fileURLWithPath: entry.path)
+        let ext = entry.fileExtension.lowercased()
+
+        if entry.isDirectory {
+            return gatherFolderInfo(path: entry.path)
+        }
+        if isImageExtension(ext) {
+            return gatherImageInfo(url: url, path: entry.path)
+        }
+        if isVideoExtension(ext) {
+            return gatherVideoInfo(url: url)
+        }
+        if isAudioExtension(ext) {
+            return gatherAudioInfo(url: url)
+        }
+        if ext == "app" {
+            return gatherAppInfo(path: entry.path)
+        }
+        if isDocumentExtension(ext) {
+            return gatherDocumentInfo(url: url, ext: ext)
+        }
+        return []
+    }
+
+    // MARK: - 图片信息
+
+    private func gatherImageInfo(url: URL, path: String) -> [(String, String)] {
+        var result: [(String, String)] = []
+
+        // 使用 ImageIO 一次性读取所有图片属性（分辨率 / 色彩空间 / 色彩深度 / EXIF）
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else {
+            return result
+        }
+
+        // 分辨率
+        if let w = props[kCGImagePropertyPixelWidth] as? Int,
+           let h = props[kCGImagePropertyPixelHeight] as? Int {
+            result.append(("分辨率", "\(w) × \(h)"))
+        }
+        // 色彩空间（kCGImagePropertyColorSpace 在新版 SDK 中不可用，使用字符串字面量）
+        if let cs = props["ColorSpace" as CFString] as? String, !cs.isEmpty {
+            result.append(("色彩空间", cs))
+        }
+        // 色彩深度（kCGImagePropertyBitsPerSample 同上）
+        if let bps = props["BitsPerSample" as CFString] as? Int, bps > 0 {
+            result.append(("色彩深度", "\(bps) 位"))
+        }
+
+        // TIFF 字典：相机制造商与型号
+        if let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+            if let make = tiff[kCGImagePropertyTIFFMake] as? String {
+                result.append(("相机制造商", make))
+            }
+            if let model = tiff[kCGImagePropertyTIFFModel] as? String {
+                result.append(("相机型号", model))
+            }
+        }
+
+        // EXIF 字典：焦距 / 光圈 / ISO
+        if let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+            if let focal = exif[kCGImagePropertyExifFocalLength] as? Double {
+                result.append(("焦距", "\(Int(focal)) mm"))
+            }
+            if let aperture = exif[kCGImagePropertyExifFNumber] as? Double {
+                result.append(("光圈", "f/\(String(format: "%.1f", aperture))"))
+            }
+            if let isoArray = exif[kCGImagePropertyExifISOSpeedRatings] as? [Int],
+               let iso = isoArray.first {
+                result.append(("ISO", "ISO \(iso)"))
+            }
+        }
+
+        return result
+    }
+
+    // MARK: - 视频信息
+
+    private func gatherVideoInfo(url: URL) -> [(String, String)] {
+        var result: [(String, String)] = []
+
+        // 使用 AVFoundation 读取所有视频属性
+        let asset = AVURLAsset(url: url)
+
+        // 时长
+        let duration = CMTimeGetSeconds(asset.duration)
+        if duration > 0 {
+            result.append(("时长", formatDuration(duration)))
+        }
+
+        // 分辨率 / 编码 / 帧率
+        if let videoTrack = asset.tracks(withMediaType: .video).first {
+            let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
+            let w = abs(size.width)
+            let h = abs(size.height)
+            if w > 0 && h > 0 {
+                result.append(("分辨率", "\(Int(w)) × \(Int(h))"))
+            }
+            if let desc = videoTrack.formatDescriptions.first {
+                let codecType = CMFormatDescriptionGetMediaSubType(desc as! CMFormatDescription)
+                result.append(("编码", fourCCToString(codecType)))
+            }
+            result.append(("帧率", String(format: "%.1f fps", videoTrack.nominalFrameRate)))
+        }
+
+        return result
+    }
+
+    // MARK: - 音频信息
+
+    private func gatherAudioInfo(url: URL) -> [(String, String)] {
+        var result: [(String, String)] = []
+
+        // 使用 AVFoundation 读取所有音频属性
+        let asset = AVURLAsset(url: url)
+
+        // 时长
+        let duration = CMTimeGetSeconds(asset.duration)
+        if duration > 0 {
+            result.append(("时长", formatDuration(duration)))
+        }
+
+        // 格式 / 比特率
+        if let audioTrack = asset.tracks(withMediaType: .audio).first {
+            if let desc = audioTrack.formatDescriptions.first {
+                let codecType = CMFormatDescriptionGetMediaSubType(desc as! CMFormatDescription)
+                result.append(("格式", fourCCToString(codecType)))
+            }
+            let bitrate = Int(audioTrack.estimatedDataRate / 1000)
+            if bitrate > 0 {
+                result.append(("比特率", "\(bitrate) kbps"))
+            }
+        }
+
+        return result
+    }
+
+    // MARK: - 应用程序信息
+
+    private func gatherAppInfo(path: String) -> [(String, String)] {
+        let infoPlistPath = (path as NSString).appendingPathComponent("Contents/Info.plist")
+        guard let dict = NSDictionary(contentsOfFile: infoPlistPath) as? [String: Any] else {
+            return []
+        }
+        var result: [(String, String)] = []
+        if let version = dict["CFBundleShortVersionString"] as? String {
+            result.append(("版本", version))
+        }
+        if let build = dict["CFBundleVersion"] as? String {
+            result.append(("内部版本", build))
+        }
+        if let bundleId = dict["CFBundleIdentifier"] as? String {
+            result.append(("Bundle ID", bundleId))
+        }
+        return result
+    }
+
+    // MARK: - 文档信息
+
+    private func gatherDocumentInfo(url: URL, ext: String) -> [(String, String)] {
+        var result: [(String, String)] = []
+
+        // PDF: 使用 PDFKit 读取页数
+        if ext == "pdf" {
+            if let document = PDFDocument(url: url) {
+                result.append(("页数", "\(document.pageCount) 页"))
+            }
+        }
+
+        // 纯文本: 尝试读取字数
+        if ["txt", "md", "rtf"].contains(ext) {
+            if let text = try? String(contentsOf: url, encoding: .utf8) {
+                let wordCount = text.components(separatedBy: .whitespacesAndNewlines)
+                    .filter { !$0.isEmpty }
+                    .count
+                result.append(("字数", "\(wordCount) 字"))
+            }
+        }
+
+        return result
+    }
+
+    // MARK: - 文件夹信息
+
+    private func gatherFolderInfo(path: String) -> [(String, String)] {
+        var result: [(String, String)] = []
+
+        // 顶层子项数量
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: path) {
+            result.append(("项目数", "\(contents.count) 项"))
+        }
+
+        // 异步计算总大小（此处仅启动计算，结果通过异步回调更新）
+        calculateFolderSizeAsync(path: path)
+
+        return result
+    }
+
+    /// 异步计算文件夹总大小，完成后更新 fileTypeInfoContainer
+    private func calculateFolderSizeAsync(path: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fm = FileManager.default
+            let url = URL(fileURLWithPath: path)
+            guard let enumerator = fm.enumerator(
+                at: url,
+                includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+                options: []
+            ) else { return }
+
+            var total: Int64 = 0
+            for case let fileURL as URL in enumerator {
+                guard let values = try? fileURL.resourceValues(
+                    forKeys: [.fileSizeKey, .isRegularFileKey]
+                ) else { continue }
+                if values.isRegularFile == true, let size = values.fileSize {
+                    total += Int64(size)
+                }
+            }
+
+            let sizeString = FFFormat.fileSize(UInt64(total))
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.entry?.path == path else { return }
+                self.appendFolderSizeRow(sizeString)
+            }
+        }
+    }
+
+    /// 在文件类型信息容器中追加"总大小"行
+    private func appendFolderSizeRow(_ sizeString: String) {
+        // 查找现有的 columnsStack 并追加一行，或直接追加单行
+        let row = makeInfoRow(label: makeLabel("总大小"), value: makeValueField(sizeString))
+        if let columnsStack = fileTypeInfoContainer.arrangedSubviews.first as? NSStackView,
+           let leftCol = columnsStack.arrangedSubviews.first as? NSStackView {
+            leftCol.addArrangedSubview(row)
+        } else {
+            fileTypeInfoContainer.addArrangedSubview(row)
+        }
+    }
+
+    // MARK: - 工具方法
+
+    private func isImageExtension(_ ext: String) -> Bool {
+        return ["jpg", "jpeg", "png", "gif", "tiff", "tif", "bmp", "heic", "webp", "psd"].contains(ext)
+    }
+
+    private func isVideoExtension(_ ext: String) -> Bool {
+        return ["mp4", "mov", "avi", "mkv", "m4v", "wmv", "flv", "webm"].contains(ext)
+    }
+
+    private func isAudioExtension(_ ext: String) -> Bool {
+        return ["mp3", "wav", "aac", "flac", "m4a", "ogg", "wma", "aiff"].contains(ext)
+    }
+
+    private func isDocumentExtension(_ ext: String) -> Bool {
+        return ["pdf", "doc", "docx", "txt", "md", "rtf", "pages"].contains(ext)
+    }
+
+    /// 格式化时长（秒 -> "H:MM:SS" 或 "M:SS"）
+    private func formatDuration(_ seconds: Double) -> String {
+        let total = Int(seconds)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        } else {
+            return String(format: "%d:%02d", minutes, secs)
+        }
+    }
+
+    /// FourCharCode (UInt32) -> 可读字符串（如 "h264" / "aac "）
+    private func fourCCToString(_ code: UInt32) -> String {
+        let bytes: [UInt8] = [
+            UInt8((code >> 24) & 0xFF),
+            UInt8((code >> 16) & 0xFF),
+            UInt8((code >> 8) & 0xFF),
+            UInt8(code & 0xFF)
+        ]
+        return String(bytes: bytes, encoding: .ascii)?.trimmingCharacters(in: .whitespaces) ?? "未知"
+    }
+
     // MARK: - (权限字段已在 1.6 重设计中移除，如需恢复可参考 git 历史)
+}
+
+// MARK: - NSTextFieldDelegate（文件说明编辑）
+
+extension ExpandableDetailsBar: NSTextFieldDelegate {
+
+    /// 文件说明编辑结束（焦点离开或按回车）：保存到 UserDefaults 并退出编辑模式
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === descriptionField else { return }
+        let path = entry?.path ?? ""
+        if !path.isEmpty {
+            setFileDescription(path: path, description: field.stringValue)
+        }
+        // 退出编辑模式：恢复为无边框标签样式
+        field.isEditable = false
+        field.isBezeled = false
+        field.drawsBackground = false
+    }
 }
