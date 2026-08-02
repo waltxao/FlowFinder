@@ -197,7 +197,8 @@ public class MainWindowController: NSWindowController {
     private var toolPanelView: ToolPanelView?
     /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
     /// 与侧边栏收藏夹/标签模块视觉分离，展开时显示所有设备不需滚动条
-    private var devicePanel: NSView!
+    /// 任务 4: 改用 FFGlassView 液态玻璃背景，与侧边栏玻璃质感统一
+    private var devicePanel: FFGlassView!
     /// 任务 F10-3: 设备浮层头部（汇总信息 + 折叠箭头）
     private var devicePanelHeader: DeviceHeaderView!
     /// 任务 F10-3: 设备浮层内容 stack（设备行纵向排列，高度自适应）
@@ -455,8 +456,7 @@ public class MainWindowController: NSWindowController {
         // 点击侧边栏工具按钮时隐藏设备栏、显示此面板；再次点击或 ❌ 关闭时反向切换
         toolPanelView = createToolPanel()
         toolPanelView?.translatesAutoresizingMaskIntoConstraints = false
-        toolPanelView?.wantsLayer = true
-        toolPanelView?.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
+        // 任务 4: 液态玻璃背景由 ToolPanelView.setupUI 内部 FFGlassView 提供
         toolPanelView?.isHidden = true
         if let toolPanel = toolPanelView {
             mainContainer.addSubview(toolPanel)
@@ -743,15 +743,11 @@ public class MainWindowController: NSWindowController {
     /// - 浮动在窗口左下角，与侧边栏收藏夹/标签模块视觉分离（独立卡片样式）
     /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
     /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
-    private func createDevicePanel() -> NSView {
-        let panel = NSView()
+    private func createDevicePanel() -> FFGlassView {
+        let panel = FFGlassView(level: .panel, cornerRadius: 8)
         panel.translatesAutoresizingMaskIntoConstraints = false
-        panel.wantsLayer = true
-        // 任务 F11-1: 设备栏浮层改为实体背景（与操作区一致，v0.6.7）
-        // 此前为半透明 controlBackgroundColor(0.8)，现统一为操作区实体色，保留 8pt 圆角卡片样式
-        panel.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
-        panel.layer?.cornerRadius = 8
-        // 不设置 masksToBounds：避免裁剪设备列表内容
+        // 任务 4: 液态玻璃：FFGlassView 自带主题刷新（内部监听外观变化），
+        // 与侧边栏玻璃质感统一；子视图不被裁剪（不设置 masksToBounds）
 
         // 设备栏头部（汇总信息 + 折叠箭头，复用 SidebarView 的 DeviceHeaderView）
         devicePanelHeader = DeviceHeaderView()
@@ -887,12 +883,9 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 任务 F11-1: 刷新设备栏浮层背景色（主题切换时调用，v0.6.7）
-    /// v0.7.0: 同时刷新工具浮动面板背景色
-    private func refreshDevicePanelBackground() {
-        let bgColor = operationAreaBackgroundColor().cgColor
-        devicePanel?.layer?.backgroundColor = bgColor
-        toolPanelView?.layer?.backgroundColor = bgColor
-    }
+    /// 任务 4: 设备/工具面板背景由 FFGlassView 自动响应主题，此方法保留为空
+    /// （调用点仍存在，避免改通知回调链；FFGlassView 内部已处理深浅色刷新）
+    private func refreshDevicePanelBackground() {}
 
     deinit {
         // Bug 6 修复：移除所有 NotificationCenter observer，防止悬空回调

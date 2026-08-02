@@ -228,9 +228,16 @@ public class ToolPanelView: NSView {
     }
 
     private func setupUI() {
-        wantsLayer = true
-        // 背景色由调用方（MainWindowController）设置，与设备栏一致
-        layer?.cornerRadius = 8
+        // 任务 4: 液态玻璃背景：FFGlassView 统一提供玻璃质感、圆角与主题刷新
+        let glassBackground = FFGlassView(level: .panel, cornerRadius: 8)
+        glassBackground.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glassBackground, positioned: .below, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            glassBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            glassBackground.topAnchor.constraint(equalTo: topAnchor),
+            glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         // 关闭按钮（右上角，16pt，tertiary label color）
         let closeButton = NSButton()
