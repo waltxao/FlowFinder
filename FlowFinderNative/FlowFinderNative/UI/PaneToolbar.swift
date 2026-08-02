@@ -171,7 +171,9 @@ class PaneToolbar: NSView {
             searchContainer.heightAnchor.constraint(equalToConstant: 24),
         ])
         searchContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        searchContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // 弹性：搜索框 hugging 设为最低（1），row2 中任何剩余宽度都分配给搜索框，
+        // 右侧图标簇（排序/分组/视图切换/显示设置）因默认 hugging 更高而保持固有宽度并贴最右。
+        searchContainer.setContentHuggingPriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
 
         sortPopup = NSPopUpButton()
         sortPopup.addItems(withTitles: SortField.allCases.map { $0.rawValue })
@@ -184,6 +186,9 @@ class PaneToolbar: NSView {
         groupPopup.target = self
         groupPopup.action = #selector(groupSelected(_:))
         groupPopup.translatesAutoresizingMaskIntoConstraints = false
+        // 防止下拉菜单被横向拉伸：保持固有宽度，剩余宽度全部给搜索框
+        sortPopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        groupPopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
         listViewButton = createViewButton(systemSymbol: "list.bullet", action: #selector(listViewClicked))
         gridViewButton = createViewButton(systemSymbol: "square.grid.2x2", action: #selector(gridViewClicked))
@@ -196,9 +201,9 @@ class PaneToolbar: NSView {
         toolsSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolsSeparator.heightAnchor.constraint(equalToConstant: 16).isActive = true
 
-        // v0.6.9: 文件夹显示配置按钮（替代原工具菜单），使用"眼睛+齿轮"合成图标
-        toolsButton = createNavButton(systemSymbol: "eye", action: #selector(showFolderOptionsMenu))
-        toolsButton.image = makeDisplaySettingsIcon()
+        // v0.6.9+: 文件夹显示配置按钮，使用系统 SF Symbol「slider.horizontal.3」
+        // 模板色自动适配浅/深色，与其他导航按钮视觉统一
+        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu))
 
         let row2 = NSStackView(views: [
             searchContainer,
@@ -254,36 +259,6 @@ class PaneToolbar: NSView {
         button.widthAnchor.constraint(equalToConstant: 28).isActive = true
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return button
-    }
-
-    /// 合成"眼睛 + 齿轮"图标，用于文件夹显示配置按钮。
-    /// 主体为 eye SF Symbol（14pt），右下角叠加 gearshape 小徽章（8pt，带圆形背景）。
-    private func makeDisplaySettingsIcon() -> NSImage {
-        let size = NSSize(width: 20, height: 20)
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        // 主体：眼睛图标（14pt，居中偏上）
-        let eyeConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        let eyeImage = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)!
-        NSColor.labelColor.setFill()
-        eyeImage.withSymbolConfiguration(eyeConfig)!.draw(in: NSRect(x: 0, y: 4, width: 16, height: 12))
-
-        // 右下角小齿轮徽章（8pt）
-        let gearConfig = NSImage.SymbolConfiguration(pointSize: 8, weight: .medium)
-        let gearImage = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)!
-
-        // 徽章圆形背景（提高齿轮在眼睛图标上的可辨识度）
-        NSColor.controlBackgroundColor.setFill()
-        NSBezierPath(ovalIn: NSRect(x: 11, y: 0, width: 9, height: 9)).fill()
-
-        // 齿轮图标
-        NSColor.labelColor.setFill()
-        gearImage.withSymbolConfiguration(gearConfig)!.draw(in: NSRect(x: 12, y: 1, width: 7, height: 7))
-
-        image.unlockFocus()
-        image.isTemplate = false
-        return image
     }
 
     // MARK: - Public API
