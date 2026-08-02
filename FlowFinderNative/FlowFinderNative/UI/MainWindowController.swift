@@ -1042,7 +1042,15 @@ public class MainWindowController: NSWindowController {
                 description: "扫描当前目录中的重复文件",
                 isEnabled: true,
                 action: { [weak self] in
-                    DuplicateScanWindowController.shared.showWindow()
+                    guard let self = self else { return }
+                    let wc = DuplicateScanWindowController.shared
+                    wc.showWindow()
+                    wc.window?.makeKeyAndOrderFront(nil)
+                    if #available(macOS 14.0, *) {
+                        NSApp.activate()
+                    } else {
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 }
             ),
             ToolOverlayView.ToolItem(
@@ -1064,6 +1072,10 @@ public class MainWindowController: NSWindowController {
                         return
                     }
                     self.menuBatchRename(nil)
+                    // 确保批量重命名窗口置前（menuBatchRename 内部 showWindow 后可能未置前）
+                    if let batchWindow = BatchRenameWindowController.shared.window {
+                        batchWindow.makeKeyAndOrderFront(nil)
+                    }
                 }
             ),
             ToolOverlayView.ToolItem(

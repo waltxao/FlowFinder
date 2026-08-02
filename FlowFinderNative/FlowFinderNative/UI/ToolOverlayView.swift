@@ -263,10 +263,14 @@ public class ToolPanelView: NSView {
 
         // 构建工具卡片，每行 3 列，不足 3 个补灰色占位方块
         var rowViews: [NSView] = []
-        for (idx, tool) in tools.enumerated() {
+        for tool in tools {
             let card = ToolPanelCardView(tool: tool) { [weak self] in
                 tool.action?()
-                self?.onClose?()
+                // 延迟关闭面板：确保工具窗口先弹出（同步 showWindow 在 onClose 前执行，
+                // 但面板收起动画与窗口弹出竞争时可能打断窗口显示，改为下一轮 runloop 关闭）
+                DispatchQueue.main.async {
+                    self?.onClose?()
+                }
             }
             rowViews.append(card)
             if rowViews.count >= 3 {
@@ -384,10 +388,38 @@ private class ToolPanelCardView: NSView {
         ])
 
         // 点击手势（仅可用工具响应）
+        // 点击视觉反馈：按下时卡片背景变深，松开恢复（解决"点了没反馈"）
         if onTap != nil {
             let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
             addGestureRecognizer(click)
+            let hover = NSTrackingArea(
+                rect: .zero,
+                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(hover)
         }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        let hover = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(hover)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.4).cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     @objc private func clicked() {
