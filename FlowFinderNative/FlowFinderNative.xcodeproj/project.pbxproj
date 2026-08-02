@@ -535,7 +535,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 690;
+				CURRENT_PROJECT_VERSION = 700;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -559,7 +559,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.9;
+				MARKETING_VERSION = 0.7.0;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
@@ -580,7 +580,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 690;
+				CURRENT_PROJECT_VERSION = 700;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -604,7 +604,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.6.9;
+				MARKETING_VERSION = 0.7.0;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
