@@ -41,3 +41,4 @@ dist/
 # Workspace files
 *.code-workspace
 CONTINUE_DEV_PROMPT.md
+FlowFinder.app/
