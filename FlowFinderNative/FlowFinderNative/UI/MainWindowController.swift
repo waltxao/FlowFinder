@@ -471,6 +471,9 @@ public class MainWindowController: NSWindowController {
                 toolPanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
                 toolPanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -44),
                 toolPanel.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor, constant: -8),
+                // 修复问题 4：工具面板缺少高度约束，NSGridView 内容不足时面板塌缩到 0，
+                // 导致不可见/不可点。给定最小高度（关闭按钮 24 + 间距 + 2 行卡片 160 + 边距）。
+                toolPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 196),
             ])
         }
 

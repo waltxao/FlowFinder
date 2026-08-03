@@ -405,6 +405,8 @@ private class ToolPanelCardView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
+        // 仅可用工具响应悬停（禁用卡片不添加 tracking area）
+        guard onTap != nil else { return }
         let hover = NSTrackingArea(
             rect: .zero,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
@@ -416,6 +418,7 @@ private class ToolPanelCardView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.4).cgColor
+        layer?.cornerRadius = 8
     }
 
     override func mouseExited(with event: NSEvent) {

@@ -13,10 +13,23 @@ final class FFQuickLookTableView: NSTableView {
     /// 当前所属面板标识（left/right）
     var side: String = "left"
 
+    /// 拦截空格键触发 QuickLook。
+    /// 用 performKeyEquivalent 而非 keyDown：NSTableView 的字符键（含空格）先经
+    /// interpretKeyEvents 处理，keyDown 可能收不到（问题 5 根因）。performKeyEquivalent
+    /// 由 NSWindow 在 interpretKeyEvents 之前分发，能可靠捕获空格。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags
+        if event.keyCode == 49 && !modifiers.contains(.command) && !modifiers.contains(.option) && !modifiers.contains(.control) {
+            FFDebug.log("FFQuickLookTableView.performKeyEquivalent: space intercepted")
+            onSpaceKey?(side)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
         if event.keyCode == 49 && modifiers.isEmpty {
-            // 空格：发送通知触发 QuickLook（不消费事件，让 FileListView.keyDown 兜底链路也走）
             onSpaceKey?(side)
             return
         }

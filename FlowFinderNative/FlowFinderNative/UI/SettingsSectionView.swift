@@ -165,7 +165,10 @@ class SettingsSectionView: NSView {
     private let rowsStack = NSStackView()
     /// 玻璃背景（卡片质感）
     private let glassBackground: FFGlassView
-    /// 内容容器（在玻璃背景之上，提供 16pt 内边距）
+    /// 实心背景（问题 6：半透明玻璃在实体窗口背景上文字不清，
+    /// 叠一层 controlBackgroundColor 实心底保证可读性，深浅色自动适配）
+    private let solidBackground = NSView()
+    /// 内容容器（在背景之上，提供 16pt 内边距）
     private let contentContainer = NSView()
 
     init(title: String, iconName: String? = nil) {
@@ -189,7 +192,14 @@ class SettingsSectionView: NSView {
     private func setupUI() {
         wantsLayer = true
 
-        // 玻璃背景填满整个卡片
+        // 实心背景（最底层）：controlBackgroundColor 动态色，圆角与卡片一致，保证文字可读
+        solidBackground.translatesAutoresizingMaskIntoConstraints = false
+        solidBackground.wantsLayer = true
+        solidBackground.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        solidBackground.layer?.cornerRadius = 12
+        addSubview(solidBackground, positioned: .below, relativeTo: nil)
+
+        // 玻璃背景填满整个卡片（叠在实心背景之上，保留玻璃质感边缘）
         glassBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glassBackground)
 
@@ -218,6 +228,12 @@ class SettingsSectionView: NSView {
         contentContainer.addSubview(rowsStack)
 
         NSLayoutConstraint.activate([
+            // 实心背景填满（圆角与玻璃一致）
+            solidBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            solidBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            solidBackground.topAnchor.constraint(equalTo: topAnchor),
+            solidBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             // 玻璃背景填满
             glassBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
             glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),

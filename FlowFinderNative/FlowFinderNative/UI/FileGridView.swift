@@ -396,6 +396,19 @@ private class DraggingCollectionView: NSCollectionView {
         return [.copy, .move, .delete]
     }
 
+    /// 拦截空格键触发 QuickLook。
+    /// 用 performKeyEquivalent 而非 keyDown：NSCollectionView 的字符键先经 interpretKeyEvents
+    /// 处理，keyDown 可能收不到（问题 5 根因）。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags
+        if event.keyCode == 49 && !modifiers.contains(.command) && !modifiers.contains(.option) && !modifiers.contains(.control) {
+            FFDebug.log("DraggingCollectionView.performKeyEquivalent: space intercepted")
+            onSpaceKey?()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
         if event.keyCode == 49 && modifiers.isEmpty {

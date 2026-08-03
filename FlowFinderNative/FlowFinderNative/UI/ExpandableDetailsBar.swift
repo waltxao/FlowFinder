@@ -78,6 +78,12 @@ class ExpandableDetailsBar: NSView {
     private let sourceField = NSTextField(labelWithString: "")
     /// 文件类型专属信息容器（展开态底部，两列下方）
     private let fileTypeInfoContainer = NSStackView()
+    /// 第一列信息容器（种类/大小/位置/日期 + 文件类型专属信息合并追加）
+    /// 问题 7：提升为存储属性，使 updateFileTypeSpecificInfo 能把专属信息行追加到主信息列，
+    /// 不再单独开两列（视觉上与其他列对齐、连贯）
+    private var mainColumn1: NSStackView!
+    /// 第二列信息容器（标签/文件说明/文件来源）
+    private var mainColumn2: NSStackView!
 
     /// 当前正在请求缩略图的路径（用于避免过期回调覆盖）
     private var thumbnailLoadPath: String?
@@ -173,12 +179,13 @@ class ExpandableDetailsBar: NSView {
         columnsContainer.translatesAutoresizingMaskIntoConstraints = false
         columnsContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        // 第一列：种类 / 大小 / 位置 / 创建日期 / 修改日期
+        // 第一列：种类 / 大小 / 位置 / 创建日期 / 修改日期 + 文件类型专属信息（问题 7 合并追加）
         let column1 = NSStackView()
         column1.orientation = .vertical
         column1.spacing = 4
         column1.alignment = .leading
         column1.translatesAutoresizingMaskIntoConstraints = false
+        mainColumn1 = column1
 
         configureValue(typeField)
         configureValue(sizeField)
@@ -214,6 +221,7 @@ class ExpandableDetailsBar: NSView {
         column2.spacing = 4
         column2.alignment = .leading
         column2.translatesAutoresizingMaskIntoConstraints = false
+        mainColumn2 = column2
 
         // 标签容器（药丸，横向排列，单击筛选 / 右键移除）
         tagsContainer.orientation = .horizontal
@@ -480,13 +488,14 @@ class ExpandableDetailsBar: NSView {
     /// 展开态高度：基础 192pt（图标 96 + 两列信息约 6 行）+ 文件类型专属信息高度
     /// 图片/视频信息行多时按行数扩展，确保完整显示（问题 9 根因：固定 210 截断图片信息）
     private func computedExpandedHeight() -> CGFloat {
+        // 问题 7：专属信息合并到主信息列后按单列计算——主信息 5 行 + 专属信息行数
         var extra: CGFloat = 0
         if let entry = entry {
             let infoRows = gatherFileInfo(entry: entry).count
-            let rowsInTwoCols = (infoRows + 1) / 2
-            if rowsInTwoCols > 4 {
-                // 基准容纳 4 行（两列），超出部分每行 +16pt
-                extra = CGFloat(rowsInTwoCols - 4) * 16
+            let totalRows = 5 + infoRows  // 种类/大小/位置/创建/修改 + 专属信息
+            if totalRows > 7 {
+                // 基准 192pt 容纳约 7 行（两列布局时），单列合并后每行 +16pt
+                extra = CGFloat(totalRows - 7) * 16
             }
         }
         return 192 + extra
@@ -847,49 +856,29 @@ class ExpandableDetailsBar: NSView {
         }
     }
 
-    /// 根据文件类型更新专属信息（分辨率 / EXIF / 时长 / 编码 等）
-    /// 使用两列布局，将信息行均分到左右两列以节省垂直空间
+    /// 问题 7：记录已追加到主信息列（mainColumn1）的专属信息行，用于清除
+    private var appendedTypeInfoRows: [NSView] = []
+
+    /// 根据文件类型更新专属信息（分辨率 / EXIF / 时长 / 编码 等）。
+    /// 问题 7 修复：专属信息行**合并到主信息列**（mainColumn1，与种类/大小/位置/日期同一列），
+    /// 不再单独开两列——与主信息对齐、视觉连贯（用户反馈"单开两列很不协调"）。
     private func updateFileTypeSpecificInfo(entry: FileEntry) {
-        clearFileTypeSpecificInfo()
+        // 先移除上一次追加的专属信息行
+        for row in appendedTypeInfoRows {
+            mainColumn1?.removeArrangedSubview(row)
+            row.removeFromSuperview()
+        }
+        appendedTypeInfoRows.removeAll()
 
         let infoRows = gatherFileInfo(entry: entry)
         guard !infoRows.isEmpty else { return }
 
-        // 均分到两列
-        let half = (infoRows.count + 1) / 2
-        let leftRows = Array(infoRows[..<half])
-        let rightRows = Array(infoRows[half...])
-
-        let leftCol = NSStackView()
-        leftCol.orientation = .vertical
-        leftCol.spacing = 4
-        leftCol.alignment = .leading
-        leftCol.translatesAutoresizingMaskIntoConstraints = false
-
-        let rightCol = NSStackView()
-        rightCol.orientation = .vertical
-        rightCol.spacing = 4
-        rightCol.alignment = .leading
-        rightCol.translatesAutoresizingMaskIntoConstraints = false
-
-        for (label, value) in leftRows {
-            leftCol.addArrangedSubview(makeInfoRow(label: makeLabel(label), value: makeValueField(value)))
+        // 在种类/大小/位置/日期之后追加专属信息行（同一列）
+        for (label, value) in infoRows {
+            let row = makeInfoRow(label: makeLabel(label), value: makeValueField(value))
+            mainColumn1?.addArrangedSubview(row)
+            appendedTypeInfoRows.append(row)
         }
-        for (label, value) in rightRows {
-            rightCol.addArrangedSubview(makeInfoRow(label: makeLabel(label), value: makeValueField(value)))
-        }
-
-        let columnsStack = NSStackView()
-        columnsStack.orientation = .horizontal
-        columnsStack.spacing = 16
-        columnsStack.alignment = .top
-        columnsStack.translatesAutoresizingMaskIntoConstraints = false
-        columnsStack.addArrangedSubview(leftCol)
-        if !rightRows.isEmpty {
-            columnsStack.addArrangedSubview(rightCol)
-        }
-
-        fileTypeInfoContainer.addArrangedSubview(columnsStack)
     }
 
     /// 收集文件类型专属信息行，返回 [(标签, 值)] 数组
@@ -1137,16 +1126,11 @@ class ExpandableDetailsBar: NSView {
         }
     }
 
-    /// 在文件类型信息容器中追加"总大小"行
+    /// 在文件类型专属信息区追加"总大小"行（合并到主信息列，问题 7 结构）
     private func appendFolderSizeRow(_ sizeString: String) {
-        // 查找现有的 columnsStack 并追加一行，或直接追加单行
         let row = makeInfoRow(label: makeLabel("总大小"), value: makeValueField(sizeString))
-        if let columnsStack = fileTypeInfoContainer.arrangedSubviews.first as? NSStackView,
-           let leftCol = columnsStack.arrangedSubviews.first as? NSStackView {
-            leftCol.addArrangedSubview(row)
-        } else {
-            fileTypeInfoContainer.addArrangedSubview(row)
-        }
+        mainColumn1?.addArrangedSubview(row)
+        appendedTypeInfoRows.append(row)
     }
 
     // MARK: - 工具方法

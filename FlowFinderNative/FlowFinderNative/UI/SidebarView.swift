@@ -63,6 +63,35 @@ private class FFFNoDisclosureOutlineView: NSOutlineView {
     }
 }
 
+// MARK: - FFSidebarRowView（自绘选中高亮）
+
+/// 自定义行视图：自绘选中高亮，精确覆盖行内容区域（图标+文字）。
+/// 系统 NSTableRowView 的选中绘制与 cell 内容存在偏移，导致"高亮未完全包裹内容"。
+/// 此子类在 drawSelection 中用强调色绘制覆盖整行内容区域的圆角矩形，
+/// 高亮范围与内容精确对齐；行间无缝隙（intercellSpacing 由 makeOutlineView 设为 0）。
+private class FFSidebarRowView: NSTableRowView {
+    /// 高亮左右内边距（覆盖 cell 内容：图标左缘 x=0 到文字右缘）
+    private let highlightInsetH: CGFloat = 3
+    /// 高亮圆角
+    private let highlightRadius: CGFloat = 6
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        // 高亮覆盖整行内容区域：左右各留 3pt，上下铺满（消除行间缝隙）
+        let highlightRect = NSRect(
+            x: bounds.minX + highlightInsetH,
+            y: bounds.minY,
+            width: bounds.width - highlightInsetH * 2,
+            height: bounds.height
+        )
+        let path = NSBezierPath(roundedRect: highlightRect, xRadius: highlightRadius, yRadius: highlightRadius)
+        // 选中时用强调色；窗口失焦时用次级灰色（与系统行为一致）
+        let color: NSColor = isEmphasized ? .controlAccentColor : .secondarySelectedControlColor
+        color.setFill()
+        path.fill()
+    }
+}
+
 // MARK: - SidebarView
 
 class SidebarView: NSView {
@@ -376,16 +405,21 @@ class SidebarView: NSView {
         ov.rowHeight = favoritesRowHeight
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
-        // 行间距：水平无间距，垂直 2pt 间距，保证行间留白
-        ov.intercellSpacing = NSSize(width: 0, height: favoritesRowSpacing)
-        // 选中样式：regular（实心高亮，确保收藏夹选中高亮框正确显示）
-        ov.selectionHighlightStyle = .regular
+        // 行间距：水平无间距，垂直 0 间距——选中高亮由 FFSidebarRowView 自绘铺满整行，
+        // 相邻选中行之间不留白色缝隙（自绘高亮上下铺满行框）
+        ov.intercellSpacing = NSSize(width: 0, height: 0)
+        // 选中样式：none——由 FFSidebarRowView.drawSelection 自绘高亮，
+        // 精确覆盖行内容区域（解决"高亮未完全包裹图标+文字"）
+        ov.selectionHighlightStyle = .none
         ov.backgroundColor = NSColor.clear
         // 禁止默认选中，避免启动时出现高亮
         ov.allowsEmptySelection = true
         ov.deselectAll(nil)
         // 禁用焦点框（蓝色边框），NSOutlineView 获得键盘焦点时不再显示蓝色 ring
         ov.focusRingType = .none
+        // 使用自定义行视图（自绘选中高亮）
+        ov.usesAutomaticRowHeights = false
+        // 委托方法 rowViewForItem 在 SidebarDataSourceBase 中实现
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarItem"))
         column.width = 200
@@ -569,9 +603,9 @@ class SidebarView: NSView {
     // 任务 F10-3: 设备刷新逻辑（refreshDevices/updateDeviceHeight）已迁移至 MainWindowController 浮层（v0.6.6）
 
     private func updateFavoritesHeight() {
-        // 收藏夹行高 + 垂直行距（intercellSpacing.height），末行无行距
+        // 收藏夹行高（intercellSpacing 已为 0，行间无缝隙，高度 = 行数 × 行高）
         let count = favoritesDataSource.favoriteCount
-        let height = CGFloat(count) * favoritesRowHeight + CGFloat(max(count - 1, 0)) * favoritesRowSpacing
+        let height = CGFloat(count) * favoritesRowHeight
         favoritesHeightConstraint.constant = max(height, favoritesRowHeight)
     }
 
@@ -652,6 +686,16 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
         return true
+    }
+
+    // MARK: - 自定义行视图（自绘选中高亮）
+
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        let rowID = NSUserInterfaceItemIdentifier("SidebarRow")
+        let row = (outlineView.makeView(withIdentifier: rowID, owner: self) as? FFSidebarRowView)
+            ?? FFSidebarRowView()
+        row.identifier = rowID
+        return row
     }
 
     // MARK: - Collapse Control
