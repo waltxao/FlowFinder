@@ -69,7 +69,7 @@ private class FFSplitView: NSSplitView {
         let gradientLayer = CAGradientLayer()
         gradientLayer.colors = [
             NSColor.clear.cgColor,
-            NSColor.controlAccentColor.cgColor,
+            FFAccent.current.cgColor,
             NSColor.clear.cgColor
         ]
         gradientLayer.locations = [0, 0.5, 1]
@@ -592,7 +592,7 @@ public class MainWindowController: NSWindowController {
         // 1.2 活动面板顶部 accent 色条（2pt 高，初始隐藏，由 updateActivePaneVisual 切换）
         let accentBar = NSView()
         accentBar.wantsLayer = true
-        accentBar.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        accentBar.layer?.backgroundColor = FFAccent.current.cgColor
         accentBar.translatesAutoresizingMaskIntoConstraints = false
         accentBar.isHidden = true  // 初始隐藏，仅活动面板显示
         container.addSubview(accentBar)
@@ -1216,6 +1216,7 @@ public class MainWindowController: NSWindowController {
     @objc private func handleQuickLookRequest(_ notification: Notification) {
         // 切换到请求的面板
         if let side = notification.userInfo?["side"] as? String {
+            FFDebug.log("handleQuickLookRequest side=\(side)")
             if side == "left" { activePane = .left } else { activePane = .right }
         }
         // 调用已有的 QuickLook 逻辑
@@ -1350,16 +1351,19 @@ public class MainWindowController: NSWindowController {
 
     private func handleQuickLook() {
         let selected = activePaneViewModel.selectedFiles
+        FFDebug.log("handleQuickLook selectedCount=\(selected.count)")
         guard !selected.isEmpty else { return }
 
         // 获取当前面板所有可预览的文件（排除文件夹）
         let previewableFiles = activePaneViewModel.files.filter { !$0.isDirectory }
         let paths = previewableFiles.map { $0.path }
+        FFDebug.log("handleQuickLook previewableCount=\(previewableFiles.count) firstSelected=\(selected.first?.path ?? "nil")")
 
         // 找到当前选中文件的索引
         let currentPath = selected.first?.path
         let currentIndex = paths.firstIndex(of: currentPath ?? "") ?? 0
 
+        FFDebug.log("handleQuickLook -> togglePreview files=\(paths.count) idx=\(currentIndex)")
         QuickLookPreviewPanel.shared.togglePreview(files: paths, currentIndex: currentIndex, targetWindow: self.window)
     }
 
@@ -1503,13 +1507,35 @@ public class MainWindowController: NSWindowController {
         let desktopPath = (homePath as NSString).appendingPathComponent("Desktop")
         let documentsPath = (homePath as NSString).appendingPathComponent("Documents")
 
-        leftPaneViewModel.state.path = desktopPath
-        leftPaneViewModel.state.history = [desktopPath]
+        // 接线设置项「启动时打开」（UserDefaults key "startup_location"）：
+        // 0 = 上次打开的位置（暂回退到桌面，因持久化上次位置未实现）
+        // 1 = 主目录
+        // 2 = 桌面
+        // 默认 0 = 桌面（与原硬编码行为一致，避免破坏现有用户习惯）
+        let startupChoice = UserDefaults.standard.integer(forKey: "startup_location")
+        let leftStart: String
+        switch startupChoice {
+        case 1:  leftStart = homePath
+        case 2:  leftStart = desktopPath
+        default: leftStart = desktopPath  // 0 或未设置：桌面（"上次位置"暂回退到桌面）
+        }
+
+        leftPaneViewModel.state.path = leftStart
+        leftPaneViewModel.state.history = [leftStart]
         leftPaneViewModel.state.historyIndex = 0
 
         rightPaneViewModel.state.path = documentsPath
         rightPaneViewModel.state.history = [documentsPath]
         rightPaneViewModel.state.historyIndex = 0
+
+        // 接线设置项「默认视图」（UserDefaults key "default_view_mode"）：
+        // "list"（默认）= 列表；"grid" = 网格。启动时按设置初始化左右面板视图模式。
+        let viewModeStr = UserDefaults.standard.string(forKey: "default_view_mode") ?? "list"
+        let initialMode: ViewMode = (viewModeStr == "grid") ? .grid : .list
+        leftPaneViewModel.setViewMode(initialMode)
+        rightPaneViewModel.setViewMode(initialMode)
+        updateViewMode(side: .left, mode: initialMode)
+        updateViewMode(side: .right, mode: initialMode)
 
         leftPaneViewModel.refresh()
         rightPaneViewModel.refresh()

@@ -163,16 +163,13 @@ class SettingsSectionView: NSView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let rowsStack = NSStackView()
-    /// 玻璃背景（卡片质感）
-    private let glassBackground: FFGlassView
-    /// 实心背景（问题 6：半透明玻璃在实体窗口背景上文字不清，
-    /// 叠一层 controlBackgroundColor 实心底保证可读性，深浅色自动适配）
+    /// 实心卡片背景（问题 6：改用 macOS 系统设置风格实心卡片，
+    /// controlBackgroundColor 深浅色自适应 + 明显边框 + 圆角，文字清晰、整页不透）
     private let solidBackground = NSView()
     /// 内容容器（在背景之上，提供 16pt 内边距）
     private let contentContainer = NSView()
 
     init(title: String, iconName: String? = nil) {
-        glassBackground = FFGlassView(level: .component, cornerRadius: 12)
         super.init(frame: .zero)
         setupUI()
         titleLabel.stringValue = title
@@ -184,24 +181,45 @@ class SettingsSectionView: NSView {
     }
 
     required init?(coder: NSCoder) {
-        glassBackground = FFGlassView(level: .component, cornerRadius: 12)
         super.init(coder: coder)
         setupUI()
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .appearanceChanged, object: nil)
+    }
+
+    /// 主题切换时刷新卡片实心底色 + 边框（cgColor 是快照，不自动跟随）
+    @objc private func refreshThemeColors() {
+        // 修复：macOS 26 上 NSColor.controlBackgroundColor 在 DarkAqua 下解析仍为纯白(1 1 1)，
+        // 导致深色模式下卡片"仍是白色"。改用手动按 isDark 选择的自定义深浅色，确保跟随主题。
+        let isDark = ThemeManager.shared.resolvedIsDark
+        let cardBG: NSColor = isDark ? NSColor(calibratedWhite: 0.16, alpha: 1.0) : NSColor(calibratedWhite: 1.0, alpha: 1.0)
+        let cardBorder: NSColor = isDark ? NSColor(calibratedWhite: 0.30, alpha: 1.0) : NSColor(calibratedWhite: 0.80, alpha: 1.0)
+        FFDebug.log("SettingsSection.refreshThemeColors: effective=\(effectiveAppearance.name) isDark=\(isDark) cardBG=\(cardBG)")
+        solidBackground.layer?.backgroundColor = cardBG.cgColor
+        solidBackground.layer?.borderColor = cardBorder.cgColor
+        solidBackground.needsDisplay = true
+    }
+
     private func setupUI() {
         wantsLayer = true
+        // 监听主题变更，刷新卡片底色与边框（修复深色模式设置页卡片不跟随）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshThemeColors),
+            name: .appearanceChanged, object: nil
+        )
 
-        // 实心背景（最底层）：controlBackgroundColor 动态色，圆角与卡片一致，保证文字可读
+        // 实心卡片背景：按 isDark 手动选深浅色（macOS 26 上 controlBackgroundColor 深色下解析为纯白，
+        // 故不依赖它）+ 明显边框 + 圆角。深浅色由 refreshThemeColors 在主题变更时刷新。
         solidBackground.translatesAutoresizingMaskIntoConstraints = false
         solidBackground.wantsLayer = true
-        solidBackground.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let isDarkInit = ThemeManager.shared.resolvedIsDark
+        solidBackground.layer?.backgroundColor = (isDarkInit ? NSColor(calibratedWhite: 0.16, alpha: 1.0) : NSColor(calibratedWhite: 1.0, alpha: 1.0)).cgColor
         solidBackground.layer?.cornerRadius = 12
+        solidBackground.layer?.borderWidth = 1
+        solidBackground.layer?.borderColor = (isDarkInit ? NSColor(calibratedWhite: 0.30, alpha: 1.0) : NSColor(calibratedWhite: 0.80, alpha: 1.0)).cgColor
         addSubview(solidBackground, positioned: .below, relativeTo: nil)
-
-        // 玻璃背景填满整个卡片（叠在实心背景之上，保留玻璃质感边缘）
-        glassBackground.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(glassBackground)
 
         // 内容容器（提供 16pt 内边距）
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -228,17 +246,11 @@ class SettingsSectionView: NSView {
         contentContainer.addSubview(rowsStack)
 
         NSLayoutConstraint.activate([
-            // 实心背景填满（圆角与玻璃一致）
+            // 实心背景填满（圆角卡片）
             solidBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
             solidBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
             solidBackground.topAnchor.constraint(equalTo: topAnchor),
             solidBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            // 玻璃背景填满
-            glassBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
-            glassBackground.topAnchor.constraint(equalTo: topAnchor),
-            glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             // 内容容器 16pt 内边距
             contentContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -454,11 +466,14 @@ private class SettingsActionTarget: NSObject {
 // MARK: - FFColorPickerView
 
 /// 颜色选择器视图：水平排列的颜色圆点，点击选择
+/// 注意：色圆点用纯 NSView + 点击手势实现（不用 NSButton）——
+/// macOS 26 上 20×20 无边框 NSButton 可能渲染出系统占位文字（如"BU"缩写），
+/// 纯视图 + 手势彻底杜绝此问题。
 class FFColorPickerView: NSView {
 
     private let colors: [String]
     private(set) var selectedHex: String
-    private var colorButtons: [NSButton] = []
+    private var colorDots: [NSView] = []
     private let onSelected: (String) -> Void
 
     init(colors: [String], selectedHex: String, onSelected: @escaping (String) -> Void) {
@@ -489,36 +504,36 @@ class FFColorPickerView: NSView {
         ])
 
         for (idx, hex) in colors.enumerated() {
-            let btn = NSButton()
-            btn.isBordered = false
-            btn.wantsLayer = true
-            btn.layer?.cornerRadius = 10
-            btn.layer?.backgroundColor = NSColor(hex: hex)?.cgColor ?? NSColor.gray.cgColor
-            btn.tag = idx
-            btn.target = self
-            btn.action = #selector(colorSelected(_:))
-            btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.widthAnchor.constraint(equalToConstant: 20).isActive = true
-            btn.heightAnchor.constraint(equalToConstant: 20).isActive = true
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = 11
+            dot.layer?.backgroundColor = NSColor(hex: hex)?.cgColor ?? NSColor.gray.cgColor
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.widthAnchor.constraint(equalToConstant: 22).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 22).isActive = true
             // 选中态边框
             if hex.lowercased() == selectedHex.lowercased() {
-                btn.layer?.borderWidth = 2
-                btn.layer?.borderColor = NSColor.labelColor.cgColor
+                dot.layer?.borderWidth = 2
+                dot.layer?.borderColor = NSColor.labelColor.cgColor
             }
-            stack.addArrangedSubview(btn)
-            colorButtons.append(btn)
+            // 点击手势（纯视图，不用 NSButton，避免系统占位文字）
+            let click = NSClickGestureRecognizer(target: self, action: #selector(dotClicked(_:)))
+            dot.addGestureRecognizer(click)
+            stack.addArrangedSubview(dot)
+            colorDots.append(dot)
         }
     }
 
-    @objc private func colorSelected(_ sender: NSButton) {
-        guard sender.tag < colors.count else { return }
-        selectedHex = colors[sender.tag]
+    @objc private func dotClicked(_ sender: NSClickGestureRecognizer) {
+        guard let dot = sender.view, let idx = colorDots.firstIndex(of: dot), idx < colors.count else { return }
+        FFDebug.log("FFColorPicker.dotClicked: idx=\(idx) hex=\(colors[idx])")
+        selectedHex = colors[idx]
         // 更新边框
-        for btn in colorButtons {
-            btn.layer?.borderWidth = 0
+        for d in colorDots {
+            d.layer?.borderWidth = 0
         }
-        sender.layer?.borderWidth = 2
-        sender.layer?.borderColor = NSColor.labelColor.cgColor
+        dot.layer?.borderWidth = 2
+        dot.layer?.borderColor = NSColor.labelColor.cgColor
         onSelected(selectedHex)
     }
 }

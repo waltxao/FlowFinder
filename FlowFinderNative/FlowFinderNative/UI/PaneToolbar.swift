@@ -212,6 +212,11 @@ class PaneToolbar: NSView {
         row2.orientation = .horizontal
         row2.alignment = .centerY
         row2.spacing = 4
+        // 修复问题 2：默认 distribution 不会拉伸低 hugging 子视图，导致搜索框卡在 120pt 自然宽度、
+        // 图标簇挤不到最右、行尾留白。设为 .fill 后，NSStackView 会拉伸水平 hugging 最低的子视图
+        // （即 searchContainer，hugging=1）吃掉全部剩余宽度，排序/分组/视图/显示设置等
+        // 高 hugging 控件保持固有宽度并整体贴到行最右。
+        row2.distribution = .fill
         row2.detachesHiddenViews = false
         row2.translatesAutoresizingMaskIntoConstraints = false
         row2.setContentHuggingPriority(.defaultHigh, for: .vertical)

@@ -251,7 +251,7 @@ class FFModalSheet: NSWindow {
         case .default:
             button.contentTintColor = .white
             // 主按钮叠加 accent 色 bezelColor（实体填充）
-            button.bezelColor = NSColor.controlAccentColor
+            button.bezelColor = FFAccent.current
             button.attributedTitle = NSAttributedString(
                 string: title,
                 attributes: [.foregroundColor: NSColor.white,
@@ -267,7 +267,7 @@ class FFModalSheet: NSWindow {
                              .font: NSFont.systemFont(ofSize: 12, weight: .semibold)]
             )
         case .plain:
-            button.contentTintColor = .controlAccentColor
+            button.contentTintColor = FFAccent.current
             button.attributedTitle = NSAttributedString(
                 string: title,
                 attributes: [.foregroundColor: NSColor.labelColor,

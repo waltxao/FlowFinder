@@ -194,7 +194,7 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             // 任务 F10-9: 访达风格实心蓝半透明选中（v0.6.6）
             // alpha 0.15->0.25 增强可见性（问题10），圆角 6->8 与访达网格一致
             view.layer?.backgroundColor = isSelected
-                ? NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
+                ? FFAccent.current.withAlphaComponent(0.25).cgColor
                 : NSColor.clear.cgColor
             // squircle 圆角（选中 8，未选中 0 自动移除 mask）
             (view as? SquircleMaskedView)?.squircleRadius = isSelected ? 8 : 0
@@ -1587,18 +1587,17 @@ private func loadAllSidebarTags() -> [Tag] {
 
         for (i, hex) in presetColors.enumerated() {
             let x = startX + CGFloat(i) * (dotSize + spacing)
-            let btn = NSButton(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
-            btn.bezelStyle = .circular
-            btn.isBordered = false
-            btn.wantsLayer = true
-            btn.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
-            btn.layer?.cornerRadius = dotSize / 2
-            btn.layer?.borderColor = NSColor.labelColor.cgColor
-            btn.layer?.borderWidth = (i == 0) ? 2 : 0
-            btn.target = colorHolder
-            btn.action = #selector(FFCreateTagColorHolder.selectColor(_:))
-            btn.tag = i
-            container.addSubview(btn)
+            let dot = NSView(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
+            dot.layer?.cornerRadius = dotSize / 2
+            dot.layer?.borderColor = NSColor.labelColor.cgColor
+            dot.layer?.borderWidth = (i == 0) ? 2 : 0
+            // 点击手势（纯视图，避免 macOS 26 小按钮渲染"BU"占位）
+            let click = NSClickGestureRecognizer(target: colorHolder, action: #selector(FFCreateTagColorHolder.selectDot(_:)))
+            dot.addGestureRecognizer(click)
+            colorHolder.dotDots.append(dot)
+            container.addSubview(dot)
         }
 
         alert.accessoryView = container

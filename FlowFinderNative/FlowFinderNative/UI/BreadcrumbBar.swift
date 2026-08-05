@@ -480,7 +480,7 @@ private class BreadcrumbSegmentButton: NSButton {
 
     /// 配置外观（标题颜色/字重 + 根图标）。响应明暗模式切换时也会调用。
     private func configureAppearance() {
-        let color: NSColor = isCurrent ? NSColor.controlAccentColor : NSColor.secondaryLabelColor
+        let color: NSColor = isCurrent ? FFAccent.current : NSColor.secondaryLabelColor
         let weight: NSFont.Weight = isCurrent ? .semibold : .regular
         let font = NSFont.systemFont(ofSize: 12, weight: weight)
 
@@ -539,7 +539,7 @@ private class BreadcrumbSegmentButton: NSButton {
     override func updateLayer() {
         if isCurrent {
             // 当前分段：accent 色淡背景胶囊
-            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
+            layer?.backgroundColor = FFAccent.current.withAlphaComponent(0.12).cgColor
         } else if isHovering {
             layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         } else {

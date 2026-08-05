@@ -20,6 +20,17 @@ final class FFQuickLookTableView: NSTableView {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags
         if event.keyCode == 49 && !modifiers.contains(.command) && !modifiers.contains(.option) && !modifiers.contains(.control) {
+            // 修复问题 2（右操作区 QuickLook 不可用根因）：
+            // performKeyEquivalent 由 NSWindow 对「所有可见 responder」分发，左 tableView 即便不是
+            // firstResponder 也会拦截空格 → 永远走 side=left 通知。改为只在「self 或其子视图是
+            // firstResponder」时拦截，让真正拥有焦点的面板处理空格。
+            let fr = window?.firstResponder as? NSObject
+            let isMyResponder = (fr === self) || (fr is NSView && (fr as! NSView).isDescendant(of: self))
+            if !isMyResponder {
+                return super.performKeyEquivalent(with: event)
+            }
+            // 问题 2 诊断：记录 firstResponder 与 onSpaceKey 状态
+            FFDebug.log("FFQuickLookTableView.performKeyEquivalent side=\(side) firstResponderIsSelf=\(fr === self) onSpaceKeySet=\(onSpaceKey != nil)")
             FFDebug.log("FFQuickLookTableView.performKeyEquivalent: space intercepted")
             onSpaceKey?(side)
             return true
@@ -30,6 +41,7 @@ final class FFQuickLookTableView: NSTableView {
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
         if event.keyCode == 49 && modifiers.isEmpty {
+            FFDebug.log("FFQuickLookTableView.keyDown: space intercepted (fallback)")
             onSpaceKey?(side)
             return
         }
@@ -679,9 +691,12 @@ public class FileListView: NSView {
         let qlTableView = FFQuickLookTableView()
         qlTableView.onSpaceKey = { [weak self] _ in
             guard let self = self else { return }
+            FFDebug.log("FileListView onSpaceKey side=\(self.getSide()) -> posting notification")
             NotificationCenter.default.post(name: .fileListRequestQuickLook, object: nil, userInfo: ["side": self.getSide()])
         }
         tableView = qlTableView
+        // 问题 2 诊断：确认每个面板都创建了 FFQuickLookTableView 且 onSpaceKey 已就位
+        FFDebug.log("FileListView setup tableView type=FFQuickLookTableView side=\(getSide()) onSpaceKeySet=\(qlTableView.onSpaceKey != nil)")
         tableView.allowsMultipleSelection = true
         tableView.allowsEmptySelection = true
         // 任务 F10-7: 启用列拖动重排（访达风格，用户可拖动列头调整列顺序）
@@ -1170,7 +1185,12 @@ public class FileListView: NSView {
     }
 
     private func getSide() -> String {
-        // 由 MainWindowController 在设置 viewModel 时通过 identifier 标记
+        // 修复问题 2（右操作区 QuickLook 不可用根因）：此前用 identifier?.rawValue，
+        // 但 identifier 在 setup 时尚未注入（MainWindowController 在 init 后才设），
+        // 导致右面板 getSide() 也返回 "left"。改用已注入的 panelSide（line 619 设）。
+        if let panelSide = panelSide {
+            return panelSide == .right ? "right" : "left"
+        }
         return identifier?.rawValue ?? "left"
     }
 
@@ -2506,7 +2526,8 @@ extension FileListView {
         nameField.placeholderString = "标签名称"
         container.addSubview(nameField)
 
-        // 预设颜色圆点按钮
+        // 预设颜色圆点（用纯 NSView + 点击手势，不用 NSButton——
+        // macOS 26 上 circular bezel 的无标题小按钮会渲染"BU"占位文字）
         let presetColors: [String] = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#5856D6"]
         let dotSize: CGFloat = 22
         let spacing: CGFloat = 8
@@ -2517,18 +2538,17 @@ extension FileListView {
 
         for (i, hex) in presetColors.enumerated() {
             let x = startX + CGFloat(i) * (dotSize + spacing)
-            let btn = NSButton(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
-            btn.bezelStyle = .circular
-            btn.isBordered = false
-            btn.wantsLayer = true
-            btn.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
-            btn.layer?.cornerRadius = dotSize / 2
-            btn.layer?.borderColor = NSColor.labelColor.cgColor
-            btn.layer?.borderWidth = (i == 0) ? 2 : 0
-            btn.target = colorHolder
-            btn.action = #selector(FFCreateTagColorHolder.selectColor(_:))
-            btn.tag = i
-            container.addSubview(btn)
+            let dot = NSView(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
+            dot.layer?.cornerRadius = dotSize / 2
+            dot.layer?.borderColor = NSColor.labelColor.cgColor
+            dot.layer?.borderWidth = (i == 0) ? 2 : 0
+            // 点击手势（纯视图，避免 macOS 26 小按钮渲染"BU"占位）
+            let click = NSClickGestureRecognizer(target: colorHolder, action: #selector(FFCreateTagColorHolder.selectDot(_:)))
+            dot.addGestureRecognizer(click)
+            colorHolder.dotDots.append(dot)
+            container.addSubview(dot)
         }
 
         alert.accessoryView = container
@@ -2573,6 +2593,8 @@ extension FileListView {
 final class FFCreateTagColorHolder: NSObject {
     private let colors: [String]
     private(set) var selectedHex: String
+    /// 颜色圆点引用数组（纯视图无 tag，用数组下标定位点击的 dot）
+    var dotDots: [NSView] = []
 
     init(colors: [String]) {
         self.colors = colors
@@ -2580,15 +2602,12 @@ final class FFCreateTagColorHolder: NSObject {
         super.init()
     }
 
-    @objc func selectColor(_ sender: NSButton) {
-        let idx = sender.tag
-        guard idx >= 0, idx < colors.count else { return }
+    @objc func selectDot(_ sender: NSClickGestureRecognizer) {
+        guard let dot = sender.view, let idx = dotDots.firstIndex(of: dot), idx < colors.count else { return }
         selectedHex = colors[idx]
-        // 更新按钮选中边框
-        if let container = sender.superview {
-            for case let btn as NSButton in container.subviews {
-                btn.layer?.borderWidth = btn === sender ? 2 : 0
-            }
+        // 更新选中边框
+        for (i, d) in dotDots.enumerated() {
+            d.layer?.borderWidth = (i == idx) ? 2 : 0
         }
     }
 }

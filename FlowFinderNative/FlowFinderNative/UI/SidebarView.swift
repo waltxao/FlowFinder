@@ -86,7 +86,7 @@ private class FFSidebarRowView: NSTableRowView {
         )
         let path = NSBezierPath(roundedRect: highlightRect, xRadius: highlightRadius, yRadius: highlightRadius)
         // 选中时用强调色；窗口失焦时用次级灰色（与系统行为一致）
-        let color: NSColor = isEmphasized ? .controlAccentColor : .secondarySelectedControlColor
+        let color: NSColor = isEmphasized ? FFAccent.current : .secondarySelectedControlColor
         color.setFill()
         path.fill()
     }
@@ -408,9 +408,10 @@ class SidebarView: NSView {
         // 行间距：水平无间距，垂直 0 间距——选中高亮由 FFSidebarRowView 自绘铺满整行，
         // 相邻选中行之间不留白色缝隙（自绘高亮上下铺满行框）
         ov.intercellSpacing = NSSize(width: 0, height: 0)
-        // 选中样式：none——由 FFSidebarRowView.drawSelection 自绘高亮，
-        // 精确覆盖行内容区域（解决"高亮未完全包裹图标+文字"）
-        ov.selectionHighlightStyle = .none
+        // 选中样式：.regular——必须保留系统选中绘制机制，否则 NSTableRowView.drawSelection
+        // 不会被调用（即便自定义了 FFSidebarRowView 子类也会被 .none 静默跳过 →「无高亮」根因）。
+        // FFSidebarRowView.drawSelection 会绘制覆盖行内容区域的圆角矩形。
+        ov.selectionHighlightStyle = .regular
         ov.backgroundColor = NSColor.clear
         // 禁止默认选中，避免启动时出现高亮
         ov.allowsEmptySelection = true
@@ -449,7 +450,9 @@ class SidebarView: NSView {
     /// 任务 T1: 切换夜间/日间模式
     @objc private func toggleTheme() {
         let newMode = ThemeManager.shared.currentMode.toggled
+        FFDebug.log("SidebarView.toggleTheme: 当前=\(ThemeManager.shared.currentMode.title) 新=\(newMode.title)")
         ThemeManager.shared.applyMode(newMode)
+        FFDebug.log("SidebarView.toggleTheme: applyMode 返回后 NSApp.appearance=\(String(describing: NSApp.appearance?.name))")
         // 更新按钮图标
         themeToggleBtn.image = NSImage(systemSymbolName: newMode.iconName, accessibilityDescription: "切换主题")
     }
@@ -465,7 +468,7 @@ class SidebarView: NSView {
         isToolPanelExpanded.toggle()
 
         // 切换按钮激活态外观：展开时强调色，收起时次级标签色
-        toolBtn.contentTintColor = isToolPanelExpanded ? .controlAccentColor : .secondaryLabelColor
+        toolBtn.contentTintColor = isToolPanelExpanded ? FFAccent.current : .secondaryLabelColor
 
         // 通知 MainWindowController 显示/隐藏 ToolOverlayView + 设备浮层联动
         NotificationCenter.default.post(
@@ -482,7 +485,7 @@ class SidebarView: NSView {
         // 仅同步状态不同步的情况（覆盖页关闭时回传 false）
         if isToolPanelExpanded != isExpanded {
             isToolPanelExpanded = isExpanded
-            toolBtn.contentTintColor = isToolPanelExpanded ? .controlAccentColor : .secondaryLabelColor
+            toolBtn.contentTintColor = isToolPanelExpanded ? FFAccent.current : .secondaryLabelColor
         }
     }
 
@@ -559,7 +562,8 @@ class SidebarView: NSView {
         nameField.placeholderString = "标签名称"
         container.addSubview(nameField)
 
-        // 预设颜色圆点按钮
+        // 预设颜色圆点（用纯 NSView + 点击手势，不用 NSButton——
+        // macOS 26 上 circular bezel 的无标题小按钮会渲染"BU"占位文字）
         let presetColors: [String] = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#5856D6"]
         let dotSize: CGFloat = 22
         let spacing: CGFloat = 8
@@ -570,18 +574,16 @@ class SidebarView: NSView {
 
         for (i, hex) in presetColors.enumerated() {
             let x = startX + CGFloat(i) * (dotSize + spacing)
-            let btn = NSButton(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
-            btn.bezelStyle = .circular
-            btn.isBordered = false
-            btn.wantsLayer = true
-            btn.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
-            btn.layer?.cornerRadius = dotSize / 2
-            btn.layer?.borderColor = NSColor.labelColor.cgColor
-            btn.layer?.borderWidth = (i == 0) ? 2 : 0
-            btn.target = colorHolder
-            btn.action = #selector(TagColorHolder.selectColor(_:))
-            btn.tag = i
-            container.addSubview(btn)
+            let dot = NSView(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
+            dot.layer?.cornerRadius = dotSize / 2
+            dot.layer?.borderColor = NSColor.labelColor.cgColor
+            dot.layer?.borderWidth = (i == 0) ? 2 : 0
+            let click = NSClickGestureRecognizer(target: colorHolder, action: #selector(TagColorHolder.selectDot(_:)))
+            dot.addGestureRecognizer(click)
+            colorHolder.dotDots.append(dot)
+            container.addSubview(dot)
         }
 
         alert.accessoryView = container
@@ -640,6 +642,8 @@ extension SidebarView: NSMenuDelegate {
 private class TagColorHolder: NSObject {
     private let colors: [String]
     private(set) var selectedHex: String
+    /// 颜色圆点引用数组（纯视图无 tag，用数组下标定位点击的 dot）
+    var dotDots: [NSView] = []
 
     init(colors: [String]) {
         self.colors = colors
@@ -647,15 +651,12 @@ private class TagColorHolder: NSObject {
         super.init()
     }
 
-    @objc func selectColor(_ sender: NSButton) {
-        let idx = sender.tag
-        guard idx >= 0, idx < colors.count else { return }
+    @objc func selectDot(_ sender: NSClickGestureRecognizer) {
+        guard let dot = sender.view, let idx = dotDots.firstIndex(of: dot), idx < colors.count else { return }
         selectedHex = colors[idx]
-        // 更新按钮选中边框
-        if let container = sender.superview {
-            for case let btn as NSButton in container.subviews {
-                btn.layer?.borderWidth = btn === sender ? 2 : 0
-            }
+        // 更新选中边框
+        for (i, d) in dotDots.enumerated() {
+            d.layer?.borderWidth = (i == idx) ? 2 : 0
         }
     }
 }
@@ -747,8 +748,11 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         cell.textField = textField
 
         NSLayoutConstraint.activate([
-            // 图标贴左边缘（constant 0），Finder 风格
-            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
+            // 修复问题 1（访达风格内缩）：图标不再贴行最左边（+0），改为往里缩 6pt。
+            // 蓝色高亮（FFSidebarRowView.drawSelection）左右各内缩 3pt，是"飘在侧边栏中间"的圆角块。
+            // 图标在 +6pt 即落在高亮内部（高亮左缘 +3pt 到图标左缘 +6pt 之间留 3pt 蓝边），
+            // 与 macOS 访达侧边栏一致；文字本就在 trailing -6pt（高亮右缘内侧）。
+            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             imageView.widthAnchor.constraint(equalToConstant: 20),
             imageView.heightAnchor.constraint(equalToConstant: 20),

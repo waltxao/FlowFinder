@@ -50,7 +50,11 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
         self.previewFiles = files
         self.currentIndex = max(0, min(currentIndex, max(0, files.count - 1)))
 
-        guard let panel = previewPanel else { return }
+        guard let panel = previewPanel else {
+            FFDebug.log("togglePreview: panel=nil (QLPreviewPanel.shared() 为 nil)")
+            return
+        }
+        FFDebug.log("togglePreview: files=\(files.count) idx=\(self.currentIndex) panelVisible=\(panel.isVisible)")
 
         if panel.isVisible {
             panel.currentPreviewItemIndex = self.currentIndex
@@ -61,7 +65,20 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
             // 此处提前设置 dataSource/delegate，与 begin 中的设置幂等。
             panel.dataSource = self
             panel.delegate = self
+            // 修复问题 5（根因）：QLPreviewPanel 是特殊面板，仅 makeKeyAndOrderFront 不会让它主动沿
+            // responder chain 找 controller 并显示（实测 makeKeyAndOrderFront 后 isVisible 仍为 false）。
+            // 需要显式调用 updateController（QLPreviewPanel 的非公开但稳定 API）触发「沿链找 acceptsPreviewPanelControl
+            // 返回 true 的 responder → 调其 beginPreviewPanelControl」。配合 responds(to:) 守卫确保安全。
+            let updateSel = Selector("updateController")
+            if panel.responds(to: updateSel) {
+                panel.perform(updateSel, with: nil, afterDelay: 0)
+            }
             panel.makeKeyAndOrderFront(nil)
+            // 再补一次 updateController 调用（下一 runloop），覆盖 makeKeyAndOrderFront 触发的 controller 查找滞后
+            if panel.responds(to: updateSel) {
+                panel.perform(updateSel, with: nil, afterDelay: 0)
+            }
+            FFDebug.log("togglePreview: makeKeyAndOrderFront called -> visible=\(panel.isVisible)")
         }
     }
 

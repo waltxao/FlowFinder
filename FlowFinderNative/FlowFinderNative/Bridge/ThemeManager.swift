@@ -95,6 +95,7 @@ public final class ThemeManager: ObservableObject {
     /// 应用指定外观模式
     /// - Parameter mode: 外观模式
     public func applyMode(_ mode: AppearanceMode) {
+        FFDebug.log("ThemeManager.applyMode: 收到 mode=\(mode.title)")
         currentMode = mode
         saveMode(mode)
 
@@ -108,6 +109,7 @@ public final class ThemeManager: ObservableObject {
         case .system:
             NSApp.appearance = nil
         }
+        FFDebug.log("ThemeManager.applyMode: NSApp.appearance 已设为=\(String(describing: NSApp.appearance?.name))")
 
         // 通知所有窗口刷新
         // 背景玻璃架构：containerView（普通 NSView）作为 contentView，
@@ -133,7 +135,9 @@ public final class ThemeManager: ObservableObject {
         // 刷新所有 FFGlassView 实例的玻璃令牌（噪声/高光/内阴影/tint）
         FFGlassView.refreshAllInstances()
 
+        FFDebug.log("ThemeManager.applyMode: 即将发送 appearanceChanged 通知")
         notifyModeChanged(mode)
+        FFDebug.log("ThemeManager.applyMode: 通知已发送完成")
     }
 
     /// 通知所有订阅者主题已变更（闭包订阅者 + NotificationCenter）

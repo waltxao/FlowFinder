@@ -9,8 +9,11 @@ import Cocoa
 
 /// 任务 F11-2: 侧边栏实体背景容器（替代 FFGlassView .panel .sidebar，v0.6.7）。
 /// 仅承载 sidebarScrollView，背景色使用系统动态 NSColor.windowBackgroundColor。
+/// 注意：isOpaque 必须返回 false——isOpaque=true 会告知 AppKit「本视图内容不变，可缓存」，
+/// 主题切换时系统会跳过该视图及子树的自动重绘，导致深色模式下侧边栏不跟随（视觉不变）。
+/// 背景色由 layer.backgroundColor 提供（我们自行在主题刷新时重设），isOpaque 无需为 true。
 private class SolidSidebarContainer: NSView {
-    override var isOpaque: Bool { return true }
+    override var isOpaque: Bool { return false }
 }
 
 // MARK: - SettingsSection
@@ -66,6 +69,8 @@ public class SettingsWindowController: NSWindowController {
     private var contentContainer: NSView!
     /// 搜索框（内容区顶部，过滤设置项）
     private var searchField: NSSearchField!
+    /// 主题变更时需重设背景色的容器（修复夜间模式适配：cgColor 静态值不随系统刷新）
+    private var bgContainers: [NSView] = []
     /// 当前显示的内容视图（侧边栏选中项切换时替换）
     private var currentContentView: NSView?
     /// 当前分区所有行视图（用于搜索过滤）
@@ -102,6 +107,63 @@ public class SettingsWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // 修复夜间模式适配：监听主题变更，刷新所有容器背景色 + 窗口 appearance
+    public override func windowDidLoad() {
+        super.windowDidLoad()
+        registerAppearanceObserver()
+    }
+
+    /// 注册主题变更监听（windowDidLoad 可能不在 NSWindowController 单例 + setupUI 已建 contentView
+    /// 的场景下被调用——即使首次 show 也可能跳过 windowDidLoad。改在 setupUI 末尾也注册一次确保挂上）。
+    private var appearanceObserverRegistered = false
+    private func registerAppearanceObserver() {
+        guard !appearanceObserverRegistered else { return }
+        appearanceObserverRegistered = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleAppearanceChanged),
+            name: .appearanceChanged, object: nil
+        )
+        FFDebug.log("SettingsWindowController: 已注册 .appearanceChanged 监听")
+    }
+
+    @objc private func handleAppearanceChanged() {
+        FFDebug.log("Settings.handleAppearanceChanged: 收到通知，准备刷背景与 appearance")
+        // 容器背景已改为透明（由窗口动态背景色透出，系统自动跟随主题），无需再刷 cgColor 快照。
+        // 仅同步各容器 appearance 跟随 NSApp.appearance + 强制子树重绘（isOpaque 已改 false，
+        // 重绘应能正常触发）。
+        window?.backgroundColor = NSColor.windowBackgroundColor
+        window?.appearance = NSApp.appearance
+        for v in bgContainers { v.appearance = NSApp.appearance }
+        func markNeedsDisplay(_ view: NSView) {
+            view.needsDisplay = true
+            for sub in view.subviews { markNeedsDisplay(sub) }
+        }
+        if let content = window?.contentView {
+            markNeedsDisplay(content)
+        }
+        window?.displayIfNeeded()
+        let effNames = bgContainers.map { String(describing: $0.effectiveAppearance.name) }.joined(separator: ", ")
+        FFDebug.log("Settings.handleAppearanceChanged: 刷新完成，容器数=\(bgContainers.count), winEffective=\(String(describing: window?.effectiveAppearance.name)), containerEffective=[\(effNames)], NSApp=\(String(describing: NSApp.appearance?.name))")
+    }
+
+    /// 诊断：首次布局后记录搜索栏 / newView / stack 的 frame，定位"搜索栏下方空白"层级
+    private var hasLoggedSettingsLayout = false
+    func logSettingsLayoutOnce() {
+        guard !hasLoggedSettingsLayout, let sf = searchField, let cv = currentContentView, !sf.frame.isEmpty else { return }
+        hasLoggedSettingsLayout = true
+        let ccFrame = contentContainer?.frame ?? .zero
+        let sfFrame = sf.frame
+        let nvFrame = cv.frame
+        // scrollView 内 stackFrame（从 cv 是 scrollView 取 documentView.frame）
+        var stackFrame = NSRect.zero
+        if let sc = cv as? NSScrollView, let doc = sc.documentView { stackFrame = doc.frame }
+        FFDebug.log("SettingsLayout: contentContainer=\(ccFrame) searchField=\(sfFrame) newView=\(nvFrame) docStack=\(stackFrame)")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .appearanceChanged, object: nil)
+    }
+
     // MARK: - UI Setup
 
     private func setupUI() {
@@ -118,14 +180,15 @@ public class SettingsWindowController: NSWindowController {
         sidebarScrollView = makeSidebarScrollView()
         sidebarScrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        // 任务 F11-2: 侧边栏实体背景（替代 FFGlassView .panel .sidebar，v0.6.7）
-        // 使用 SolidSidebarContainer（isOpaque=true）承载 sidebarScrollView，
-        // 背景色为系统动态 windowBackgroundColor，与窗口背景一致。
+        // 任务 F11-2: 侧边栏容器（背景透明，让窗口动态背景色透出）
+        // 修复夜间模式：此前 sidebarContainer.layer.backgroundColor 用 windowBackgroundColor 的
+        // cgColor 快照（浅色值），切深色后不跟随；改为透明让窗口动态背景色自动适配主题。
         let sidebarContainer = SolidSidebarContainer()
         sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
         sidebarContainer.wantsLayer = true
-        sidebarContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        sidebarContainer.layer?.backgroundColor = NSColor.clear.cgColor
         sidebarContainer.addSubview(sidebarScrollView)
+        bgContainers.append(sidebarContainer)
         // 任务 F11-2: sidebarScrollView 撑满 sidebarContainer（v0.6.7）
         NSLayoutConstraint.activate([
             sidebarScrollView.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
@@ -159,13 +222,17 @@ public class SettingsWindowController: NSWindowController {
         splitView.addArrangedSubview(sidebarContainer)
         splitView.addArrangedSubview(contentContainer)
 
-        // 主容器（实体背景）
+        // 主容器（透明背景，让窗口动态背景色透出；主题切换由窗口系统自动处理）
         let mainContainer = NSView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
-        mainContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
         mainContainer.addSubview(splitView)
-        mainContainer.appearance = NSApp.effectiveAppearance
+        // 修复夜间模式根因：原设 `mainContainer.appearance = NSApp.effectiveAppearance` 把
+        // mainContainer 锁死在启动时的浅色 appearance 上（NSApp.effectiveAppearance 在
+        // applyMode 切夜间后延迟更新，仍返回浅色），导致切夜间后设置页内容仍按浅色渲染 →
+        // 看似"一片空白"。去掉这行，让 mainContainer 跟随 NSApp.appearance 自动适配。
+        bgContainers.append(mainContainer)
 
         NSLayoutConstraint.activate([
             splitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
@@ -174,12 +241,12 @@ public class SettingsWindowController: NSWindowController {
             splitView.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
         ])
 
-        // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
-        // FFOpaqueContainerView 重写 isOpaque=true，背景色由 layer 提供。
+        // 顶层容器（透明背景，让窗口动态背景色透出；主题切换由窗口系统自动处理）
         let containerView = FFOpaqueContainerView()
         containerView.wantsLayer = true
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        containerView.layer?.backgroundColor = NSColor.clear.cgColor
+        bgContainers.append(containerView)
         // 窗口使用 .fullSizeContentView + titlebarAppearsTransparent=true，
         // FFOpaqueContainerView 的 isOpaque=true 会导致 safeAreaLayoutGuide 不提供正确的顶部 inset。
         // 手动补充 28pt 顶部安全区域，确保内容不被红绿灯/标题栏遮挡。
@@ -202,6 +269,10 @@ public class SettingsWindowController: NSWindowController {
         sidebarContainer.widthAnchor.constraint(equalToConstant: 180).isActive = true
         splitView.setPosition(180, ofDividerAt: 0)
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+
+        // 修复夜间模式适配：windowDidLoad 在单例+setupUI 已建 contentView 场景不可靠，
+        // 这里 setupUI 末尾再注册一次确保监听挂上（registerAppearanceObserver 用 flag 防重复）。
+        registerAppearanceObserver()
 
         // 默认选中第一项（通用）
         selectSection(.general)
@@ -263,10 +334,18 @@ public class SettingsWindowController: NSWindowController {
         NSLayoutConstraint.activate([
             newView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             newView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            newView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 4),
+            // 修复搜索栏下方大片空白：newView.top 紧贴 searchField.bottom（间距 0），
+            // 内部 stack 距 clipView.top 也只留 4pt——叠合为搜索框下方仅 4pt 视觉间距，
+            // 内容紧贴搜索栏。
+            newView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 0),
             newView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
         currentContentView = newView
+
+        // 诊断：内容视图布局完成后再记录各层 frame（异步到下一 runloop 确保布局已结算）
+        DispatchQueue.main.async { [weak self] in
+            self?.logSettingsLayoutOnce()
+        }
     }
 
     // MARK: - 搜索过滤
@@ -361,24 +440,11 @@ public class SettingsWindowController: NSWindowController {
         }
         fileOpsSection.addRow(showHiddenRow)
 
-        let dualPaneRow = SettingsRowView.toggleRow(
-            title: "默认显示双面板",
-            desc: "新窗口以双面板模式打开",
-            state: UserDefaults.standard.bool(forKey: "default_dual_pane")
-        ) { state in
-            UserDefaults.standard.set(state, forKey: "default_dual_pane")
-        }
-        fileOpsSection.addRow(dualPaneRow)
-
-        let rememberPaneRow = SettingsRowView.toggleRow(
-            title: "关闭窗口时记住面板状态",
-            desc: "重新打开时恢复上次的面板布局",
-            state: UserDefaults.standard.object(forKey: "remember_pane_state") as? Bool ?? true,
-            action: { state in
-                UserDefaults.standard.set(state, forKey: "remember_pane_state")
-            }
-        )
-        fileOpsSection.addRow(rememberPaneRow)
+        // 暂时隐藏「默认显示双面板」与「关闭窗口时记住面板状态」：
+        // 这两项功能尚未接线（主窗口固定双面板，无单/双切换机制，也无面板状态持久化）。
+        // 在接线完成前隐藏，避免作为摆设误导用户。
+        // let dualPaneRow = SettingsRowView.toggleRow(...)  // 保留定义供未来接线恢复
+        // let rememberPaneRow = SettingsRowView.toggleRow(...)
 
         let confirmOpsRow = SettingsRowView.toggleRow(
             title: "文件操作确认",
@@ -399,7 +465,7 @@ public class SettingsWindowController: NSWindowController {
             UserDefaults.standard.set(idx, forKey: "default_file_behavior")
         }
         fileOpsSection.addRow(defaultBehaviorRow)
-        registerForSearch(fileOpsSection, rows: [defaultViewRow, showHiddenRow, dualPaneRow, rememberPaneRow, confirmOpsRow, defaultBehaviorRow])
+        registerForSearch(fileOpsSection, rows: [defaultViewRow, showHiddenRow, confirmOpsRow, defaultBehaviorRow])
 
         let stack = NSStackView(views: [startupSection, fileOpsSection])
         stack.orientation = .vertical
@@ -432,15 +498,15 @@ public class SettingsWindowController: NSWindowController {
         // 强调色 section
         let accentSection = SettingsSectionView(title: "强调色", iconName: "paintpalette")
         let accentColors = ["#0a84ff", "#bf5af2", "#ff375f", "#ff453a", "#ff9f0a", "#30d158", "#8e8e93"]
-        let currentAccent = UserDefaults.standard.string(forKey: "accent_color") ?? "#0a84ff"
         let accentRow = SettingsRowView.colorRow(
             title: "强调色",
             desc: "应用于按钮、选中状态等界面元素",
             colors: accentColors,
-            selectedHex: currentAccent
+            selectedHex: FFAccent.currentHex
         ) { hex in
-            UserDefaults.standard.set(hex, forKey: "accent_color")
-            NotificationCenter.default.post(name: .appearanceChanged, object: nil)
+            // 接线 FFAccent.set：写 UserDefaults + 广播 .accentColorChanged，
+            // 全应用所有 FFAccent.current 引用下次读取即生效。
+            FFAccent.set(hex: hex)
         }
         accentSection.addRow(accentRow)
         registerForSearch(accentSection, rows: [accentRow])
@@ -736,19 +802,32 @@ public class SettingsWindowController: NSWindowController {
         // 裁到可视区外/首行偏移，故移除 contentInsets 改用显式约束。
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets()
+        // 修复搜索栏下方留白：NSScrollView 默认 scrollerInsets 可能在顶部留位，
+        // 显式置零让 clipView 顶紧贴 scrollView 顶，内容无额外偏移。
+        scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         return scrollView
     }
 
     /// 在 NSScrollView 中约束 stackView 宽度并允许垂直滚动
     private func constrainStackInScroll(_ stack: NSStackView, in scrollView: NSScrollView) {
-        guard let clipView = scrollView.contentView as? NSClipView else { return }
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: clipView.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: clipView.trailingAnchor, constant: -24),
-            stack.topAnchor.constraint(equalTo: clipView.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: clipView.bottomAnchor, constant: -20),
-            stack.widthAnchor.constraint(equalTo: clipView.widthAnchor, constant: -48),
-        ])
+        // 最终方案（多次反复后的结论）：NSScrollView 的 documentView 若 isFlipped=true
+        // （y=0 在顶部），滚动方向与视觉一致——内容天然贴可视区顶部，无"搜索栏下方空白"，
+        // 且事件坐标由系统正确处理。此前 Auto Layout 方案（非 flipped + topAnchor）会把
+        // 内容钉到视觉底部；flipped 容器 + Auto Layout 又导致事件错乱。现在用
+        // frame-based + flipped 容器：FlippedStackContainer(isFlipped=true) 作为 documentView，
+        // stack 以 frame 布局放进去，高度用 fittingSize 结算。
+        let container = FlippedStackContainer()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        scrollView.documentView = container
+
+        let clipWidth = scrollView.contentView.bounds.width
+        stack.layoutSubtreeIfNeeded()
+        let contentHeight = max(stack.fittingSize.height, 1)
+        stack.frame = NSRect(x: 24, y: 4, width: max(clipWidth - 48, 300), height: contentHeight)
+        // 容器高度 = 内容高度（flipped 下 y=0 在顶，容器顶即可视区顶）
+        container.frame = NSRect(x: 0, y: 0, width: max(clipWidth, 300), height: contentHeight + 8)
 
         // 修复 T8（根因）：NSStackView 垂直方向默认 .centerX 对齐，对无 intrinsic size 的
         // 分区视图（SettingsSectionView / SMBManagerPanel / 自定义内容视图）宽度产生歧义，
@@ -760,6 +839,25 @@ public class SettingsWindowController: NSWindowController {
                 view.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             ])
         }
+
+        // 窗口 resize 时保持容器/stack 宽度跟随（frame-based 需手动同步）
+        scrollView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(settingsScrollFrameChanged(_:)),
+            name: NSView.frameDidChangeNotification, object: scrollView
+        )
+    }
+
+    @objc private func settingsScrollFrameChanged(_ note: Notification) {
+        guard let scrollView = note.object as? NSScrollView,
+              let container = scrollView.documentView as? FlippedStackContainer,
+              let stack = container.subviews.first else { return }
+        let clipWidth = scrollView.contentView.bounds.width
+        stack.layoutSubtreeIfNeeded()
+        let contentHeight = max(stack.fittingSize.height, 1)
+        stack.frame = NSRect(x: 24, y: 4, width: max(clipWidth - 48, 300), height: contentHeight)
+        container.frame = NSRect(x: 0, y: 0, width: max(clipWidth, 300), height: contentHeight + 8)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     // MARK: - Public API
@@ -1065,11 +1163,23 @@ class TagManagementRowView: SettingsRowView {
         refreshTagList()
     }
 
+    /// 生成 16×16 彩色圆点 NSImage（用于下拉菜单 item 的图像，
+    /// 让颜色选择直观且不依赖纯文字渲染——避免 macOS 26 窄 popup 显示占位缩写）
+    private func makeColorDotImage(hex: String) -> NSImage? {
+        let size = NSSize(width: 16, height: 16)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let color = NSColor(hex: hex) ?? .gray
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 14, height: 14)).fill()
+        image.unlockFocus()
+        return image
+    }
+
     private func refreshTagList() {
         tagsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
-        for (idx, tag) in tags.enumerated() {
-            let row = makeTagRow(tag: tag, index: idx)
+        for (idx, tag) in tags.enumerated() {            let row = makeTagRow(tag: tag, index: idx)
             tagsStack.addArrangedSubview(row)
         }
 
@@ -1157,12 +1267,17 @@ class TagManagementRowView: SettingsRowView {
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         alert.accessoryView = input
 
-        // 颜色选择
-        let colorPopup = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 240, height: 26), pullsDown: false)
+        // 颜色选择（用带彩色圆点图像的下拉菜单，替代纯文字——避免 macOS 26 上
+        // 纯文字 popup item 在窄宽度下渲染异常显示占位缩写）
+        let colorPopup = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 260, height: 26), pullsDown: false)
         let colorNames = ["红色", "橙色", "黄色", "绿色", "蓝色", "紫色", "灰色"]
         for (i, name) in colorNames.enumerated() {
             colorPopup.addItem(withTitle: name)
             colorPopup.item(at: i)?.tag = i
+            // item 加彩色圆点图像（20×20 圆，让选择更直观且不依赖纯文字渲染）
+            if let dot = makeColorDotImage(hex: availableColors[i]) {
+                colorPopup.item(at: i)?.image = dot
+            }
         }
         let colorContainer = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 60))
         colorContainer.addSubview(input)
@@ -1193,12 +1308,15 @@ class TagManagementRowView: SettingsRowView {
         alert.informativeText = "为标签「\(tags[index].name)」选择新颜色"
         alert.alertStyle = .informational
 
-        let colorPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 26), pullsDown: false)
+        let colorPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
         let colorNames = ["红色", "橙色", "黄色", "绿色", "蓝色", "紫色", "灰色"]
         let currentColor = tags[index].color.uppercased()
         var selectedIdx = 0
         for (i, name) in colorNames.enumerated() {
             colorPopup.addItem(withTitle: name)
+            if let dot = makeColorDotImage(hex: availableColors[i]) {
+                colorPopup.item(at: i)?.image = dot
+            }
             if availableColors[i].uppercased() == currentColor {
                 selectedIdx = i
             }
@@ -1234,4 +1352,16 @@ class TagManagementRowView: SettingsRowView {
             refreshTagList()
         }
     }
+}
+
+
+// MARK: - FlippedStackContainer
+
+/// 设置页滚动容器：isFlipped=true（y=0 在顶部）的 documentView。
+/// NSScrollView 的 documentView 若 flipped，滚动方向与视觉一致——内容天然贴可视区顶部，
+/// 无"搜索栏下方空白"，且鼠标事件坐标由系统正确处理（此前非 flipped 方案内容贴底/空白）。
+/// 内部 stack 用 frame 布局（constrainStackInScroll 设置），窗口 resize 时由
+/// settingsScrollFrameChanged 同步宽度。
+private final class FlippedStackContainer: NSView {
+    override var isFlipped: Bool { true }
 }

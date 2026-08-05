@@ -347,8 +347,8 @@ private class DuplicateFileRow: NSView {
     func updateKeepState(isKeep: Bool) {
         self.isKeep = isKeep
         if isKeep {
-            radioView.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-            radioView.layer?.borderColor = NSColor.controlAccentColor.cgColor
+            radioView.layer?.backgroundColor = FFAccent.current.cgColor
+            radioView.layer?.borderColor = FFAccent.current.cgColor
             statusLabel.stringValue = "保留"
             statusLabel.textColor = NSColor.systemGreen
         } else {

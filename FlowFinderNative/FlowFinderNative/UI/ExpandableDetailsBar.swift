@@ -121,6 +121,19 @@ class ExpandableDetailsBar: NSView {
         glassBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glassBackground)
 
+        // 修复鼠标穿透：详情栏作为浮层覆盖在文件列表上方，但空白区域（无子控件的区域）
+        // 的鼠标事件会穿透到下方的文件列表——用户反馈"鼠标居然可以穿透详情栏点击下方内容"。
+        // 加一个全 bounds 覆盖的鼠标拦截视图，放在玻璃上方、内容下方。
+        // 普通NSView不消费mouseDown、hitTest返回最深子视图，事件仍会传到下方兄弟视图——
+        // 这里用 FFMouseInterceptorView（重写 mouse* 事件消费 + hitTest 返回 self 兜底），
+        // 确保鼠标落到详情栏区域就被详情栏拦截，不再穿透到文件列表。
+        // 不影响子控件交互：子视图的 hitTest 优先于父，有控件的区域仍返回控件。
+        let mouseInterceptor = FFMouseInterceptorView()
+        mouseInterceptor.wantsLayer = true
+        mouseInterceptor.layer?.backgroundColor = NSColor.clear.cgColor
+        mouseInterceptor.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(mouseInterceptor)
+
         // compact 视图（收起态）
         compactView.translatesAutoresizingMaskIntoConstraints = false
         smallIconView.imageScaling = .scaleProportionallyUpOrDown
@@ -295,6 +308,12 @@ class ExpandableDetailsBar: NSView {
             glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
             glassBackground.topAnchor.constraint(equalTo: topAnchor),
             glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            // 鼠标拦截层撑满（修复穿透：确保详情栏区域内的点击不穿到下方文件列表）
+            mouseInterceptor.leadingAnchor.constraint(equalTo: leadingAnchor),
+            mouseInterceptor.trailingAnchor.constraint(equalTo: trailingAnchor),
+            mouseInterceptor.topAnchor.constraint(equalTo: topAnchor),
+            mouseInterceptor.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             // 分隔线
             separator.topAnchor.constraint(equalTo: topAnchor),
@@ -1194,4 +1213,25 @@ extension ExpandableDetailsBar: NSTextFieldDelegate {
         field.isBezeled = false
         field.drawsBackground = false
     }
+}
+
+// MARK: - FFMouseInterceptorView
+
+/// 鼠标拦截视图：覆盖在详情栏玻璃背景上方，确保所有落到详情栏区域的鼠标事件
+/// 都被本视图消费（mouseDown/ mouseMoved 等返回空实现），不再穿透到下层的文件列表。
+///
+/// 关键点：
+/// 1. NSView 默认 `mouseDown` 会把事件继续传递给下一 responder（通常父 view），
+///    最终可能到达窗口的其他兄弟视图（包括下层的文件列表）——这是穿透根因。
+///    本类重写 mouse 事件为空实现，主动「吃掉」事件，终止传递。
+/// 2. 子视图（详情栏内的图标、标签等控件）的 hitTest 优先级高于父视图，
+///    鼠标落在控件上时仍返回控件，本拦截器只兜底"控件之间的空白区域"。
+private final class FFMouseInterceptorView: NSView {
+    override func mouseDown(with event: NSEvent) { }
+    override func mouseUp(with event: NSEvent) { }
+    override func mouseDragged(with event: NSEvent) { }
+    override func mouseMoved(with event: NSEvent) { }
+    override func rightMouseDown(with event: NSEvent) { }
+    override func rightMouseUp(with event: NSEvent) { }
+    override func rightMouseDragged(with event: NSEvent) { }
 }

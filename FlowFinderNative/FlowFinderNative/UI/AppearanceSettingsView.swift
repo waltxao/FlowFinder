@@ -163,10 +163,40 @@ public class AppearanceSettingsView: NSView {
         }
     }
 
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            FFDebug.log("AppearanceSettingsView movedToWindow frame=\(frame) bounds=\(bounds)")
+        }
+    }
+
+    private var lastHitTestLogged = Date.distantPast
+
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        let result = super.hitTest(point)
+        // 诊断：点击是否到达本视图（若 super 返回 nil 说明被上层拦截或点在 bounds 外）
+        // 节流：鼠标移动会高频调用 hitTest，限制每 0.5s 最多记一次
+        if window != nil, Date().timeIntervalSince(lastHitTestLogged) > 0.5 {
+            lastHitTestLogged = Date()
+            let inBounds = bounds.contains(point)
+            FFDebug.log("AppearanceSettingsView.hitTest: point=\(point) inBounds=\(inBounds) result=\(result.map { String(describing: type(of: $0)) } ?? "nil") bounds=\(bounds)")
+        }
+        return result
+    }
+
+    public override func layout() {
+        super.layout()
+        if window != nil && !bounds.isEmpty {
+            FFDebug.log("AppearanceSettingsView layout frame=\(frame) bounds=\(bounds) lightBtn=\(lightButton.frame) darkBtn=\(darkButton.frame) systemBtn=\(systemButton.frame) lightInWin=\(lightButton.convert(lightButton.bounds, to: window?.contentView))")
+        }
+    }
+
     // MARK: - Actions
 
     @objc private func themeButtonClicked(_ sender: NSButton) {
         guard let mode = AppearanceMode(rawValue: sender.tag) else { return }
+        FFDebug.log("AppearanceSettingsView.themeButtonClicked: mode=\(mode.title) tag=\(sender.tag)")
         ThemeManager.shared.applyMode(mode)
+        FFDebug.log("AppearanceSettingsView.themeButtonClicked: applyMode 返回后 NSApp.appearance=\(String(describing: NSApp.appearance?.name))")
     }
 }

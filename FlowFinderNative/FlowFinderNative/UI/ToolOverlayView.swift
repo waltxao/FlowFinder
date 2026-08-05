@@ -154,7 +154,7 @@ private class ToolCardView: NSView {
         // 图标
         let iconView = NSImageView()
         iconView.image = NSImage(systemSymbolName: tool.icon, accessibilityDescription: tool.title)
-        iconView.contentTintColor = tool.isEnabled ? .controlAccentColor : .tertiaryLabelColor
+        iconView.contentTintColor = tool.isEnabled ? FFAccent.current : .tertiaryLabelColor
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
@@ -217,6 +217,9 @@ public class ToolPanelView: NSView {
 
     /// 网格容器（3×N 布局；提升为存储属性以便 layout() 中设置列宽）
     private var gridContainer: NSGridView!
+
+    // 问题 4 诊断：面板是否被正常布局（bounds 非 0 是卡片可点的前提）
+    private var hasLoggedLayout = false
 
     /// 初始化
     /// - Parameter tools: 工具项列表
@@ -289,6 +292,14 @@ public class ToolPanelView: NSView {
         // 设置行高（80pt 大方块）和列宽（自适应填充）
         for i in 0..<gridContainer.numberOfRows {
             gridContainer.row(at: i).height = 80
+            // 修复问题 4（根因之二）：默认 cell placement=.center，卡片在 cell 内居中但不撑满，
+            // 叠加卡片自身无高度约束时被压成 0×0。改为 .fill 让卡片填满 cell（80pt 高），
+            // 卡片内部 icon 顶 10 + 28 + 6 + name + 8 的链式约束在 80pt 内自然落下，鼠标可命中。
+            for j in 0..<gridContainer.numberOfColumns {
+                let cell = gridContainer.cell(atColumnIndex: j, rowIndex: i)
+                cell.xPlacement = .fill
+                cell.yPlacement = .fill
+            }
         }
         // NSGridCell.Placement 只有 .center, .leading, .trailing, .fill, .none（旧SDK）
         // 使用 .center 即可，列宽由内容自适应
@@ -306,6 +317,9 @@ public class ToolPanelView: NSView {
             gridContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             gridContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
         ])
+
+        // 问题 4 诊断：记录面板创建（与 layout 日志交叉对照）
+        FFDebug.log("ToolPanel setup done tools=\(tools.count) enabled=\(tools.filter { $0.isEnabled }.count)")
     }
 
     /// 关闭按钮点击
@@ -332,6 +346,11 @@ public class ToolPanelView: NSView {
         for i in 0..<gridContainer.numberOfColumns {
             gridContainer.column(at: i).width = colWidth
         }
+        // 问题 4 诊断：每实例仅记录一次面板布局后的真实尺寸（卡片可点的前提是 bounds 非 0）
+        if !hasLoggedLayout && !bounds.isEmpty {
+            hasLoggedLayout = true
+            FFDebug.log("ToolPanel layout bounds=\(bounds) colWidth=\(colWidth) rows=\(gridContainer.numberOfRows) cols=\(gridContainer.numberOfColumns)")
+        }
     }
 }
 
@@ -341,11 +360,17 @@ private class ToolPanelCardView: NSView {
 
     /// 点击回调
     private let onTap: (() -> Void)?
+    /// 问题 4 诊断：卡片标题，用于日志区分
+    private let logTitle: String
+    /// 问题 4 诊断：仅记录一次进入窗口后的尺寸
+    private var hasLoggedInWindow = false
 
     init(tool: ToolOverlayView.ToolItem, onTap: @escaping () -> Void) {
         self.onTap = tool.isEnabled ? onTap : nil
+        self.logTitle = tool.title
         super.init(frame: .zero)
         setupUI(tool: tool)
+        FFDebug.log("ToolCard init title=\(tool.title) enabled=\(tool.isEnabled) onTapSet=\(self.onTap != nil)")
     }
 
     required init?(coder: NSCoder) {
@@ -360,7 +385,7 @@ private class ToolPanelCardView: NSView {
         // 图标（28pt SF Symbol）
         let iconView = NSImageView()
         iconView.image = NSImage(systemSymbolName: tool.icon, accessibilityDescription: tool.title)
-        iconView.contentTintColor = tool.isEnabled ? .controlAccentColor : .tertiaryLabelColor
+        iconView.contentTintColor = tool.isEnabled ? FFAccent.current : .tertiaryLabelColor
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
@@ -385,6 +410,11 @@ private class ToolPanelCardView: NSView {
             descLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 6),
             descLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             descLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+
+            // 修复问题 4（根因之一）：卡片自身无底部约束 → 无固有高度，
+            // NSGridView cell placement=.center 时卡片被压成 0×0，鼠标点不到、悬停不进。
+            // 钉死卡片底部到名称下方 8pt，配合下方 cell placement=.fill 使卡片撑满 cell。
+            bottomAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8),
         ])
 
         // 点击手势（仅可用工具响应）
@@ -417,15 +447,33 @@ private class ToolPanelCardView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        FFDebug.log("ToolCard mouseEntered title=\(logTitle) frame=\(frame) wantsLayer=\(wantsLayer)")
         layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.4).cgColor
         layer?.cornerRadius = 8
     }
 
     override func mouseExited(with event: NSEvent) {
+        FFDebug.log("ToolCard mouseExited title=\(logTitle)")
         layer?.backgroundColor = NSColor.clear.cgColor
     }
 
+    override func mouseDown(with event: NSEvent) {
+        // 问题 4 诊断：点击若到达卡片会先于此打印；NSClickGestureRecognizer 也会收到 mouseDown。
+        FFDebug.log("ToolCard mouseDown title=\(logTitle) frame=\(frame) onTapSet=\(onTap != nil)")
+        super.mouseDown(with: event)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if !hasLoggedInWindow, window != nil {
+            hasLoggedInWindow = true
+            // 问题 4 诊断：卡片进入窗口后的真实 frame。若 frame 为 .zero，则点击/悬停必失效。
+            FFDebug.log("ToolCard movedToWindow title=\(logTitle) frame=\(frame) onTapSet=\(onTap != nil)")
+        }
+    }
+
     @objc private func clicked() {
+        FFDebug.log("ToolCard clicked title=\(logTitle) onTapSet=\(onTap != nil)")
         onTap?()
     }
 }
