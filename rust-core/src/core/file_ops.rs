@@ -31,16 +31,31 @@ pub fn copy_file(src: &Path, dst: &Path) -> io::Result<u64> {
 ///
 /// Returns an `io::Error` if the source does not exist or cannot be moved.
 pub fn move_file(src: &Path, dst: &Path) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    const EXDEV: i32 = 18;
+    #[cfg(not(target_os = "macos"))]
+    const EXDEV: i32 = 18;
+    const EEXIST: i32 = 17;
+    const ENOTEMPTY: i32 = 66;
+
     // Try rename first (same volume, fast)
     match std::fs::rename(src, dst) {
         Ok(()) => return Ok(()),
         Err(e) => {
-            // If it's a cross-device error, fall back to copy + delete
             let errno = e.raw_os_error().unwrap_or(0);
-            #[cfg(target_os = "macos")]
-            const EXDEV: i32 = 18;
-            #[cfg(not(target_os = "macos"))]
-            const EXDEV: i32 = 18;
+            // ENOTEMPTY / EEXIST → 目标已存在（冲突弹窗选择"替换"时）。
+            // rename 不覆盖已存在的非空目录，删除目标后重试，实现替换语义。
+            if errno == ENOTEMPTY || errno == EEXIST {
+                if let Ok(meta) = std::fs::symlink_metadata(dst) {
+                    if meta.is_dir() {
+                        std::fs::remove_dir_all(dst)?;
+                    } else {
+                        std::fs::remove_file(dst)?;
+                    }
+                }
+                return std::fs::rename(src, dst);
+            }
+            // If it's a cross-device error, fall back to copy + delete
             if errno != EXDEV {
                 return Err(e);
             }

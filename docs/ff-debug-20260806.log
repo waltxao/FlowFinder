@@ -1,0 +1,116 @@
+[8:18:26.683 PM] AppDelegate: applicationDidFinishLaunching
+[8:18:26.685 PM] ThemeManager.applyMode: 收到 mode=浅色
+[8:18:26.686 PM] ThemeManager.applyMode: NSApp.appearance 已设为=Optional(__C.NSAppearanceName(_rawValue: NSAppearanceNameAqua))
+[8:18:26.686 PM] ThemeManager.applyMode: 即将发送 appearanceChanged 通知
+[8:18:26.686 PM] ThemeManager.applyMode: 通知已发送完成
+[8:18:26.719 PM] setupUI: started, window=(2180.0, 112.0, 1400.0, 900.0)
+[8:18:26.766 PM] createPaneContainer: side=left
+[8:18:26.767 PM] FFGlass init level=panel r=Optional(0.0)
+[8:18:26.774 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:26.783 PM] FileListView.init frame=(0.0, 0.0, 0.0, 0.0)
+[8:18:26.785 PM] FileListView setup tableView type=FFQuickLookTableView side=left onSpaceKeySet=true
+[8:18:26.803 PM] FFGlass init level=panel r=Optional(12.0)
+[8:18:26.808 PM] createPaneContainer: side=right
+[8:18:26.808 PM] FFGlass init level=panel r=Optional(0.0)
+[8:18:26.809 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:26.811 PM] FileListView.init frame=(0.0, 0.0, 0.0, 0.0)
+[8:18:26.811 PM] FileListView setup tableView type=FFQuickLookTableView side=left onSpaceKeySet=true
+[8:18:26.814 PM] FFGlass init level=panel r=Optional(12.0)
+[8:18:26.818 PM] FFGlass init level=component r=Optional(0.0)
+[8:18:26.820 PM] FFGlass init level=panel r=Optional(8.0)
+[8:18:26.822 PM] FFGlass init level=panel r=Optional(8.0)
+[8:18:26.823 PM] ToolCard init title=查重扫描 enabled=true onTapSet=true
+[8:18:26.826 PM] ToolCard init title=批量重命名 enabled=true onTapSet=true
+[8:18:26.826 PM] ToolCard init title=AI 打标 Beta enabled=false onTapSet=false
+[8:18:26.827 PM] ToolCard init title=AI 整理 Beta enabled=false onTapSet=false
+[8:18:26.827 PM] ToolPanel setup done tools=4 enabled=2
+[8:18:26.834 PM] ToolCard movedToWindow title=查重扫描 frame=(0.0, 0.0, 0.0, 0.0) onTapSet=true
+[8:18:26.834 PM] ToolCard movedToWindow title=批量重命名 frame=(0.0, 0.0, 0.0, 0.0) onTapSet=true
+[8:18:26.834 PM] ToolCard movedToWindow title=AI 打标 Beta frame=(0.0, 0.0, 0.0, 0.0) onTapSet=false
+[8:18:26.834 PM] ToolCard movedToWindow title=AI 整理 Beta frame=(0.0, 0.0, 0.0, 0.0) onTapSet=false
+[8:18:26.834 PM] NSEvent monitor installed: true
+[8:18:26.834 PM] KeyEvent monitor installed: true
+[8:18:43.557 PM] FSEvents 文件系统监控已启动，监控路径: /Users/waltxao
+[8:18:43.558 PM] windowDidBecomeKey: window is now key window
+[8:18:43.558 PM] windowDidBecomeMain: window is now main window
+[8:18:43.604 PM] FFGlass layout-done level=panel r=0.0 bounds=(0.0, 0.0, 342.0, 72.0) tintFrame=Optional((0.0, 0.0, 342.0, 72.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.300 shadowRadius=14.0 native=true
+[8:18:43.619 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 120.0, 24.0) tintFrame=Optional((0.0, 0.0, 120.0, 24.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:43.632 PM] FFGlass layout-done level=panel r=12.0 bounds=(0.0, 0.0, 326.0, 54.0) tintFrame=Optional((0.0, 0.0, 326.0, 54.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.300 shadowRadius=14.0 native=true
+[8:18:43.635 PM] FFGlass layout-done level=panel r=0.0 bounds=(0.0, 0.0, 342.0, 72.0) tintFrame=Optional((0.0, 0.0, 342.0, 72.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.300 shadowRadius=14.0 native=true
+[8:18:43.638 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 120.0, 24.0) tintFrame=Optional((0.0, 0.0, 120.0, 24.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:43.643 PM] FFGlass layout-done level=panel r=12.0 bounds=(0.0, 0.0, 326.0, 54.0) tintFrame=Optional((0.0, 0.0, 326.0, 54.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.300 shadowRadius=14.0 native=true
+[8:18:43.645 PM] FFGlass layout-done level=panel r=8.0 bounds=(0.0, 0.0, 684.0, 48.0) tintFrame=Optional((0.0, 0.0, 684.0, 48.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.300 shadowRadius=14.0 native=true
+[8:18:43.646 PM] ToolPanel layout bounds=(0.0, 0.0, 684.0, 220.0) colWidth=212.0 rows=2 cols=3
+[8:18:43.646 PM] FFGlass layout-done level=panel r=8.0 bounds=(0.0, 0.0, 684.0, 220.0) tintFrame=Optional((0.0, 0.0, 684.0, 220.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.300 shadowRadius=14.0 native=true
+[8:18:43.655 PM] Window state: isKey=true isMain=true isVisible=true frame=(2180.0, 150.0, 1400.0, 900.0) ignoresMouseEvents=false
+[8:18:43.655 PM] contentView: type=NSVisualEffectView frame=(0.0, 0.0, 1400.0, 900.0) subviews=["FFOpaqueContainerView"]
+[8:18:43.661 PM] windowDidResignKey: window lost key status
+[8:18:43.661 PM] windowDidResignMain: window lost main status
+[8:18:43.722 PM] windowDidBecomeMain: window is now main window
+[8:18:43.722 PM] windowDidBecomeKey: window is now key window
+[8:18:44.960 PM] EVENT leftMouseDown window=FlowFinder loc=(404.64453125, 676.08984375) hitView=FFQuickLookTableView
+[8:18:45.083 PM] shouldSelectRow row=3 firstResponder=true
+[8:18:45.083 PM] selectionDidChange selectedRows=1 indexes isReloading=false filesCount=13
+[8:18:45.083 PM] shouldSelectRow row=3 firstResponder=true
+[8:18:45.090 PM] selectionDidChange selectedRows=1 indexes isReloading=true filesCount=13
+[8:18:45.090 PM] selectionDidChange selectedRows=1 indexes isReloading=true filesCount=13
+[8:18:45.103 PM] selectionDidChange selectedRows=1 indexes isReloading=true filesCount=13
+[8:18:45.552 PM] FileListView.handlePaneKey: space -> QuickLook
+[8:18:45.553 PM] handleQuickLookRequest side=left
+[8:18:45.553 PM] handleQuickLook selectedCount=1
+[8:18:45.553 PM] handleQuickLook previewableCount=12 firstSelected=/Users/waltxao/Desktop/截屏2026-08-03 晚上9.07.34 (2).png
+[8:18:45.553 PM] handleQuickLook -> togglePreview files=12 idx=2
+[8:18:45.565 PM] togglePreview: files=12 idx=2 panelVisible=false
+[8:18:45.775 PM] togglePreview: makeKeyAndOrderFront called -> visible=false
+[8:18:45.781 PM] windowDidResignKey: window lost key status
+[8:18:46.620 PM] windowDidBecomeKey: window is now key window
+[8:18:49.870 PM] EVENT leftMouseDown window=FlowFinder loc=(117.6171875, 30.45703125) hitView=NSButton
+[8:18:50.384 PM] EVENT leftMouseDown window=FlowFinder loc=(108.7421875, 20.35546875) hitView=NSButton
+[8:18:50.519 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:50.520 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 136.0, 32.0) tintFrame=Optional((0.0, 0.0, 136.0, 32.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:50.521 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:50.524 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 136.0, 32.0) tintFrame=Optional((0.0, 0.0, 136.0, 32.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:50.525 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:50.526 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 136.0, 32.0) tintFrame=Optional((0.0, 0.0, 136.0, 32.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:50.526 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:50.527 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 136.0, 32.0) tintFrame=Optional((0.0, 0.0, 136.0, 32.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:50.527 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:50.528 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 136.0, 32.0) tintFrame=Optional((0.0, 0.0, 136.0, 32.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:50.528 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:50.529 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 136.0, 32.0) tintFrame=Optional((0.0, 0.0, 136.0, 32.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:50.529 PM] FFGlass init level=component r=Optional(8.0)
+[8:18:50.530 PM] FFGlass layout-done level=component r=8.0 bounds=(0.0, 0.0, 136.0, 32.0) tintFrame=Optional((0.0, 0.0, 136.0, 32.0)) borderPathSet=true shadowPathSet=true shadowOpacity=0.000 shadowRadius=0.0 native=true
+[8:18:50.537 PM] SettingsWindowController: 已注册 .appearanceChanged 监听
+[8:18:50.556 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 513.0, 446.0) cards=[SettingsSectionView:465x163 | SettingsSectionView:465x267]
+[8:18:50.558 PM] windowDidResignKey: window lost key status
+[8:18:50.558 PM] windowDidResignMain: window lost main status
+[8:18:50.594 PM] SettingsLayout4b: scrollView=(0.0, 0.0, 579.0, 557.0) clipView=(0.0, 0.0, 579.0, 557.0) container=(0.0, 0.0, 579.0, 446.0)
+[8:18:50.594 PM] SettingsLayout: contentContainer=(181.0, 0.0, 579.0, 597.0) searchField=(20.0, 557.0, 539.0, 28.0) newView=(0.0, 0.0, 579.0, 557.0) docStack=(0.0, 0.0, 579.0, 446.0)
+[8:18:51.737 PM] EVENT leftMouseDown window=设置 loc=(90.7734375, 520.81640625) hitView=NSTableCellView
+[8:18:51.883 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 478.5, 391.0) cards=[SettingsSectionView:430x264 | SettingsSectionView:430x111]
+[8:18:51.884 PM] AppearanceSettingsView movedToWindow frame=(144.5, 0.0, 254.0, 201.0) bounds=(0.0, 0.0, 254.0, 201.0)
+[8:18:51.893 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 478.5, 391.0) cards=[SettingsSectionView:430x264 | SettingsSectionView:430x111]
+[8:18:51.894 PM] AppearanceSettingsView movedToWindow frame=(144.5, 0.0, 254.0, 201.0) bounds=(0.0, 0.0, 254.0, 201.0)
+[8:18:51.900 PM] AppearanceSettingsView layout frame=(245.0, 0.0, 254.0, 201.0) bounds=(0.0, 0.0, 254.0, 201.0) lightBtn=(0.0, 0.0, 100.0, 100.0) darkBtn=(116.0, 0.0, 100.0, 100.0) systemBtn=(232.0, 0.0, 100.0, 100.0) lightInWin=(486.0, 351.0, 100.0, 100.0)
+[8:18:51.901 PM] AppearanceSettingsView layout frame=(245.0, 0.0, 254.0, 201.0) bounds=(0.0, 0.0, 254.0, 201.0) lightBtn=(0.0, 0.0, 100.0, 100.0) darkBtn=(116.0, 0.0, 100.0, 100.0) systemBtn=(232.0, 0.0, 100.0, 100.0) lightInWin=(486.0, 351.0, 100.0, 100.0)
+[8:18:51.906 PM] SettingsLayout4b: scrollView=(0.0, 0.0, 579.0, 557.0) clipView=(0.0, 0.0, 579.0, 557.0) container=(0.0, 0.0, 579.0, 391.0)
+[8:18:52.615 PM] EVENT leftMouseDown window=设置 loc=(76.5078125, 491.08984375) hitView=NSTextField
+[8:18:52.754 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 276.5, 167.0) cards=[SettingsSectionView:228x163]
+[8:18:52.764 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 276.5, 167.0) cards=[SettingsSectionView:228x163]
+[8:18:52.773 PM] SettingsLayout4b: scrollView=(0.0, 0.0, 579.0, 557.0) clipView=(0.0, 0.0, 579.0, 557.0) container=(0.0, 0.0, 579.0, 167.0)
+[8:18:53.141 PM] EVENT leftMouseDown window=设置 loc=(81.14453125, 394.66015625) hitView=NSTextField
+[8:18:53.297 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 224.0, 1245.0) cards=[SettingsSectionView:176x423 | SettingsSectionView:176x371 | SettingsSectionView:176x423]
+[8:18:53.333 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 224.0, 1245.0) cards=[SettingsSectionView:176x423 | SettingsSectionView:176x371 | SettingsSectionView:176x423]
+[8:18:53.361 PM] SettingsLayout4b: scrollView=(0.0, 0.0, 579.0, 557.0) clipView=(0.0, 0.0, 562.0, 557.0) container=(0.0, 0.0, 562.0, 1245.0)
+[8:18:53.552 PM] EVENT leftMouseDown window=设置 loc=(83.66796875, 321.41015625) hitView=NSTableView
+[8:18:53.906 PM] EVENT leftMouseDown window=设置 loc=(70.890625, 372.59375) hitView=NSTableCellView
+[8:18:54.086 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 224.0, 1245.0) cards=[SettingsSectionView:176x423 | SettingsSectionView:176x371 | SettingsSectionView:176x423]
+[8:18:54.113 PM] SettingsLayout4b: scrollView=(0.0, 0.0, 579.0, 557.0) clipView=(0.0, 0.0, 562.0, 557.0) container=(0.0, 0.0, 562.0, 1245.0)
+[8:18:54.369 PM] EVENT leftMouseDown window=设置 loc=(66.9609375, 343.12890625) hitView=NSTableCellView
+[8:18:54.500 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 436.0, 275.0) cards=[SettingsSectionView:388x271]
+[8:18:54.508 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 436.0, 275.0) cards=[SettingsSectionView:388x271]
+[8:18:54.524 PM] SettingsLayout4b: scrollView=(0.0, 0.0, 579.0, 557.0) clipView=(0.0, 0.0, 579.0, 557.0) container=(0.0, 0.0, 579.0, 275.0)
+[8:18:55.414 PM] EVENT leftMouseDown window=设置 loc=(76.796875, 382.26953125) hitView=NSTextField
+[8:18:55.590 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 224.0, 1245.0) cards=[SettingsSectionView:176x423 | SettingsSectionView:176x371 | SettingsSectionView:176x423]
+[8:18:55.627 PM] SettingsLayout4: scrollView=(0.0, 0.0, 0.0, 0.0) clipView=(0.0, 0.0, 0.0, 0.0) container=(0.0, 0.0, 224.0, 1245.0) cards=[SettingsSectionView:176x423 | SettingsSectionView:176x371 | SettingsSectionView:176x423]
+[8:18:55.651 PM] SettingsLayout4b: scrollView=(0.0, 0.0, 579.0, 557.0) clipView=(0.0, 0.0, 562.0, 557.0) container=(0.0, 0.0, 562.0, 1245.0)

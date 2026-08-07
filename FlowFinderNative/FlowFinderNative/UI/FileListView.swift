@@ -10,6 +10,11 @@ import Combine
 final class FFQuickLookTableView: NSTableView {
     /// 空格键触发 QuickLook 通知（userInfo 携带 side）
     var onSpaceKey: ((String) -> Void)?
+    /// Enter 键触发内联重命名（tableView 是 firstResponder 时 Enter 被其 keyDown/
+    /// interpretKeyEvents 消耗不冒泡到 FileListView.keyDown，需在此拦截转发）
+    var onEnterKey: (() -> Void)?
+    /// Del 键触发删除（移到废纸篓，访达语义）
+    var onDeleteKey: (() -> Void)?
     /// 当前所属面板标识（left/right）
     var side: String = "left"
 
@@ -40,10 +45,25 @@ final class FFQuickLookTableView: NSTableView {
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
-        if event.keyCode == 49 && modifiers.isEmpty {
-            FFDebug.log("FFQuickLookTableView.keyDown: space intercepted (fallback)")
-            onSpaceKey?(side)
-            return
+        // 修复：不能用 isEmpty——Enter 自带 .numericPad 标志，改为不含 Cmd/Opt/Ctrl/Shift
+        let hasRealModifier = !modifiers.intersection([.command, .option, .control, .shift]).isEmpty
+        if !hasRealModifier {
+            if event.keyCode == 49 {
+                FFDebug.log("FFQuickLookTableView.keyDown: space intercepted (fallback)")
+                onSpaceKey?(side)
+                return
+            }
+            // 修复 Enter 重命名：tableView 为 firstResponder 时 Enter 被本方法拦截转发，
+            // 否则被 interpretKeyEvents 消化，FileListView.keyDown 收不到 → 无法内联重命名。
+            if event.keyCode == 36 || event.keyCode == 76 {
+                onEnterKey?()
+                return
+            }
+            // Del 删除（访达语义：keyCode 51 = backspace/Del）
+            if event.keyCode == 51 {
+                onDeleteKey?()
+                return
+            }
         }
         super.keyDown(with: event)
     }
@@ -432,12 +452,8 @@ public class FileListView: NSView {
     // Bug 9 修复：reload 期间标志位，防止 selectionDidChange -> state 变更 -> reload 形成循环
     private var isReloading: Bool = false
 
-    // 内联重命名状态
-    private var renamingRow: Int = -1
-    private var renamingOriginalName: String = ""
-    private var renamingPath: String = ""
-    private weak var renamingTextField: NSTextField?
-    private var renameCancelled: Bool = false
+    /// 统一操作控制器：处理右键菜单、键盘操作、内联重命名等（与 FileGridView 共用同一套逻辑）
+    private(set) lazy var actionsController: FFPaneActionsController = FFPaneActionsController(host: self)
 
     // 问题 7 根因修复：拖拽过程中持续捕获修饰键（用于 ⌘ 判断，访达语义）。
     // validateDrop/acceptDrop 回调中 NSApp.currentEvent 不可靠（可能为 nil 或非拖拽事件），
@@ -493,7 +509,17 @@ public class FileListView: NSView {
                 }
                 .store(in: &cancellables)
             reloadData()
+            // 重命名等"数量不变"操作：state sink 只比较数量不刷新，需强制 reloadData
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(forceReload),
+                name: .fileListContentChanged, object: nil
+            )
         }
+    }
+
+    @objc private func forceReload() {
+        FFDebug.log("FileListView.forceReload")
+        reloadData()
     }
 
     // 任务 F10-8: 上次刷新时记录的分组/排序状态，用于检测变化决定是否刷新
@@ -626,10 +652,10 @@ public class FileListView: NSView {
         return identifier?.rawValue == "right" ? .right : .left
     }
 
-    /// 标签二级菜单（动态构建：每次显示前由 NSMenuDelegate 重建内容）
-    private lazy var tagsSubmenu: NSMenu = {
+    /// 标签二级菜单（动态构建：每次显示前由控制器 menuNeedsUpdate 重建内容）
+    lazy var tagsSubmenu: NSMenu = {
         let menu = NSMenu()
-        menu.delegate = self
+        menu.delegate = actionsController
         return menu
     }()
 
@@ -693,6 +719,16 @@ public class FileListView: NSView {
             guard let self = self else { return }
             FFDebug.log("FileListView onSpaceKey side=\(self.getSide()) -> posting notification")
             NotificationCenter.default.post(name: .fileListRequestQuickLook, object: nil, userInfo: ["side": self.getSide()])
+        }
+        // Enter 键 → 内联重命名（与 Finder 一致，委托给 actionsController）
+        qlTableView.onEnterKey = { [weak self] in
+            FFDebug.log("FFQuickLookTableView.onEnterKey 触发")
+            self?.actionsController.beginInlineRename()
+        }
+        // Del 键 → 移到废纸篓（与 Finder 一致，委托给 actionsController）
+        qlTableView.onDeleteKey = { [weak self] in
+            FFDebug.log("FFQuickLookTableView.onDeleteKey 触发")
+            self?.actionsController.deleteSelected(nil)
         }
         tableView = qlTableView
         // 问题 2 诊断：确认每个面板都创建了 FFQuickLookTableView 且 onSpaceKey 已就位
@@ -840,316 +876,28 @@ public class FileListView: NSView {
     // MARK: - Context Menu (in-app dialog, no NSOpenPanel/NSSavePanel)
 
     private func setupContextMenu() {
-        let menu = NSMenu()
-        // 启用动态菜单：右键菜单显示前由 menuNeedsUpdate 更新图标/可见性/标签二级子菜单
-        menu.delegate = self
-
-        // 1. 打开（图标由 menuNeedsUpdate 根据选中项是文件夹还是文件动态设置：folder / doc）
-        menu.addItem(withTitle: "打开", action: #selector(openSelected(_:)), keyEquivalent: "")
-        // 2. 分隔线
-        menu.addItem(.separator())
-        // 3. 复制 — doc.on.doc
-        let copyItem = menu.addItem(withTitle: "复制", action: #selector(copySelected(_:)), keyEquivalent: "c")
-        copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制")
-        // 4. 剪切 — scissors
-        let cutItem = menu.addItem(withTitle: "剪切", action: #selector(cutSelected(_:)), keyEquivalent: "x")
-        cutItem.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "剪切")
-        // 5. 粘贴 — doc.on.clipboard
-        let pasteItem = menu.addItem(withTitle: "粘贴", action: #selector(pasteSelected(_:)), keyEquivalent: "v")
-        pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "粘贴")
-        // 6. 分隔线
-        menu.addItem(.separator())
-        // 7. 移动到另一面板（图标根据当前面板方向：左面板→arrow.right，右面板→arrow.left）
-        let moveItem = menu.addItem(withTitle: "移动到另一面板", action: #selector(moveToOtherPane(_:)), keyEquivalent: "")
-        moveItem.image = NSImage(systemSymbolName: effectiveSide == .left ? "arrow.right" : "arrow.left",
-                                 accessibilityDescription: "移动到另一面板")
-        // 8. 复制到另一面板（图标根据当前面板方向：左面板→arrow.right.square，右面板→arrow.left.square）
-        let copyOtherItem = menu.addItem(withTitle: "复制到另一面板", action: #selector(copyToOtherPane(_:)), keyEquivalent: "")
-        copyOtherItem.image = NSImage(systemSymbolName: effectiveSide == .left ? "arrow.right.square" : "arrow.left.square",
-                                      accessibilityDescription: "复制到另一面板")
-        // 任务 F10-10: 新增"在对侧面板打开"菜单项（仅文件夹显示）（修复问题13）
-        // 点击后导航对侧面板到该文件夹（仿访达"在新窗口打开"的跨面板版本）
-        // 可见性由 menuNeedsUpdate 控制：仅当右键点击项为文件夹时显示
-        let openOtherItem = menu.addItem(withTitle: "在对侧面板打开", action: #selector(openInOtherPane(_:)), keyEquivalent: "")
-        openOtherItem.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "在对侧面板打开")
-        // 初始隐藏，由 menuNeedsUpdate 根据右键点击项是否为文件夹动态显示
-        openOtherItem.isHidden = true
-        // 9. 分隔线
-        menu.addItem(.separator())
-        // 10. 重命名 — pencil
-        let renameItem = menu.addItem(withTitle: "重命名", action: #selector(renameSelected(_:)), keyEquivalent: "")
-        renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "重命名")
-        // 11. 移到废纸篓 — trash（红色文字）
-        let trashItem = menu.addItem(withTitle: "移到废纸篓", action: #selector(deleteSelected(_:)), keyEquivalent: "\u{7F}")
-        trashItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "移到废纸篓")
-        let redAttrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.systemRed]
-        trashItem.attributedTitle = NSAttributedString(string: "移到废纸篓", attributes: redAttrs)
-        // 12. 分隔线
-        menu.addItem(.separator())
-        // 13. 新建文件夹 — folder.badge.plus
-        let newFolderItem = menu.addItem(withTitle: "新建文件夹", action: #selector(createDirectory(_:)), keyEquivalent: "n")
-        newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
-        // 14. 分隔线
-        menu.addItem(.separator())
-        // 15. 添加到我的收藏 — star
-        let favItem = menu.addItem(withTitle: "添加到我的收藏", action: #selector(addToFavorites(_:)), keyEquivalent: "")
-        favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
-        // 16. 标签（二级菜单） — tag
-        //     仅当选中单个文件时显示（多选时由 menuNeedsUpdate 隐藏）
-        let tagsItem = menu.addItem(withTitle: "标签", action: nil, keyEquivalent: "")
-        tagsItem.image = NSImage(systemSymbolName: "tag", accessibilityDescription: "标签")
-        tagsItem.submenu = tagsSubmenu
-        // 17. AI 自动打标签 — sparkles
-        let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: #selector(generateAITags(_:)), keyEquivalent: "")
-        aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI 自动打标签")
-        // 18. 查重扫描 — rectangle.dashed
-        let dupItem = menu.addItem(withTitle: "查重扫描", action: #selector(duplicateScan(_:)), keyEquivalent: "")
-        dupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
-        // 19. 分隔线
-        menu.addItem(.separator())
-        // 20. 显示简介 — info.circle
-        let infoItem = menu.addItem(withTitle: "显示简介", action: #selector(showInfoMenu(_:)), keyEquivalent: "i")
-        infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "显示简介")
-
-        for item in menu.items where item.action != nil {
-            item.target = self
-            if item.keyEquivalent == "n" {
-                item.keyEquivalentModifierMask = [.command, .shift]
-            } else if !item.keyEquivalent.isEmpty {
-                item.keyEquivalentModifierMask = .command
-            }
-        }
+        // 统一由 FFPaneMenuBuilder 构建，target 为 actionsController（操作逻辑由控制器统一处理）
+        let menu = FFPaneMenuBuilder.buildMenu(for: actionsController, isLeft: effectiveSide == .left, tagsSubmenu: tagsSubmenu)
+        menu.delegate = actionsController
         tableView.menu = menu
     }
 
-    // MARK: - Context Menu Actions
+    // MARK: - Keyboard / External Entry（委托给 actionsController）
 
-    @objc private func openSelected(_ sender: Any?) {
-        guard let entry = clickedEntry else { return }
-        if entry.isDirectory {
-            onDoubleClick?(entry)
-        } else {
-            NSWorkspace.shared.openFile(entry.path)
-        }
+    /// 统一键盘入口（MainWindowController 全局 keyDown monitor 调用）：
+    /// 委托给 actionsController 统一处理（空格/Enter/Del）。
+    func handlePaneKey(_ keyCode: UInt16) -> Bool {
+        return actionsController.handlePaneKey(keyCode)
     }
 
-    @objc private func copySelected(_ sender: Any?) {
-        // 剪贴板操作将由 MainWindowController 统一管理
-        NotificationCenter.default.post(name: .fileListDidCopy, object: nil, userInfo: ["side": getSide()])
-    }
+    // 所有右键菜单 @objc action 方法（renameSelected / deleteSelected / createDirectory /
+    // addToFavorites / showInfoMenu / duplicateScan / generateAITags / copyToOtherPane /
+    // moveToOtherPane / openInOtherPane / addTagMenu）已迁移至 FFPaneActionsController。
+    // 菜单 target 设为 actionsController，无需在此重复实现。
 
-    @objc private func cutSelected(_ sender: Any?) {
-        NotificationCenter.default.post(name: .fileListDidCut, object: nil, userInfo: ["side": getSide()])
-    }
-
-    @objc private func pasteSelected(_ sender: Any?) {
-        NotificationCenter.default.post(name: .fileListDidPaste, object: nil, userInfo: ["side": getSide()])
-    }
-
-    @objc private func renameSelected(_ sender: Any?) {
-        guard let entry = clickedEntry else { return }
-        let alert = NSAlert()
-        alert.messageText = "重命名 \"\(entry.name)\""
-        alert.informativeText = "输入新名称："
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "重命名")
-        alert.addButton(withTitle: "取消")
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        textField.stringValue = entry.name
-        alert.accessoryView = textField
-        alert.beginSheetModal(for: window!) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            let newName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !newName.isEmpty, newName != entry.name else { return }
-            self?.viewModel?.renameFile(entry.path, to: newName)
-        }
-    }
-
-    @objc private func deleteSelected(_ sender: Any?) {
-        let entries = viewModel?.selectedFiles ?? []
-        guard !entries.isEmpty else { return }
-        let alert = NSAlert()
-        alert.messageText = entries.count == 1 ? "删除\"\(entries[0].name)\"？" : "删除 \(entries.count) 个项目？"
-        alert.informativeText = "此操作可通过 ⌘Z 撤销。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
-        alert.beginSheetModal(for: window!) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            self?.viewModel?.deleteSelected()
-        }
-    }
-
-    @objc private func createDirectory(_ sender: Any?) {
-        guard let currentPath = viewModel?.currentPath else { return }
-        let alert = NSAlert()
-        alert.messageText = "新建文件夹"
-        alert.informativeText = "输入文件夹名称："
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        textField.stringValue = "未命名文件夹"
-        textField.selectText(nil)
-        alert.accessoryView = textField
-        alert.beginSheetModal(for: window!) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            let folderName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !folderName.isEmpty else { return }
-            let newPath = (currentPath as NSString).appendingPathComponent(folderName)
-            do {
-                try CoreBridge.shared.createDirectory(path: newPath)
-                self?.viewModel?.refresh()
-            } catch {
-                self?.showError(error: error)
-            }
-        }
-    }
-
-    @objc private func addToFavorites(_ sender: Any?) {
-        guard let entry = clickedEntry else { return }
-        NotificationCenter.default.post(name: .fileListDidAddFavorite, object: nil, userInfo: ["name": entry.name, "path": entry.path])
-    }
-
-    @objc private func addTagMenu(_ sender: Any?) {
-        guard let entry = clickedEntry else { return }
-        NotificationCenter.default.post(name: .fileListAddTag, object: nil, userInfo: ["path": entry.path])
-    }
-
-    @objc private func showInfoMenu(_ sender: Any?) {
-        // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
-        // 优先取右键点击的文件，回退到当前选中项的第一项（访达行为：显示第一个文件信息）。
-        let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
-        // 任务 F10-10: 入口日志（修复问题15/16 诊断）+ path 空回退提示
-        FFLog.debug("[F10-10] showInfoMenu clicked, clickedEntry=\(clickedEntry?.path ?? "nil"), fallback selectedFirst=\(viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")", log: FFLog.ui)
-        // 若无目标路径（既无右键点击项也无选中项），给出提示而非静默无响应
-        if targetPath == nil || (targetPath?.isEmpty ?? true) {
-            let alert = NSAlert()
-            alert.messageText = "显示简介"
-            alert.informativeText = "请先选择一个文件后再查看简介。"
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "好")
-            if let window = window { alert.beginSheetModal(for: window) { _ in } }
-            return
-        }
-        NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
-    }
-
-    /// C13: 查重扫描 — 打开查重扫描窗口
-    @objc private func duplicateScan(_ sender: Any?) {
-        DuplicateScanWindowController.shared.showWindow()
-    }
-
-    @objc private func generateAITags(_ sender: Any?) {
-        // 任务 F11-11: 复用公共入口（供侧边栏工具面板 AI 工具入口调用，C1）
-        triggerAITagGeneration()
-    }
-
-    /// 任务 F11-11: AI 自动打标签公共入口（C1）。
-    /// 供 MainWindowController 在收到侧边栏工具面板 AI 工具点击通知后调用。
-    /// 优先使用当前选中文件列表，无选中时回退到右键点击的文件；两者皆无则不执行。
+    /// AI 自动打标签入口（供 MainWindowController 侧边栏工具面板调用）
     public func triggerAITagGeneration() {
-        // 优先使用选中的文件列表，无选中时回退到右键点击的文件
-        var entries = viewModel?.selectedFiles ?? []
-        if entries.isEmpty {
-            if let entry = clickedEntry {
-                entries = [entry]
-            } else {
-                return
-            }
-        }
-
-        let paths = entries.map { $0.path }
-        let totalCount = paths.count
-
-        // 后台线程批量生成标签并写入 xattr
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var successCount = 0
-            var totalTagsAdded = 0
-            var xattrFailCount = 0
-            var firstError: String?
-
-            for path in paths {
-                do {
-                    let generatedTags = try CoreBridge.shared.generateAITags(path: path)
-                    for genTag in generatedTags {
-                        let tag = Tag(name: genTag.name, color: genTag.color)
-                        if TagBridge.shared.addTag(tag, path: path) {
-                            totalTagsAdded += 1
-                        } else {
-                            xattrFailCount += 1
-                        }
-                    }
-                    successCount += 1
-                } catch {
-                    if firstError == nil {
-                        firstError = error.localizedDescription
-                    }
-                }
-            }
-
-            DispatchQueue.main.async {
-                guard let self = self, let window = self.window else { return }
-
-                if successCount == 0 {
-                    // 全部失败
-                    let alert = NSAlert()
-                    alert.messageText = "AI 标签生成失败"
-                    alert.informativeText = firstError ?? "未知错误"
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "关闭")
-                    alert.beginSheetModal(for: window)
-                    return
-                }
-
-                // 部分或全部成功
-                let alert = NSAlert()
-                if successCount == totalCount {
-                    alert.messageText = "已为 \(successCount) 个文件生成 AI 标签"
-                    if totalTagsAdded > 0 {
-                        var info = "共添加 \(totalTagsAdded) 个标签。"
-                        if xattrFailCount > 0 {
-                            info += "\n\(xattrFailCount) 个标签写入失败（权限不足或不支持扩展属性）。"
-                        }
-                        alert.informativeText = info
-                    } else if xattrFailCount > 0 {
-                        alert.informativeText = "标签写入失败（权限不足或不支持扩展属性）。"
-                    } else {
-                        alert.informativeText = "未识别到可分类的文件类型。"
-                    }
-                } else {
-                    alert.messageText = "部分文件标签生成失败"
-                    alert.informativeText = "成功 \(successCount) / 总计 \(totalCount)。\n\(firstError ?? "")"
-                }
-                alert.alertStyle = totalTagsAdded > 0 ? .informational : .warning
-                alert.addButton(withTitle: "关闭")
-                alert.beginSheetModal(for: window)
-
-                // 刷新列表以更新标签显示
-                self.reloadData()
-            }
-        }
-    }
-
-    // MARK: - Cross-Pane Actions
-
-    @objc private func copyToOtherPane(_ sender: Any?) {
-        // 任务 F10-10: 入口日志（修复问题15/16 诊断）
-        FFLog.debug("[F10-10] copyToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)", log: FFLog.ui)
-        // 问题12修复：传递右键点击文件路径，供空选兜底使用
-        NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil, userInfo: ["side": getSide(), "clickedPath": clickedEntry?.path])
-    }
-
-    @objc private func moveToOtherPane(_ sender: Any?) {
-        // 任务 F10-10: 入口日志（修复问题15/16 诊断）
-        FFLog.debug("[F10-10] moveToOtherPane clicked, side=\(getSide()), clickedEntry=\(clickedEntry?.path ?? "nil"), selectedCount=\(viewModel?.selectedFiles.count ?? 0)", log: FFLog.ui)
-        // 问题12修复：传递右键点击文件路径，供空选兜底使用
-        NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil, userInfo: ["side": getSide(), "clickedPath": clickedEntry?.path])
-    }
-
-    @objc private func openInOtherPane(_ sender: Any?) {
-        guard let entry = clickedEntry else { return }
-        NotificationCenter.default.post(name: .fileListDidOpenInOther, object: nil, userInfo: ["side": getSide(), "path": entry.path])
+        actionsController.triggerAITagGeneration()
     }
 
     // MARK: - Drag Source
@@ -1174,7 +922,7 @@ public class FileListView: NSView {
 
     // MARK: - Helpers
 
-    private var clickedEntry: FileEntry? {
+    var clickedEntry: FileEntry? {
         // 任务 F10-8: 通过 displayRows 映射 clickedRow -> viewModel.files 下标
         guard let viewModel = viewModel,
               let row = tableView.clickedRow as Int?,
@@ -2042,6 +1790,8 @@ extension FileListView: NSTableViewDelegate {
                     }
 
                     if success < total {
+                        // 诊断：记录失败详情（替换失败时定位 Rust 侧错误）
+                        FFDebug.log("拖拽\(isMove ? "移动" : "复制")部分失败: \(total - success)/\(total) 失败, 详情: \(partialDetail)")
                         self?.showError(error: NSError(
                             domain: "FlowFinder", code: -1,
                             userInfo: [NSLocalizedDescriptionKey: "\(total - success) 个项目操作失败：\(partialDetail)"])
@@ -2117,10 +1867,9 @@ extension FileListView {
             return
         }
 
-        // Enter / Return：触发内联重命名（拦截事件，不再沿响应链传递到 MainWindowController 的打开逻辑）
-        // macOS Finder 风格：Enter=重命名，Cmd+O/Cmd+Down=打开
+        // Enter / Return：触发内联重命名（委托给 actionsController）
         if (event.keyCode == 36 || event.keyCode == 76) && modifiers.isEmpty {
-            beginInlineRename()
+            actionsController.beginInlineRename()
             return
         }
 
@@ -2131,7 +1880,7 @@ extension FileListView {
             && !modifiers.contains(.option)
             && !modifiers.contains(.control)
         if isPureCommand && (event.keyCode == 125 || event.keyCode == 31) {
-            openSelectedEntry()
+            actionsController.openSelectedEntry()
             return
         }
 
@@ -2145,131 +1894,8 @@ extension FileListView {
         super.keyDown(with: event)
     }
 
-    /// 打开当前选中的条目（Cmd+O / Cmd+Down 触发，与双击行为一致）
-    private func openSelectedEntry() {
-        guard let entry = viewModel?.selectedFiles.first else { return }
-        onDoubleClick?(entry)
-    }
-
-    // MARK: - Inline Rename（内联重命名）
-
-    /// 开始内联重命名：选中单个文件时按 Enter 触发
-    private func beginInlineRename() {
-        // 正在重命名时不重复触发
-        guard renamingRow < 0 else { return }
-        guard let viewModel = viewModel else { return }
-
-        // 仅单选时触发重命名
-        let selectedRows = tableView.selectedRowIndexes
-        guard selectedRows.count == 1, let row = selectedRows.first,
-              row >= 0, row < displayRows.count else { return }
-        // 任务 F10-8: 通过 displayRows 映射行号 -> viewModel.files 下标
-        let displayRow = displayRows[row]
-        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return }
-
-        let entry = viewModel.files[displayRow.fileIndex]
-
-        // 获取名称列的 cell view
-        guard let cellView = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView,
-              let textField = cellView.textField else { return }
-
-        // 记录重命名上下文
-        renamingRow = row
-        renamingOriginalName = entry.name
-        renamingPath = entry.path
-        renamingTextField = textField
-        renameCancelled = false
-
-        // 进入编辑模式：将名称 textField 设为可编辑并获取焦点
-        textField.isEditable = true
-        textField.isSelectable = true
-        textField.delegate = self
-
-        guard window?.makeFirstResponder(textField) == true else {
-            // 无法进入编辑模式，清理状态
-            textField.isEditable = false
-            textField.delegate = nil
-            renamingRow = -1
-            renamingOriginalName = ""
-            renamingPath = ""
-            renamingTextField = nil
-            renameCancelled = false
-            return
-        }
-
-        // 选中文件名（不含扩展名），与访达行为一致
-        if let editor = textField.currentEditor() {
-            let name = entry.name as NSString
-            let extRange = name.range(of: ".", options: .backwards)
-            if entry.isDirectory || extRange.location == NSNotFound || extRange.location == 0 {
-                editor.selectAll(nil)
-            } else {
-                editor.selectedRange = NSRange(location: 0, length: extRange.location)
-            }
-        }
-    }
-
-    /// 结束内联重命名，根据取消标志决定是否提交
-    private func endInlineRename() {
-        guard renamingRow >= 0 else { return }
-        let textField = renamingTextField
-        let originalName = renamingOriginalName
-        let path = renamingPath
-        let cancelled = renameCancelled
-
-        // 清理状态
-        renamingRow = -1
-        renamingOriginalName = ""
-        renamingPath = ""
-        renamingTextField = nil
-        renameCancelled = false
-
-        // 恢复 textField 为非编辑状态
-        textField?.delegate = nil
-        if let tf = textField {
-            tf.isEditable = false
-            // 取消时恢复原名称显示
-            if cancelled {
-                tf.stringValue = originalName
-            }
-        }
-
-        // 取消则不重命名
-        guard !cancelled else { return }
-
-        // 提交重命名（复用 viewModel.renameFile，与右键菜单重命名一致）
-        guard let tf = textField else { return }
-        let newName = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !newName.isEmpty, newName != originalName else { return }
-        viewModel?.renameFile(path, to: newName)
-    }
-}
-
-// MARK: - NSTextFieldDelegate（内联重命名编辑事件）
-
-extension FileListView: NSTextFieldDelegate {
-    /// 处理编辑中的特殊按键（Enter 确认 / Esc 取消）
-    public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        switch commandSelector {
-        case #selector(NSResponder.cancelOperation(_:)):
-            // Esc：取消重命名
-            renameCancelled = true
-            window?.makeFirstResponder(tableView)
-            return true
-        case #selector(NSResponder.insertNewline(_:)):
-            // Enter/Return：确认重命名（交还焦点触发 controlTextDidEndEditing）
-            window?.makeFirstResponder(tableView)
-            return true
-        default:
-            return false
-        }
-    }
-
-    /// 编辑结束（Enter 确认 / 失焦自动确认 / Esc 取消）
-    public func controlTextDidEndEditing(_ obj: Notification) {
-        guard renamingRow >= 0 else { return }
-        endInlineRename()
-    }
+    // openSelectedEntry / beginInlineRename / endInlineRename 已迁移至 FFPaneActionsController。
+    // keyDown 中的调用改为 actionsController.beginInlineRename() / actionsController.openSelectedEntry()。
 }
 
 // MARK: - Drag and Drop
@@ -2335,167 +1961,12 @@ extension FileListView {
     }
 }
 
-// MARK: - C13: NSMenuDelegate（动态构建右键菜单 + 标签二级子菜单）
-
-extension FileListView: NSMenuDelegate {
-
-    /// 菜单即将显示时更新：
-    /// - 主菜单："打开"项图标根据选中项是文件夹还是文件动态切换（folder / doc）
-    ///           "标签"项仅当选中单个文件时显示（多选时隐藏）
-    /// - 标签子菜单：每次显示前重建（列出所有标签 + ✓标记当前文件已有 + "新建标签..."）
-    public func menuNeedsUpdate(_ menu: NSMenu) {
-        if menu === tableView.menu {
-            updateMainMenu(menu)
-        } else if menu === tagsSubmenu {
-            rebuildTagsSubmenu(menu)
-        }
-    }
-
-    /// 更新主右键菜单的动态项
-    private func updateMainMenu(_ menu: NSMenu) {
-        // "打开"项图标：文件夹用 folder，文件用 doc
-        if let openItem = menu.items.first(where: { $0.title == "打开" }) {
-            let isOpenFolder = clickedEntry?.isDirectory == true
-            openItem.image = NSImage(systemSymbolName: isOpenFolder ? "folder" : "doc",
-                                     accessibilityDescription: "打开")
-        }
-
-        // "标签"项：仅当选中单个文件时显示
-        if let tagsItem = menu.items.first(where: { $0.title == "标签" }) {
-            let selectedCount = tableView.selectedRowIndexes.count
-            // 单选或无选中但有右键点击行时显示（右键点击单个文件可操作）
-            let singleSelected = selectedCount == 1
-            let hasClickedSingle = selectedCount == 0 && tableView.clickedRow >= 0
-            tagsItem.isHidden = !(singleSelected || hasClickedSingle)
-        }
-
-        // "移动/复制到另一面板"箭头方向：panelSide 可能在 init 后才被设置，每次显示菜单时同步
-        let isLeftPane = effectiveSide == .left
-        if let moveItem = menu.items.first(where: { $0.title == "移动到另一面板" }) {
-            moveItem.image = NSImage(systemSymbolName: isLeftPane ? "arrow.right" : "arrow.left",
-                                     accessibilityDescription: "移动到另一面板")
-        }
-        if let copyOtherItem = menu.items.first(where: { $0.title == "复制到另一面板" }) {
-            copyOtherItem.image = NSImage(systemSymbolName: isLeftPane ? "arrow.right.square" : "arrow.left.square",
-                                          accessibilityDescription: "复制到另一面板")
-        }
-
-        // 任务 F10-10: "在对侧面板打开"仅当右键点击项为文件夹时显示（修复问题13）
-        // 文件无此操作意义（文件无法被"打开"为目录导航目标）
-        if let openOtherItem = menu.items.first(where: { $0.title == "在对侧面板打开" }) {
-            openOtherItem.isHidden = !(clickedEntry?.isDirectory ?? false)
-        }
-    }
-
-    /// 重建标签二级子菜单
-    /// - 顶部：列出现有所有标签（彩色圆点 + 名称，当前文件已有的显示 ✓）
-    /// - 分隔线
-    /// - "新建标签..." 项
-    private func rebuildTagsSubmenu(_ menu: NSMenu) {
-        menu.removeAllItems()
-
-        // 目标文件路径：优先右键点击的文件，其次单选的文件
-        let targetEntry = clickedEntry ?? viewModel?.selectedFiles.first
-        guard let entry = targetEntry else {
-            // 无目标文件：仅显示"新建标签..."
-            let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
-            createItem.target = self
-            createItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
-            menu.addItem(createItem)
-            return
-        }
-
-        // 获取当前文件已有的标签
-        let currentTags = TagBridge.shared.getTags(path: entry.path)
-        let currentTagIds = Set(currentTags.map { $0.id })
-        let currentTagNames = Set(currentTags.map { $0.name })
-
-        // 列出所有现有标签
-        let allTags = loadAllSidebarTags()
-        for tag in allTags {
-            let item = NSMenuItem(title: tag.name, action: #selector(toggleTagOnFile(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = ["tagId": tag.id, "tagName": tag.name, "tagColor": tag.color, "path": entry.path]
-            // 彩色圆点图标
-            item.image = makeDotImage(colorHex: tag.color)
-            // 当前文件已有此标签则显示 ✓（使用 onStateImage）
-            if currentTagIds.contains(tag.id) || currentTagNames.contains(tag.name) {
-                item.state = .on
-            }
-            menu.addItem(item)
-        }
-
-        if !allTags.isEmpty {
-            menu.addItem(.separator())
-        }
-
-        // "新建标签..."
-        let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
-        createItem.target = self
-        createItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
-        menu.addItem(createItem)
-    }
-
-    /// 创建带颜色的圆点 NSImage（用于标签子菜单项图标）
-    private func makeDotImage(colorHex: String) -> NSImage {
-        let size = NSSize(width: 12, height: 12)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        let color = NSColor(hex: colorHex) ?? .systemBlue
-        color.setFill()
-        NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 8, height: 8)).fill()
-        image.unlockFocus()
-        return image
-    }
-}
-
-// MARK: - C13: Tag Helpers（标签数据读写 + 对话框）
+// MARK: - Tag Pill Context Menu（列表视图特有：标签药丸右键菜单）
 
 extension FileListView {
 
-    /// 读取所有现有标签（从 UserDefaults "SidebarTags" 读取，与 SidebarView.TagsSidebarDataSource 共享存储）
-    /// 注：TagBridge 无 getAllTags API，此处直接读 UserDefaults 以满足"不修改其他文件"约束
-    private func loadAllSidebarTags() -> [Tag] {
-        guard let data = UserDefaults.standard.data(forKey: "SidebarTags"),
-              let tags = try? JSONDecoder().decode([Tag].self, from: data) else {
-            return []
-        }
-        return tags
-    }
-
-    /// 写回所有标签到 UserDefaults（新建标签后同步给侧边栏）
-    private func saveAllSidebarTags(_ tags: [Tag]) {
-        if let data = try? JSONEncoder().encode(tags) {
-            UserDefaults.standard.set(data, forKey: "SidebarTags")
-        }
-    }
-
-    /// 切换文件标签：已有则移除，没有则添加
-    @objc private func toggleTagOnFile(_ sender: NSMenuItem) {
-        guard let info = sender.representedObject as? [String: String],
-              let tagId = info["tagId"],
-              let tagName = info["tagName"],
-              let path = info["path"] else { return }
-        let tagColor = info["tagColor"] ?? "#007AFF"
-
-        let currentTags = TagBridge.shared.getTags(path: path)
-        if currentTags.contains(where: { $0.id == tagId || $0.name == tagName }) {
-            // 已有 → 移除
-            _ = TagBridge.shared.removeTag(tagId, path: path)
-        } else {
-            // 没有 → 添加
-            let tag = Tag(id: tagId, name: tagName, color: tagColor)
-            _ = TagBridge.shared.addTag(tag, path: path)
-        }
-
-        // 刷新列表以更新名称列内联药丸
-        reloadData()
-        // 通知侧边栏刷新标签列表，携带文件当前标签以同步侧边栏
-        let updatedTags = TagBridge.shared.getTags(path: path)
-        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": updatedTags])
-    }
-
-    /// 右键药丸移除标签（按名称移除，兼容原生标签随机 id）
+    /// 右键药丸移除标签（按名称移除，兼容原生标签随机 id）。
+    /// 此方法为列表视图特有——标签药丸的右键菜单仅列表视图有（网格视图无内联药丸）。
     @objc private func removeTagByNameFromPill(_ sender: NSMenuItem) {
         guard let info = sender.representedObject as? [String: String],
               let tagName = info["tagName"],
@@ -2506,84 +1977,38 @@ extension FileListView {
         let updatedTags = TagBridge.shared.getTags(path: path)
         NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": updatedTags])
     }
+}
 
-    /// 新建标签对话框（参考 SidebarView.showCreateTagDialog 实现）
-    /// 创建后同时添加到当前右键目标文件
-    @objc private func showCreateTagDialog(_ sender: Any?) {
-        guard let window = self.window else { return }
-        let alert = NSAlert()
-        alert.messageText = "新建标签"
-        alert.informativeText = "输入标签名称并选择颜色："
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
+// MARK: - FFPaneViewHost 协议实现
 
-        let containerWidth: CGFloat = 300
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: containerWidth, height: 64))
+extension FileListView: FFPaneViewHost {
 
-        // 名称输入框
-        let nameField = NSTextField(frame: NSRect(x: 0, y: 36, width: containerWidth, height: 24))
-        nameField.placeholderString = "标签名称"
-        container.addSubview(nameField)
+    public var hostWindow: NSWindow? { window }
+    public var selectedEntries: [FileEntry] { viewModel?.selectedFiles ?? [] }
+    public var doubleClickHandler: ((FileEntry) -> Void)? { onDoubleClick }
 
-        // 预设颜色圆点（用纯 NSView + 点击手势，不用 NSButton——
-        // macOS 26 上 circular bezel 的无标题小按钮会渲染"BU"占位文字）
-        let presetColors: [String] = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#5856D6"]
-        let dotSize: CGFloat = 22
-        let spacing: CGFloat = 8
-        let totalDotsWidth = CGFloat(presetColors.count) * dotSize + CGFloat(presetColors.count - 1) * spacing
-        let startX = (containerWidth - totalDotsWidth) / 2
+    func renameTextFieldForSelection() -> NSTextField? {
+        guard let viewModel = viewModel else { return nil }
+        let selectedRows = tableView.selectedRowIndexes
+        guard selectedRows.count == 1, let row = selectedRows.first,
+              row >= 0, row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return nil }
+        guard let cellView = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView,
+              let textField = cellView.textField else { return nil }
+        return textField
+    }
 
-        let colorHolder = FFCreateTagColorHolder(colors: presetColors)
-
-        for (i, hex) in presetColors.enumerated() {
-            let x = startX + CGFloat(i) * (dotSize + spacing)
-            let dot = NSView(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
-            dot.wantsLayer = true
-            dot.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
-            dot.layer?.cornerRadius = dotSize / 2
-            dot.layer?.borderColor = NSColor.labelColor.cgColor
-            dot.layer?.borderWidth = (i == 0) ? 2 : 0
-            // 点击手势（纯视图，避免 macOS 26 小按钮渲染"BU"占位）
-            let click = NSClickGestureRecognizer(target: colorHolder, action: #selector(FFCreateTagColorHolder.selectDot(_:)))
-            dot.addGestureRecognizer(click)
-            colorHolder.dotDots.append(dot)
-            container.addSubview(dot)
-        }
-
-        alert.accessoryView = container
-        alert.window.initialFirstResponder = nameField
-
-        // 目标文件路径（创建后同时添加到该文件）
-        let targetPath = clickedEntry?.path ?? viewModel?.selectedFiles.first?.path
-
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return }
-            let tag = Tag(name: name, color: colorHolder.selectedHex)
-
-            // 1) 写入全局标签库（UserDefaults，与侧边栏共享）
-            var allTags = self?.loadAllSidebarTags() ?? []
-            if !allTags.contains(where: { $0.name == tag.name }) {
-                allTags.append(tag)
-                self?.saveAllSidebarTags(allTags)
-            }
-
-            // 2) 同时添加到当前文件
-            if let path = targetPath {
-                _ = TagBridge.shared.addTag(tag, path: path)
-                self?.reloadData()
-            }
-
-            // 3) 通知侧边栏刷新标签显示，携带新标签以同步侧边栏
-            var notifyTags = allTags
-            if !notifyTags.contains(where: { $0.name == tag.name }) {
-                notifyTags.append(tag)
-            }
-            NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": notifyTags])
+    func selectClickedItemForRename() {
+        let row = tableView.clickedRow
+        if row >= 0 {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
     }
+
+    var focusRestoreTarget: NSResponder? { tableView }
+
+    func reloadPaneData() { reloadData() }
 }
 
 // MARK: - FFCreateTagColorHolder（新建标签对话框颜色选择辅助类）

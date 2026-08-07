@@ -60,6 +60,7 @@
 		FF0000000000000000200057 /* ProgressDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200058; };
 		FF0000000000000000200063 /* FFLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200064; };
 		FF0000000000000000200065 /* FFCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200066; };
+		FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200076; };
 		FF0000000000000000200067 /* SquircleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200068; };
 		FF0000000000000000200069 /* ToolOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006A; };
 		FF000000000000000020006B /* FFFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006C; };
@@ -121,6 +122,7 @@
 		FF0000000000000000200058 /* ProgressDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressDialog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200064 /* FFLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200066 /* FFCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCommon.swift; sourceTree = "<group>"; };
+		FF0000000000000000200076 /* FFPaneActionsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPaneActionsController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200068 /* SquircleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquircleView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006A /* ToolOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOverlayView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006C /* FFFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFFormat.swift; sourceTree = "<group>"; };
@@ -202,6 +204,7 @@
 				FF0000000000000000200056 /* ConnectServerDialog.swift */,
 				FF0000000000000000200058 /* ProgressDialog.swift */,
 				FF0000000000000000200066 /* FFCommon.swift */,
+				FF0000000000000000200076 /* FFPaneActionsController.swift */,
 				FF0000000000000000200068 /* SquircleView.swift */,
 				FF000000000000000020006A /* ToolOverlayView.swift */,
 				FF000000000000000020006C /* FFFormat.swift */,
@@ -404,6 +407,7 @@
 				FF0000000000000000200057 /* ProgressDialog.swift in Sources */,
 				FF0000000000000000200063 /* FFLog.swift in Sources */,
 				FF0000000000000000200065 /* FFCommon.swift in Sources */,
+				FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */,
 				FF0000000000000000200067 /* SquircleView.swift in Sources */,
 				FF0000000000000000200069 /* ToolOverlayView.swift in Sources */,
 				FF000000000000000020006B /* FFFormat.swift in Sources */,

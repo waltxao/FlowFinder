@@ -31,6 +31,8 @@ extension Notification.Name {
 
     // 标签相关
     static let fileListAddTag = Notification.Name("FileListAddTag")
+    // 文件内容变更（重命名等数量不变的操作）→ 列表/网格强制刷新
+    static let fileListContentChanged = Notification.Name("FileListContentChanged")
 
     // SMB 网络卷断连重连
     static let smbVolumeDisconnected = Notification.Name("SMBVolumeDisconnected")
@@ -85,4 +87,98 @@ enum FFAccent {
 extension Notification.Name {
     /// 强调色变更通知（由 FFAccent.set 广播，监听者收到后刷新 UI）
     static let accentColorChanged = Notification.Name("FFAccentColorChanged")
+}
+
+// MARK: - FFPaneMenuBuilder（列表/网格视图共享右键菜单）
+
+/// 统一构建文件面板右键菜单：FileListView 与 FileGridView 共用同一套菜单结构与 action
+/// （架构统一：两种视图只是排列方式不同，右键操作完全一致）。
+/// 所有 item 的 action 用 Selector 字符串引用——两个视图都实现了同名 @objc 方法，
+/// target 传入实际视图，运行时按 selector 分派到对应视图的实现。
+enum FFPaneMenuBuilder {
+
+    /// 构建右键菜单
+    /// - Parameters:
+    ///   - target: 接收 action 的视图（FileListView / FileGridView，需实现全部 selector）
+    ///   - isLeft: 当前面板是否为左侧（决定"移动到/复制到另一面板"箭头方向）
+    ///   - tagsSubmenu: 标签二级菜单（nil 则不添加标签项）
+    static func buildMenu(for target: AnyObject, isLeft: Bool, tagsSubmenu: NSMenu?) -> NSMenu {
+        let menu = NSMenu()
+
+        // 1. 打开
+        menu.addItem(withTitle: "打开", action: Selector("openSelected:"), keyEquivalent: "")
+        // 2. 分隔线
+        menu.addItem(.separator())
+        // 3. 复制
+        let copyItem = menu.addItem(withTitle: "复制", action: Selector("copySelected:"), keyEquivalent: "c")
+        copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制")
+        // 4. 剪切
+        let cutItem = menu.addItem(withTitle: "剪切", action: Selector("cutSelected:"), keyEquivalent: "x")
+        cutItem.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "剪切")
+        // 5. 粘贴
+        let pasteItem = menu.addItem(withTitle: "粘贴", action: Selector("pasteSelected:"), keyEquivalent: "v")
+        pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "粘贴")
+        // 6. 分隔线
+        menu.addItem(.separator())
+        // 7. 移动到另一面板（箭头方向随面板）
+        let moveItem = menu.addItem(withTitle: "移动到另一面板", action: Selector("moveToOtherPane:"), keyEquivalent: "")
+        moveItem.image = NSImage(systemSymbolName: isLeft ? "arrow.right" : "arrow.left",
+                                 accessibilityDescription: "移动到另一面板")
+        // 8. 复制到另一面板
+        let copyOtherItem = menu.addItem(withTitle: "复制到另一面板", action: Selector("copyToOtherPane:"), keyEquivalent: "")
+        copyOtherItem.image = NSImage(systemSymbolName: isLeft ? "arrow.right.square" : "arrow.left.square",
+                                      accessibilityDescription: "复制到另一面板")
+        // 9. 在对侧面板打开（仅文件夹，由 menuNeedsUpdate 动态显示）
+        let openOtherItem = menu.addItem(withTitle: "在对侧面板打开", action: Selector("openInOtherPane:"), keyEquivalent: "")
+        openOtherItem.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "在对侧面板打开")
+        openOtherItem.isHidden = true
+        // 10. 分隔线
+        menu.addItem(.separator())
+        // 11. 重命名
+        let renameItem = menu.addItem(withTitle: "重命名", action: Selector("renameSelected:"), keyEquivalent: "")
+        renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "重命名")
+        // 12. 移到废纸篓（红色文字）
+        let deleteItem = menu.addItem(withTitle: "移到废纸篓", action: Selector("deleteSelected:"), keyEquivalent: "\u{7F}")
+        deleteItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "移到废纸篓")
+        let redAttrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.systemRed]
+        deleteItem.attributedTitle = NSAttributedString(string: "移到废纸篓", attributes: redAttrs)
+        // 13. 分隔线
+        menu.addItem(.separator())
+        // 14. 新建文件夹
+        let newFolderItem = menu.addItem(withTitle: "新建文件夹", action: Selector("createDirectory:"), keyEquivalent: "n")
+        newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
+        // 15. 分隔线
+        menu.addItem(.separator())
+        // 16. 添加到我的收藏
+        let favItem = menu.addItem(withTitle: "添加到我的收藏", action: Selector("addToFavorites:"), keyEquivalent: "")
+        favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
+        // 17. 标签（二级菜单）
+        if let tagsSubmenu = tagsSubmenu {
+            let tagsItem = menu.addItem(withTitle: "标签", action: nil, keyEquivalent: "")
+            tagsItem.image = NSImage(systemSymbolName: "tag", accessibilityDescription: "标签")
+            tagsItem.submenu = tagsSubmenu
+        }
+        // 18. AI 自动打标签
+        let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: Selector("generateAITags:"), keyEquivalent: "")
+        aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI 自动打标签")
+        // 19. 查重扫描
+        let dupItem = menu.addItem(withTitle: "查重扫描", action: Selector("duplicateScan:"), keyEquivalent: "")
+        dupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
+        // 20. 分隔线
+        menu.addItem(.separator())
+        // 21. 显示简介
+        let infoItem = menu.addItem(withTitle: "显示简介", action: Selector("showInfoMenu:"), keyEquivalent: "i")
+        infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "显示简介")
+
+        // 设置 target 与快捷键修饰键（与访达一致：⌘N 新建文件夹用 ⇧⌘N）
+        for item in menu.items where item.action != nil {
+            item.target = target
+            if item.keyEquivalent == "n" {
+                item.keyEquivalentModifierMask = [.command, .shift]
+            } else if !item.keyEquivalent.isEmpty {
+                item.keyEquivalentModifierMask = .command
+            }
+        }
+        return menu
+    }
 }

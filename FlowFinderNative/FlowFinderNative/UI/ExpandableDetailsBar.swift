@@ -888,6 +888,8 @@ class ExpandableDetailsBar: NSView {
             row.removeFromSuperview()
         }
         appendedTypeInfoRows.removeAll()
+        // 同步清空总大小行引用（避免异步回调 appendFolderSizeRow 重复移除已清除的视图崩溃）
+        folderSizeRow = nil
 
         let infoRows = gatherFileInfo(entry: entry)
         guard !infoRows.isEmpty else { return }
@@ -1146,10 +1148,25 @@ class ExpandableDetailsBar: NSView {
     }
 
     /// 在文件类型专属信息区追加"总大小"行（合并到主信息列，问题 7 结构）
+    /// 去重：异步计算可能重复回调（同路径多次选中/竞态），追加前先移除已有的"总大小"行，
+    /// 避免多个"总大小"堆积把"修改日期"挤出可视区（问题：文件夹详情多个总大小）。
+    /// 崩溃防护：updateFileTypeSpecificInfo 清除时可能已把旧行移出 stack——此时
+    /// removeArrangedSubview 对不在 stack 的视图触发 NSStackView 断言崩溃（SIGABRT），
+    /// 故移除前先检查 old 是否仍在 arrangedSubviews 中。
+    private var folderSizeRow: NSView?
     private func appendFolderSizeRow(_ sizeString: String) {
+        if let old = folderSizeRow {
+            if mainColumn1?.arrangedSubviews.contains(old) == true {
+                mainColumn1?.removeArrangedSubview(old)
+                old.removeFromSuperview()
+            }
+            appendedTypeInfoRows.removeAll { $0 === old }
+            folderSizeRow = nil
+        }
         let row = makeInfoRow(label: makeLabel("总大小"), value: makeValueField(sizeString))
         mainColumn1?.addArrangedSubview(row)
         appendedTypeInfoRows.append(row)
+        folderSizeRow = row
     }
 
     // MARK: - 工具方法

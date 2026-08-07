@@ -128,15 +128,24 @@ public final class ThumbnailManager {
                     return
                 }
 
-                // 任务 F10-9: 修正 NSImage.size 用请求的 point size（v0.6.5）
-                // 原代码用 cgImage 像素尺寸（Retina 下翻倍），导致 NSImage.size 翻倍、
-                // 绘制时被按 point size 缩放，最终缩略图模糊（问题7）。
-                // 改为传入的 size（point size），与请求尺寸一致。
-                let image = NSImage(
-                    cgImage: thumbnail.cgImage,
-                    size: size  // 用请求的 point size，非 cgImage 像素尺寸
-                )
-                FFLog.debug("[Thumb] 生成成功: \(path) \(thumbnail.cgImage.width)x\(thumbnail.cgImage.height)", log: FFLog.thumbnail)
+                // 修复缩略图 1:1 方形根因：原代码 `NSImage(cgImage:size: size)` 用请求的
+                // 方形 point size（96×96）作为 NSImage.size 元数据——虽然 cgImage 像素保持
+                // 原始比例（如 96×54），但 NSImage 按元数据缩放绘制时被拉伸成方形。
+                // 改为用 cgImage 实际像素尺寸换算 point size（除以 scale），NSImage.size
+                // 保持原始宽高比，显示端（FileGridView.setThumbnail）即可按比例渲染。
+                let pixelW = CGFloat(thumbnail.cgImage.width)
+                let pixelH = CGFloat(thumbnail.cgImage.height)
+                let image: NSImage
+                if pixelW > 0 && pixelH > 0 {
+                    image = NSImage(
+                        cgImage: thumbnail.cgImage,
+                        size: NSSize(width: pixelW / scale, height: pixelH / scale)
+                    )
+                } else {
+                    // 极端情况：无像素信息时回退请求尺寸
+                    image = NSImage(cgImage: thumbnail.cgImage, size: size)
+                }
+                FFLog.debug("[Thumb] 生成成功: \(path) \(Int(pixelW))x\(Int(pixelH)) point=\(image.size)", log: FFLog.thumbnail)
 
                 // 写入缓存
                 self?.memoryCache.setObject(image, forKey: cacheKey)

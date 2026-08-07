@@ -10,6 +10,8 @@ class SettingsRowView: NSView {
     private let descLabel = NSTextField(labelWithString: "")
     /// 右侧控件容器
     private let controlContainer = NSView()
+    /// 全宽内容模式标志（setFullWidthContent 设置；true 时 controlContainer 撑满整行）
+    private var isFullWidthContent = false
     /// 悬停背景层（微弱高亮）
     private let hoverBackground = NSView()
     /// 悬停追踪区域
@@ -145,6 +147,29 @@ class SettingsRowView: NSView {
         ])
     }
 
+    /// 全宽内容模式：内容视图铺满整行（不挤在右侧控件区）。
+    /// 用于自带完整布局的内容块（标签列表/关于信息/外观选择器）——
+    /// 旧实现 setControl 把内容塞进右侧 controlContainer（窄、靠右），
+    /// 导致"内容靠右挤/只占右半边"。
+    func setFullWidthContent(_ view: NSView) {
+        isFullWidthContent = true
+        titleLabel.isHidden = true
+        descLabel.isHidden = true
+        controlContainer.subviews.forEach { $0.removeFromSuperview() }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        controlContainer.addSubview(view)
+        // 全宽模式：控件区从行左 16 延伸到行右 -16（内容铺满整行，不挤右侧）
+        NSLayoutConstraint.activate([
+            controlContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            controlContainer.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            controlContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            view.leadingAnchor.constraint(equalTo: controlContainer.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: controlContainer.trailingAnchor),
+            view.topAnchor.constraint(equalTo: controlContainer.topAnchor),
+            view.bottomAnchor.constraint(equalTo: controlContainer.bottomAnchor),
+        ])
+    }
+
     /// 禁用整行（占位项标注"即将支持"）
     func setDisabled(tooltip: String = "即将支持") {
         titleLabel.textColor = NSColor.tertiaryLabelColor
@@ -239,6 +264,10 @@ class SettingsSectionView: NSView {
         rowsStack.orientation = .vertical
         rowsStack.spacing = 4
         rowsStack.detachesHiddenViews = false
+        // 修复设置页内部布局：rowsStack 默认 alignment=.leading，子视图（设置行/全宽内容
+        // 如 AppearanceSettingsView 主题选择器）只按 intrinsic 宽度排布——主题按钮等
+        // 内容会塌缩/溢出卡片。设为 .width 让所有行/内容撑满卡片内容区，居中布局正常。
+        rowsStack.alignment = .width
         rowsStack.translatesAutoresizingMaskIntoConstraints = false
 
         contentContainer.addSubview(iconView)
@@ -278,13 +307,11 @@ class SettingsSectionView: NSView {
     }
 
     /// 添加一行（自动填充宽度到 stack）
+    /// 注意：不再手动加 leading/trailing 约束——rowsStack.alignment = .width 已由 NSStackView
+    /// 内部统一撑满子视图，手动约束会与内部约束冲突导致布局错乱（内容靠右挤/卡片占半边）。
     func addRow(_ row: SettingsRowView) {
         row.translatesAutoresizingMaskIntoConstraints = false
         rowsStack.addArrangedSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor),
-        ])
     }
 
     /// 添加一个任意内容视图（全宽嵌入，与 addRow 行为一致）
@@ -293,10 +320,6 @@ class SettingsSectionView: NSView {
     func addContentView(_ view: NSView) {
         view.translatesAutoresizingMaskIntoConstraints = false
         rowsStack.addArrangedSubview(view)
-        NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor),
-        ])
     }
 }
 

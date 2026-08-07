@@ -96,6 +96,13 @@ mod native {
 /// the destination metadata — for a CoW clone this is the logical size, not
 /// the zero physical bytes that were actually written).
 pub fn copy_file_cow(src: &Path, dst: &Path) -> io::Result<u64> {
+    #[cfg(target_os = "macos")]
+    const EXDEV: i32 = 18;
+    #[cfg(not(target_os = "macos"))]
+    const EXDEV: i32 = 18;
+    const ENOTSUP: i32 = 45;
+    const EEXIST: i32 = 17;
+
     // Handle directories recursively — clonefile can clone an empty directory
     // but not a populated one, and std::fs::copy does not work on directories.
     let src_meta = std::fs::metadata(src)?;
@@ -134,6 +141,38 @@ pub fn copy_file_cow(src: &Path, dst: &Path) -> io::Result<u64> {
                     // Everything else is a real error and is surfaced.
                     if errno == EXDEV || errno == ENOTSUP {
                         return std::fs::copy(src, dst);
+                    }
+                    // EEXIST → 目标已存在（冲突弹窗选择"替换"时）。
+                    // clonefile 不覆盖已存在目标，先删除目标再重试，实现替换语义
+                    //（与 std::fs::copy 的覆盖行为一致）。目录同样处理（整目录替换）。
+                    // 保护：src == dst（拖到自身）时禁止删除源，直接报错避免数据丢失。
+                    if errno == EEXIST {
+                        if src == dst {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("源与目标相同，无法替换: {}", dst.display()),
+                            ));
+                        }
+                        if let Ok(meta) = std::fs::symlink_metadata(dst) {
+                            let rm = if meta.is_dir() {
+                                std::fs::remove_dir_all(dst)
+                            } else {
+                                std::fs::remove_file(dst)
+                            };
+                            if let Err(rm_err) = rm {
+                                // 删除目标失败（EPERM 等）：返回带上下文的错误便于定位
+                                return Err(io::Error::new(
+                                    rm_err.kind(),
+                                    format!(
+                                        "替换失败：删除目标 {} 出错: {} (errno={:?})",
+                                        dst.display(),
+                                        rm_err,
+                                        rm_err.raw_os_error()
+                                    ),
+                                ));
+                            }
+                        }
+                        return copy_file_cow(src, dst);
                     }
                     return Err(err);
                 }

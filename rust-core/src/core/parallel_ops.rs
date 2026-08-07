@@ -85,11 +85,36 @@ fn move_single(src: &str, dst_dir: &str) -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "无法获取文件名"))?;
     let dst_path = Path::new(dst_dir).join(file_name);
 
-    std::fs::rename(src, &dst_path)
-        .or_else(|_| {
+    // 修复替换语义 + 目录移动：
+    // 1) ENOTEMPTY/EEXIST（目标已存在，冲突弹窗选"替换"）→ 先删目标（文件或目录）再 rename
+    // 2) EXDEV（跨卷）→ 复制 + 删除源；删源用 remove_path（兼容目录，remove_file 对目录报 EPERM）
+    match std::fs::rename(src, &dst_path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let errno = e.raw_os_error().unwrap_or(0);
+            const EEXIST: i32 = 17;
+            const ENOTEMPTY: i32 = 66;
+            const EXDEV: i32 = 18;
+            if errno == ENOTEMPTY || errno == EEXIST {
+                // 替换：删除旧目标后重试 rename（src == dst 保护）
+                if src_path == dst_path {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("源与目标相同，无法替换: {}", dst_path.display()),
+                    ));
+                }
+                crate::core::cow_copy::remove_path(&dst_path)?;
+                return std::fs::rename(src, &dst_path);
+            }
+            if errno != EXDEV {
+                return Err(e);
+            }
+            // 跨卷：复制后删除源（remove_path 兼容目录，修复目录移动 EPERM）
             copy_single(src, dst_dir)?;
-            std::fs::remove_file(src)
-        })
+            crate::core::cow_copy::remove_path(src_path)?;
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]

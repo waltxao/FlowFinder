@@ -85,6 +85,8 @@ public class PaneViewModel: ObservableObject {
     /// 每次发起新 loadDirectory 时自增，后台完成回主线程时校验代次一致才应用结果，
     /// 避免快速导航时旧后台加载覆盖新加载（竞态导致显示错误目录内容）。
     private var loadGeneration: Int = 0
+    /// 重命名后待发的内容变更通知标志（加载完成后发出，确保视图读到新数据）
+    private var pendingContentChangeNotification = false
 
     init() {}
 
@@ -469,8 +471,10 @@ public class PaneViewModel: ObservableObject {
     func renameFile(_ oldPath: String, to newName: String) {
         let dir = (oldPath as NSString).deletingLastPathComponent
         let newPath = (dir as NSString).appendingPathComponent(newName)
+        FFDebug.log("PaneState.renameFile: \(oldPath) -> \(newPath)")
         do {
             try CoreBridge.shared.renameFile(src: oldPath, dst: newPath)
+            FFDebug.log("PaneState.renameFile: 成功")
             // 注册撤销：undo 闭包内调用 renameFile 反向重命名，
             // NSUndoManager 在 undo 模式下会将 registerUndo 加入 redo 栈，
             // 因此 redo 自动支持，且不会无限递归。
@@ -479,9 +483,13 @@ public class PaneViewModel: ObservableObject {
                 vm.renameFile(newPath, to: oldName)
             }
             undoManager?.setActionName("重命名")
+            // 重命名是"数量不变"操作：加载完成后需通知视图强制刷新（sink 只比较数量不刷新）。
+            // 通知延迟到 loadDirectory 异步完成、state.files 已更新后发出（否则 reload 读到旧数据）。
+            pendingContentChangeNotification = true
             loadDirectory()
         } catch {
             state.error = error.localizedDescription
+            FFDebug.log("PaneState.renameFile: 失败 \(error.localizedDescription)")
         }
     }
 
@@ -527,6 +535,11 @@ public class PaneViewModel: ObservableObject {
                     // 任务 F11-8: 统一走 applyFilter（综合标签+搜索过滤），保持单一过滤入口
                     // 任务 F11-11: 大目录分页加载（C5）- 首批 pageSize 条立即显示，其余异步追加
                     self.applyFilterPaginated()
+                    // 重命名等"数量不变"操作：加载完成、state.files 已更新后发通知强制视图刷新
+                    if self.pendingContentChangeNotification {
+                        self.pendingContentChangeNotification = false
+                        NotificationCenter.default.post(name: .fileListContentChanged, object: nil)
+                    }
                     // 若当前有非空搜索查询，触发子目录递归搜索（追加深层匹配项）
                     if !self.state.searchQuery.isEmpty && self.state.tagFilter == nil {
                         self.performRecursiveSearch(query: self.state.searchQuery)

@@ -233,6 +233,8 @@ public class MainWindowController: NSWindowController {
     private var mainContainerView: NSView!
     /// 诊断：鼠标事件监听器（必须强引用，否则会被立即释放）
     private var mouseEventMonitor: Any?
+    /// 全局键盘拦截（空格/Enter/Del 统一处理，见 setup 中注释）
+    private var keyEventMonitor: Any?
 
     private var leftPaneToolbar: PaneToolbar!
     private var rightPaneToolbar: PaneToolbar!
@@ -520,6 +522,41 @@ public class MainWindowController: NSWindowController {
             return event
         }
         FFDebug.log("NSEvent monitor installed: \(mouseEventMonitor != nil)")
+
+        // 全局键盘拦截（根治空格/Enter/Del 不触发的架构问题）：
+        // 键盘事件先经 firstResponder 的 keyDown/interpretKeyEvents 分发，NSTableView/
+        // NSCollectionView 会消耗空格/Enter/Del 导致 FileListView/FileGridView 的 keyDown
+        // 收不到（多次修复无效的根因）。用 local monitor 在事件分发前统一拦截：
+        // 仅当焦点在文件面板（tableView/collectionView 或其子视图）且非文本编辑中时拦截。
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self, let window = self.window, window.isKeyWindow else { return event }
+            let modifiers = event.modifierFlags
+            // 修复：不能用 modifiers.isEmpty——macOS 的 Enter 键自带 .numericPad 标志，
+            // 空格也可能带其他非修饰标志。改为"不含 Cmd/Opt/Ctrl/Shift 即可拦截"。
+            let hasRealModifier = !modifiers.intersection([.command, .option, .control, .shift]).isEmpty
+            guard !hasRealModifier else { return event }
+            let isSpace = event.keyCode == 49
+            let isEnter = event.keyCode == 36 || event.keyCode == 76
+            let isDelete = event.keyCode == 51
+            guard isSpace || isEnter || isDelete else { return event }
+            // 文本编辑中不拦截（搜索框输入空格/重命名框 Del 删字符/Enter 提交等）：
+            // 关键：NSTextField 编辑时 firstResponder 是其内部 field editor（NSTextView），
+            // 只判断 NSTextField 会漏掉编辑中的情况 → Del 被误拦成删除文件（用户反馈的 bug）。
+            let fr = window.firstResponder
+            if fr is NSTextView { return event }  // field editor / 任何文本视图编辑中
+            if let tf = fr as? NSTextField, tf.isEditable { return event }
+            // 焦点必须位于文件面板——按 firstResponder 归属的 FileListView/FileGridView
+            // 分派（不依赖 activePane：点击网格时 activePane 可能未更新，导致分派到错误面板）
+            guard let frView = window.firstResponder as? NSView,
+                  let paneView = self.filePaneView(for: frView) else { return event }
+            if let listView = paneView as? FileListView {
+                if listView.handlePaneKey(event.keyCode) { return nil }
+            } else if let gridView = paneView as? FileGridView {
+                if gridView.handlePaneKey(event.keyCode) { return nil }
+            }
+            return event
+        }
+        FFDebug.log("KeyEvent monitor installed: \(keyEventMonitor != nil)")
 
         // Holding priorities
         mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
@@ -1211,6 +1248,19 @@ public class MainWindowController: NSWindowController {
         }
         guard !path.isEmpty else { return }
         showFileInfo(forPath: path)
+    }
+
+    /// 沿视图层级向上查找 firstResponder 归属的 FileListView / FileGridView。
+    /// 全局键盘 monitor 用它把按键分派到正确的面板视图（不依赖 activePane）。
+    private func filePaneView(for view: NSView) -> NSView? {
+        var v: NSView? = view
+        while let current = v {
+            if current is FileListView || current is FileGridView {
+                return current
+            }
+            v = current.superview
+        }
+        return nil
     }
 
     @objc private func handleQuickLookRequest(_ notification: Notification) {
@@ -2107,40 +2157,24 @@ extension MainWindowController {
             return
         }
 
-        // 任务 F11-9：进入"直接进度"模式，展开底部进度栏
+        // 修复问题4：跨面板移动/复制重名时不再自动"副本N"后缀，改为弹出冲突对话框
+        // （替换/保留两者/跳过，与拖拽/粘贴路径一致，走 ConflictResolver）。
         let operationName = isMove ? "移动" : "复制"
-        let totalCount = selectedFiles.count
+        let srcPaths = selectedFiles.map { $0.path }
+        let conflictPlan = ConflictResolver.resolveConflicts(
+            srcPaths: srcPaths,
+            destDir: destPath,
+            window: window
+        )
+        guard !conflictPlan.isEmpty else { return }
+
+        let totalCount = conflictPlan.count
         taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
         showProgressBar(animated: true)
 
-        // 预计算每个文件的目标名：重名冲突时追加 "副本" 后缀。
-        // 无冲突文件（dstName == 原名）走批量 parallel 接口；冲突文件单独处理以保留重命名。
-        // parallel 接口将文件放入 dstDir 并保留原名，因此无冲突文件的 dst = dstDir/原名。
-        struct OpItem {
-            let src: String
-            let name: String
-            let dstName: String
-        }
-        var items: [OpItem] = []
-        for entry in selectedFiles {
-            let fileName = entry.name
-            var dstName = fileName
-            let baseDst = (destPath as NSString).appendingPathComponent(fileName)
-            if FileManager.default.fileExists(atPath: baseDst) {
-                let ext = (fileName as NSString).pathExtension
-                let nameWithoutExt = (fileName as NSString).deletingPathExtension
-                var counter = 1
-                repeat {
-                    let suffixName = ext.isEmpty ? "\(nameWithoutExt) 副本 \(counter)" : "\(nameWithoutExt) 副本 \(counter).\(ext)"
-                    dstName = suffixName
-                    counter += 1
-                } while FileManager.default.fileExists(atPath: (destPath as NSString).appendingPathComponent(dstName))
-            }
-            items.append(OpItem(src: entry.path, name: fileName, dstName: dstName))
-        }
-
-        let batchItems = items.filter { $0.dstName == $0.name }
-        let conflictItems = items.filter { $0.dstName != $0.name }
+        // 无冲突/替换项走批量接口；保留两者项逐项改名复制/移动（与 menuPaste 一致）
+        let batchSrcs = conflictPlan.normalSrcs
+        let keepBothPairs = conflictPlan.keepBoth
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var successCount = 0
@@ -2159,10 +2193,10 @@ extension MainWindowController {
                 }
             }
 
-            // 1) 批量处理无冲突文件（parallel 接口，跨卷移动自动回退复制+删除）
-            if !batchItems.isEmpty {
-                let batchSrcs = batchItems.map { $0.src }
-                let batchCount = batchItems.count
+            // 1) 批量处理无冲突/替换文件（parallel 接口，跨卷移动自动回退复制+删除）
+            if !batchSrcs.isEmpty {
+                let batchSrcList = batchSrcs
+                let batchCount = batchSrcList.count
                 let progressHandler: ((Int, Int) -> Void)? = { done, _ in
                     let displayDone = done
                     DispatchQueue.main.async { [weak self] in
@@ -2176,16 +2210,16 @@ extension MainWindowController {
                 }
                 do {
                     let ok = isMove
-                        ? try CoreBridge.shared.parallelMove(srcs: batchSrcs, dstDir: destPath, progress: progressHandler)
-                        : try CoreBridge.shared.parallelCopy(srcs: batchSrcs, dstDir: destPath, progress: progressHandler)
+                        ? try CoreBridge.shared.parallelMove(srcs: batchSrcList, dstDir: destPath, progress: progressHandler)
+                        : try CoreBridge.shared.parallelCopy(srcs: batchSrcList, dstDir: destPath, progress: progressHandler)
                     successCount += ok
-                    for it in batchItems {
-                        movedOrCopied.append((src: it.src, dst: (destPath as NSString).appendingPathComponent(it.name)))
+                    for src in batchSrcList {
+                        movedOrCopied.append((src: src, dst: (destPath as NSString).appendingPathComponent((src as NSString).lastPathComponent)))
                     }
                 } catch {
                     // 批量失败：将每个文件记为失败
-                    for it in batchItems {
-                        failedFiles.append((it.name, error))
+                    for src in batchSrcList {
+                        failedFiles.append(((src as NSString).lastPathComponent, error))
                     }
                 }
                 completed += batchCount
@@ -2200,35 +2234,35 @@ extension MainWindowController {
                 }
             }
 
-            // 2) 逐个处理冲突文件（保留 "副本" 重命名）
-            for it in conflictItems {
-                let dstPath = (destPath as NSString).appendingPathComponent(it.dstName)
+            // 2) 逐个处理"保留两者"文件（按用户选择的副本名复制/移动）
+            for pair in keepBothPairs {
+                let dstPath = (destPath as NSString).appendingPathComponent(pair.dstName)
                 let preCompleted = completed
                 DispatchQueue.main.async { [weak self] in
                     self?.taskProgressBar.updateDirectProgress(
                         operation: operationName,
-                        currentFileName: it.dstName,
+                        currentFileName: pair.dstName,
                         completed: preCompleted,
                         total: totalCount
                     )
                 }
                 do {
                     if isMove {
-                        try safeMove(src: it.src, dst: dstPath)
+                        try safeMove(src: pair.src, dst: dstPath)
                     } else {
-                        try CoreBridge.shared.copyFile(src: it.src, dst: dstPath)
+                        try CoreBridge.shared.copyFile(src: pair.src, dst: dstPath)
                     }
-                    movedOrCopied.append((src: it.src, dst: dstPath))
+                    movedOrCopied.append((src: pair.src, dst: dstPath))
                     successCount += 1
                 } catch {
-                    failedFiles.append((it.dstName, error))
+                    failedFiles.append((pair.dstName, error))
                 }
                 completed += 1
                 let c = completed
                 DispatchQueue.main.async { [weak self] in
                     self?.taskProgressBar.updateDirectProgress(
                         operation: operationName,
-                        currentFileName: it.dstName,
+                        currentFileName: pair.dstName,
                         completed: min(c, totalCount),
                         total: totalCount
                     )

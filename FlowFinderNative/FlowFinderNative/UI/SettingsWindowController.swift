@@ -773,7 +773,7 @@ public class SettingsWindowController: NSWindowController {
         ])
 
         let aboutRow = SettingsRowView(title: "", desc: "")
-        aboutRow.setControl(infoContainer)
+        aboutRow.setFullWidthContent(infoContainer)
         aboutSection.addRow(aboutRow)
         registerForSearch(aboutSection, rows: [aboutRow])
 
@@ -808,56 +808,38 @@ public class SettingsWindowController: NSWindowController {
         return scrollView
     }
 
-    /// 在 NSScrollView 中约束 stackView 宽度并允许垂直滚动
+    /// 在 NSScrollView 中布局设置卡片（纯 Auto Layout 约束方案）
+    ///
+    /// 方案：将 NSStackView 直接放入 FlippedStackContainer（isFlipped=true，y=0 在顶），
+    /// stack 撑满容器宽度（减去左右各 24pt 边距），容器宽度跟随 scrollView 可视宽度。
+    /// 卡片高度由 Auto Layout 根据内容自然计算，无需预计算 fittingSize（预计算在视图
+    /// 未加入层级时宽度为 0，导致高度错误——历史 bug 根因）。
+    ///
+    /// 关键约束链：
+    /// - container.width = scrollView.frameLayoutGuide.width（可视宽度，含 scroller 补偿）
+    /// - stack.leading = container.leading + 24, stack.trailing = container.trailing - 24
+    /// - stack.top = container.top + 4, stack.bottom = container.bottom - 4
+    /// - stack 内部 alignment = .width 自动撑满子视图（在 buildXXXSection 中设置）
     private func constrainStackInScroll(_ stack: NSStackView, in scrollView: NSScrollView) {
-        // 最终方案（多次反复后的结论）：NSScrollView 的 documentView 若 isFlipped=true
-        // （y=0 在顶部），滚动方向与视觉一致——内容天然贴可视区顶部，无"搜索栏下方空白"，
-        // 且事件坐标由系统正确处理。此前 Auto Layout 方案（非 flipped + topAnchor）会把
-        // 内容钉到视觉底部；flipped 容器 + Auto Layout 又导致事件错乱。现在用
-        // frame-based + flipped 容器：FlippedStackContainer(isFlipped=true) 作为 documentView，
-        // stack 以 frame 布局放进去，高度用 fittingSize 结算。
         let container = FlippedStackContainer()
         container.translatesAutoresizingMaskIntoConstraints = false
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
         scrollView.documentView = container
 
-        let clipWidth = scrollView.contentView.bounds.width
-        stack.layoutSubtreeIfNeeded()
-        let contentHeight = max(stack.fittingSize.height, 1)
-        stack.frame = NSRect(x: 24, y: 4, width: max(clipWidth - 48, 300), height: contentHeight)
-        // 容器高度 = 内容高度（flipped 下 y=0 在顶，容器顶即可视区顶）
-        container.frame = NSRect(x: 0, y: 0, width: max(clipWidth, 300), height: contentHeight + 8)
+        // 将 stack 放入 container（不拆分 arrangedSubviews，由 stack 内部管理卡片布局）
+        // alignment = .width 确保所有卡片撑满 stack 宽度（不设则卡片按 intrinsic 宽度靠左排列）
+        stack.alignment = .width
+        container.addSubview(stack)
 
-        // 修复 T8（根因）：NSStackView 垂直方向默认 .centerX 对齐，对无 intrinsic size 的
-        // 分区视图（SettingsSectionView / SMBManagerPanel / 自定义内容视图）宽度产生歧义，
-        // 约束求解后可能塌缩为 0 宽 → 分区"空白"。
-        // 显式将每个 arranged subview 的 leading/trailing 钉到 stack 边缘，撑满整行宽度。
-        for view in stack.arrangedSubviews {
-            NSLayoutConstraint.activate([
-                view.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
-            ])
-        }
+        NSLayoutConstraint.activate([
+            // stack 撑满 container（左右 24pt 边距，上下 4/12pt 间距）
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
+        ])
 
-        // 窗口 resize 时保持容器/stack 宽度跟随（frame-based 需手动同步）
-        scrollView.postsFrameChangedNotifications = true
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(settingsScrollFrameChanged(_:)),
-            name: NSView.frameDidChangeNotification, object: scrollView
-        )
-    }
-
-    @objc private func settingsScrollFrameChanged(_ note: Notification) {
-        guard let scrollView = note.object as? NSScrollView,
-              let container = scrollView.documentView as? FlippedStackContainer,
-              let stack = container.subviews.first else { return }
-        let clipWidth = scrollView.contentView.bounds.width
-        stack.layoutSubtreeIfNeeded()
-        let contentHeight = max(stack.fittingSize.height, 1)
-        stack.frame = NSRect(x: 24, y: 4, width: max(clipWidth - 48, 300), height: contentHeight)
-        container.frame = NSRect(x: 0, y: 0, width: max(clipWidth, 300), height: contentHeight + 8)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
+        // 容器宽度跟随 scrollView 可视区域（contentView = NSClipView）
+        container.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor).isActive = true
     }
 
     // MARK: - Public API
@@ -1159,7 +1141,7 @@ class TagManagementRowView: SettingsRowView {
             tagsStack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
-        setControl(container)
+        setFullWidthContent(container)
         refreshTagList()
     }
 
