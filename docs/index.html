@@ -323,25 +323,129 @@
         }
 
         .arch-container {
-            max-width: 900px;
+            max-width: 960px;
             margin: 0 auto;
         }
 
-        .arch-diagram {
-            background: rgba(0, 0, 0, 0.4);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 32px;
-            font-family: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-            font-size: 13px;
-            line-height: 1.7;
-            overflow-x: auto;
-            color: var(--text-secondary);
+        /* 分层架构卡片图（v0.7.4 重新设计：替换 ASCII 框图，修复换行折叠显示异常） */
+        .arch-layers {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            margin-top: 40px;
         }
 
-        .arch-diagram .layer-ui { color: var(--accent-light); }
-        .arch-diagram .layer-rust { color: #FF9F0A; }
-        .arch-diagram .layer-ffi { color: #30D158; }
+        .arch-layer {
+            position: relative;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px 28px;
+            backdrop-filter: var(--blur);
+            -webkit-backdrop-filter: var(--blur);
+        }
+
+        .arch-layer-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .arch-layer-badge {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            padding: 4px 12px;
+            border-radius: 999px;
+            border: 1px solid;
+            flex-shrink: 0;
+        }
+
+        .arch-layer-title {
+            font-size: 17px;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .arch-layer-sub {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-left: auto;
+        }
+
+        /* 各层配色 */
+        .arch-layer-ui .arch-layer-badge {
+            color: var(--accent-light);
+            border-color: rgba(64, 156, 255, 0.4);
+            background: rgba(64, 156, 255, 0.1);
+        }
+        .arch-layer-ui { border-top: 3px solid var(--accent-light); }
+
+        .arch-layer-ffi .arch-layer-badge {
+            color: #30D158;
+            border-color: rgba(48, 209, 88, 0.4);
+            background: rgba(48, 209, 88, 0.1);
+        }
+        .arch-layer-ffi {
+            border-top: 3px solid #30D158;
+            margin: 0 48px;
+        }
+
+        .arch-layer-rust .arch-layer-badge {
+            color: #FF9F0A;
+            border-color: rgba(255, 159, 10, 0.4);
+            background: rgba(255, 159, 10, 0.1);
+        }
+        .arch-layer-rust { border-top: 3px solid #FF9F0A; }
+
+        /* 层间连接箭头 */
+        .arch-link {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 0;
+            color: var(--text-tertiary);
+            font-size: 12px;
+            font-family: "SF Mono", "Fira Code", monospace;
+        }
+        .arch-link .arrow { color: #30D158; font-size: 15px; }
+
+        /* 模块网格 */
+        .arch-modules {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .arch-module {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 14px;
+            transition: border-color 0.2s ease, transform 0.2s ease;
+        }
+        .arch-module:hover {
+            border-color: rgba(255, 255, 255, 0.25);
+            transform: translateY(-1px);
+        }
+
+        .arch-module-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
+            font-family: "SF Mono", "Fira Code", monospace;
+        }
+        .arch-module-desc {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            margin-top: 3px;
+            line-height: 1.5;
+        }
+        .arch-module-accent { color: var(--accent-light); }
+        .arch-module-rust { color: #FF9F0A; }
+        .arch-module-ffi { color: #30D158; }
 
         .perf-table {
             width: 100%;
@@ -575,30 +679,130 @@
                 <h2>架构设计</h2>
                 <p>Swift & AppKit 负责 UI，Rust Core 提供高性能后端，FFI 桥接</p>
             </div>
-            <div class="arch-diagram">
-<span class="layer-ui">┌──────────────────────────────────────────────────┐
-│  Swift & AppKit UI Layer                          │
-│  - NSTableView / NSCollectionView                 │
-│  - NSSplitView 双栏布局                           │
-│  - NSVisualEffectView 毛玻璃                      │
-│  - QLPreviewPanel Quick Look                      │
-│  - Spotlight NSMetadataQuery                      │
-│  - NSDraggingSource/Destination 原生拖拽          │
-└──────────────────────────────────────────────────┘</span>
-                        │
-                        │ <span class="layer-ffi">FFI (C ABI)</span>
-                        ▼
-<span class="layer-rust">┌──────────────────────────────────────────────────┐
-│  Rust Core Engine (cdylib)                        │
-│  - bulk_read: getattrlistbulk(2) 批量读取       │
-│  - scanner: 文件扫描 + 元数据                     │
-│  - dedup_engine: 三阶段 BLAKE3 去重               │
-│  - cow_copy: APFS copy-on-write 克隆              │
-│  - dir_cache: LRU + TTL 目录缓存                  │
-│  - task_scheduler: 统一任务调度                   │
-│  - search_engine: 正则 / 通配符搜索               │
-│  - sqlite_cache: 标签 / 缩略图持久化              │
-└──────────────────────────────────────────────────┘</span>
+            <div class="arch-layers">
+
+                <!-- 第 1 层：Swift & AppKit UI -->
+                <div class="arch-layer arch-layer-ui">
+                    <div class="arch-layer-header">
+                        <span class="arch-layer-badge">LAYER 1</span>
+                        <span class="arch-layer-title">Swift &amp; AppKit UI 层</span>
+                        <span class="arch-layer-sub">macOS 原生体验 · 进程内调用</span>
+                    </div>
+                    <div class="arch-modules">
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-accent">FileListView / FileGridView</div>
+                            <div class="arch-module-desc">NSTableView / NSCollectionView 双视图，分组 + 内联重命名</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-accent">NSSplitView 双栏</div>
+                            <div class="arch-module-desc">左右双面板 + 详情栏，独立导航历史</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-accent">Quick Look</div>
+                            <div class="arch-module-desc">QLPreviewPanel 空格预览，双面板 firstResponder 守卫</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-accent">Spotlight 全局搜索</div>
+                            <div class="arch-module-desc">NSMetadataQuery 系统级索引搜索</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-accent">原生拖拽</div>
+                            <div class="arch-module-desc">NSDraggingSource / Destination，跨面板与外部应用</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-accent">SMB 网络共享</div>
+                            <div class="arch-module-desc">NetFS 挂载管理，连接/卸载/自动重连</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 层间连接 -->
+                <div class="arch-link">
+                    <span>Swift FFI 声明</span>
+                    <span class="arrow">⇅</span>
+                    <span>extern "C" 回调</span>
+                </div>
+
+                <!-- 第 2 层：FFI 桥接 -->
+                <div class="arch-layer arch-layer-ffi">
+                    <div class="arch-layer-header">
+                        <span class="arch-layer-badge">FFI</span>
+                        <span class="arch-layer-title">C ABI 桥接层</span>
+                        <span class="arch-layer-sub">@_silgen_name · 零拷贝指针传递</span>
+                    </div>
+                    <div class="arch-modules">
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-ffi">ffi/mod.rs</div>
+                            <div class="arch-module-desc">3000+ 行导出：文件操作 / 去重 / 搜索 / 任务 / 缓存 / 设置 / 卷管理</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-ffi">ff_ffi.h</div>
+                            <div class="arch-module-desc">C 头文件契约，Swift FFIFunctions.swift 与 Rust 双向对齐</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-ffi">回调上下文</div>
+                            <div class="arch-module-desc">Unmanaged 生命周期管理，进度 / 结果 / 任务事件回调</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 层间连接 -->
+                <div class="arch-link">
+                    <span>Rust Core</span>
+                    <span class="arrow">▼</span>
+                </div>
+
+                <!-- 第 3 层：Rust Core -->
+                <div class="arch-layer arch-layer-rust">
+                    <div class="arch-layer-header">
+                        <span class="arch-layer-badge">LAYER 2</span>
+                        <span class="arch-layer-title">Rust Core 引擎</span>
+                        <span class="arch-layer-sub">cdylib 动态库 · 内存安全 · 零 GC</span>
+                    </div>
+                    <div class="arch-modules">
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">bulk_read</div>
+                            <div class="arch-module-desc">getattrlistbulk(2) 批量读取目录项</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">scanner / dedup_engine</div>
+                            <div class="arch-module-desc">三阶段 BLAKE3 哈希去重扫描</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">fsevents</div>
+                            <div class="arch-module-desc">FSEventStreamCreate 事件驱动监听（300ms 去抖）</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">file_ops / cow_copy</div>
+                            <div class="arch-module-desc">APFS copy-on-write 克隆，EOPNOTSUPP 自动回退</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">path_guard</div>
+                            <div class="arch-module-desc">写操作路径安全校验（拒绝逃逸 / 根目录操作）</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">dir_cache / sqlite_cache</div>
+                            <div class="arch-module-desc">L1 内存 LRU + L2 SQLite 持久化，带 freshness 校验</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">task_scheduler</div>
+                            <div class="arch-module-desc">统一任务队列，有界并发 + 历史清理</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">search_engine</div>
+                            <div class="arch-module-desc">名称模糊匹配 + 文件类型 / 大小 / 日期过滤</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">batch_ops / parallel_ops</div>
+                            <div class="arch-module-desc">批量重命名 / 按日期分类，rayon 并行复制移动删除</div>
+                        </div>
+                        <div class="arch-module">
+                            <div class="arch-module-name arch-module-rust">tags / thumbnails</div>
+                            <div class="arch-module-desc">xattr 标签读写 + 缩略图生成缓存</div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </section>
