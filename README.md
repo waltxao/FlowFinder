@@ -6,7 +6,7 @@
 
 **流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 玻璃态双栏
 
-![Version](https://img.shields.io/badge/version-0.6.9-blue)
+![Version](https://img.shields.io/badge/version-0.7.4-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-green)
 ![Swift](https://img.shields.io/badge/Swift-5.9+-F05138)
 ![Rust](https://img.shields.io/badge/Rust-2021+-DEA584)
@@ -113,6 +113,54 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 ---
 
+## 更新日志
+
+### v0.7.4（2026-08-09）
+
+**核心引擎（Rust Core）**
+- 文件监听重写：占位轮询 → 真实 FSEventStream（事件驱动 + 300ms 去抖，替换 1s 轮询）
+- 路径安全防护接入：全部 12 个写操作入口（复制/移动/删除/重命名/批量/并行操作）通过 `path_guard` 校验，拒绝空路径、相对路径、`..` 逃逸与根目录操作
+- 任务历史清理：新增 `ff_task_clear_history` FFI，「清除已完成」按钮真正生效
+- 设置键名对齐：Rust `appearance.theme` 与 Swift `appearance_mode` 互通，主题双轨脱节修复
+
+**文件浏览**
+- 重命名拦截含 `/` 的文件名（防止跨目录移动导致文件"消失"）
+- 标签筛选改为后台批量读取 xattr（大目录不再主线程卡顿）
+- 搜索输入 300ms 防抖；快速输入不再触发并发搜索
+- 删除失败项保留在选中集并展示失败文件名；多目录删除逐目录失效缓存
+
+**搜索面板**
+- 搜索竞态修复：旧查询迟到结果不再混入新查询（代次校验）
+- 主题跟随修复：切换深色模式后搜索面板背景正确变色
+- 「文件名包含 / 内容包含」筛选生效（内容搜索限文本类 ≤4MB 文件）
+- 结果批量刷新（每 32 条），消除 O(n²) 逐条重载
+
+**详情栏**
+- 缩略图/工作区图标竞态守卫（`didReceiveThumbnail`）
+- 多选汇总（目录大小 + 标签）后台计算，代次校验防过期覆盖
+- 删除死代码（tagsField）；辅助类拆分为独立文件
+
+**对话框**
+- FFModalSheet 统一键盘交互：Enter 触发主按钮、Esc 取消、输入框自动聚焦
+- 新建标签弹窗：观察者泄漏修复、颜色面板悬空 target 清理、展开第二行布局修正
+- 标签选择器：药丸流式换行（标签多不再溢出截断）
+- 连接服务器：不支持协议禁用「连接」按钮；用户名/密码 URL 编码
+
+**设置**
+- 设置页快捷键真实生效（shortcut_* → 主菜单 keyEquivalent，实时刷新）
+- SettingsActionTarget 分区切换清理（字典无界增长泄漏修复）
+- 设置键名集中到 FFUserDefaultsKeys
+
+**其他**
+- TaskPanel「清除已完成」真正清除任务历史（仅完成/失败，保留运行中）
+- 重复扫描删除流程统一读取「不再询问」标志
+- FFDebug 日志仅 DEBUG 编译生效 + 常驻句柄（release 零开销）
+- 删除死代码 ProgressDialog
+- 网格视图空格 QuickLook 增加 firstResponder 守卫（双面板不再误触发）
+- 排序不再双重 reload；面板激活不再双重触发；选择器观察者 deinit 清理
+
+---
+
 ## 下载与安装
 
 ### 系统要求
@@ -126,8 +174,8 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 | 文件 | 说明 | 适用架构 |
 |------|------|---------|
-| `FlowFinder-0.6.0-alpha.dmg` | DMG 安装镜像 | Apple Silicon |
-| `FlowFinder-0.6.0-alpha.zip` | ZIP 压缩包（含 .app） | Apple Silicon |
+| `FlowFinder-0.7.4.dmg` | DMG 安装镜像 | Apple Silicon |
+| `FlowFinder-0.7.4.zip` | ZIP 压缩包（含 .app） | Apple Silicon |
 
 ### 安装步骤
 
