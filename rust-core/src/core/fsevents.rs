@@ -1,7 +1,13 @@
 //! macOS FSEvents watcher for directory change notifications.
 //!
 //! Provides a lightweight wrapper around the macOS FSEvents API
-//! to notify the Swift UI when filesystem changes occur.
+//! (`FSEventStreamCreate`) to notify the Swift UI when filesystem changes
+//! occur. On non-macOS targets (Linux CI etc.) a minimal polling stub keeps
+//! the module compilable and the `start`/`stop` lifecycle working.
+//!
+//! The FSEvents bindings are declared directly via `extern "C"` (same pattern
+//! as `cow_copy::native` for `clonefile(2)`) so no extra crates or build
+//! flags are required — FSEvents and CoreFoundation are part of the macOS SDK.
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
@@ -10,30 +16,342 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 
 /// Callback type for FSEvents notifications.
 /// Arguments: (path, user_data)
 pub type FSEventCallback = extern "C" fn(path: *const c_char, user_data: *mut c_void);
 
+/// Raw-pointer wrapper that makes `CFRunLoopRef` shareable across threads.
+///
+/// The run-loop pointer is only ever dereferenced inside `macos` FFI calls
+/// after being retrieved from the shared slot (which is only written by the
+/// worker before entering the run loop and only read by `stop_internal`),
+/// so marking it `Send` is safe.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct SendPtr(*mut c_void);
+
+#[cfg(target_os = "macos")]
+unsafe impl Send for SendPtr {}
+
+// ── macOS: real FSEventStream implementation ────────────────────────
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::*;
+    use std::ffi::CStr;
+
+    // ── CoreFoundation / FSEvents opaque types ──────────────────────
+    pub type CFTypeRef = *const c_void;
+    pub type CFAllocatorRef = *const c_void;
+    pub type CFArrayRef = *const c_void;
+    pub type CFStringRef = *const c_void;
+    pub type CFRunLoopRef = *mut c_void;
+    pub type CFIndex = isize;
+    pub type CFTimeInterval = f64;
+    pub type CFStringEncoding = u32;
+    pub type Boolean = u8;
+    pub type FSEventStreamRef = *const c_void;
+    pub type ConstFSEventStreamRef = *const c_void;
+    pub type FSEventStreamEventId = u64;
+    pub type FSEventStreamEventFlags = u32;
+    pub type FSEventStreamCreateFlags = u32;
+
+    pub const kCFStringEncodingUTF8: CFStringEncoding = 0x0800_0100;
+    /// Watch from "now" — do not replay the past.
+    pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = 0xFFFF_FFFF_FFFF_FFFF;
+    /// Deliver file-level events (paths for individual file changes).
+    pub const kFSEventStreamCreateFlagFileEvents: FSEventStreamCreateFlags = 0x0000_0010;
+
+    /// FSEvents callback signature.
+    ///
+    /// With `kFSEventStreamCreateFlagUseCFTypes` *not* set, `event_paths` is
+    /// a C array of `const char *` of length `num_events` (no CF plumbing
+    /// needed on the callback hot path).
+    pub type FSEventStreamCallback = extern "C" fn(
+        stream_ref: ConstFSEventStreamRef,
+        client_call_back_info: *mut c_void,
+        num_events: usize,
+        event_paths: *mut c_void,
+        event_flags: *const FSEventStreamEventFlags,
+        event_ids: *const FSEventStreamEventId,
+    );
+
+    /// Context handed to `FSEventStreamCreate` (mirrors `FSEventStreamContext`).
+    #[repr(C)]
+    pub struct FSEventStreamContext {
+        version: CFIndex,
+        info: *mut c_void,
+        retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
+        release: Option<unsafe extern "C" fn(*const c_void)>,
+        copy_description: Option<unsafe extern "C" fn(*const c_void) -> CFStringRef>,
+    }
+
+    /// Callbacks passed to `CFArrayCreate` (mirrors `CFArrayCallBacks`).
+    #[repr(C)]
+    pub struct CFArrayCallBacks {
+        version: CFIndex,
+        retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
+        release: Option<unsafe extern "C" fn(*const c_void)>,
+        copy_description: Option<unsafe extern "C" fn(*const c_void) -> CFStringRef>,
+        equal: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> Boolean>,
+    }
+
+    // FSEvents symbols live in the CoreServices framework.
+    #[link(name = "CoreServices", kind = "framework")]
+    extern "C" {
+        // ── FSEvents ──
+        pub fn FSEventStreamCreate(
+            allocator: CFAllocatorRef,
+            callback: FSEventStreamCallback,
+            context: *mut FSEventStreamContext,
+            paths_to_watch: CFArrayRef,
+            since_when: FSEventStreamEventId,
+            latency: CFTimeInterval,
+            flags: FSEventStreamCreateFlags,
+        ) -> FSEventStreamRef;
+        pub fn FSEventStreamScheduleWithRunLoop(
+            stream_ref: FSEventStreamRef,
+            run_loop: CFRunLoopRef,
+            run_loop_mode: CFStringRef,
+        );
+        pub fn FSEventStreamStart(stream_ref: FSEventStreamRef) -> Boolean;
+        pub fn FSEventStreamStop(stream_ref: FSEventStreamRef);
+        pub fn FSEventStreamInvalidate(stream_ref: FSEventStreamRef);
+        pub fn FSEventStreamRelease(stream_ref: FSEventStreamRef);
+
+        // ── CoreFoundation ──
+        pub fn CFArrayCreate(
+            allocator: CFAllocatorRef,
+            values: *const CFTypeRef,
+            num_values: CFIndex,
+            call_backs: *const CFArrayCallBacks,
+        ) -> CFArrayRef;
+        pub fn CFStringCreateWithCString(
+            allocator: CFAllocatorRef,
+            c_str: *const c_char,
+            encoding: CFStringEncoding,
+        ) -> CFStringRef;
+        pub fn CFRelease(cf: CFTypeRef);
+        pub fn CFRunLoopGetCurrent() -> CFRunLoopRef;
+        pub fn CFRunLoopRun();
+        pub fn CFRunLoopStop(run_loop: CFRunLoopRef);
+
+        pub static kCFAllocatorDefault: CFAllocatorRef;
+        pub static kCFRunLoopDefaultMode: CFStringRef;
+        pub static kCFTypeArrayCallBacks: CFArrayCallBacks;
+    }
+
+    /// Payload passed to the FSEventStream via `context.info`. Owns the
+    /// external callback, the user-data pointer, and a reference to the
+    /// stop flag so the callback can also tear the run loop down.
+    struct CallbackInfo {
+        callback: FSEventCallback,
+        user_data: *mut c_void,
+        stop_flag: Arc<AtomicBool>,
+    }
+
+    /// Latency (seconds) passed to `FSEventStreamCreate`. This is the
+    /// debounce window: events arriving within 300 ms are coalesced by
+    /// FSEvents into a single callback invocation.
+    const LATENCY: CFTimeInterval = 0.3;
+    const FLAGS: FSEventStreamCreateFlags = kFSEventStreamCreateFlagFileEvents;
+
+    /// FSEvents delivery callback — runs on the worker thread's run loop.
+    ///
+    /// `event_paths` is a `const char **` array (UseCFTypes flag is off).
+    /// A 300 ms debounce is enforced by the stream's `latency`; additionally
+    /// we honor the stop flag here so a late burst can unblock the run loop.
+    extern "C" fn on_fsevent(
+        _stream_ref: ConstFSEventStreamRef,
+        info: *mut c_void,
+        num_events: usize,
+        event_paths: *mut c_void,
+        _event_flags: *const FSEventStreamEventFlags,
+        _event_ids: *const FSEventStreamEventId,
+    ) {
+        // Safety: `info` is the `CallbackInfo` box we created in the worker
+        // and which is only freed after the run loop has exited.
+        let info = unsafe { &*(info as *const CallbackInfo) };
+        let callback = info.callback;
+        let user_data = info.user_data;
+
+        if info.stop_flag.load(Ordering::Acquire) {
+            // Shutdown requested — wake the run loop so the worker exits.
+            unsafe { CFRunLoopStop(CFRunLoopGetCurrent()) };
+            return;
+        }
+
+        let paths = event_paths as *const *const c_char;
+        for i in 0..num_events {
+            // Safety: FSEvents guarantees `num_events` valid C-string
+            // pointers starting at `event_paths`.
+            let path_ptr = unsafe { *paths.add(i) };
+            if path_ptr.is_null() {
+                continue;
+            }
+            let path = unsafe { CStr::from_ptr(path_ptr) }
+                .to_string_lossy()
+                .into_owned();
+            if let Ok(path_c) = CString::new(path) {
+                callback(path_c.as_ptr(), user_data);
+            }
+        }
+    }
+
+    /// Start a real FSEventStream for `path` on macOS.
+    ///
+    /// A dedicated worker thread creates the stream on its own run loop and
+    /// blocks in `CFRunLoopRun()` until `stop()` signals via `CFRunLoopStop`.
+    /// The stream + run loop are published through shared slots so `stop()`
+    /// (running on another thread) can wake the loop.
+    pub fn start_macos(
+        path: &str,
+        callback: FSEventCallback,
+        user_data: *mut c_void,
+    ) -> i32 {
+        let path_bytes: Vec<u8> = path.as_bytes().to_vec();
+        let user_data_addr = user_data as usize;
+        let stop_flag = Arc::new(AtomicBool::new(false));
+
+        let run_loop_slot = Arc::new(Mutex::new(None::<SendPtr>));
+        let ready = Arc::new(Mutex::new(false));
+        let ready_cvar = Arc::new(Condvar::new());
+
+        let w_run_loop = run_loop_slot.clone();
+        let w_ready = ready.clone();
+        let w_cvar = ready_cvar.clone();
+        let w_stop = stop_flag.clone();
+
+        let handle = thread::spawn(move || {
+            // Setup phase. Publishes the run loop + signals `ready` exactly
+            // once, whether setup succeeds (before entering the run loop) or
+            // fails (before returning).
+            let setup: Result<(macos::FSEventStreamRef, *mut c_void, CFTypeRef, CFTypeRef), ()> =
+                (|| {
+                    let path_c = CString::new(path_bytes).map_err(|_| ())?;
+                    let path_str = unsafe {
+                        CFStringCreateWithCString(
+                            kCFAllocatorDefault,
+                            path_c.as_ptr(),
+                            kCFStringEncodingUTF8,
+                        )
+                    };
+                    if path_str.is_null() {
+                        return Err(());
+                    }
+                    let paths_arr = [path_str as CFTypeRef; 1];
+                    let paths = unsafe {
+                        CFArrayCreate(
+                            kCFAllocatorDefault,
+                            paths_arr.as_ptr(),
+                            1,
+                            &kCFTypeArrayCallBacks,
+                        )
+                    };
+                    if paths.is_null() {
+                        unsafe { CFRelease(path_str) };
+                        return Err(());
+                    }
+
+                    let info_box = Box::new(CallbackInfo {
+                        callback,
+                        user_data: user_data_addr as *mut c_void,
+                        stop_flag: w_stop,
+                    });
+                    let info_ptr = Box::into_raw(info_box) as *mut c_void;
+                    let mut context = FSEventStreamContext {
+                        version: 0,
+                        info: info_ptr,
+                        retain: None,
+                        release: None,
+                        copy_description: None,
+                    };
+
+                    let stream = unsafe {
+                        FSEventStreamCreate(
+                            kCFAllocatorDefault,
+                            on_fsevent,
+                            &mut context,
+                            paths,
+                            kFSEventStreamEventIdSinceNow,
+                            LATENCY,
+                            FLAGS,
+                        )
+                    };
+                    if stream.is_null() {
+                        let _ = unsafe { Box::from_raw(info_ptr as *mut CallbackInfo) };
+                        unsafe { CFRelease(paths) };
+                        unsafe { CFRelease(path_str) };
+                        return Err(());
+                    }
+
+                    let rl = unsafe { CFRunLoopGetCurrent() };
+                    unsafe { FSEventStreamScheduleWithRunLoop(stream, rl, kCFRunLoopDefaultMode) };
+                    if unsafe { FSEventStreamStart(stream) } == 0 {
+                        unsafe { FSEventStreamInvalidate(stream) };
+                        unsafe { FSEventStreamRelease(stream) };
+                        let _ = unsafe { Box::from_raw(info_ptr as *mut CallbackInfo) };
+                        unsafe { CFRelease(paths) };
+                        unsafe { CFRelease(path_str) };
+                        return Err(());
+                    }
+
+                    *w_run_loop.lock() = Some(SendPtr(rl));
+                    Ok((stream, info_ptr, paths, path_str))
+                })();
+
+            match setup {
+                Ok((stream, info_ptr, paths, path_str)) => {
+                    // Signal readiness *before* blocking so `stop()` (on
+                    // another thread) can call CFRunLoopStop to wake us.
+                    *w_ready.lock() = true;
+                    w_cvar.notify_all();
+
+                    // Block until CFRunLoopStop() is called from stop().
+                    unsafe { CFRunLoopRun() };
+
+                    unsafe { FSEventStreamStop(stream) };
+                    unsafe { FSEventStreamInvalidate(stream) };
+                    unsafe { FSEventStreamRelease(stream) };
+                    // Reclaim the CallbackInfo box we leaked into context.info.
+                    let _ = unsafe { Box::from_raw(info_ptr as *mut CallbackInfo) };
+                    unsafe { CFRelease(paths) };
+                    unsafe { CFRelease(path_str) };
+                }
+                Err(()) => {
+                    *w_ready.lock() = true;
+                    w_cvar.notify_all();
+                }
+            }
+        });
+
+        let mut global = FSEVENTS_STATE.lock();
+        *global = Some(FSEventsState {
+            stop_flag,
+            join_handle: Some(handle),
+            run_loop: run_loop_slot,
+            ready: (ready, ready_cvar),
+        });
+        0
+    }
+}
+
+// ── Internal state ───────────────────────────────────────────────────
+
 /// Internal state for the FSEvents watcher.
 ///
 /// Holds everything needed to (a) signal the worker thread to stop and
 /// (b) `join()` the worker thread so its resources are reclaimed.
-///
-/// Previously the worker thread ran an unbounded `loop { sleep }` and the
-/// `stop()` function only cleared the global `FSEVENTS_STATE` without
-/// telling the thread to exit or waiting for it — every `start`/`stop`
-/// pair therefore leaked a thread (and its stack) for the lifetime of the
-/// process. The `stop_flag` + `join_handle` pair below fixes that.
 struct FSEventsState {
     stop_flag: Arc<AtomicBool>,
     join_handle: Option<JoinHandle<()>>,
+    #[cfg(target_os = "macos")]
+    run_loop: Arc<Mutex<Option<SendPtr>>>,
+    #[cfg(target_os = "macos")]
+    ready: (Arc<Mutex<bool>>, Arc<Condvar>),
 }
-
-// P2-9 修复：删除不必要的 unsafe impl Send/Sync。
-// FSEventsState 自动满足 Send（Arc<AtomicBool> 和 Option<JoinHandle> 均为 Send）。
-// Sync 不需要手动实现——Mutex<Option<FSEventsState>> 的 Sync 仅要求 T: Send。
 
 static FSEVENTS_STATE: Mutex<Option<FSEventsState>> = Mutex::new(None);
 
@@ -56,39 +374,39 @@ pub fn start(path: &str, callback: FSEventCallback, user_data: *mut c_void) -> i
     // don't leak its thread before overwriting the global state.
     stop_internal();
 
+    #[cfg(target_os = "macos")]
+    {
+        macos::start_macos(path, callback, user_data)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        start_fallback(path, callback, user_data)
+    }
+}
+
+/// Non-macOS fallback: a polling stub that keeps the module compilable on
+/// Linux/CI and preserves the `start`/`stop` lifecycle. It does not deliver
+/// real events (there is no FSEvents outside macOS); it simply sleeps until
+/// `stop()` sets the flag and joins the thread.
+#[cfg(not(target_os = "macos"))]
+fn start_fallback(path: &str, callback: FSEventCallback, user_data: *mut c_void) -> i32 {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let worker_flag = stop_flag.clone();
 
-    // Keep `path` and `callback`/`user_data` alive for the worker thread.
-    // `path_c` is leaked into a `Box<CString>` so we can free it after the
-    // thread finishes; the worker joins before `stop()` returns, so the
-    // box is dropped deterministically.
     let path_c = match CString::new(path) {
         Ok(c) => c,
         Err(_) => return -1,
     };
     let path_box = Arc::new(path_c);
-
-    // Raw pointers (`*mut c_void`) are `!Send`, so the closure below
-    // would not be `Send` and `thread::spawn` would refuse it. Convert
-    // the user-data pointer to a `usize` (which is `Send`) for the trip
-    // across the thread boundary; a real FSEvents implementation would
-    // cast it back to `*mut c_void` before invoking `callback`.
     let user_data_addr = user_data as usize;
     let worker_path = path_box.clone();
+
     let join_handle = thread::spawn(move || {
-        // Placeholder: In production, this would set up an FSEventStream
-        // and run the CFRunLoop to receive events. For now, we poll the
-        // stop flag at a 1s granularity so `stop()` can promptly tear the
-        // thread down instead of spinning forever.
-        // `callback`, `user_data_addr`, and `worker_path` are intentionally
-        // unused here — a real FSEvents implementation would invoke
-        // `callback(path_ptr, user_data_addr as *mut c_void)` on each
-        // event. We reference them to keep the closure's captures
-        // explicit and avoid "unused variable" warnings getting promoted
-        // to errors in stricter builds.
         let _ = (callback, user_data_addr, worker_path);
-        // P2-20 修复：使用 Acquire 读取 stop_flag，确保看到 store(Release) 的写入
+        // Poll the stop flag at a 1s granularity so `stop()` can promptly
+        // tear the thread down instead of spinning forever. On platforms
+        // without FSEvents, real change notifications are unavailable, so
+        // no events are synthesized.
         while !worker_flag.load(Ordering::Acquire) {
             thread::sleep(Duration::from_secs(1));
         }
@@ -99,7 +417,6 @@ pub fn start(path: &str, callback: FSEventCallback, user_data: *mut c_void) -> i
         stop_flag,
         join_handle: Some(join_handle),
     });
-
     0
 }
 
@@ -108,13 +425,27 @@ pub fn start(path: &str, callback: FSEventCallback, user_data: *mut c_void) -> i
 fn stop_internal() {
     let mut global = FSEVENTS_STATE.lock();
     if let Some(mut state) = global.take() {
-        // Signal the worker to exit its polling loop.
-        // P2-20 修复：使用 Release 存储 stop_flag，确保 load(Acquire) 能看到写入
+        // Signal the worker to exit.
         state.stop_flag.store(true, Ordering::Release);
-        // Block until the worker has actually exited, reclaiming its
-        // stack and OS thread resources. A real FSEvents implementation
-        // would additionally `CFRunLoopStop()` here; the placeholder
-        // worker only sleeps, so `join` returns within ~1s.
+
+        #[cfg(target_os = "macos")]
+        {
+            // Wait until the worker has published its run loop (created and
+            // started the stream) so we can stop it from this thread.
+            let (ready_lock, cvar) = &state.ready;
+            let mut ready = ready_lock.lock();
+            if !*ready {
+                cvar.wait(&mut ready);
+            }
+            drop(ready);
+
+            if let Some(rl) = *state.run_loop.lock() {
+                unsafe { macos::CFRunLoopStop(rl.0) };
+            }
+        }
+
+        // Block until the worker has actually exited, reclaiming its stack
+        // and OS thread resources.
         if let Some(handle) = state.join_handle.take() {
             let _ = handle.join();
         }
@@ -127,11 +458,13 @@ fn stop_internal() {
 /// - `0` on success.
 /// - `-1` if no watcher is running.
 pub fn stop() -> i32 {
-    let was_running = FSEVENTS_STATE
-        .lock()
-        .is_some();
+    let was_running = FSEVENTS_STATE.lock().is_some();
     stop_internal();
-    if was_running { 0 } else { -1 }
+    if was_running {
+        0
+    } else {
+        -1
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -150,5 +483,12 @@ mod tests {
 
         let result = stop();
         assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_fsevents_stop_without_start() {
+        // No watcher running → stop must report -1 (and must not panic).
+        stop_internal();
+        assert_eq!(stop(), -1);
     }
 }

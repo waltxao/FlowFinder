@@ -200,6 +200,7 @@ ff_error_t ff_task_cancel(const char *task_id);
 ff_error_t ff_task_list(void (*callback)(const FFTaskInfo *task, void *user_data),
                         void *user_data);
 ff_error_t ff_task_progress(const char *task_id, double *out_progress);
+ff_error_t ff_task_clear_history(void);
 
 /* ── Volume Management API (Sub-project 10) ──────────────── */
 typedef struct {

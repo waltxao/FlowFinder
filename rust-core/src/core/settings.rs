@@ -266,7 +266,7 @@ pub fn settings_get(key: *const c_char) -> *mut c_char {
         "general.default_directory" => &guard.general.default_directory,
         "general.show_hidden_files" => return bool_to_cstring(guard.general.show_hidden_files),
         "general.confirm_delete" => return bool_to_cstring(guard.general.confirm_delete),
-        "appearance.theme" => &guard.appearance.theme,
+        "appearance.theme" | "appearance_mode" => &guard.appearance.theme,
         "appearance.icon_size" => return u32_to_cstring(guard.appearance.icon_size),
         "appearance.font_size" => return u32_to_cstring(guard.appearance.font_size),
         "shortcuts.new_window" => &guard.shortcuts.new_window,
@@ -320,7 +320,7 @@ pub fn settings_set(key: *const c_char, value: *const c_char) -> c_int {
         "general.default_directory" => guard.general.default_directory = value_str.to_string(),
         "general.show_hidden_files" => guard.general.show_hidden_files = parse_bool(value_str),
         "general.confirm_delete" => guard.general.confirm_delete = parse_bool(value_str),
-        "appearance.theme" => guard.appearance.theme = value_str.to_string(),
+        "appearance.theme" | "appearance_mode" => guard.appearance.theme = value_str.to_string(),
         "appearance.icon_size" => {
             if let Ok(v) = value_str.parse() {
                 guard.appearance.icon_size = v;

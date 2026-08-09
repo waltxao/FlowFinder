@@ -368,9 +368,12 @@ impl TaskScheduler {
         tasks.remove(&task.id);
     }
 
-    fn clear_history(&self) {
+    /// 清除任务历史中已完成/失败的任务（保留 Cancelled 及仍在执行的任务）。
+    pub fn clear_history(&self) {
         let mut history = self.history.lock();
-        history.clear();
+        history.retain(|task| {
+            task.status != TaskStatus::Completed && task.status != TaskStatus::Failed
+        });
     }
 }
 
@@ -531,7 +534,7 @@ pub extern "C" fn ff_task_history(
     FF_OK
 }
 
-/// Clear task history.
+/// 清除任务历史中已完成/失败的任务（保留 Cancelled 及仍在执行的任务）。
 ///
 /// # Returns
 /// - `FF_OK` on success.

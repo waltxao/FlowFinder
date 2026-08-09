@@ -433,6 +433,15 @@ pub extern "C" fn ff_copy_file(src: *const c_char, dst: *const c_char) -> c_int 
             }
         };
 
+        if let Err(msg) = crate::core::path_guard::path_guard(src_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+        if let Err(msg) = crate::core::path_guard::path_guard(dst_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+
         match crate::core::file_ops::copy_file(std::path::Path::new(src_str), std::path::Path::new(dst_str)) {
             Ok(_) => {
                 clear_last_error();
@@ -494,6 +503,15 @@ pub extern "C" fn ff_move_file(src: *const c_char, dst: *const c_char) -> c_int 
             }
         };
 
+        if let Err(msg) = crate::core::path_guard::path_guard(src_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+        if let Err(msg) = crate::core::path_guard::path_guard(dst_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+
         match crate::core::file_ops::move_file(std::path::Path::new(src_str), std::path::Path::new(dst_str)) {
             Ok(()) => {
                 clear_last_error();
@@ -540,6 +558,11 @@ pub extern "C" fn ff_delete_file(path: *const c_char) -> c_int {
                 }
             }
         };
+
+        if let Err(msg) = crate::core::path_guard::path_guard(path_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
 
         match crate::core::file_ops::delete_file(std::path::Path::new(path_str)) {
             Ok(()) => {
@@ -588,6 +611,11 @@ pub extern "C" fn ff_delete_dir(path: *const c_char) -> c_int {
             }
         };
 
+        if let Err(msg) = crate::core::path_guard::path_guard(path_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+
         match crate::core::file_ops::delete_dir(std::path::Path::new(path_str)) {
             Ok(()) => {
                 clear_last_error();
@@ -634,6 +662,11 @@ pub extern "C" fn ff_create_dir(path: *const c_char) -> c_int {
                 }
             }
         };
+
+        if let Err(msg) = crate::core::path_guard::path_guard(path_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
 
         match crate::core::file_ops::create_dir(std::path::Path::new(path_str)) {
             Ok(()) => {
@@ -692,6 +725,15 @@ pub extern "C" fn ff_rename(src: *const c_char, dst: *const c_char) -> c_int {
                 }
             }
         };
+
+        if let Err(msg) = crate::core::path_guard::path_guard(src_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+        if let Err(msg) = crate::core::path_guard::path_guard(dst_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
 
         match crate::core::file_ops::rename(std::path::Path::new(src_str), std::path::Path::new(dst_str)) {
             Ok(()) => {
@@ -1637,6 +1679,10 @@ pub extern "C" fn ff_batch_rename(
             } else {
                 unsafe { CStr::from_ptr(item.new_name).to_string_lossy().to_string() }
             };
+            if let Err(msg) = crate::core::path_guard::path_guard(&original) {
+                set_last_error(msg);
+                return FF_ERR_INVALID_PATH;
+            }
             rename_items.push(crate::core::batch_ops::RenameItem {
                 original_path: original,
                 new_name,
@@ -1703,6 +1749,11 @@ pub extern "C" fn ff_organize_by_date(
             }
         };
 
+        if let Err(msg) = crate::core::path_guard::path_guard(path_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+
         match crate::core::batch_ops::organize_by_date(path_str, format_str, None) {
             Ok(count) => {
                 clear_last_error();
@@ -1750,6 +1801,11 @@ pub extern "C" fn ff_organize_by_type(
                 }
             }
         };
+
+        if let Err(msg) = crate::core::path_guard::path_guard(path_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
 
         match crate::core::batch_ops::organize_by_type(path_str, None) {
             Ok(count) => {
@@ -1845,6 +1901,17 @@ pub extern "C" fn ff_parallel_copy(
             }
         };
 
+        if let Err(msg) = crate::core::path_guard::path_guard(&dst_dir_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+        for src in &srcs_vec {
+            if let Err(msg) = crate::core::path_guard::path_guard(src) {
+                set_last_error(msg);
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+
         // Cast `user_data` to `usize` so the closure captures a `Sync` value
         // (raw pointers are `!Sync` by default, which would violate the
         // `Fn(...) + Sync` bound required by rayon's `par_iter`).
@@ -1905,6 +1972,17 @@ pub extern "C" fn ff_parallel_move(
             }
         };
 
+        if let Err(msg) = crate::core::path_guard::path_guard(&dst_dir_str) {
+            set_last_error(msg);
+            return FF_ERR_INVALID_PATH;
+        }
+        for src in &srcs_vec {
+            if let Err(msg) = crate::core::path_guard::path_guard(src) {
+                set_last_error(msg);
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+
         let user_data_addr = user_data as usize;
         let results = crate::core::parallel_ops::parallel_move_files(
             &srcs_vec,
@@ -1959,6 +2037,13 @@ pub extern "C" fn ff_parallel_delete(
         } else {
             unsafe { parse_c_string_array(paths, path_count) }
         };
+
+        for p in &paths_vec {
+            if let Err(msg) = crate::core::path_guard::path_guard(p) {
+                set_last_error(msg);
+                return FF_ERR_INVALID_PATH;
+            }
+        }
 
         let user_data_addr = user_data as usize;
         let results = crate::core::parallel_ops::parallel_delete_files(
