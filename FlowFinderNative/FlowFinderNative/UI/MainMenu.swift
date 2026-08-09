@@ -122,6 +122,111 @@ class MainMenu {
         helpMenu.addItem(withTitle: "FlowFinder 帮助", action: nil, keyEquivalent: "?")
         helpMenu.addItem(withTitle: "键盘快捷键", action: nil, keyEquivalent: "")
 
+        // C3: 应用已保存的快捷键设置（shortcut_* → 菜单项 keyEquivalent）
+        applyShortcutSettings(to: mainMenu)
+        // C3: 注册快捷键变更监听：设置页录制保存后广播 .shortcutsChanged，刷新菜单
+        if shortcutsObserverToken == nil {
+            shortcutsObserverToken = NotificationCenter.default.addObserver(
+                forName: .shortcutsChanged, object: nil, queue: .main
+            ) { _ in
+                applyShortcutSettings(to: NSApp.mainMenu)
+            }
+        }
+
         NSApp.mainMenu = mainMenu
+    }
+
+    // MARK: - 快捷键设置接入（C3）
+
+    /// 快捷键变更监听 token（block 版 observer 需强引用，否则会被自动移除）
+    private static var shortcutsObserverToken: NSObjectProtocol?
+
+    /// shortcut_* UserDefaults key → 菜单项 action selector 映射。
+    /// 无法映射的键（shortcut_quicklook / shortcut_duplicate）在设置页对应，但主菜单无对应菜单项，不在此映射。
+    private static let shortcutMenuMap: [(key: String, action: Selector)] = [
+        (FFUserDefaultsKeys.shortcutNewFolder, #selector(MainWindowController.menuNewFolder(_:))),
+        (FFUserDefaultsKeys.shortcutOpenFile, #selector(MainWindowController.menuOpen(_:))),
+        (FFUserDefaultsKeys.shortcutCloseWindow, #selector(NSWindow.performClose(_:))),
+        (FFUserDefaultsKeys.shortcutCopy, #selector(MainWindowController.menuCopy(_:))),
+        (FFUserDefaultsKeys.shortcutCut, #selector(MainWindowController.menuCut(_:))),
+        (FFUserDefaultsKeys.shortcutPaste, #selector(MainWindowController.menuPaste(_:))),
+        (FFUserDefaultsKeys.shortcutSelectAll, #selector(MainWindowController.menuSelectAll(_:))),
+        (FFUserDefaultsKeys.shortcutTrash, #selector(MainWindowController.menuMoveToTrash(_:))),
+        (FFUserDefaultsKeys.shortcutUndo, Selector("undo:")),
+        (FFUserDefaultsKeys.shortcutRedo, Selector("redo:")),
+        (FFUserDefaultsKeys.shortcutListView, #selector(MainWindowController.menuListView(_:))),
+        (FFUserDefaultsKeys.shortcutGridView, #selector(MainWindowController.menuGridView(_:))),
+        (FFUserDefaultsKeys.shortcutRefresh, #selector(MainWindowController.menuRefresh(_:))),
+        (FFUserDefaultsKeys.shortcutSearch, #selector(MainWindowController.menuSearch(_:))),
+        (FFUserDefaultsKeys.shortcutDuplicateScan, #selector(MainWindowController.menuDuplicateScan(_:))),
+        (FFUserDefaultsKeys.shortcutTaskPanel, #selector(MainWindowController.menuTaskPanel(_:))),
+        (FFUserDefaultsKeys.shortcutConnectServer, #selector(MainWindowController.menuConnectServer(_:))),
+        (FFUserDefaultsKeys.shortcutPreferences, #selector(MainWindowController.menuSettings(_:))),
+    ]
+
+    /// 读取 UserDefaults 中已保存的快捷键并应用到对应菜单项。
+    /// 未保存过（用户未改动）的键保持菜单构建时的默认值。
+    private static func applyShortcutSettings(to menu: NSMenu?) {
+        guard let menu = menu else { return }
+        for entry in shortcutMenuMap {
+            guard let saved = UserDefaults.standard.string(forKey: entry.key),
+                  let parsed = parseShortcut(saved),
+                  let item = findMenuItem(action: entry.action, in: menu) else { continue }
+            var mask = parsed.mask
+            // 原 map 约定：所有默认快捷键均含 ⌘（菜单项 keyEquivalentModifierMask 也均含 .command），
+            // 故对普通字符键强制补上 command，避免无修饰键/仅 shift 的快捷键误触发。
+            if !mask.contains(.command) {
+                mask.insert(.command)
+            }
+            item.keyEquivalent = parsed.key
+            item.keyEquivalentModifierMask = mask
+        }
+    }
+
+    /// 递归查找指定 action 的菜单项（跨所有子菜单）
+    private static func findMenuItem(action: Selector, in menu: NSMenu) -> NSMenuItem? {
+        for item in menu.items {
+            if item.action == action { return item }
+            if let submenu = item.submenu, let found = findMenuItem(action: action, in: submenu) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    /// 解析设置页保存的快捷键字符串（如 "⌘⇧Z"、"⌘N"、"⌘,"）为 keyEquivalent + modifierMask。
+    /// 与 ShortcutRecorderView.formatShortcut 的输出格式对应；字母键统一转小写（大写由 ⇧ 修饰键表达）。
+    /// 无法解析时返回 nil（保持菜单默认值）。
+    private static func parseShortcut(_ shortcut: String) -> (key: String, mask: NSEvent.ModifierFlags)? {
+        var mask: NSEvent.ModifierFlags = []
+        var rest = shortcut
+        while let first = rest.first {
+            switch first {
+            case "⌘": mask.insert(.command); rest.removeFirst()
+            case "⇧": mask.insert(.shift); rest.removeFirst()
+            case "⌥": mask.insert(.option); rest.removeFirst()
+            case "⌃": mask.insert(.control); rest.removeFirst()
+            default:
+                let keyStr = rest
+                switch keyStr {
+                case "空格键": return (" ", mask)
+                case "⌫": return ("\u{8}", mask)      // Backspace
+                case "↩": return ("\r", mask)         // Return
+                case "⇥": return ("\t", mask)         // Tab
+                case "⎋": return ("\u{1B}", mask)     // Escape
+                case "←": return ("\u{F702}", mask)   // Left arrow
+                case "→": return ("\u{F703}", mask)   // Right arrow
+                case "↑": return ("\u{F700}", mask)   // Up arrow
+                case "↓": return ("\u{F701}", mask)   // Down arrow
+                default:
+                    if keyStr.hasPrefix("F"), let n = Int(keyStr.dropFirst()), n >= 1, n <= 19 {
+                        return (String(UnicodeScalar(0xF703 + n)!), mask)  // F1 = 0xF704
+                    }
+                    guard keyStr.count == 1 else { return nil }
+                    return (keyStr.lowercased(), mask)
+                }
+            }
+        }
+        return nil
     }
 }

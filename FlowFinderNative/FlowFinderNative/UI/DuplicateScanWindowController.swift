@@ -581,6 +581,13 @@ public class DuplicateScanWindowController: NSWindowController {
     @objc private func deleteSelected() {
         guard !allDeleteFilePaths.isEmpty else { return }
 
+        // 与 MainWindowController 语义一致：用户勾选"不再询问"后跳过确认弹窗直接删除
+        let disabled = UserDefaults.standard.bool(forKey: "delete_confirm_disabled")
+        if disabled {
+            performDelete()
+            return
+        }
+
         let dialog = DeleteConfirmDialog(fileCount: allDeleteFilePaths.count) { [weak self] in
             self?.performDelete()
         }

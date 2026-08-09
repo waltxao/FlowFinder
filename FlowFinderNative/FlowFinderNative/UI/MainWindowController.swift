@@ -731,6 +731,21 @@ public class MainWindowController: NSWindowController {
         detailsBar.layer?.shadowOffset = CGSize(width: 0, height: -2)
         detailsBar.layer?.shadowColor = NSColor.black.cgColor
 
+        // v0.7.4 项 3：详情栏名称行单击改名 → 调用对应侧 viewModel.renameFile
+        let paneVM = side == .left ? leftPaneViewModel : rightPaneViewModel
+        detailsBar.onRename = { [weak paneVM] oldPath, newName in
+            paneVM?.renameFile(oldPath, to: newName)
+        }
+        // v0.7.4 修订 2：详情栏标签变更 → 注册撤销
+        detailsBar.onUndoableTagChange = { [weak paneVM] kind, tag, path in
+            switch kind {
+            case .add:
+                paneVM?.registerUndoAddTag(tag: tag, path: path)
+            case .remove:
+                paneVM?.registerUndoRemoveTag(tag: tag, path: path)
+            }
+        }
+
         // 保存引用
         switch side {
         case .left:
@@ -1039,6 +1054,14 @@ public class MainWindowController: NSWindowController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleRefreshHiddenFiles),
             name: .refreshHiddenFiles, object: nil
+        )
+        // v0.7.4 修复 4：监听文件内容变更（重命名等），刷新详情栏显示新名字。
+        // 底层审查 FINDING：renameFile 后 state.selectedFiles 已更新（修复 2），
+        // 但详情栏（ExpandableDetailsBar）仅在 selectionDidChange 触发时刷新，
+        // 重命名后选中恢复可能被 isReloading 抑制，详情栏残留旧名字。此处主动刷新。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileContentChanged(_:)),
+            name: .fileListContentChanged, object: nil
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleRefreshSystemFiles),
@@ -1504,7 +1527,8 @@ public class MainWindowController: NSWindowController {
         let detailsBar = side == .left ? leftDetailsBar : rightDetailsBar
         let itemCount = state.files.count
         let diskFree = getDiskFreeSpace(forPath: state.path)
-        detailsBar?.updateStatus(itemCount: itemCount, diskFree: diskFree)
+        // v0.7.4 修订 4：传入当前目录路径（未选中时详情栏显示该文件夹图标）
+        detailsBar?.updateStatus(itemCount: itemCount, diskFree: diskFree, currentDirectoryPath: state.path)
 
         // 任务 F11-8: 状态变化时同步侧边栏标签高亮（导航清除 tagFilter / 切换活动面板时高亮需跟随）
         if side == activePane {
@@ -1602,7 +1626,29 @@ public class MainWindowController: NSWindowController {
         }
     }
 
+    /// v0.7.4 修复 4：文件内容变更（重命名等）后刷新详情栏。
+    /// 详情栏显示选中文件的名称/路径，重命名后若不刷新会残留旧名字。
+    /// 通知携带目录路径，据此确定受影响的面板，用其 viewModel.selectedFiles 首项刷新详情栏。
+    @objc private func handleFileContentChanged(_ notification: Notification) {
+        let changedPath = (notification.userInfo?["path"] as? String) ?? ""
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // 更新受影响面板（左/右）的详情栏。目录匹配的面板数据已刷新（refresh 或重载），
+            // selectedFiles 中旧路径条目已在 renameFile 中更新为新路径（修复 2）。
+            if changedPath == self.leftPaneViewModel.currentPath {
+                self.leftDetailsBar?.update(with: self.leftPaneViewModel.selectedFiles)
+            }
+            if changedPath == self.rightPaneViewModel.currentPath {
+                self.rightDetailsBar?.update(with: self.rightPaneViewModel.selectedFiles)
+            }
+        }
+    }
+
     private func handleSelectionChanged(side: PaneSide, files: [FileEntry]) {
+        // v0.7.4 修订: 同步"新建文件夹"按钮的选中数量（行为与悬停提示跟随变化）
+        let toolbar = side == .left ? leftPaneToolbar : rightPaneToolbar
+        toolbar?.setFolderSelectionCount(files.count)
+
         // 防抖: 取消上一次未完成的选中变更 UI 更新，防止快速连续点击不同文件时
         // 多次 layout 触发窗口跳动。将详情栏更新推迟到下一个 runloop，确保
         // NSTableView 的选中态渲染完成后再更新详情栏，避免布局冲突。
@@ -1610,13 +1656,8 @@ public class MainWindowController: NSWindowController {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             guard let detailsBar = side == .left ? self.leftDetailsBar : self.rightDetailsBar else { return }
-            if let first = files.first {
-                detailsBar.update(with: first)
-                detailsBar.setSelectedCount(files.count)
-            } else {
-                detailsBar.update(with: nil)
-                detailsBar.setSelectedCount(0)
-            }
+            // v0.7.4 修订: 传入完整选中数组，详情栏自行区分单选/多选/未选
+            detailsBar.update(with: files)
         }
         selectionChangeWorkItem = workItem
         DispatchQueue.main.async(execute: workItem)
@@ -1727,9 +1768,16 @@ extension MainWindowController: PaneToolbarDelegate {
         menuBatchRename(nil)
     }
 
-    // v0.6.9: 文件夹配置菜单"新建文件夹"回调
-    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar) {
-        menuNewFolder(nil)
+    // v0.6.9: 文件夹配置菜单"新建文件夹"回调（v0.7.4 修订：合并行为，携带选中数量）
+    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar, selectedCount: Int) {
+        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        if selectedCount >= 2 {
+            // 选中 2 个及以上：用所选项目新建文件夹
+            _ = vm.createFolderFromSelection(window: window)
+        } else {
+            // 未选中（或单选）：创建空文件夹
+            vm.createDirectory()
+        }
     }
 }
 

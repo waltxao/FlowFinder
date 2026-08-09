@@ -457,12 +457,18 @@ class DraggingCollectionView: NSCollectionView {
     /// 拦截空格键触发 QuickLook。
     /// 用 performKeyEquivalent 而非 keyDown：NSCollectionView 的字符键先经 interpretKeyEvents
     /// 处理，keyDown 可能收不到（问题 5 根因）。
+    /// G2: performKeyEquivalent 由 NSWindow 对所有可见 responder 分发，必须校验本视图
+    /// （或其子视图）是 firstResponder 才拦截，否则双网格面板时空格 QuickLook 打到错误面板。
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags
         if event.keyCode == 49 && !modifiers.contains(.command) && !modifiers.contains(.option) && !modifiers.contains(.control) {
-            FFDebug.log("DraggingCollectionView.performKeyEquivalent: space intercepted")
-            onSpaceKey?()
-            return true
+            let fr = window?.firstResponder as? NSObject
+            let isMyResponder = (fr === self) || (fr is NSView && (fr as! NSView).isDescendant(of: self))
+            if isMyResponder {
+                FFDebug.log("DraggingCollectionView.performKeyEquivalent: space intercepted")
+                onSpaceKey?()
+                return true
+            }
         }
         return super.performKeyEquivalent(with: event)
     }
@@ -551,16 +557,29 @@ public class FileGridView: NSView {
                 .store(in: &cancellables)
             reloadData()
             // 重命名等"数量不变"操作：state sink 只比较数量不刷新，需强制 reloadData
+            // v0.7.4 修复：先移除旧 observer 再注册——viewModel 被多次赋值时，
+            // 不加 removeObserver 会累积重复监听，post 一次通知触发 N 次 forceReload
+            // （实测日志出现 25 次重复 forceReload 风暴）。
+            NotificationCenter.default.removeObserver(self, name: .fileListContentChanged, object: nil)
             NotificationCenter.default.addObserver(
-                self, selector: #selector(forceReload),
+                self, selector: #selector(forceReload(_:)),
                 name: .fileListContentChanged, object: nil
             )
         }
     }
 
-    @objc private func forceReload() {
-        FFDebug.log("FileGridView.forceReload")
-        reloadData()
+    /// 内容变更强制刷新（重命名等数量不变操作）。
+    /// v0.7.4 修复 3：通知携带目录路径。若本面板显示的目录 = 变更目录，
+    /// 说明数据可能过期（尤其对侧面板未随 renameFile 刷新），先 refresh() 重读磁盘再 reloadData。
+    @objc private func forceReload(_ notification: Notification) {
+        let changedPath = (notification.userInfo?["path"] as? String) ?? ""
+        if let vm = viewModel, !changedPath.isEmpty, vm.currentPath == changedPath {
+            FFDebug.log("FileGridView.forceReload: 目录匹配 \(changedPath)，refresh 重读磁盘")
+            vm.refresh()
+        } else {
+            FFDebug.log("FileGridView.forceReload")
+            reloadData()
+        }
     }
 
     /// 任务 F10-8: 根据 viewModel.groupedFiles 重建分组缓存。
@@ -967,6 +986,11 @@ public class FileGridView: NSView {
         if !indexPaths.isEmpty {
             collectionView?.selectItems(at: indexPaths, scrollPosition: [])
         }
+    }
+
+    deinit {
+        // G3: 移除 selector 版通知观察者（selector 观察者不会随 dealloc 自动移除）
+        NotificationCenter.default.removeObserver(self, name: .fileListContentChanged, object: nil)
     }
 }
 

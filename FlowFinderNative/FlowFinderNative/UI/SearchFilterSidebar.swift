@@ -159,8 +159,27 @@ class SearchFilterSidebar: NSView {
             existing.removeFromSuperview()
         }
         let section = makeSection(title: "标签")
-        let emptyRow = SettingsRowView(title: "暂无标签")
-        section.addRow(emptyRow)
+        // D4: 加载 SidebarTags（与侧边栏/设置页共享存储），有标签时渲染可筛选行
+        let allTags = FFCreateTagDialog.loadAllSidebarTags()
+        if allTags.isEmpty {
+            section.addRow(SettingsRowView(title: "暂无标签"))
+        } else {
+            for tag in allTags {
+                let row = makeCheckRow(
+                    title: tag.name,
+                    state: config.enabledTags.contains(tag.name)
+                ) { [weak self] on in
+                    guard let self = self else { return }
+                    if on {
+                        self.config.enabledTags.insert(tag.name)
+                    } else {
+                        self.config.enabledTags.remove(tag.name)
+                    }
+                    self.onConfigChanged?(self.config)
+                }
+                section.addRow(row)
+            }
+        }
         tagsSection = section
         mainStack.addArrangedSubview(section)
     }

@@ -255,8 +255,10 @@ public final class CoreBridge {
                 // Cache hit — use the cached entries directly.
                 ffiResult = 0
                 ffiEntries = cacheContext.entries
+                FFDebug.log("[CACHE-DIAG] listDirectory: 缓存命中 path=\(path) entries=\(cacheContext.entries.count) 首项=\(cacheContext.entries.first?.name ?? "nil")")
                 return
             }
+            FFDebug.log("[CACHE-DIAG] listDirectory: 缓存未命中，实时扫描 path=\(path) cacheResult=\(cacheResult)")
 
             // ── Cache miss — live scan via ff_list_dir ─────────────────
             var scanContext = EntryCollectorContext()
@@ -1049,6 +1051,25 @@ public final class CoreBridge {
 
         semaphore.wait()
         return tasks
+    }
+
+    /// 清除任务历史中已完成/失败的任务（保留正在执行及取消的任务）
+    /// - Throws: CoreBridgeError if operation fails
+    func clearCompletedTasks() throws {
+        let semaphore = DispatchSemaphore(value: 0)
+        var ffiResult: Int32 = -1
+
+        ffiQueue.async {
+            defer { semaphore.signal() }
+            ffiResult = ff_task_clear_history()
+        }
+
+        semaphore.wait()
+
+        guard ffiResult == 0 else {
+            let errorMessage = getLastError()
+            throw CoreBridgeError.ffiError(errorMessage)
+        }
     }
 
     // MARK: - Volume Management (Sub-project 10)

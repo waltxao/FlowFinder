@@ -43,6 +43,7 @@
 		FF0000000000000000200035 /* TaskProgressBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200036; };
 		FF0000000000000000200039 /* BreadcrumbBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003A; };
 		FF000000000000000020003B /* ExpandableDetailsBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003C; };
+		FF00000000000000002000A1 /* FFMiniThumbnailStackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00000000000000002000A2; };
 		FF0000000000000000200061 /* FileInfoWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200060; };
 		FF0000000000000000200059 /* FFScroller.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020005A; };
 		FF000000000000000020005B /* AboutWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020005C; };
@@ -55,9 +56,9 @@
 		FF000000000000000020004B /* DuplicateGroupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020004C; };
 		FF000000000000000020004D /* DuplicatePreviewPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020004E; };
 		FF0000000000000000200051 /* TagSelectorDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200052; };
+		FF0000000000000020000000 /* FFCreateTagDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000020000001; };
 		FF0000000000000000200053 /* DeleteConfirmDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200054; };
 		FF0000000000000000200055 /* ConnectServerDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200056; };
-		FF0000000000000000200057 /* ProgressDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200058; };
 		FF0000000000000000200063 /* FFLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200064; };
 		FF0000000000000000200065 /* FFCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200066; };
 		FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200076; };
@@ -117,15 +118,16 @@
 		FF000000000000000020004C /* DuplicateGroupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicateGroupView.swift; sourceTree = "<group>"; };
 		FF000000000000000020004E /* DuplicatePreviewPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicatePreviewPanel.swift; sourceTree = "<group>"; };
 		FF0000000000000000200052 /* TagSelectorDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagSelectorDialog.swift; sourceTree = "<group>"; };
+		FF0000000000000020000001 /* FFCreateTagDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCreateTagDialog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200054 /* DeleteConfirmDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteConfirmDialog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200056 /* ConnectServerDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectServerDialog.swift; sourceTree = "<group>"; };
-		FF0000000000000000200058 /* ProgressDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressDialog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200064 /* FFLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200066 /* FFCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCommon.swift; sourceTree = "<group>"; };
 		FF0000000000000000200076 /* FFPaneActionsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPaneActionsController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200068 /* SquircleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquircleView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006A /* ToolOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOverlayView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006C /* FFFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFFormat.swift; sourceTree = "<group>"; };
+		FF00000000000000002000A2 /* FFMiniThumbnailStackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFMiniThumbnailStackView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +183,7 @@
 				FF0000160000000000000016 /* MainWindowController.swift */,
 							FF000000000000000020001C /* AppearanceSettingsView.swift */,
 				FF000000000000000020003C /* ExpandableDetailsBar.swift */,
+				FF00000000000000002000A2 /* FFMiniThumbnailStackView.swift */,
 				FF0000000000000000200060 /* FileInfoWindowController.swift */,
 				FF0000000000000000200022 /* DuplicateScanWindowController.swift */,
 				FF0000000000000000200024 /* FileGridView.swift */,
@@ -200,9 +203,9 @@
 				FF000000000000000020004C /* DuplicateGroupView.swift */,
 				FF000000000000000020004E /* DuplicatePreviewPanel.swift */,
 				FF0000000000000000200052 /* TagSelectorDialog.swift */,
+				FF0000000000000020000001 /* FFCreateTagDialog.swift */,
 				FF0000000000000000200054 /* DeleteConfirmDialog.swift */,
 				FF0000000000000000200056 /* ConnectServerDialog.swift */,
-				FF0000000000000000200058 /* ProgressDialog.swift */,
 				FF0000000000000000200066 /* FFCommon.swift */,
 				FF0000000000000000200076 /* FFPaneActionsController.swift */,
 				FF0000000000000000200068 /* SquircleView.swift */,
@@ -392,6 +395,7 @@
 				FF0000000000000000200059 /* FFScroller.swift in Sources */,
 				FF000000000000000020005B /* AboutWindowController.swift in Sources */,
 				FF000000000000000020003B /* ExpandableDetailsBar.swift in Sources */,
+				FF00000000000000002000A1 /* FFMiniThumbnailStackView.swift in Sources */,
 				FF0000000000000000200061 /* FileInfoWindowController.swift in Sources */,
 				FF000000000000000020003D /* BatchRenameWindowController.swift in Sources */,
 				FF0000000000000000200041 /* DesignTokens.swift in Sources */,
@@ -402,9 +406,9 @@
 				FF000000000000000020004B /* DuplicateGroupView.swift in Sources */,
 				FF000000000000000020004D /* DuplicatePreviewPanel.swift in Sources */,
 				FF0000000000000000200051 /* TagSelectorDialog.swift in Sources */,
+				FF0000000000000020000000 /* FFCreateTagDialog.swift in Sources */,
 				FF0000000000000000200053 /* DeleteConfirmDialog.swift in Sources */,
 				FF0000000000000000200055 /* ConnectServerDialog.swift in Sources */,
-				FF0000000000000000200057 /* ProgressDialog.swift in Sources */,
 				FF0000000000000000200063 /* FFLog.swift in Sources */,
 				FF0000000000000000200065 /* FFCommon.swift in Sources */,
 				FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */,
@@ -543,7 +547,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 702;
+				CURRENT_PROJECT_VERSION = 740;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -567,7 +571,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.7.2;
+				MARKETING_VERSION = 0.7.4;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
@@ -588,7 +592,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 702;
+				CURRENT_PROJECT_VERSION = 740;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -612,7 +616,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.7.2;
+				MARKETING_VERSION = 0.7.4;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",

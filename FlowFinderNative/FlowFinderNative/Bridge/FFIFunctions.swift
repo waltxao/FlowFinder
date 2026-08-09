@@ -531,6 +531,11 @@ public func ff_task_progress(
     _ outProgress: UnsafeMutablePointer<Double>
 ) -> Int32
 
+/// 清除任务历史中已完成/失败的任务（保留 Cancelled 及仍在执行的任务）
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_task_clear_history")
+public func ff_task_clear_history() -> Int32
+
 // MARK: - Thumbnail Generation (Sub-project 7) FFI Declarations
 
 /// Generate a thumbnail for an image file

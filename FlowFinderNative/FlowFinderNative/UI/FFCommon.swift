@@ -38,6 +38,9 @@ extension Notification.Name {
     static let smbVolumeDisconnected = Notification.Name("SMBVolumeDisconnected")
     static let smbVolumeReconnected = Notification.Name("SMBVolumeReconnected")
     static let smbVolumeReconnectFailed = Notification.Name("SMBVolumeReconnectFailed")
+
+    // 快捷键设置变更（设置页录制保存后广播；MainMenu 监听后刷新菜单快捷键）
+    static let shortcutsChanged = Notification.Name("FFShortcutsChanged")
 }
 
 // MARK: - FFUserDefaultsKeys
@@ -51,6 +54,42 @@ enum FFUserDefaultsKeys {
     static let showFileTags = "show_file_tags"
     static let showFileExtensions = "show_file_extensions"
     static let showSystemFiles = "show_system_files"
+
+    // 设置页：通用
+    static let startupLocation = "startup_location"
+    static let checkUpdateOnStartup = "check_update_on_startup"
+    static let defaultViewMode = "default_view_mode"
+    static let confirmFileOperations = "confirm_file_operations"
+    static let defaultFileBehavior = "default_file_behavior"
+    // 设置页：文件管理
+    static let folderFirstSort = "folder_first_sort"
+    static let keepSelectionPosition = "keep_selection_position"
+    // 设置页：SMB
+    static let smbDefaultDomain = "smb_default_domain"
+    static let smbAutoReconnect = "smb_auto_reconnect"
+    // 设置页：快捷键（MainMenu 读取并应用到菜单项）
+    static let shortcutNewFolder = "shortcut_new_folder"
+    static let shortcutOpenFile = "shortcut_open_file"
+    static let shortcutCloseWindow = "shortcut_close_window"
+    static let shortcutCopy = "shortcut_copy"
+    static let shortcutCut = "shortcut_cut"
+    static let shortcutPaste = "shortcut_paste"
+    static let shortcutSelectAll = "shortcut_select_all"
+    static let shortcutTrash = "shortcut_trash"
+    static let shortcutUndo = "shortcut_undo"
+    static let shortcutRedo = "shortcut_redo"
+    static let shortcutListView = "shortcut_list_view"
+    static let shortcutGridView = "shortcut_grid_view"
+    static let shortcutRefresh = "shortcut_refresh"
+    static let shortcutSearch = "shortcut_search"
+    static let shortcutDuplicateScan = "shortcut_duplicate_scan"
+    static let shortcutTaskPanel = "shortcut_task_panel"
+    static let shortcutQuicklook = "shortcut_quicklook"
+    static let shortcutDuplicate = "shortcut_duplicate"
+    static let shortcutConnectServer = "shortcut_connect_server"
+    static let shortcutPreferences = "shortcut_preferences"
+    // 标签（侧边栏/设置页/标签弹窗共享存储）
+    static let sidebarTags = "SidebarTags"
 }
 
 // MARK: - FFAccent（应用级强调色源）
@@ -105,6 +144,19 @@ enum FFPaneMenuBuilder {
     static func buildMenu(for target: AnyObject, isLeft: Bool, tagsSubmenu: NSMenu?) -> NSMenu {
         let menu = NSMenu()
 
+        // v0.7.4 修订 2：撤销/重做项（默认隐藏，有可撤销/重做操作时由 menuNeedsUpdate 显示）
+        // 标题动态更新为"撤销 X"/"重做 X"，如"撤销删除"、"重做删除"
+        // tag 100=撤销, 101=重做（用 tag 识别避免标题变化后匹配失败）
+        let undoItem = menu.addItem(withTitle: "撤销", action: Selector("undoFromMenu:"), keyEquivalent: "z")
+        undoItem.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "撤销")
+        undoItem.isHidden = true
+        undoItem.tag = 100
+        let redoItem = menu.addItem(withTitle: "重做", action: Selector("redoFromMenu:"), keyEquivalent: "Z")
+        redoItem.image = NSImage(systemSymbolName: "arrow.uturn.forward", accessibilityDescription: "重做")
+        redoItem.isHidden = true
+        redoItem.tag = 101
+        menu.addItem(.separator())
+
         // 1. 打开
         menu.addItem(withTitle: "打开", action: Selector("openSelected:"), keyEquivalent: "")
         // 2. 分隔线
@@ -147,26 +199,35 @@ enum FFPaneMenuBuilder {
         // 14. 新建文件夹
         let newFolderItem = menu.addItem(withTitle: "新建文件夹", action: Selector("createDirectory:"), keyEquivalent: "n")
         newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
-        // 15. 分隔线
+        // 15. 用所选项目新建文件夹（选中数量在 menuNeedsUpdate 中动态更新标题）
+        // v0.7.4 项 6：标题 "用所选 X 个项目新建文件夹"，X 由 updateMainMenu 填充
+        let folderFromSelectionItem = menu.addItem(
+            withTitle: "用所选项目新建文件夹",
+            action: Selector("createFolderFromSelection:"),
+            keyEquivalent: ""
+        )
+        folderFromSelectionItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "用所选项目新建文件夹")
+        folderFromSelectionItem.isHidden = true  // 无选中时隐藏，由 updateMainMenu 控制
+        // 16. 分隔线
         menu.addItem(.separator())
-        // 16. 添加到我的收藏
+        // 17. 添加到我的收藏
         let favItem = menu.addItem(withTitle: "添加到我的收藏", action: Selector("addToFavorites:"), keyEquivalent: "")
         favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
-        // 17. 标签（二级菜单）
+        // 18. 标签（二级菜单）
         if let tagsSubmenu = tagsSubmenu {
             let tagsItem = menu.addItem(withTitle: "标签", action: nil, keyEquivalent: "")
             tagsItem.image = NSImage(systemSymbolName: "tag", accessibilityDescription: "标签")
             tagsItem.submenu = tagsSubmenu
         }
-        // 18. AI 自动打标签
+        // 19. AI 自动打标签
         let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: Selector("generateAITags:"), keyEquivalent: "")
         aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI 自动打标签")
-        // 19. 查重扫描
+        // 20. 查重扫描
         let dupItem = menu.addItem(withTitle: "查重扫描", action: Selector("duplicateScan:"), keyEquivalent: "")
         dupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
-        // 20. 分隔线
+        // 21. 分隔线
         menu.addItem(.separator())
-        // 21. 显示简介
+        // 22. 显示简介
         let infoItem = menu.addItem(withTitle: "显示简介", action: Selector("showInfoMenu:"), keyEquivalent: "i")
         infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "显示简介")
 

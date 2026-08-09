@@ -240,18 +240,20 @@ class ConnectServerDialog: FFModalSheet {
     @objc private func protocolChanged() {
         let proto = ConnectServerProtocol(rawValue: protocolSegmented.selectedSegment) ?? .smb
         portField.stringValue = proto.defaultPort
-        // 非支持协议禁用连接（视觉提示）
+        // 非支持协议禁用连接（F2: 同时禁用「连接」按钮，避免点击后静默无效果）
         if !proto.isSupported {
             // 仅 SMB 已支持，其他协议禁用用户名/密码输入
             userField.isEnabled = false
             passwordField.isEnabled = false
             shareField.isEnabled = false
+            setPrimaryButtonEnabled(false)
             // 提示
             userField.placeholderString = "（\(proto.title) 暂不支持）"
         } else {
             userField.isEnabled = true
             passwordField.isEnabled = true
             shareField.isEnabled = true
+            setPrimaryButtonEnabled(true)
             userField.placeholderString = "可选（匿名访问留空）"
         }
     }
@@ -271,19 +273,23 @@ struct ConnectServerResult {
     let autoConnect: Bool
 
     /// 生成 SMB URL（仅 SMB 协议有效）
+    /// F2: user/password 需 URL 编码（含 @、:、/ 等字符时否则 URL 解析错误）
     func smbURL() -> URL? {
         guard `protocol` == .smb, !server.isEmpty else { return nil }
         var urlString = "smb://"
         if !user.isEmpty {
-            urlString += user
+            let encodedUser = user.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? user
+            urlString += encodedUser
             if !password.isEmpty {
-                urlString += ":" + password
+                let encodedPassword = password.addingPercentEncoding(withAllowedCharacters: .urlPasswordAllowed) ?? password
+                urlString += ":" + encodedPassword
             }
             urlString += "@"
         }
         urlString += server
         if !share.isEmpty {
-            urlString += "/\(share)"
+            let encodedShare = share.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? share
+            urlString += "/\(encodedShare)"
         }
         return URL(string: urlString)
     }

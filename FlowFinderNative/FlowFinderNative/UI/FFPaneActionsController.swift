@@ -102,6 +102,15 @@ final class FFPaneActionsController: NSObject {
 
     // MARK: - 右键菜单 Action 方法
 
+    /// v0.7.4 修订 2：右键菜单撤销/重做（转发到窗口 UndoManager）
+    @objc func undoFromMenu(_ sender: Any?) {
+        host?.hostWindow?.undoManager?.undo()
+    }
+
+    @objc func redoFromMenu(_ sender: Any?) {
+        host?.hostWindow?.undoManager?.redo()
+    }
+
     @objc func openSelected(_ sender: Any?) {
         guard let entry = host?.clickedEntry else { return }
         if entry.isDirectory {
@@ -171,6 +180,12 @@ final class FFPaneActionsController: NSObject {
         }
     }
 
+    /// v0.7.4 项 6：用所选项目新建文件夹（创建新文件夹并把选中项移入，冲突弹窗询问）
+    @objc func createFolderFromSelection(_ sender: Any?) {
+        guard let window = host?.hostWindow else { return }
+        host?.viewModel?.createFolderFromSelection(window: window)
+    }
+
     @objc func addToFavorites(_ sender: Any?) {
         guard let entry = host?.clickedEntry else { return }
         NotificationCenter.default.post(name: .fileListDidAddFavorite, object: nil,
@@ -229,7 +244,7 @@ final class FFPaneActionsController: NSObject {
     // MARK: - 键盘操作
 
     /// 统一键盘入口（MainWindowController 全局 keyDown monitor 调用）：
-    /// 空格 → QuickLook，Enter → 内联重命名，Del → 移到废纸篓。
+    /// 空格 -> QuickLook，Enter -> 内联重命名，Del -> 移到废纸篓。
     @discardableResult
     func handlePaneKey(_ keyCode: UInt16) -> Bool {
         if keyCode == 49 {  // 空格
@@ -237,6 +252,7 @@ final class FFPaneActionsController: NSObject {
             return true
         }
         if keyCode == 36 || keyCode == 76 {  // Enter
+            FFDebug.log("[RENAME-DIAG] handlePaneKey: 收到 Enter(keyCode=\(keyCode)), isRenaming=\(isRenaming), 将调用 beginInlineRename")
             beginInlineRename()
             return true
         }
@@ -258,13 +274,26 @@ final class FFPaneActionsController: NSObject {
     /// 开始内联重命名：选中单个文件时按 Enter 或右键"重命名"触发。
     /// 视图特有的操作（获取文本框、选中项）通过协议委托给视图实现。
     func beginInlineRename() {
-        guard !isRenaming else { return }
-        guard let viewModel = host?.viewModel else { return }
-        guard let textField = host?.renameTextFieldForSelection() else { return }
+        guard !isRenaming else {
+            FFDebug.log("[RENAME-DIAG] beginInlineRename: 跳过（已在重命名中）")
+            return
+        }
+        guard let viewModel = host?.viewModel else {
+            FFDebug.log("[RENAME-DIAG] beginInlineRename: 跳过（无 viewModel）")
+            return
+        }
+        guard let textField = host?.renameTextFieldForSelection() else {
+            FFDebug.log("[RENAME-DIAG] beginInlineRename: 跳过（无法获取 textField）")
+            return
+        }
 
         // 获取单选文件
-        guard viewModel.selectedFiles.count == 1 else { return }
+        guard viewModel.selectedFiles.count == 1 else {
+            FFDebug.log("[RENAME-DIAG] beginInlineRename: 跳过（选中数量=\(viewModel.selectedFiles.count)，需单选）")
+            return
+        }
         let entry = viewModel.selectedFiles[0]
+        FFDebug.log("[RENAME-DIAG] beginInlineRename: 开始编辑 path=\(entry.path) originalName=\(entry.name)")
 
         // 记录重命名上下文
         isRenaming = true
@@ -273,7 +302,7 @@ final class FFPaneActionsController: NSObject {
         renamingTextField = textField
         renameCancelled = false
 
-        // 进入编辑模式：先用完整文件名（含后缀）填充编辑框——
+        // 进入编辑模式：先用完整文件名（含后缀）填充编辑框--
         // cell 显示名可能不含后缀（showFileExtensions=false 时），直接用显示名编辑
         // 会在提交时丢失后缀。与 Finder 一致：编辑框显示完整名，仅默认选中不含后缀部分。
         textField.stringValue = entry.name
@@ -282,6 +311,7 @@ final class FFPaneActionsController: NSObject {
         textField.delegate = self
 
         guard host?.hostWindow?.makeFirstResponder(textField) == true else {
+            FFDebug.log("[RENAME-DIAG] beginInlineRename: makeFirstResponder 失败，清理状态返回")
             // 无法进入编辑模式，清理状态
             textField.isEditable = false
             textField.delegate = nil
@@ -292,6 +322,7 @@ final class FFPaneActionsController: NSObject {
             renameCancelled = false
             return
         }
+        FFDebug.log("[RENAME-DIAG] beginInlineRename: 已进入编辑模式，textField 成为 firstResponder")
 
         // 选中文件名（不含扩展名），与访达行为一致
         if let editor = textField.currentEditor() {
@@ -312,11 +343,15 @@ final class FFPaneActionsController: NSObject {
     /// 导致读到旧值、"输入框消失但名字没变"。
     /// 修复方案：优先从 field editor（`currentEditor()`）读取最新文本。
     func endInlineRename() {
-        guard isRenaming else { return }
+        guard isRenaming else {
+            FFDebug.log("[RENAME-DIAG] endInlineRename: 跳过（isRenaming=false，可能已被处理）")
+            return
+        }
         let textField = renamingTextField
         let originalName = renamingOriginalName
         let path = renamingPath
         let cancelled = renameCancelled
+        FFDebug.log("[RENAME-DIAG] endInlineRename: 进入 path=\(path) originalName=\(originalName) cancelled=\(cancelled)")
 
         // 清理状态
         isRenaming = false
@@ -336,15 +371,22 @@ final class FFPaneActionsController: NSObject {
 
         // 取消则不重命名
         guard !cancelled else {
+            FFDebug.log("[RENAME-DIAG] endInlineRename: 已取消，不重命名")
             restoreFocus()
             return
         }
 
         // 提交重命名
         guard let tf = textField else {
+            FFDebug.log("[RENAME-DIAG] endInlineRename: textField 为 nil，无法重命名")
             restoreFocus()
             return
         }
+
+        // 关键诊断：在清理状态/关闭编辑框之前，先记录此时 field editor 和 stringValue 的原始值
+        let editorBefore = tf.currentEditor()?.string
+        let stringValueBefore = tf.stringValue
+        FFDebug.log("[RENAME-DIAG] endInlineRename: 读取时刻 [清理状态后/关闭编辑框前] hasEditor=\(tf.currentEditor() != nil) editor.string=\(editorBefore ?? "nil") tf.stringValue=\(stringValueBefore)")
 
         // Bug 修复：优先从 field editor 读取最新文本。
         // control(_:doCommandBy:) 调用本方法时 field editor 仍活跃，
@@ -356,13 +398,14 @@ final class FFPaneActionsController: NSObject {
             newName = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        FFDebug.log("endInlineRename: path=\(path) newName=\(newName) cancelled=\(cancelled)")
+        FFDebug.log("[RENAME-DIAG] endInlineRename: 最终 newName=\(newName) (trimmed) 是否与原名相同=\(newName == originalName)")
         guard !newName.isEmpty, newName != originalName else {
+            FFDebug.log("[RENAME-DIAG] endInlineRename: 名字为空或未变，不重命名 -> 这就是'名字变回旧值'的断点")
             restoreFocus()
             return
         }
 
-        // 后缀变更提醒（与 Finder 一致）：原文件有后缀且新名后缀不同 → 弹确认框
+        // 后缀变更提醒（与 Finder 一致）：原文件有后缀且新名后缀不同 -> 弹确认框
         let oldExt = (originalName as NSString).pathExtension
         let newExt = (newName as NSString).pathExtension
         if !oldExt.isEmpty && oldExt != newExt {
@@ -373,12 +416,15 @@ final class FFPaneActionsController: NSObject {
             alert.addButton(withTitle: "使用新名称")
             alert.addButton(withTitle: "取消")
             if alert.runModal() != .alertFirstButtonReturn {
+                FFDebug.log("[RENAME-DIAG] endInlineRename: 用户在扩展名确认框点了取消")
                 tf.stringValue = originalName
                 restoreFocus()
                 return
             }
+            FFDebug.log("[RENAME-DIAG] endInlineRename: 用户在扩展名确认框点了使用新名称")
         }
 
+        FFDebug.log("[RENAME-DIAG] endInlineRename: 调用 renameFile path=\(path) newName=\(newName)")
         host?.viewModel?.renameFile(path, to: newName)
         restoreFocus()
     }
@@ -482,14 +528,16 @@ extension FFPaneActionsController: NSTextFieldDelegate {
         switch commandSelector {
         case #selector(NSResponder.cancelOperation(_:)):
             // Esc：取消重命名
+            FFDebug.log("[RENAME-DIAG] control:doCommandBy cancelOperation(Esc): 触发，设 cancelled=true 调 endInlineRename")
             renameCancelled = true
             endInlineRename()
             return true
         case #selector(NSResponder.insertNewline(_:)):
             // Enter/Return：直接提交重命名。
-            // 不依赖 makeFirstResponder 转移焦点触发 controlTextDidEndEditing——
+            // 不依赖 makeFirstResponder 转移焦点触发 controlTextDidEndEditing--
             // 焦点转移失败时编辑不结束、无法提交（历史 Bug 根因）。
             // endInlineRename 内部会从 field editor 读取最新文本并恢复焦点。
+            FFDebug.log("[RENAME-DIAG] control:doCommandBy insertNewline(Enter确认): 触发，调 endInlineRename (isRenaming=\(isRenaming))")
             endInlineRename()
             return true
         default:
@@ -499,7 +547,11 @@ extension FFPaneActionsController: NSTextFieldDelegate {
 
     /// 编辑结束（失焦自动确认 / Esc 取消）
     public func controlTextDidEndEditing(_ obj: Notification) {
-        guard isRenaming else { return }
+        FFDebug.log("[RENAME-DIAG] controlTextDidEndEditing: 触发 (isRenaming=\(isRenaming))")
+        guard isRenaming else {
+            FFDebug.log("[RENAME-DIAG] controlTextDidEndEditing: isRenaming=false，跳过（防止双重调用）")
+            return
+        }
         endInlineRename()
     }
 }
@@ -525,6 +577,35 @@ extension FFPaneActionsController: NSMenuDelegate {
 
     /// 更新主右键菜单的动态项
     private func updateMainMenu(_ menu: NSMenu) {
+        // v0.7.4 修订 3：判断是否"空白处右键"（未点击任何文件且无选中项）
+        let isBlankArea = host?.clickedEntry == nil && (host?.selectedEntries.isEmpty ?? true)
+
+        // 空白处右键：精简菜单，只保留不需要选中文件的操作
+        // 保留：粘贴 / 新建文件夹 / 查重扫描 / 撤销(动态) / 重做(动态)
+        // 隐藏：打开 / 复制 / 剪切 / 移动与复制到另一面板 / 重命名 / 移到废纸篓 /
+        //       添加到收藏 / 标签 / AI打标 / 显示简介 / 用所选新建文件夹
+        if isBlankArea {
+            // 固定保留的项（标题不变）
+            let keepTitles = Set(["粘贴", "新建文件夹", "查重扫描"])
+            for item in menu.items {
+                if item.isSeparatorItem { continue }
+                // 撤销/重做项用 tag 识别（100=撤销, 101=重做），单独按 canUndo/canRedo 判断
+                if item.tag == 100 || item.tag == 101 { continue }
+                item.isHidden = !keepTitles.contains(item.title)
+            }
+            // 撤销/重做项在空白处也按 canUndo/canRedo 独立判断
+            updateUndoRedoMenuItems(menu)
+            return
+        }
+
+        // 非空白处（点击了文件或有选中）：全部恢复可见，再按需动态调整
+        for item in menu.items {
+            if item.isSeparatorItem { continue }
+            item.isHidden = false
+        }
+        // 撤销/重做项始终动态显示（不随"恢复可见"无条件显示）
+        updateUndoRedoMenuItems(menu)
+
         // "打开"项图标：文件夹用 folder，文件用 doc
         if let openItem = menu.items.first(where: { $0.title == "打开" }) {
             let isOpenFolder = host?.clickedEntry?.isDirectory == true
@@ -554,6 +635,43 @@ extension FFPaneActionsController: NSMenuDelegate {
         // "在对侧面板打开"仅当右键点击项为文件夹时显示
         if let openOtherItem = menu.items.first(where: { $0.title == "在对侧面板打开" }) {
             openOtherItem.isHidden = !(host?.clickedEntry?.isDirectory ?? false)
+        }
+
+        // v0.7.4 项 6："用所选 X 个项目新建文件夹" 动态标题与显隐
+        // 选中 2 个及以上项目时显示（标题带数量）；单选/无选中时隐藏
+        if let folderFromSelItem = menu.items.first(where: { $0.title.contains("用所选") }) {
+            let selectedCount = host?.selectedEntries.count ?? 0
+            if selectedCount >= 2 {
+                folderFromSelItem.title = "用所选 \(selectedCount) 个项目新建文件夹"
+                folderFromSelItem.isHidden = false
+            } else {
+                folderFromSelItem.isHidden = true
+            }
+        }
+    }
+
+    // MARK: - v0.7.4 修订 2: 撤销/重做动态菜单项
+
+    /// 动态更新右键菜单的撤销/重做项（用 tag 100/101 识别，避免标题变化后匹配失败）：
+    /// - canUndo 为 true 时显示"撤销 X"（X 为操作名，如"撤销删除"），否则隐藏
+    /// - canRedo 为 true 时显示"重做 X"，否则隐藏
+    /// - 两者独立判断、互不影响
+    private func updateUndoRedoMenuItems(_ menu: NSMenu) {
+        guard let window = host?.hostWindow, let um = window.undoManager else { return }
+        let canUndo = um.canUndo
+        let canRedo = um.canRedo
+        let undoName = um.undoActionName.isEmpty ? "" : um.undoActionName
+        let redoName = um.redoActionName.isEmpty ? "" : um.redoActionName
+
+        // tag 100 = 撤销项，tag 101 = 重做项
+        for item in menu.items {
+            if item.tag == 100 {
+                item.title = canUndo ? "撤销\(undoName)" : "撤销"
+                item.isHidden = !canUndo
+            } else if item.tag == 101 {
+                item.title = canRedo ? "重做\(redoName)" : "重做"
+                item.isHidden = !canRedo
+            }
         }
     }
 
@@ -645,10 +763,16 @@ extension FFPaneActionsController {
 
         let currentTags = TagBridge.shared.getTags(path: path)
         if currentTags.contains(where: { $0.id == tagId || $0.name == tagName }) {
+            // 移除前先找到该标签（用于撤销时恢复）
+            let tag = currentTags.first(where: { $0.id == tagId || $0.name == tagName })
             _ = TagBridge.shared.removeTag(tagId, path: path)
+            if let tag = tag {
+                host?.viewModel?.registerUndoRemoveTag(tag: tag, path: path)
+            }
         } else {
             let tag = Tag(id: tagId, name: tagName, color: tagColor)
             _ = TagBridge.shared.addTag(tag, path: path)
+            host?.viewModel?.registerUndoAddTag(tag: tag, path: path)
         }
 
         host?.reloadPaneData()
@@ -658,73 +782,19 @@ extension FFPaneActionsController {
     }
 
     /// 新建标签对话框（创建后同时添加到当前右键目标文件）
+    /// v0.7.4 项 1：统一改用共享模块 FFCreateTagDialog（预设色块 + 自定义系统颜色选择器）
     @objc private func showCreateTagDialog(_ sender: Any?) {
         guard let window = host?.hostWindow else { return }
-        let alert = NSAlert()
-        alert.messageText = "新建标签"
-        alert.informativeText = "输入标签名称并选择颜色："
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
-
-        let containerWidth: CGFloat = 300
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: containerWidth, height: 64))
-
-        let nameField = NSTextField(frame: NSRect(x: 0, y: 36, width: containerWidth, height: 24))
-        nameField.placeholderString = "标签名称"
-        container.addSubview(nameField)
-
-        let presetColors: [String] = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#5856D6"]
-        let dotSize: CGFloat = 22
-        let spacing: CGFloat = 8
-        let totalDotsWidth = CGFloat(presetColors.count) * dotSize + CGFloat(presetColors.count - 1) * spacing
-        let startX = (containerWidth - totalDotsWidth) / 2
-
-        let colorHolder = FFCreateTagColorHolder(colors: presetColors)
-
-        for (i, hex) in presetColors.enumerated() {
-            let x = startX + CGFloat(i) * (dotSize + spacing)
-            let dot = NSView(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
-            dot.wantsLayer = true
-            dot.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
-            dot.layer?.cornerRadius = dotSize / 2
-            dot.layer?.borderColor = NSColor.labelColor.cgColor
-            dot.layer?.borderWidth = (i == 0) ? 2 : 0
-            let click = NSClickGestureRecognizer(target: colorHolder,
-                                                  action: #selector(FFCreateTagColorHolder.selectDot(_:)))
-            dot.addGestureRecognizer(click)
-            colorHolder.dotDots.append(dot)
-            container.addSubview(dot)
-        }
-
-        alert.accessoryView = container
-        alert.window.initialFirstResponder = nameField
-
         let targetPath = host?.clickedEntry?.path ?? host?.viewModel?.selectedFiles.first?.path
 
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return }
-            let tag = Tag(name: name, color: colorHolder.selectedHex)
-
-            var allTags = self?.loadAllSidebarTags() ?? []
-            if !allTags.contains(where: { $0.name == tag.name }) {
-                allTags.append(tag)
-                self?.saveAllSidebarTags(allTags)
-            }
-
+        FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { [weak self] tag in
+            guard let self = self else { return }
             if let path = targetPath {
                 _ = TagBridge.shared.addTag(tag, path: path)
-                self?.host?.reloadPaneData()
-            }
-
-            var notifyTags = allTags
-            if !notifyTags.contains(where: { $0.name == tag.name }) {
-                notifyTags.append(tag)
+                self.host?.reloadPaneData()
             }
             NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil,
-                                            userInfo: ["tags": notifyTags])
+                                            userInfo: ["tags": FFCreateTagDialog.loadAllSidebarTags()])
         }
     }
 }

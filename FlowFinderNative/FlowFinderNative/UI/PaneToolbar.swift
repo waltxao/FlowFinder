@@ -14,12 +14,13 @@ protocol PaneToolbarDelegate: AnyObject {
     func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: ViewMode)
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String)
     // v0.6.9: 文件夹显示配置菜单回调
-    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar)
+    // v0.7.4 修订: 新建文件夹回调携带当前选中数量（未选中建空文件夹，选中>=2 用所选新建文件夹）
+    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar, selectedCount: Int)
 }
 
 // MARK: - PaneToolbarDelegate 默认实现
 extension PaneToolbarDelegate {
-    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar) {}
+    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar, selectedCount: Int) {}
 }
 
 // MARK: - PaneToolbar
@@ -43,6 +44,10 @@ class PaneToolbar: NSView {
     private var listViewButton: NSButton!
     private var gridViewButton: NSButton!
     private var toolsButton: NSButton!  // 任务 D15: 工具菜单按钮
+    // v0.7.4 项 2: 新建文件夹独立按钮（原在显示设置菜单里）
+    private var newFolderButton: NSButton!
+    // v0.7.4 修订: 当前选中数量（决定按钮行为与悬停提示）
+    private var currentSelectionCount: Int = 0
 
     // 任务 F3: BreadcrumbBar 嵌入 Row1（刷新按钮后），紧贴刷新按钮
     private var breadcrumbBar: BreadcrumbBar?
@@ -79,6 +84,8 @@ class PaneToolbar: NSView {
 
         setupRow1()
         setupRow2()
+        // v0.7.4 修订 1：注册新建文件夹按钮悬停跟踪（鼠标移入立即弹提示气泡）
+        setupNewFolderHoverHint()
     }
 
     // MARK: - Row 1: Navigation
@@ -201,11 +208,20 @@ class PaneToolbar: NSView {
         // 模板色自动适配浅/深色，与其他导航按钮视觉统一
         toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu))
 
+        // v0.7.4 项 2 + 项 6 合并（v0.7.4 修订）：单一「新建文件夹」按钮。
+        // - 未选中任何项目：点击创建空文件夹（默认名"新建文件夹"，重名自动加序号）
+        // - 选中 2 个及以上：点击自动"用所选 N 个项目新建文件夹"
+        // - 悬停提示随选中状态动态变化（由 setFolderSelectionCount 更新）
+        newFolderButton = createNavButton(systemSymbol: "folder.badge.plus", action: #selector(newFolderClicked))
+        newFolderButton.toolTip = "新建文件夹"
+        newFolderButton.isEnabled = true
+
         let row2 = NSStackView(views: [
             searchContainer,
             sortPopup,
             groupPopup,
             listViewButton, gridViewButton,
+            newFolderButton,
             toolsSeparator,
             toolsButton,
         ])
@@ -369,17 +385,11 @@ class PaneToolbar: NSView {
         systemItem.state = showSystem ? .on : .off
         menu.addItem(systemItem)
 
-        menu.addItem(.separator())
-
-        // 新建文件夹
-        let newFolderItem = NSMenuItem(
-            title: "新建文件夹",
-            action: #selector(newFolderClicked),
-            keyEquivalent: ""
-        )
-        newFolderItem.target = self
-        newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
-        menu.addItem(newFolderItem)
+        // v0.7.4 项 2: 「新建文件夹」已从菜单移除，改为工具栏独立按钮（newFolderButton）。
+        // 原实现：
+        //   menu.addItem(.separator())
+        //   let newFolderItem = NSMenuItem(title: "新建文件夹", ...)
+        //   menu.addItem(newFolderItem)
 
         // 在按钮下方弹出菜单
         let location = NSPoint(x: 0, y: toolsButton.bounds.height + 2)
@@ -412,8 +422,105 @@ class PaneToolbar: NSView {
         NotificationCenter.default.post(name: .refreshSystemFiles, object: nil)
     }
 
+    /// v0.7.4 项 2+6 合并：新建文件夹按钮回调。
+    /// 行为由 MainWindowController 决定（未选中建空文件夹；选中>=2 用所选新建文件夹），
+    /// 通过新回调把当前选中数量传出去，让控制器按需处理。
     @objc private func newFolderClicked() {
-        delegate?.paneToolbarDidClickNewFolder(self)
+        delegate?.paneToolbarDidClickNewFolder(self, selectedCount: currentSelectionCount)
+    }
+
+    /// v0.7.4 修订：外部更新选中数量，用于动态切换按钮行为与悬停提示
+    /// - Parameter count: 当前选中项目数（0 = 未选中）
+    func setFolderSelectionCount(_ count: Int) {
+        currentSelectionCount = count
+        // 若悬停提示当前正显示，立即更新文字
+        if let label = hoverHintLabel, hoverHintLabel?.window != nil {
+            label.stringValue = currentHintText()
+            label.sizeToFit()
+        }
+    }
+
+    // MARK: - v0.7.4 修订：立即显示悬停提示（轻量，鼠标移入即现，移出即隐）
+
+    private var hoverHintLabel: NSTextField?
+    private var newFolderHoverTracking: NSTrackingArea?
+
+    /// 给新建文件夹按钮注册悬停跟踪（在按钮创建后调用一次）
+    func setupNewFolderHoverHint() {
+        guard let btn = newFolderButton else { return }
+        // 移除旧的跟踪区域
+        if let old = newFolderHoverTracking {
+            btn.removeTrackingArea(old)
+        }
+        let area = NSTrackingArea(
+            rect: btn.bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        btn.addTrackingArea(area)
+        newFolderHoverTracking = area
+    }
+
+    public override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        guard event.trackingArea === newFolderHoverTracking else { return }
+        showHoverHint()
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        guard event.trackingArea === newFolderHoverTracking else { return }
+        hideHoverHint()
+    }
+
+    /// 立即显示悬停提示（轻量小浮层，跟随按钮上方）
+    private func showHoverHint() {
+        guard let btn = newFolderButton, let window = window else { return }
+        hideHoverHint()
+
+        let label = NSTextField(labelWithString: currentHintText())
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.textColor = NSColor.labelColor
+        label.backgroundColor = NSColor.windowBackgroundColor
+        label.wantsLayer = true
+        label.layer?.cornerRadius = 4
+        label.layer?.borderWidth = 0.5
+        label.layer?.borderColor = NSColor.separatorColor.cgColor
+        label.alphaValue = 0.0
+        label.sizeToFit()
+        // 增加内边距
+        let padded = NSSize(width: label.frame.width + 12, height: label.frame.height + 6)
+        label.frame.size = padded
+
+        // 位置：按钮上方居中
+        let btnFrameInWindow = btn.convert(btn.bounds, to: nil)
+        let x = btnFrameInWindow.midX - padded.width / 2
+        let y = btnFrameInWindow.maxY + 4
+        label.frame.origin = NSPoint(x: x, y: y)
+
+        // 添加到 window 的 contentView 上（浮层，不参与布局）
+        window.contentView?.addSubview(label)
+        hoverHintLabel = label
+
+        // 立即显示（无需动画延迟）
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.08
+            label.animator().alphaValue = 1.0
+        }
+    }
+
+    private func hideHoverHint() {
+        hoverHintLabel?.removeFromSuperview()
+        hoverHintLabel = nil
+    }
+
+    /// 当前提示文本（随选中数量变化）
+    private func currentHintText() -> String {
+        if currentSelectionCount >= 2 {
+            return "用所选 \(currentSelectionCount) 个项目新建文件夹"
+        }
+        return "新建文件夹"
     }
 }
 

@@ -547,56 +547,11 @@ class SidebarView: NSView {
 
     @objc private func showCreateTagDialog() {
         guard let window = self.window else { return }
-        let alert = NSAlert()
-        alert.messageText = "新建标签"
-        alert.informativeText = "输入标签名称并选择颜色："
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
-
-        let containerWidth: CGFloat = 300
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: containerWidth, height: 64))
-
-        // 名称输入框
-        let nameField = NSTextField(frame: NSRect(x: 0, y: 36, width: containerWidth, height: 24))
-        nameField.placeholderString = "标签名称"
-        container.addSubview(nameField)
-
-        // 预设颜色圆点（用纯 NSView + 点击手势，不用 NSButton——
-        // macOS 26 上 circular bezel 的无标题小按钮会渲染"BU"占位文字）
-        let presetColors: [String] = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#5856D6"]
-        let dotSize: CGFloat = 22
-        let spacing: CGFloat = 8
-        let totalDotsWidth = CGFloat(presetColors.count) * dotSize + CGFloat(presetColors.count - 1) * spacing
-        let startX = (containerWidth - totalDotsWidth) / 2
-
-        let colorHolder = TagColorHolder(colors: presetColors)
-
-        for (i, hex) in presetColors.enumerated() {
-            let x = startX + CGFloat(i) * (dotSize + spacing)
-            let dot = NSView(frame: NSRect(x: x, y: 4, width: dotSize, height: dotSize))
-            dot.wantsLayer = true
-            dot.layer?.backgroundColor = (NSColor(hex: hex) ?? .systemBlue).cgColor
-            dot.layer?.cornerRadius = dotSize / 2
-            dot.layer?.borderColor = NSColor.labelColor.cgColor
-            dot.layer?.borderWidth = (i == 0) ? 2 : 0
-            let click = NSClickGestureRecognizer(target: colorHolder, action: #selector(TagColorHolder.selectDot(_:)))
-            dot.addGestureRecognizer(click)
-            colorHolder.dotDots.append(dot)
-            container.addSubview(dot)
-        }
-
-        alert.accessoryView = container
-        alert.window.initialFirstResponder = nameField
-
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return }
-            let tag = Tag(name: name, color: colorHolder.selectedHex)
-            self?.tagsDataSource.addTag(tag)
-            self?.tagFlowView.updateTags(self?.tagsDataSource.allTags() ?? [])
-            self?.updateTagsHeight()
+        // v0.7.4 项 1：统一改用共享模块 FFCreateTagDialog（预设色块 + 自定义系统颜色选择器）
+        FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { [weak self] _ in
+            guard let self = self else { return }
+            self.tagFlowView.updateTags(self.tagsDataSource.allTags())
+            self.updateTagsHeight()
         }
     }
 

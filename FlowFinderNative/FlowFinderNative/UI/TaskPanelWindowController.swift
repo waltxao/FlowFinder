@@ -171,8 +171,8 @@ public class TaskPanelWindowController: NSWindowController {
     }
 
     @objc private func clearClicked() {
-        // 清除已完成的任务（仅刷新显示，Rust 端保留历史）
-        TaskSchedulerManager.shared.refreshTasks()
+        // 真正清除已完成/失败的任务历史（Rust 端），正在执行的任务保留
+        TaskSchedulerManager.shared.clearCompletedTasks()
     }
 }
 

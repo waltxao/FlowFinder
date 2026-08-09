@@ -314,6 +314,9 @@ public class SettingsWindowController: NSWindowController {
         // 移除旧内容视图
         currentContentView?.removeFromSuperview()
         currentRows = []
+        // C1: 清空上一分区的 ActionTarget handler（旧控件已随旧视图释放，
+        // 其注册项永不再触发；不清理会令单例字典无界增长 + 闭包捕获泄露）
+        SettingsActionTarget.shared.removeAll()
 
         // 构建新内容视图
         let newView = buildSectionView(section)
@@ -401,18 +404,18 @@ public class SettingsWindowController: NSWindowController {
             title: "启动时打开",
             desc: "应用启动时显示的初始位置",
             items: ["上次打开的位置", "主目录", "桌面"],
-            selectedIndex: UserDefaults.standard.integer(forKey: "startup_location"),
+            selectedIndex: UserDefaults.standard.integer(forKey: FFUserDefaultsKeys.startupLocation),
             action: { idx in
-                UserDefaults.standard.set(idx, forKey: "startup_location")
+                UserDefaults.standard.set(idx, forKey: FFUserDefaultsKeys.startupLocation)
             }
         )
         startupSection.addRow(startupRow)
         let checkUpdateRow = SettingsRowView.toggleRow(
             title: "启动时检查更新",
             desc: "自动检查应用新版本",
-            state: UserDefaults.standard.object(forKey: "check_update_on_startup") as? Bool ?? true,
+            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.checkUpdateOnStartup) as? Bool ?? true,
             action: { state in
-                UserDefaults.standard.set(state, forKey: "check_update_on_startup")
+                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.checkUpdateOnStartup)
             }
         )
         startupSection.addRow(checkUpdateRow)
@@ -424,9 +427,9 @@ public class SettingsWindowController: NSWindowController {
             title: "默认视图",
             desc: "新窗口的默认文件展示方式",
             labels: ["列表", "图标"],
-            selected: (UserDefaults.standard.string(forKey: "default_view_mode") == "grid") ? 1 : 0
+            selected: (UserDefaults.standard.string(forKey: FFUserDefaultsKeys.defaultViewMode) == "grid") ? 1 : 0
         ) { idx in
-            UserDefaults.standard.set(idx == 0 ? "list" : "grid", forKey: "default_view_mode")
+            UserDefaults.standard.set(idx == 0 ? "list" : "grid", forKey: FFUserDefaultsKeys.defaultViewMode)
         }
         fileOpsSection.addRow(defaultViewRow)
 
@@ -449,9 +452,9 @@ public class SettingsWindowController: NSWindowController {
         let confirmOpsRow = SettingsRowView.toggleRow(
             title: "文件操作确认",
             desc: "移动或删除文件前弹出确认对话框",
-            state: UserDefaults.standard.object(forKey: "confirm_file_operations") as? Bool ?? false,
+            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.confirmFileOperations) as? Bool ?? false,
             action: { state in
-                UserDefaults.standard.set(state, forKey: "confirm_file_operations")
+                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.confirmFileOperations)
             }
         )
         fileOpsSection.addRow(confirmOpsRow)
@@ -460,9 +463,9 @@ public class SettingsWindowController: NSWindowController {
             title: "默认操作行为",
             desc: "同盘拖拽时移动，跨盘拖拽时复制（Finder 风格）",
             labels: ["同盘移动", "跨盘复制"],
-            selected: UserDefaults.standard.integer(forKey: "default_file_behavior")
+            selected: UserDefaults.standard.integer(forKey: FFUserDefaultsKeys.defaultFileBehavior)
         ) { idx in
-            UserDefaults.standard.set(idx, forKey: "default_file_behavior")
+            UserDefaults.standard.set(idx, forKey: FFUserDefaultsKeys.defaultFileBehavior)
         }
         fileOpsSection.addRow(defaultBehaviorRow)
         registerForSearch(fileOpsSection, rows: [defaultViewRow, showHiddenRow, confirmOpsRow, defaultBehaviorRow])
@@ -485,15 +488,16 @@ public class SettingsWindowController: NSWindowController {
 
         // 主题切换 section：AppearanceSettingsView 自带标题/三个主题按钮/说明文字，
         // 作为全宽内容嵌入分区卡片。
-        // 修复 T8：原实现把 appearanceView 塞进 SettingsRowView 的 controlContainer
-        // （controlContainer 无宽度约束，且 appearanceView 无 intrinsic size），
-        // 导致整个外观分区塌缩为空白/按钮溢出。改为全宽 content 布局后，
-        // 在任何窗口宽度下都能完整显示 3 个 100×100 按钮。
+        // v0.7.4 实测证据修复：主题卡片此前走 themeSection.addContentView(appearanceView)，
+        // 运行时 LAYOUT-DIAG 显示主题卡片塌缩为 286pt（正常应全宽 531），按钮溢出。
+        // 而关于页/标签列表走 addRow + setFullWidthContent 通道实测全宽正常（531）。
+        // 故改为同一已验证通道：用 SettingsRowView 包住 appearanceView 再 addRow。
         let themeSection = SettingsSectionView(title: "主题", iconName: "circle.lefthalf.filled")
         let appearanceView = AppearanceSettingsView(frame: .zero)
-        appearanceView.translatesAutoresizingMaskIntoConstraints = false
-        themeSection.addContentView(appearanceView)
-        registerForSearch(themeSection, rows: [])
+        let themeRow = SettingsRowView(title: "", desc: "")
+        themeRow.setFullWidthContent(appearanceView)
+        themeSection.addRow(themeRow)
+        registerForSearch(themeSection, rows: [themeRow])
 
         // 强调色 section
         let accentSection = SettingsSectionView(title: "强调色", iconName: "paintpalette")
@@ -532,9 +536,9 @@ public class SettingsWindowController: NSWindowController {
         let folderFirstRow = SettingsRowView.toggleRow(
             title: "智能排序",
             desc: "文件夹自动置顶",
-            state: UserDefaults.standard.object(forKey: "folder_first_sort") as? Bool ?? true,
+            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.folderFirstSort) as? Bool ?? true,
             action: { state in
-                UserDefaults.standard.set(state, forKey: "folder_first_sort")
+                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.folderFirstSort)
             }
         )
         sortSection.addRow(folderFirstRow)
@@ -542,9 +546,9 @@ public class SettingsWindowController: NSWindowController {
         let keepSelectionRow = SettingsRowView.toggleRow(
             title: "保留选择位置",
             desc: "刷新后保持已选文件",
-            state: UserDefaults.standard.object(forKey: "keep_selection_position") as? Bool ?? true,
+            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.keepSelectionPosition) as? Bool ?? true,
             action: { state in
-                UserDefaults.standard.set(state, forKey: "keep_selection_position")
+                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.keepSelectionPosition)
             }
         )
         sortSection.addRow(keepSelectionRow)
@@ -593,18 +597,18 @@ public class SettingsWindowController: NSWindowController {
             title: "默认域",
             desc: "SMB 连接时使用的默认域",
             placeholder: "WORKGROUP",
-            value: UserDefaults.standard.string(forKey: "smb_default_domain") ?? ""
+            value: UserDefaults.standard.string(forKey: FFUserDefaultsKeys.smbDefaultDomain) ?? ""
         ) { val in
-            UserDefaults.standard.set(val, forKey: "smb_default_domain")
+            UserDefaults.standard.set(val, forKey: FFUserDefaultsKeys.smbDefaultDomain)
         }
         configSection.addRow(domainRow)
 
         let autoReconnectRow = SettingsRowView.toggleRow(
             title: "自动重连",
             desc: "启动时自动重新连接上次的服务器",
-            state: UserDefaults.standard.bool(forKey: "smb_auto_reconnect"),
+            state: UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.smbAutoReconnect),
             action: { state in
-                UserDefaults.standard.set(state, forKey: "smb_auto_reconnect")
+                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.smbAutoReconnect)
             }
         )
         configSection.addRow(autoReconnectRow)
@@ -637,33 +641,33 @@ public class SettingsWindowController: NSWindowController {
         let container = makeScrollContainer()
 
         let shortcuts: [(String, String, String)] = [
-            ("新建文件夹", "⌘N", "shortcut_new_folder"),
-            ("打开文件", "⌘O", "shortcut_open_file"),
-            ("关闭窗口", "⌘W", "shortcut_close_window"),
-            ("复制", "⌘C", "shortcut_copy"),
-            ("剪切", "⌘X", "shortcut_cut"),
-            ("粘贴", "⌘V", "shortcut_paste"),
-            ("全选", "⌘A", "shortcut_select_all"),
-            ("移动到废纸篓", "⌘⌫", "shortcut_trash"),
-            ("撤销", "⌘Z", "shortcut_undo"),
-            ("重做", "⌘⇧Z", "shortcut_redo"),
-            ("列表视图", "⌘1", "shortcut_list_view"),
-            ("图标视图", "⌘2", "shortcut_grid_view"),
-            ("刷新", "⌘R", "shortcut_refresh"),
-            ("搜索", "⌘F", "shortcut_search"),
-            ("重复文件扫描", "⌘⇧D", "shortcut_duplicate_scan"),
-            ("任务面板", "⌘0", "shortcut_task_panel"),
-            ("QuickLook 预览", "空格键", "shortcut_quicklook"),
-            ("复制选中项", "⌘D", "shortcut_duplicate"),
-            ("连接服务器", "⌘K", "shortcut_connect_server"),
-            ("偏好设置", "⌘,", "shortcut_preferences"),
+            ("新建文件夹", "⌘N", FFUserDefaultsKeys.shortcutNewFolder),
+            ("打开文件", "⌘O", FFUserDefaultsKeys.shortcutOpenFile),
+            ("关闭窗口", "⌘W", FFUserDefaultsKeys.shortcutCloseWindow),
+            ("复制", "⌘C", FFUserDefaultsKeys.shortcutCopy),
+            ("剪切", "⌘X", FFUserDefaultsKeys.shortcutCut),
+            ("粘贴", "⌘V", FFUserDefaultsKeys.shortcutPaste),
+            ("全选", "⌘A", FFUserDefaultsKeys.shortcutSelectAll),
+            ("移动到废纸篓", "⌘⌫", FFUserDefaultsKeys.shortcutTrash),
+            ("撤销", "⌘Z", FFUserDefaultsKeys.shortcutUndo),
+            ("重做", "⌘⇧Z", FFUserDefaultsKeys.shortcutRedo),
+            ("列表视图", "⌘1", FFUserDefaultsKeys.shortcutListView),
+            ("图标视图", "⌘2", FFUserDefaultsKeys.shortcutGridView),
+            ("刷新", "⌘R", FFUserDefaultsKeys.shortcutRefresh),
+            ("搜索", "⌘F", FFUserDefaultsKeys.shortcutSearch),
+            ("重复文件扫描", "⌘⇧D", FFUserDefaultsKeys.shortcutDuplicateScan),
+            ("任务面板", "⌘0", FFUserDefaultsKeys.shortcutTaskPanel),
+            ("QuickLook 预览", "空格键", FFUserDefaultsKeys.shortcutQuicklook),
+            ("复制选中项", "⌘D", FFUserDefaultsKeys.shortcutDuplicate),
+            ("连接服务器", "⌘K", FFUserDefaultsKeys.shortcutConnectServer),
+            ("偏好设置", "⌘,", FFUserDefaultsKeys.shortcutPreferences),
         ]
 
         // 文件操作快捷键 section
         let fileShortcutSection = SettingsSectionView(title: "文件操作", iconName: "doc.on.doc")
         var fileRows: [SettingsRowView] = []
         let fileShortcuts = shortcuts.filter { item in
-            ["shortcut_new_folder", "shortcut_open_file", "shortcut_copy", "shortcut_cut", "shortcut_paste", "shortcut_trash", "shortcut_duplicate"].contains(item.2)
+            [FFUserDefaultsKeys.shortcutNewFolder, FFUserDefaultsKeys.shortcutOpenFile, FFUserDefaultsKeys.shortcutCopy, FFUserDefaultsKeys.shortcutCut, FFUserDefaultsKeys.shortcutPaste, FFUserDefaultsKeys.shortcutTrash, FFUserDefaultsKeys.shortcutDuplicate].contains(item.2)
         }
         for (name, defaultKey, key) in fileShortcuts {
             let saved = UserDefaults.standard.string(forKey: key) ?? defaultKey
@@ -679,7 +683,7 @@ public class SettingsWindowController: NSWindowController {
         let viewShortcutSection = SettingsSectionView(title: "窗口与视图", iconName: "rectangle.3.group")
         var viewRows: [SettingsRowView] = []
         let viewShortcuts = shortcuts.filter { item in
-            ["shortcut_close_window", "shortcut_list_view", "shortcut_grid_view", "shortcut_refresh", "shortcut_quicklook", "shortcut_task_panel"].contains(item.2)
+            [FFUserDefaultsKeys.shortcutCloseWindow, FFUserDefaultsKeys.shortcutListView, FFUserDefaultsKeys.shortcutGridView, FFUserDefaultsKeys.shortcutRefresh, FFUserDefaultsKeys.shortcutQuicklook, FFUserDefaultsKeys.shortcutTaskPanel].contains(item.2)
         }
         for (name, defaultKey, key) in viewShortcuts {
             let saved = UserDefaults.standard.string(forKey: key) ?? defaultKey
@@ -695,7 +699,7 @@ public class SettingsWindowController: NSWindowController {
         let otherShortcutSection = SettingsSectionView(title: "其他", iconName: "ellipsis.circle")
         var otherRows: [SettingsRowView] = []
         let otherShortcuts = shortcuts.filter { item in
-            ["shortcut_select_all", "shortcut_undo", "shortcut_redo", "shortcut_search", "shortcut_duplicate_scan", "shortcut_connect_server", "shortcut_preferences"].contains(item.2)
+            [FFUserDefaultsKeys.shortcutSelectAll, FFUserDefaultsKeys.shortcutUndo, FFUserDefaultsKeys.shortcutRedo, FFUserDefaultsKeys.shortcutSearch, FFUserDefaultsKeys.shortcutDuplicateScan, FFUserDefaultsKeys.shortcutConnectServer, FFUserDefaultsKeys.shortcutPreferences].contains(item.2)
         }
         for (name, defaultKey, key) in otherShortcuts {
             let saved = UserDefaults.standard.string(forKey: key) ?? defaultKey
@@ -761,13 +765,18 @@ public class SettingsWindowController: NSWindowController {
         let infoStack = NSStackView(views: [appIcon, appName, versionLabel, descLabel, copyrightLabel])
         infoStack.orientation = .vertical
         infoStack.spacing = 8
+        // v0.7.4 关于页居中修复：
+        // - .centerX alignment 让每个子视图在 stack 内水平居中
+        // - 显式 width = infoContainer.width 让 stack 撑满全宽（避免 .centerX 下
+        //   stack 塌缩到最宽子视图 64pt 图标导致文字截断的历史 bug）
+        // 注意：不能同时用 .width alignment + 子视图 centerX（互相冲突，居中失效）。
         infoStack.alignment = .centerX
         infoStack.translatesAutoresizingMaskIntoConstraints = false
         infoContainer.addSubview(infoStack)
 
         NSLayoutConstraint.activate([
-            infoStack.leadingAnchor.constraint(equalTo: infoContainer.leadingAnchor),
-            infoStack.trailingAnchor.constraint(equalTo: infoContainer.trailingAnchor),
+            infoStack.widthAnchor.constraint(equalTo: infoContainer.widthAnchor),
+            infoStack.centerXAnchor.constraint(equalTo: infoContainer.centerXAnchor),
             infoStack.topAnchor.constraint(equalTo: infoContainer.topAnchor, constant: 16),
             infoStack.bottomAnchor.constraint(equalTo: infoContainer.bottomAnchor, constant: -16),
         ])
@@ -825,9 +834,11 @@ public class SettingsWindowController: NSWindowController {
         container.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = container
 
-        // 将 stack 放入 container（不拆分 arrangedSubviews，由 stack 内部管理卡片布局）
-        // alignment = .width 确保所有卡片撑满 stack 宽度（不设则卡片按 intrinsic 宽度靠左排列）
-        stack.alignment = .width
+        // v0.7.4 根因修复：不再依赖 stack.alignment = .width！
+        // 运行时证据（LAYOUT-DIAG）：.width alignment 对含 setFullWidthContent 的卡片
+        // （主题/关于/标签）失效——卡片右对齐塌缩（主题 x=213 w=318、标签 x=389 w=142）。
+        // 改为：stack 内所有卡片显式 leading/trailing 钉到 stack 边缘（全宽），
+        // 不依赖 NSStackView alignment 的隐式行为。
         container.addSubview(stack)
 
         NSLayoutConstraint.activate([
@@ -837,6 +848,16 @@ public class SettingsWindowController: NSWindowController {
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
         ])
+
+        // 显式约束：所有卡片（arranged subviews）leading/trailing 钉到 stack 边缘，
+        // 确保全宽铺满，不再右对齐塌缩
+        for subview in stack.arrangedSubviews {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                subview.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+                subview.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            ])
+        }
 
         // 容器宽度跟随 scrollView 可视区域（contentView = NSClipView）
         container.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor).isActive = true
@@ -1024,6 +1045,8 @@ class ShortcutRecorderView: NSView {
         currentShortcut = shortcutStr
         button.title = shortcutStr
         UserDefaults.standard.set(shortcutStr, forKey: storageKey)
+        // C3: 快捷键已保存，广播通知 MainMenu 刷新对应菜单项
+        NotificationCenter.default.post(name: .shortcutsChanged, object: nil)
         isRecording = false
         button.highlight(false)
         window?.makeFirstResponder(nil)
@@ -1088,7 +1111,7 @@ class ShortcutRecorderView: NSView {
 /// 使用 UserDefaults "SidebarTags" key 与侧边栏标签同步
 class TagManagementRowView: SettingsRowView {
 
-    private let tagsKey = "SidebarTags"
+    private let tagsKey = FFUserDefaultsKeys.sidebarTags
     private var tags: [Tag] = []
     private let tagsStack = NSStackView()
     private let availableColors = ["#FF453A", "#FF9F0A", "#FFD60A", "#30D158", "#0A84FF", "#BF5AF2", "#8E8E93"]
@@ -1128,6 +1151,10 @@ class TagManagementRowView: SettingsRowView {
     private func setupTagUI() {
         tagsStack.orientation = .vertical
         tagsStack.spacing = 6
+        // v0.7.4 修复标签列表布局：原默认 .leading 让标签行收缩到自身内容宽度，
+        // 颜色圆点/名称/删除按钮挤在一起。改 .width 让每行撑满列表宽度，
+        // 圆点靠左、删除按钮靠右。
+        tagsStack.alignment = .width
         tagsStack.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView()
@@ -1241,43 +1268,16 @@ class TagManagementRowView: SettingsRowView {
     // MARK: - Actions
 
     @objc private func addTagClicked() {
-        let alert = NSAlert()
-        alert.messageText = "新建标签"
-        alert.informativeText = "请输入标签名称"
-        alert.alertStyle = .informational
-
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        alert.accessoryView = input
-
-        // 颜色选择（用带彩色圆点图像的下拉菜单，替代纯文字——避免 macOS 26 上
-        // 纯文字 popup item 在窄宽度下渲染异常显示占位缩写）
-        let colorPopup = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 260, height: 26), pullsDown: false)
-        let colorNames = ["红色", "橙色", "黄色", "绿色", "蓝色", "紫色", "灰色"]
-        for (i, name) in colorNames.enumerated() {
-            colorPopup.addItem(withTitle: name)
-            colorPopup.item(at: i)?.tag = i
-            // item 加彩色圆点图像（20×20 圆，让选择更直观且不依赖纯文字渲染）
-            if let dot = makeColorDotImage(hex: availableColors[i]) {
-                colorPopup.item(at: i)?.image = dot
+        // v0.7.4 项 1：统一改用共享模块 FFCreateTagDialog（预设色块 + 自定义系统颜色选择器）
+        guard let window = self.window else { return }
+        FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { [weak self] tag in
+            guard let self = self else { return }
+            // 同步到本地 tags 数组并刷新列表
+            if !self.tags.contains(where: { $0.name == tag.name }) {
+                self.tags.append(tag)
+                self.saveTags()
             }
-        }
-        let colorContainer = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 60))
-        colorContainer.addSubview(input)
-        colorContainer.addSubview(colorPopup)
-        alert.accessoryView = colorContainer
-
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            let name = input.stringValue.trimmingCharacters(in: .whitespaces)
-            guard !name.isEmpty else { return }
-            let colorIdx = max(0, min(colorPopup.indexOfSelectedItem, availableColors.count - 1))
-            let color = availableColors[colorIdx]
-            let tag = Tag(name: name, color: color)
-            tags.append(tag)
-            saveTags()
-            refreshTagList()
+            self.refreshTagList()
         }
     }
 

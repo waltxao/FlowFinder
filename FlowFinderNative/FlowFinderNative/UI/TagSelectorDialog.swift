@@ -1,5 +1,87 @@
 import Cocoa
 
+// MARK: - F4: 可换行药丸容器（NSStackView 不 wrap，标签多时溢出被裁剪）
+
+/// 简单的流式换行布局容器：子视图按行排列，超宽自动换行，高度自适应。
+/// 替代横向 NSStackView 解决"标签多时溢出"问题。
+final class FFWrapContainerView: NSView {
+    private(set) var arrangedSubviews: [NSView] = []
+    var spacing: CGFloat = 6
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    override func layout() {
+        super.layout()
+        layoutItems()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let size = calculateLayout().size
+        return NSSize(width: NSView.noIntrinsicMetric, height: size.height)
+    }
+
+    /// 把 subview 加入容器并触发布局
+    func addArrangedSubview(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        arrangedSubviews.append(view)
+        addSubview(view)
+        needsLayout = true
+        invalidateIntrinsicContentSize()
+    }
+
+    /// 移除所有子视图
+    func removeAllArrangedSubviews() {
+        for v in arrangedSubviews {
+            v.removeFromSuperview()
+        }
+        arrangedSubviews.removeAll()
+        needsLayout = true
+        invalidateIntrinsicContentSize()
+    }
+
+    private struct WrapLayout {
+        let size: NSSize
+        let frames: [NSRect]
+    }
+
+    private func calculateLayout() -> WrapLayout {
+        let width = bounds.width
+        var frames: [NSRect] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for view in arrangedSubviews {
+            if view.isHidden { continue }
+            let itemSize = view.fittingSize
+            if x > 0 && x + itemSize.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            frames.append(NSRect(x: x, y: y, width: itemSize.width, height: itemSize.height))
+            x += itemSize.width + spacing
+            rowHeight = max(rowHeight, itemSize.height)
+        }
+        let totalHeight = y + rowHeight
+        return WrapLayout(size: NSSize(width: width, height: totalHeight), frames: frames)
+    }
+
+    private func layoutItems() {
+        let layout = calculateLayout()
+        for (i, view) in arrangedSubviews.enumerated() {
+            if view.isHidden { continue }
+            view.frame = layout.frames[i]
+        }
+    }
+}
+
 // MARK: - TagSelectorDialog
 
 /// 标签选择对话框：搜索框 + 已选药丸区 + 推荐药丸区
@@ -15,8 +97,8 @@ class TagSelectorDialog: FFModalSheet {
 
     // UI 引用
     private var searchField: NSSearchField!
-    private var selectedContainer: NSStackView!
-    private var suggestedContainer: NSStackView!
+    private var selectedContainer: FFWrapContainerView!
+    private var suggestedContainer: FFWrapContainerView!
 
     /// 初始化
     /// - Parameters:
@@ -92,13 +174,9 @@ class TagSelectorDialog: FFModalSheet {
         selectedTitle.textColor = .secondaryLabelColor
         selectedTitle.translatesAutoresizingMaskIntoConstraints = false
 
-        // 已选药丸容器（横向 wrap）
-        selectedContainer = NSStackView()
-        selectedContainer.orientation = .horizontal
-        selectedContainer.alignment = .centerY
+        // 已选药丸容器（F4: 流式换行，标签多时不溢出）
+        selectedContainer = FFWrapContainerView()
         selectedContainer.spacing = 6
-        selectedContainer.detachesHiddenViews = false
-        selectedContainer.translatesAutoresizingMaskIntoConstraints = false
 
         // 推荐区标题
         let suggestedTitle = NSTextField(labelWithString: "推荐")
@@ -106,13 +184,9 @@ class TagSelectorDialog: FFModalSheet {
         suggestedTitle.textColor = .secondaryLabelColor
         suggestedTitle.translatesAutoresizingMaskIntoConstraints = false
 
-        // 推荐药丸容器
-        suggestedContainer = NSStackView()
-        suggestedContainer.orientation = .horizontal
-        suggestedContainer.alignment = .centerY
+        // 推荐药丸容器（F4: 流式换行）
+        suggestedContainer = FFWrapContainerView()
         suggestedContainer.spacing = 6
-        suggestedContainer.detachesHiddenViews = false
-        suggestedContainer.translatesAutoresizingMaskIntoConstraints = false
 
         bodyView.addSubview(searchField)
         bodyView.addSubview(selectedTitle)
@@ -149,7 +223,7 @@ class TagSelectorDialog: FFModalSheet {
 
     private func refreshPills() {
         // 已选药丸
-        selectedContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        selectedContainer.removeAllArrangedSubviews()
         for tag in selectedTags {
             selectedContainer.addArrangedSubview(makeSelectedPill(tag: tag))
         }
@@ -157,11 +231,12 @@ class TagSelectorDialog: FFModalSheet {
             let empty = NSTextField(labelWithString: "未选择标签")
             empty.font = .systemFont(ofSize: 11)
             empty.textColor = .tertiaryLabelColor
+            empty.translatesAutoresizingMaskIntoConstraints = false
             selectedContainer.addArrangedSubview(empty)
         }
 
         // 推荐药丸（过滤搜索词 + 排除已选）
-        suggestedContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        suggestedContainer.removeAllArrangedSubviews()
         let selectedNames = Set(selectedTags.map { $0.name })
         let query = searchField?.stringValue.lowercased() ?? ""
         let suggested = allTags.filter { tag in
@@ -175,6 +250,7 @@ class TagSelectorDialog: FFModalSheet {
             let empty = NSTextField(labelWithString: "无可用标签")
             empty.font = .systemFont(ofSize: 11)
             empty.textColor = .tertiaryLabelColor
+            empty.translatesAutoresizingMaskIntoConstraints = false
             suggestedContainer.addArrangedSubview(empty)
         }
     }

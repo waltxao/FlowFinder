@@ -18,7 +18,7 @@ enum FFModalSheetButtonStyle {
 /// 设计稿中所有对话框共用 macOS sheet 风格（圆角 12pt、阴影、header/body/footer 三段式）。
 /// 任务 F11-2: 移除 FFGlassView 透明玻璃背景，改为实体 `windowBackgroundColor`（v0.6.7）。
 /// 此前用户反馈对话框透明度过高、内容不可读；实体背景后所有子类（DeleteConfirmDialog/
-/// ConnectServerDialog/TagSelectorDialog/ProgressDialog）均清晰可读。
+/// ConnectServerDialog/TagSelectorDialog）均清晰可读。
 ///
 /// 用法：
 /// ```swift
@@ -198,6 +198,8 @@ class FFModalSheet: NSWindow {
                                    style: primaryButtonStyle,
                                    isPrimary: true,
                                    action: #selector(primaryButtonClicked))
+        // F1: 主按钮支持 Return 触发（键盘交互）
+        primaryButton.keyEquivalent = "\r"
         footerView.addSubview(primaryButton)
 
         // 次按钮（可选）
@@ -219,6 +221,8 @@ class FFModalSheet: NSWindow {
                                        style: .plain,
                                        isPrimary: false,
                                        action: #selector(secondaryButtonClicked))
+            // F1: 次按钮支持 Esc 触发（取消语义）
+            secondary.keyEquivalent = "\u{1b}"
             footerView.addSubview(secondary)
             secondaryButton = secondary
             constraints.append(contentsOf: [
@@ -294,6 +298,11 @@ class FFModalSheet: NSWindow {
 
     // MARK: - 按钮事件
 
+    /// F2: 子类控制主按钮可用状态（如协议不支持时禁用连接）
+    func setPrimaryButtonEnabled(_ enabled: Bool) {
+        primaryButton.isEnabled = enabled
+    }
+
     @objc private func closeButtonClicked() {
         cancel()
     }
@@ -315,11 +324,26 @@ class FFModalSheet: NSWindow {
         close()
     }
 
+    // MARK: - 键盘交互（F1）
+
+    /// Esc 键触发次按钮（取消）语义；无次按钮时关闭窗口。
+    override func cancelOperation(_ sender: Any?) {
+        if secondaryAction != nil || secondaryButton != nil {
+            secondaryButtonClicked()
+        } else {
+            close()
+        }
+    }
+
     // MARK: - 显示
 
-    /// 以 sheet 形式附加到目标窗口
-    func beginSheetModal(for parentWindow: NSWindow) {
+    /// 以 sheet 形式附加到目标窗口。
+    /// - Parameter initialFirstResponder: 弹出后获得焦点的视图（如输入框），nil 则用窗口默认。
+    func beginSheetModal(for parentWindow: NSWindow, initialFirstResponder: NSView? = nil) {
         parentWindow.beginSheet(self, completionHandler: nil)
+        if let firstResponder = initialFirstResponder {
+            parentWindow.makeFirstResponder(firstResponder)
+        }
     }
 
     /// 作为独立模态窗口显示（阻塞当前线程）

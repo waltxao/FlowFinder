@@ -92,6 +92,15 @@ public class SearchPanelController: NSWindowController {
     private var progressIndicator: NSProgressIndicator!
     /// 搜索进行中标志（用于正确判断进度条状态，而非依赖 isDisplayedWhenStopped）
     private var isSearching: Bool = false
+    /// D1: 搜索代次计数器。每次发起新搜索自增；回调校验代次一致才应用结果，
+    /// 避免旧搜索的迟到结果混入新查询（竞态）。
+    private var searchGeneration: Int = 0
+    /// D5: 结果批量刷新计数器（每 32 条刷新一次表）
+    private var searchBatchPending: Int = 0
+    /// D2: 主容器引用（主题切换时刷新静态 cgColor 背景快照）
+    private weak var mainContainerView: NSView?
+    /// D2: 主题变化监听 token
+    private var appearanceObserver: NSObjectProtocol?
 
     // MARK: - 数据
 
@@ -255,10 +264,10 @@ public class SearchPanelController: NSWindowController {
         let mainContainer = NSView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         mainContainer.wantsLayer = true
-        mainContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        // D2: 不用静态 cgColor 快照（不随主题变化）；背景色由 viewDidChangeEffectiveAppearance 动态刷新
         mainContainer.addSubview(searchToolbar)
         mainContainer.addSubview(splitView)
-        mainContainer.appearance = NSApp.effectiveAppearance
+        mainContainerView = mainContainer
 
         NSLayoutConstraint.activate([
             // 顶部工具栏
@@ -314,6 +323,7 @@ public class SearchPanelController: NSWindowController {
         let containerView = FFOpaqueContainerView()
         containerView.wantsLayer = true
         containerView.translatesAutoresizingMaskIntoConstraints = false
+        // D2: cgColor 是快照不随主题变化；窗口背景由系统绘制，层背景色仅在主题切换时刷新一次
         containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         containerView.addSubview(mainContainer)
@@ -325,6 +335,18 @@ public class SearchPanelController: NSWindowController {
         ])
 
         window.contentView = containerView
+
+        // D2: 主题切换时刷新静态 cgColor 快照背景（移除 appearance 快照后窗口本身跟随系统，
+        // 但 layer 背景色是快照，需在主题变化时重绘）
+        appearanceObserver = NotificationCenter.default.addObserver(
+            forName: .appearanceChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self = self, let mainView = self.mainContainerView else { return }
+            let isDark = ThemeManager.shared.resolvedIsDark
+            let bg: NSColor = isDark ? NSColor(calibratedWhite: 0.16, alpha: 1.0) : NSColor.windowBackgroundColor
+            mainView.layer?.backgroundColor = bg.cgColor
+            mainView.needsDisplay = true
+        }
     }
 
     // MARK: - 任务 F11-2: 实体背景容器工厂（v0.6.7）
@@ -464,6 +486,7 @@ public class SearchPanelController: NSWindowController {
 
     private func performSearch() {
         guard !currentQuery.isEmpty else {
+            searchGeneration += 1
             results = []
             filteredResults = []
             resultsTableView.reloadData()
@@ -471,6 +494,9 @@ public class SearchPanelController: NSWindowController {
             return
         }
 
+        // D1: 自增代次，使旧搜索的迟到回调被丢弃
+        searchGeneration += 1
+        let generation = searchGeneration
         results = []
         filteredResults = []
         resultsTableView.reloadData()
@@ -481,44 +507,59 @@ public class SearchPanelController: NSWindowController {
 
         switch currentMode {
         case .local:
-            performLocalSearch()
+            performLocalSearch(generation: generation)
         case .global:
-            performGlobalSearch()
+            performGlobalSearch(generation: generation)
         }
     }
 
-    private func performLocalSearch() {
+    private func performLocalSearch(generation: Int) {
         let path = currentPath.isEmpty
             ? FileManager.default.homeDirectoryForCurrentUser.path
             : currentPath
+
+        // D5: 结果批量刷新。每结果立即 reloadData 是 O(n²)（每次过滤全表+重载），
+        // 改为每 32 条刷新一次，最后一条强制刷新。
+        searchBatchPending = 0
 
         SearchBridge.shared.search(
             path: path,
             query: currentQuery,
             resultHandler: { [weak self] result in
                 DispatchQueue.main.async {
-                    self?.results.append(result)
-                    self?.applyFiltersAndReload()
+                    guard let self = self, self.searchGeneration == generation else { return }
+                    self.results.append(result)
+                    self.searchBatchPending += 1
+                    if self.searchBatchPending >= 32 {
+                        self.searchBatchPending = 0
+                        self.applyFiltersAndReload()
+                    }
                 }
             },
             completion: { [weak self] error in
                 DispatchQueue.main.async {
-                    self?.isSearching = false
-                    self?.progressIndicator.stopAnimation(nil)
-                    self?.updateResultsHeader(error: error)
+                    guard let self = self, self.searchGeneration == generation else { return }
+                    if self.searchBatchPending > 0 {
+                        self.searchBatchPending = 0
+                        self.applyFiltersAndReload()
+                    }
+                    self.isSearching = false
+                    self.progressIndicator.stopAnimation(nil)
+                    self.updateResultsHeader(error: error)
                 }
             }
         )
     }
 
-    private func performGlobalSearch() {
+    private func performGlobalSearch(generation: Int) {
         SpotlightBridge.shared.search(query: currentQuery) { [weak self] results in
             DispatchQueue.main.async {
-                self?.isSearching = false
-                self?.results = results
-                self?.applyFiltersAndReload()
-                self?.progressIndicator.stopAnimation(nil)
-                self?.updateResultsHeader(error: nil)
+                guard let self = self, self.searchGeneration == generation else { return }
+                self.isSearching = false
+                self.results = results
+                self.applyFiltersAndReload()
+                self.progressIndicator.stopAnimation(nil)
+                self.updateResultsHeader(error: nil)
             }
         }
     }
@@ -625,12 +666,23 @@ public class SearchPanelController: NSWindowController {
                 }
                 if let cutoff = cutoff, modDate < cutoff { return false }
             }
-            // 标签筛选（暂未接入标签系统，跳过）
-            // 搜索条件筛选（matchContent/caseSensitive 由 Rust 引擎处理，此处仅做客户端兜底）
-            if config.caseSensitive {
-                if !result.name.contains(currentQuery) { return false }
-            } else {
-                if !result.name.lowercased().contains(currentQuery.lowercased()) { return false }
+            // D3: 搜索条件筛选（matchFileName/matchContent/caseSensitive 在此客户端过滤实现；
+            // Rust ff_search 仅按文件名模糊匹配，不做内容搜索——客户端兜底覆盖两种模式）
+            let query = currentQuery
+            // 文件名包含：默认开启；关闭时不再要求文件名匹配（但 Rust 端已按文件名返回结果，
+            // 关闭此开关时保留所有返回项，不额外排除）
+            if config.matchFileName && !query.isEmpty {
+                if config.caseSensitive {
+                    if !result.name.contains(query) { return false }
+                } else {
+                    if !result.name.lowercased().contains(query.lowercased()) { return false }
+                }
+            }
+            // 内容包含：需读取文件内容匹配（仅文本类文件；二进制/大文件跳过）
+            if config.matchContent && !query.isEmpty {
+                if !fileContainsText(path: result.path, query: query, caseSensitive: config.caseSensitive) {
+                    return false
+                }
             }
             return true
         }
@@ -641,6 +693,17 @@ public class SearchPanelController: NSWindowController {
         } else {
             resultsHeader.stringValue = "找到 \(filteredResults.count) 个结果"
         }
+    }
+
+    /// D3: 读取文件内容检查是否包含查询文本（文本类小文件；二进制或 >4MB 跳过）
+    private func fileContainsText(path: String, query: String, caseSensitive: Bool) -> Bool {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe),
+              data.count <= 4 * 1024 * 1024 else { return false }
+        guard let content = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return false }
+        if caseSensitive {
+            return content.contains(query)
+        }
+        return content.lowercased().contains(query.lowercased())
     }
 
     /// F9-D: 规范化路径：去掉末尾的 "/"（根目录 "/" 除外），统一用于前缀比较

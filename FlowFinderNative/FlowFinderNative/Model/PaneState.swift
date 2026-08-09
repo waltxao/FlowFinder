@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit  // v0.7.4 项 6: createFolderFromSelection 使用 NSWindow 弹冲突框
 
 // MARK: - SortField
 
@@ -81,6 +82,8 @@ public class PaneViewModel: ObservableObject {
     private var paginationWorkItems: [DispatchWorkItem] = []
     /// 分页每批大小（首批与追加批均为 500 条）
     private let paginationPageSize: Int = 500
+    /// 任务 F10-10: 搜索防抖任务。快速输入时取消上一次挂起的递归搜索，300ms 后只触发一次。
+    private var searchDebounceWorkItem: DispatchWorkItem?
     /// 任务 F11-11: loadDirectory 的加载代次（C5）。
     /// 每次发起新 loadDirectory 时自增，后台完成回主线程时校验代次一致才应用结果，
     /// 避免快速导航时旧后台加载覆盖新加载（竞态导致显示错误目录内容）。
@@ -100,10 +103,22 @@ public class PaneViewModel: ObservableObject {
     // MARK: - Navigation
 
     func navigate(to path: String) {
+        // 防重复：导航到当前路径时不产生新历史条目
+        if path == state.path {
+            state.selectedFiles.removeAll()
+            state.searchQuery = ""
+            state.tagFilter = nil  // 任务 F11-8: 导航时清除标签筛选（与 searchQuery 一致）
+            state.error = nil
+            return
+        }
         if state.historyIndex < state.history.count - 1 {
             state.history = Array(state.history.prefix(state.historyIndex + 1))
         }
         state.history.append(path)
+        // 历史上限：超出时裁掉最旧条目，防止无限增长
+        if state.history.count > 500 {
+            state.history.removeFirst(state.history.count - 500)
+        }
         state.historyIndex = state.history.count - 1
         state.path = path
         state.selectedFiles.removeAll()
@@ -158,6 +173,9 @@ public class PaneViewModel: ObservableObject {
                let endIndex = state.files.firstIndex(where: { $0.path == file.path }) {
                 let range = min(startIndex, endIndex)...max(startIndex, endIndex)
                 state.selectedFiles = Array(state.files[range])
+            } else {
+                // lastSelected 不在当前过滤列表（如筛选后）时，退化为单选，避免 shift 静默失效
+                state.selectedFiles = [file]
             }
         } else if multi {
             if let idx = state.selectedFiles.firstIndex(where: { $0.path == file.path }) {
@@ -204,30 +222,21 @@ public class PaneViewModel: ObservableObject {
 
     // MARK: - 任务 F10-8: 分组聚合（v0.6.6 仿访达）
 
-    /// 分组缓存：大目录下 groupedFiles 被多次访问（rebuildDisplayRows/sectionCount/headerCell），
-    /// 每次都全量遍历 state.files 分桶。缓存通过 groupBy+count+首尾路径签名检测失效。
-    private var _groupedFilesCache: [(key: String, entries: [FileEntry])]?
-    private var _groupedFilesCacheKey: String = ""
-
     /// 分组后的文件列表（按种类/日期/大小聚合）。
     /// - groupBy == "none" 时返回单个分组 "全部"，包含所有文件
     /// - 其余维度返回有序分组，组内顺序与 state.files 一致（state.files 已由 applySort 排序），
     ///   因此"排序在分组内生效"：先排序再分组的实现保证组内顺序正确，
     ///   但组的整体顺序由本方法决定（仿访达：种类/日期/大小各有固定顺序）
     ///
-    /// 注意：返回值使用元组 (key, entries)，元组在 Swift 中无法直接作为 @Published
-    /// 触发 UI 刷新，UI 层应通过监听 $state 变化后调用此计算属性获取最新分组。
+    /// v0.7.4 根因修复：移除签名缓存！原缓存用 groupBy+count+首尾路径做 key，
+    /// 改名中间位置文件时 key 不变 -> 返回旧数据（含旧名字的 FileEntry）->
+    /// rebuildDisplayRows 用旧路径查新索引失败 -> 文件从列表消失/显示旧名字。
+    /// 运行时证据 [RENDER-DIAG]：groupedFiles=[logo12.png] vs state.files=[133.png] 不一致。
+    /// 移除缓存后每次都从 state.files 实时计算，确保数据一致。
+    /// 性能影响可忽略：分组遍历是 O(n)，与 rebuildDisplayRows 本身的 O(n) 同级，
+    /// 且只在 reloadData 时调用（非滚动时高频调用）。
     var groupedFiles: [(key: String, entries: [FileEntry])] {
-        // 大目录优化：签名缓存，避免多次访问时重复全量遍历
-        let cacheKey = "\(state.groupBy)|\(state.files.count)|\(state.files.first?.path ?? "")|\(state.files.last?.path ?? "")"
-        if cacheKey == _groupedFilesCacheKey, let cached = _groupedFilesCache {
-            return cached
-        }
-
-        let result = computeGroupedFiles()
-        _groupedFilesCache = result
-        _groupedFilesCacheKey = cacheKey
-        return result
+        return computeGroupedFiles()
     }
 
     private func computeGroupedFiles() -> [(key: String, entries: [FileEntry])] {
@@ -341,12 +350,19 @@ public class PaneViewModel: ObservableObject {
         // applyFilter 在 query 为空时恢复 allFiles，非空时从 allFiles 过滤
         // 任务 F11-8: 非空查询触发子目录递归搜索（异步），先回退到当前目录过滤避免界面空白
         if query.isEmpty {
+            searchDebounceWorkItem?.cancel()
+            searchDebounceWorkItem = nil
             applyFilter()
         } else {
             // 先用当前目录直接子项过滤（即时反馈，避免界面空白）
             applyFilter()
-            // 再异步递归搜索子目录，匹配项追加到结果中
-            performRecursiveSearch(query: query)
+            // 300ms 防抖后再异步递归搜索子目录，避免快速输入触发并发搜索
+            searchDebounceWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.performRecursiveSearch(query: query)
+            }
+            searchDebounceWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
         }
     }
 
@@ -378,6 +394,7 @@ public class PaneViewModel: ObservableObject {
         // 并保留 trashURL 用于撤销时恢复。trashItem 必须在主线程调用，
         // deleteSelected 由菜单/右键菜单触发，已在主线程。
         var trashedItems: [(originalPath: String, trashURL: URL)] = []
+        var failedPaths: [String] = []
         var failedCount = 0
 
         for entry in toDelete {
@@ -390,13 +407,19 @@ public class PaneViewModel: ObservableObject {
                 }
             } catch {
                 failedCount += 1
+                failedPaths.append(entry.path)
             }
         }
 
         if !trashedItems.isEmpty {
-            // 失效缓存以反映删除（best-effort，缓存错误不阻塞 UI）
-            let parentDir = (trashedItems[0].originalPath as NSString).deletingLastPathComponent
-            try? CoreBridge.shared.invalidateCache(path: parentDir)
+            // 失效所有涉及目录的父缓存（多目录选择时逐目录失效，而非只失效第一个）
+            var parentDirs = Set<String>()
+            for item in trashedItems {
+                parentDirs.insert((item.originalPath as NSString).deletingLastPathComponent)
+            }
+            for dir in parentDirs {
+                try? CoreBridge.shared.invalidateCache(path: dir)
+            }
 
             // 注册撤销：从废纸篓恢复（moveItem 回原路径）。undoTrashRestore 会同步注册 redo（redoTrashRestore），
             // 而 redoTrashRestore 处理器内又会注册反向 undo（= undoTrashRestore），
@@ -414,7 +437,16 @@ public class PaneViewModel: ObservableObject {
         }
 
         if failedCount > 0 {
-            state.error = "\(failedCount) 个项目删除失败"
+            // 失败项保留在选中集，便于用户重试；成功项已移除
+            if !failedPaths.isEmpty {
+                let remaining = toDelete.filter { failedPaths.contains($0.path) }
+                state.selectedFiles = remaining
+                if !remaining.isEmpty {
+                    state.selectedFiles = remaining
+                    loadDirectory()
+                }
+            }
+            state.error = "\(failedCount) 个项目删除失败：\(failedPaths.joined(separator: ", "))"
         }
     }
 
@@ -471,10 +503,38 @@ public class PaneViewModel: ObservableObject {
     func renameFile(_ oldPath: String, to newName: String) {
         let dir = (oldPath as NSString).deletingLastPathComponent
         let newPath = (dir as NSString).appendingPathComponent(newName)
-        FFDebug.log("PaneState.renameFile: \(oldPath) -> \(newPath)")
+        FFDebug.log("[RENAME-DIAG] PaneState.renameFile: oldPath=\(oldPath) newName=\(newName) newPath=\(newPath)")
+        // 安全检查：newName 不应包含路径分隔符（否则会跨目录移动文件导致"消失"）
+        if newName.contains("/") {
+            state.error = "文件名不能包含 \"/\""
+            return
+        }
         do {
             try CoreBridge.shared.renameFile(src: oldPath, dst: newPath)
-            FFDebug.log("PaneState.renameFile: 成功")
+            FFDebug.log("[RENAME-DIAG] PaneState.renameFile: Rust ff_rename 成功")
+            // 根因修复（v0.7.4）：改名成功后必须先失效目录缓存再刷新！
+            // listDirectory 优先读 Rust 侧 dir_cache（LRU 缓存），缓存命中就直接用
+            // 缓存数据、不访问真实文件系统。改名成功后若不失效缓存，loadDirectory
+            // 会读到旧缓存（还显示旧文件名）→ 用户看到"名字变回旧值/文件消失"。
+            // deleteSelected/undoTrashRestore/refresh 都先 invalidateCache 再 loadDirectory，
+            // 唯独 renameFile 漏了这一步（历史多轮修复均聚焦读取环节，未发现此遗漏）。
+            try? CoreBridge.shared.invalidateCache(path: dir)
+            // v0.7.4 根因修复：groupedFiles 签名缓存已彻底移除（见 groupedFiles 属性注释），
+            // 不再需要手动清空。缓存移除后每次都从 state.files 实时计算，数据始终一致。
+            // 修复 2：更新 state.selectedFiles 中旧路径条目为新路径/新名字，
+            // 否则详情栏/右键菜单/QuickLook 等仍读到旧名字。
+            state.selectedFiles = state.selectedFiles.map { entry in
+                if entry.path == oldPath {
+                    return FileEntry(
+                        path: newPath, name: newName, isDirectory: entry.isDirectory,
+                        isFile: entry.isFile, isSymlink: entry.isSymlink,
+                        isHidden: entry.isHidden, isSystemProtected: entry.isSystemProtected,
+                        size: entry.size, modificationDate: entry.modificationDate,
+                        creationDate: entry.creationDate, tags: entry.tags
+                    )
+                }
+                return entry
+            }
             // 注册撤销：undo 闭包内调用 renameFile 反向重命名，
             // NSUndoManager 在 undo 模式下会将 registerUndo 加入 redo 栈，
             // 因此 redo 自动支持，且不会无限递归。
@@ -489,7 +549,7 @@ public class PaneViewModel: ObservableObject {
             loadDirectory()
         } catch {
             state.error = error.localizedDescription
-            FFDebug.log("PaneState.renameFile: 失败 \(error.localizedDescription)")
+            FFDebug.log("[RENAME-DIAG] PaneState.renameFile: Rust ff_rename 失败 \(error.localizedDescription)")
         }
     }
 
@@ -498,10 +558,195 @@ public class PaneViewModel: ObservableObject {
         let newDirPath = (state.path as NSString).appendingPathComponent(newDirName)
         do {
             try CoreBridge.shared.createDirectory(path: newDirPath)
+            // v0.7.4 修订 2：注册撤销（删除刚创建的文件夹）
+            registerUndoCreateFolder(folderPath: newDirPath)
             loadDirectory()
         } catch {
             state.error = error.localizedDescription
         }
+    }
+
+    /// v0.7.4 修订 2：注册"新建文件夹"的撤销（删除该文件夹）与重做（重新创建）
+    private func registerUndoCreateFolder(folderPath: String) {
+        undoManager?.registerUndo(withTarget: self) { vm in
+            // 撤销：删除该文件夹（先删除其中的内容，再删文件夹本身）
+            try? FileManager.default.removeItem(atPath: folderPath)
+            try? CoreBridge.shared.invalidateCache(path: vm.state.path)
+            vm.loadDirectory()
+            // 注册重做：重新创建
+            vm.undoManager?.registerUndo(withTarget: vm) { vm2 in
+                vm2.redoCreateFolder(folderPath: folderPath)
+            }
+            vm.undoManager?.setActionName("新建文件夹")
+        }
+        undoManager?.setActionName("新建文件夹")
+    }
+
+    /// 重做"新建文件夹"：重新创建该文件夹
+    private func redoCreateFolder(folderPath: String) {
+        try? CoreBridge.shared.createDirectory(path: folderPath)
+        try? CoreBridge.shared.invalidateCache(path: state.path)
+        loadDirectory()
+        // 注册反向撤销
+        undoManager?.registerUndo(withTarget: self) { vm in
+            try? FileManager.default.removeItem(atPath: folderPath)
+            try? CoreBridge.shared.invalidateCache(path: vm.state.path)
+            vm.loadDirectory()
+            vm.undoManager?.registerUndo(withTarget: vm) { vm2 in
+                vm2.redoCreateFolder(folderPath: folderPath)
+            }
+            vm.undoManager?.setActionName("新建文件夹")
+        }
+        undoManager?.setActionName("新建文件夹")
+    }
+
+    // MARK: - v0.7.4 项 6：用所选项目新建文件夹
+
+    /// 用当前选中的项目新建文件夹：创建"新建文件夹"（重名自动加序号），
+    /// 把选中的项目移动进去。冲突（目标已有同名项目）时弹窗询问。
+    /// - Parameter window: 宿主窗口（用于冲突弹窗）
+    /// - Returns: 是否执行了操作（无选中项返回 false）
+    @discardableResult
+    func createFolderFromSelection(window: NSWindow?) -> Bool {
+        let items = state.selectedFiles
+        guard !items.isEmpty else { return false }
+
+        let dir = state.path
+        // 生成不重复的文件夹名："新建文件夹"、"新建文件夹 2"、"新建文件夹 3"...
+        var folderName = "新建文件夹"
+        var counter = 2
+        while FileManager.default.fileExists(atPath: (dir as NSString).appendingPathComponent(folderName)) {
+            folderName = "新建文件夹 \(counter)"
+            counter += 1
+        }
+        let folderPath = (dir as NSString).appendingPathComponent(folderName)
+
+        do {
+            try CoreBridge.shared.createDirectory(path: folderPath)
+        } catch {
+            state.error = "创建文件夹失败：\(error.localizedDescription)"
+            return false
+        }
+
+        // 移动选中的项目进新文件夹（冲突弹窗询问）
+        let srcPaths = items.map { $0.path }
+        let conflictPlan = ConflictResolver.resolveConflicts(srcPaths: srcPaths, destDir: folderPath, window: window)
+
+        // 记录实际移动的 (源路径, 目标路径) 对，用于撤销
+        var movedPairs: [(src: String, dst: String)] = []
+        var failedCount = 0
+        // 普通源：批量移动
+        if !conflictPlan.normalSrcs.isEmpty {
+            do {
+                _ = try CoreBridge.shared.parallelMove(srcs: conflictPlan.normalSrcs, dstDir: folderPath)
+                movedPairs.append(contentsOf: conflictPlan.normalSrcs.map {
+                    (src: $0, dst: (folderPath as NSString).appendingPathComponent(($0 as NSString).lastPathComponent))
+                })
+            } catch {
+                failedCount += conflictPlan.normalSrcs.count
+            }
+        }
+        // keepBoth 源：逐项移动（目标名已是唯一名）
+        for pair in conflictPlan.keepBoth {
+            let dst = (folderPath as NSString).appendingPathComponent(pair.dstName)
+            do {
+                try CoreBridge.shared.moveFile(src: pair.src, dst: dst)
+                movedPairs.append((src: pair.src, dst: dst))
+            } catch {
+                failedCount += 1
+            }
+        }
+
+        if failedCount > 0 {
+            state.error = "\(failedCount) 个项目移动失败"
+        }
+        // 失效缓存并刷新
+        try? CoreBridge.shared.invalidateCache(path: dir)
+        state.selectedFiles.removeAll()
+        loadDirectory()
+        // v0.7.4 修订 2：注册撤销（把项目移回原位 + 删除文件夹）
+        if !movedPairs.isEmpty {
+            registerUndoCreateFolderFromSelection(folderPath: folderPath, movedPairs: movedPairs)
+        }
+        return true
+    }
+
+    /// v0.7.4 修订 2：注册"用所选新建文件夹"的撤销（移回项目 + 删除文件夹）与重做
+    private func registerUndoCreateFolderFromSelection(folderPath: String, movedPairs: [(src: String, dst: String)]) {
+        let dir = state.path
+        undoManager?.registerUndo(withTarget: self) { vm in
+            // 撤销：把项目移回原处，再删除文件夹
+            for pair in movedPairs {
+                try? CoreBridge.shared.moveFile(src: pair.dst, dst: pair.src)
+            }
+            try? FileManager.default.removeItem(atPath: folderPath)
+            try? CoreBridge.shared.invalidateCache(path: dir)
+            vm.loadDirectory()
+            // 注册重做
+            vm.undoManager?.registerUndo(withTarget: vm) { vm2 in
+                vm2.redoCreateFolderFromSelection(folderPath: folderPath, movedPairs: movedPairs)
+            }
+            vm.undoManager?.setActionName("新建文件夹")
+        }
+        undoManager?.setActionName("新建文件夹")
+    }
+
+    /// 重做"用所选新建文件夹"：重建文件夹并把项目移回
+    private func redoCreateFolderFromSelection(folderPath: String, movedPairs: [(src: String, dst: String)]) {
+        try? CoreBridge.shared.createDirectory(path: folderPath)
+        for pair in movedPairs {
+            try? CoreBridge.shared.moveFile(src: pair.src, dst: pair.dst)
+        }
+        try? CoreBridge.shared.invalidateCache(path: state.path)
+        loadDirectory()
+        // 注册反向撤销
+        undoManager?.registerUndo(withTarget: self) { vm in
+            for pair in movedPairs {
+                try? CoreBridge.shared.moveFile(src: pair.dst, dst: pair.src)
+            }
+            try? FileManager.default.removeItem(atPath: folderPath)
+            try? CoreBridge.shared.invalidateCache(path: vm.state.path)
+            vm.loadDirectory()
+            vm.undoManager?.registerUndo(withTarget: vm) { vm2 in
+                vm2.redoCreateFolderFromSelection(folderPath: folderPath, movedPairs: movedPairs)
+            }
+            vm.undoManager?.setActionName("新建文件夹")
+        }
+        undoManager?.setActionName("新建文件夹")
+    }
+
+    // MARK: - v0.7.4 修订 2：标签操作撤销
+
+    /// 注册"添加标签到文件"的撤销（移除该标签）。
+    /// 供右键菜单/详情栏标签操作调用，实现 ⌘Z 撤销标签变更。
+    func registerUndoAddTag(tag: Tag, path: String) {
+        undoManager?.registerUndo(withTarget: self) { vm in
+            _ = TagBridge.shared.removeTagByName(tag.name, path: path)
+            vm.refresh()
+            // 注册重做：重新添加
+            vm.undoManager?.registerUndo(withTarget: vm) { vm2 in
+                _ = TagBridge.shared.addTag(tag, path: path)
+                vm2.refresh()
+            }
+            vm.undoManager?.setActionName("添加标签")
+        }
+        undoManager?.setActionName("添加标签")
+    }
+
+    /// 注册"从文件移除标签"的撤销（重新添加该标签）。
+    /// 供右键菜单/详情栏标签操作调用，实现 ⌘Z 撤销标签变更。
+    func registerUndoRemoveTag(tag: Tag, path: String) {
+        undoManager?.registerUndo(withTarget: self) { vm in
+            _ = TagBridge.shared.addTag(tag, path: path)
+            vm.refresh()
+            // 注册重做：再次移除
+            vm.undoManager?.registerUndo(withTarget: vm) { vm2 in
+                _ = TagBridge.shared.removeTagByName(tag.name, path: path)
+                vm2.refresh()
+            }
+            vm.undoManager?.setActionName("移除标签")
+        }
+        undoManager?.setActionName("移除标签")
     }
 
     // MARK: - Private
@@ -534,11 +779,28 @@ public class PaneViewModel: ObservableObject {
                     self.allFiles = sortedEntries
                     // 任务 F11-8: 统一走 applyFilter（综合标签+搜索过滤），保持单一过滤入口
                     // 任务 F11-11: 大目录分页加载（C5）- 首批 pageSize 条立即显示，其余异步追加
-                    self.applyFilterPaginated()
+                    // B7: 有标签筛选时走 applyFilter 的异步批量读标签路径（xattr I/O 不进主线程）
+                    if self.state.tagFilter != nil {
+                        self.applyFilter()
+                    } else {
+                        self.applyFilterPaginated()
+                    }
+                    // 诊断：记录加载完成后 state.files 是否包含预期文件名（验证数据层是否读到新名字）
+                    // 小目录打印完整列表；大目录只打印前 8 个
+                    if self.state.files.count <= 30 {
+                        let allNames = self.state.files.map { $0.name }
+                        FFDebug.log("[CACHE-DIAG] loadDirectory 完成 path=\(path) files=\(self.state.files.count) 全部=\(allNames)")
+                    } else {
+                        let previewNames = self.state.files.prefix(8).map { $0.name }
+                        FFDebug.log("[CACHE-DIAG] loadDirectory 完成 path=\(path) files=\(self.state.files.count) 前8个=\(previewNames)")
+                    }
                     // 重命名等"数量不变"操作：加载完成、state.files 已更新后发通知强制视图刷新
+                    // v0.7.4 修复 3：通知携带目录路径，对侧面板（显示同一目录时）也刷新数据，
+                    // 避免右面板仍渲染旧名字（底层审查 FINDING 2）。
                     if self.pendingContentChangeNotification {
                         self.pendingContentChangeNotification = false
-                        NotificationCenter.default.post(name: .fileListContentChanged, object: nil)
+                        NotificationCenter.default.post(name: .fileListContentChanged, object: nil,
+                                                        userInfo: ["path": path])
                     }
                     // 若当前有非空搜索查询，触发子目录递归搜索（追加深层匹配项）
                     if !self.state.searchQuery.isEmpty && self.state.tagFilter == nil {
@@ -616,14 +878,46 @@ public class PaneViewModel: ObservableObject {
         filtered = applyDisplayFilter(filtered)
         // 1. 标签筛选：仅保留含该标签的文件（TagBridge.getTags 检查是否含该标签）
         if let tagFilter = state.tagFilter {
-            filtered = filtered.filter { entry in
-                // 优先使用 FileEntry 已缓存的 tags，避免对每个文件都做 xattr 读取
-                if !entry.tags.isEmpty {
-                    return entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+            // B7: 批量后台读取标签（xattr 是磁盘 I/O），避免大目录在主线程逐文件 getxattr 卡顿。
+            // 优先使用 FileEntry 已缓存的 tags；未缓存的路径收集后统一后台读取。
+            let uncached = filtered.filter { $0.tags.isEmpty }
+            let cached = filtered.filter { !$0.tags.isEmpty }
+            let pathsToRead = uncached.map { $0.path }
+            if pathsToRead.isEmpty {
+                // 全部已缓存，主线程直接过滤（纯内存操作）
+                filtered = cached.filter { entry in
+                    entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
                 }
-                let tags = TagBridge.shared.getTags(path: entry.path)
-                return tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+                state.files = filtered
+                return
             }
+            // 快照当前筛选条件，后台读取完成后校验未变才应用
+            let generation = loadGeneration
+            let capturedQuery = state.searchQuery
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+                var tagMap: [String: [Tag]] = [:]
+                for path in pathsToRead {
+                    tagMap[path] = TagBridge.shared.getTags(path: path)
+                }
+                DispatchQueue.main.async {
+                    guard self.loadGeneration == generation else { return }
+                    guard self.state.tagFilter?.id == tagFilter.id else { return }
+                    guard self.state.searchQuery == capturedQuery else { return }
+                    // 用后台读取的标签补齐 entry.tags，再做过滤
+                    let allEntries = filtered.map { entry -> FileEntry in
+                        guard entry.tags.isEmpty, let tags = tagMap[entry.path] else { return entry }
+                        var updated = entry
+                        updated.tags = tags
+                        return updated
+                    }
+                    let result = allEntries.filter { entry in
+                        entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+                    }
+                    self.state.files = result
+                }
+            }
+            return
         }
         // 2. 搜索过滤：从（已标签筛选的）列表中按名称匹配
         if !state.searchQuery.isEmpty {
@@ -657,19 +951,17 @@ public class PaneViewModel: ObservableObject {
     private func applyFilterPaginated() {
         cancelPagination()
 
+        // B7: 有标签筛选时统一走 applyFilter 的异步批量读标签路径
+        //（applyFilterPaginated 的分页是同步过滤，无法承载 xattr I/O）
+        if state.tagFilter != nil {
+            applyFilter()
+            return
+        }
+
         // 综合标签 + 搜索过滤（与 applyFilter 相同逻辑，结果为完整过滤列表）
         var filtered = allFiles
         // v0.6.9: 显示配置过滤（隐藏文件 / 系统文件）
         filtered = applyDisplayFilter(filtered)
-        if let tagFilter = state.tagFilter {
-            filtered = filtered.filter { entry in
-                if !entry.tags.isEmpty {
-                    return entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
-                }
-                let tags = TagBridge.shared.getTags(path: entry.path)
-                return tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
-            }
-        }
         if !state.searchQuery.isEmpty {
             let query = state.searchQuery.lowercased()
             filtered = filtered.filter { $0.name.lowercased().contains(query) }

@@ -38,6 +38,8 @@ class ExpandableDetailsBar: NSView {
 
     private var entry: FileEntry?
     private var selectedCount: Int = 0
+    /// v0.7.4 修订: 完整选中数组（多选时用于汇总显示）
+    private var selectedFiles: [FileEntry] = []
 
     /// 展开/收起状态。设置时自动带动画过渡。
     var isExpanded: Bool = false {
@@ -64,14 +66,16 @@ class ExpandableDetailsBar: NSView {
     // expanded
     private let bigIconView = NSImageView()
     // 1.6 字段顺序：种类 / 大小 / 位置 / 创建日期 / 修改日期 / 标签
-    // 移除"名称"（header 已显示）和"权限"字段；合并完整路径到"位置"字段
+    // v0.7.4 项 3：新增"名称"行（第一列最上方），单击可改名
+    private let nameField = NSTextField(labelWithString: "")
     private let typeField = NSTextField(labelWithString: "")
     private let sizeField = NSTextField(labelWithString: "")
     private let locationField = NSTextField(labelWithString: "")
     private let createdField = NSTextField(labelWithString: "")
     private let modifiedField = NSTextField(labelWithString: "")
-    private let tagsField = NSTextField(labelWithString: "")
     private let tagsContainer = NSStackView()
+    /// v0.7.4 项 4：标签行编辑按钮（点击弹出标签选择弹窗）
+    private let tagsEditButton = NSButton()
 
     // 第二列字段：文件说明 / 文件来源
     private let descriptionField = NSTextField(labelWithString: "")
@@ -85,6 +89,38 @@ class ExpandableDetailsBar: NSView {
     /// 第二列信息容器（标签/文件说明/文件来源）
     private var mainColumn2: NSStackView!
 
+    // v0.7.4 项 7：所有信息行的引用（多选/未选时隐藏空白条目，单选时显示）
+    private var infoRows: [NSView] = []
+
+    // v0.7.4 修订 4：单选内容行（图标 + 两列）与多选内容行（图标 + 两列汇总）
+    private var singleContentRow: NSStackView!
+    private var multiContentRow: NSStackView!
+    /// 多选大图标（缩略图堆叠）
+    private var multiIconView: FFMiniThumbnailStackView!
+
+    /// v0.7.4 项 3：文件名编辑回调（由 MainWindowController 注入，调用 PaneViewModel.renameFile）。
+    /// 参数：旧路径、新名字。详情栏不直接持有 viewModel，通过此闭包让控制器执行改名。
+    var onRename: ((String, String) -> Void)?
+
+    /// v0.7.4 修订 2：标签变更回调（用于注册撤销）。由 MainWindowController 注入。
+    /// - .add: 添加了标签；.remove: 移除了标签
+    var onUndoableTagChange: ((TagChangeKind, Tag, String) -> Void)?
+
+    /// v0.7.4 修订 4：当前所在文件夹路径（未选中时显示该文件夹图标）
+    private var currentDirectoryPath: String?
+
+    /// E2: 缩略图是否已成功加载（置位后工作区图标回调不再覆盖大图标）
+    private var didReceiveThumbnail = false
+
+    /// E3: 多选汇总异步计算代次（快速切换选择时旧任务结果被丢弃）
+    private var multiSelectGeneration: Int = 0
+
+    /// 标签变更类型（用于撤销注册）
+    enum TagChangeKind {
+        case add
+        case remove
+    }
+
     /// 当前正在请求缩略图的路径（用于避免过期回调覆盖）
     private var thumbnailLoadPath: String?
 
@@ -95,6 +131,16 @@ class ExpandableDetailsBar: NSView {
 
     /// 问题7: 状态栏标签（项目数 + 磁盘可用空间），由 updateStatus(itemCount:diskFree:) 更新
     private var statusLabel: NSTextField?
+
+    // v0.7.4 项 4: 多选汇总字段（放入与单选同布局的 multiContentRow 两列中）
+    /// 多选汇总：数量行
+    private let multiCountField = NSTextField(labelWithString: "")
+    /// 多选汇总：总大小行
+    private let multiSizeField = NSTextField(labelWithString: "")
+    /// 多选汇总：包含类型行（带数量）
+    private let multiTypesField = NSTextField(labelWithString: "")
+    /// 多选汇总：包含标签行（药丸）
+    private let multiTagsContainer = NSStackView()
 
     // MARK: - Init
 
@@ -165,7 +211,7 @@ class ExpandableDetailsBar: NSView {
         expandedView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(expandedView)
 
-        // 展开态内容：垂直堆叠（内容行 + 文件类型信息）
+        // 展开态内容：垂直堆叠（多选汇总 + 内容行 + 文件类型信息）
         let expandedStack = NSStackView()
         expandedStack.orientation = .vertical
         expandedStack.spacing = 8
@@ -173,12 +219,35 @@ class ExpandableDetailsBar: NSView {
         expandedStack.translatesAutoresizingMaskIntoConstraints = false
         expandedView.addSubview(expandedStack)
 
-        // 内容行：图标 + 两列信息
+        // v0.7.4 修订 4: 多选字段（数量/总大小/类型/标签）——放入与单选同布局的 multiContentRow
+        // （多选数量行）
+        multiCountField.font = NSFont.systemFont(ofSize: 10)
+        multiCountField.textColor = NSColor.labelColor
+        multiCountField.translatesAutoresizingMaskIntoConstraints = false
+
+        // 多选总大小行
+        multiSizeField.font = NSFont.systemFont(ofSize: 10)
+        multiSizeField.textColor = NSColor.labelColor
+        multiSizeField.translatesAutoresizingMaskIntoConstraints = false
+
+        // 多选类型行（文本：图片 3 · 文档 2）
+        multiTypesField.font = NSFont.systemFont(ofSize: 10)
+        multiTypesField.textColor = NSColor.labelColor
+        multiTypesField.translatesAutoresizingMaskIntoConstraints = false
+
+        // 多选标签行（药丸）
+        multiTagsContainer.orientation = .horizontal
+        multiTagsContainer.spacing = 4
+        multiTagsContainer.alignment = .centerY
+        multiTagsContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        // 内容行：图标 + 两列信息（单选）
         let contentRow = NSStackView()
         contentRow.orientation = .horizontal
         contentRow.spacing = 12
         contentRow.alignment = .top
         contentRow.translatesAutoresizingMaskIntoConstraints = false
+        singleContentRow = contentRow
 
         bigIconView.imageScaling = .scaleProportionallyUpOrDown
         bigIconView.translatesAutoresizingMaskIntoConstraints = false
@@ -192,13 +261,28 @@ class ExpandableDetailsBar: NSView {
         columnsContainer.translatesAutoresizingMaskIntoConstraints = false
         columnsContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        // 第一列：种类 / 大小 / 位置 / 创建日期 / 修改日期 + 文件类型专属信息（问题 7 合并追加）
+        // 第一列：名称 / 种类 / 大小 / 位置 / 创建日期 / 修改日期 + 文件类型专属信息
         let column1 = NSStackView()
         column1.orientation = .vertical
         column1.spacing = 4
         column1.alignment = .leading
         column1.translatesAutoresizingMaskIntoConstraints = false
         mainColumn1 = column1
+
+        // v0.7.4 项 3：名称行（可单击改名）。文件名以 11pt semibold 显示，与其它字段区分
+        configureValue(nameField)
+        nameField.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        nameField.textColor = NSColor.labelColor
+        nameField.lineBreakMode = .byTruncatingTail
+        nameField.maximumNumberOfLines = 1
+        nameField.cell?.truncatesLastVisibleLine = true
+        nameField.cell?.wraps = false
+        nameField.delegate = self
+        // 单击进入改名编辑（与 descriptionField 双击不同：名称单击即编辑）
+        let nameClickGesture = NSClickGestureRecognizer(target: self, action: #selector(beginEditingName))
+        nameClickGesture.numberOfClicksRequired = 1
+        nameField.addGestureRecognizer(nameClickGesture)
+        nameField.toolTip = "点击编辑文件名"
 
         configureValue(typeField)
         configureValue(sizeField)
@@ -222,11 +306,18 @@ class ExpandableDetailsBar: NSView {
         configureValue(createdField)
         configureValue(modifiedField)
 
-        column1.addArrangedSubview(makeInfoRow(label: makeLabel("种类"), value: typeField))
-        column1.addArrangedSubview(makeInfoRow(label: makeLabel("大小"), value: sizeField))
-        column1.addArrangedSubview(makeInfoRow(label: makeLabel("位置"), value: locationField))
-        column1.addArrangedSubview(makeInfoRow(label: makeLabel("创建日期"), value: createdField))
-        column1.addArrangedSubview(makeInfoRow(label: makeLabel("修改日期"), value: modifiedField))
+        let nameRow = makeInfoRow(label: makeLabel("名称"), value: nameField)
+        let typeRow = makeInfoRow(label: makeLabel("种类"), value: typeField)
+        let sizeRow = makeInfoRow(label: makeLabel("大小"), value: sizeField)
+        let locationRow = makeInfoRow(label: makeLabel("位置"), value: locationField)
+        let createdRow = makeInfoRow(label: makeLabel("创建日期"), value: createdField)
+        let modifiedRow = makeInfoRow(label: makeLabel("修改日期"), value: modifiedField)
+        column1.addArrangedSubview(nameRow)
+        column1.addArrangedSubview(typeRow)
+        column1.addArrangedSubview(sizeRow)
+        column1.addArrangedSubview(locationRow)
+        column1.addArrangedSubview(createdRow)
+        column1.addArrangedSubview(modifiedRow)
 
         // 第二列：标签 / 文件说明 / 文件来源
         let column2 = NSStackView()
@@ -236,12 +327,31 @@ class ExpandableDetailsBar: NSView {
         column2.translatesAutoresizingMaskIntoConstraints = false
         mainColumn2 = column2
 
-        // 标签容器（药丸，横向排列，单击筛选 / 右键移除）
+        // 标签容器（药丸，横向排列，单击筛选 / 右键移除）+ 编辑按钮
         tagsContainer.orientation = .horizontal
         tagsContainer.spacing = 4
         tagsContainer.alignment = .centerY
         tagsContainer.translatesAutoresizingMaskIntoConstraints = false
         tagsContainer.heightAnchor.constraint(equalToConstant: 18).isActive = true
+
+        // v0.7.4 项 4：标签行编辑按钮（铅笔图标），点击弹出标签选择弹窗
+        tagsEditButton.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "编辑标签")
+        tagsEditButton.contentTintColor = NSColor.secondaryLabelColor
+        tagsEditButton.isBordered = false
+        tagsEditButton.controlSize = .small
+        tagsEditButton.target = self
+        tagsEditButton.action = #selector(editTagsClicked)
+        tagsEditButton.toolTip = "编辑标签"
+        tagsEditButton.translatesAutoresizingMaskIntoConstraints = false
+        tagsEditButton.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        tagsEditButton.heightAnchor.constraint(equalToConstant: 16).isActive = true
+
+        // 标签值视图 = 药丸容器 + 编辑按钮（水平排列）
+        let tagsValueView = NSStackView(views: [tagsContainer, tagsEditButton])
+        tagsValueView.orientation = .horizontal
+        tagsValueView.alignment = .centerY
+        tagsValueView.spacing = 6
+        tagsValueView.translatesAutoresizingMaskIntoConstraints = false
 
         // 文件说明：可编辑文本字段（双击进入编辑，回车保存至 UserDefaults）
         descriptionField.font = NSFont.systemFont(ofSize: 10)
@@ -263,13 +373,71 @@ class ExpandableDetailsBar: NSView {
 
         configureValue(sourceField)
 
-        column2.addArrangedSubview(makeInfoRow(label: makeLabel("标签"), value: tagsContainer))
-        column2.addArrangedSubview(makeInfoRow(label: makeLabel("文件说明"), value: descriptionField))
-        column2.addArrangedSubview(makeInfoRow(label: makeLabel("文件来源"), value: sourceField))
+        // v0.7.4 项 4：标签行 value 用 tagsValueView（药丸 + 编辑按钮）
+        let tagsRow = makeInfoRow(label: makeLabel("标签"), value: tagsValueView)
+        let descRow = makeInfoRow(label: makeLabel("文件说明"), value: descriptionField)
+        let sourceRow = makeInfoRow(label: makeLabel("文件来源"), value: sourceField)
+        column2.addArrangedSubview(tagsRow)
+        column2.addArrangedSubview(descRow)
+        column2.addArrangedSubview(sourceRow)
+
+        // v0.7.4 项 7：收集所有信息行引用（多选/未选时隐藏）
+        infoRows = [nameRow, typeRow, sizeRow, locationRow, createdRow, modifiedRow, tagsRow, descRow, sourceRow]
 
         columnsContainer.addArrangedSubview(column1)
         columnsContainer.addArrangedSubview(column2)
         contentRow.addArrangedSubview(columnsContainer)
+
+        // v0.7.4 修订 4：多选内容行（图标 + 两列汇总信息，与单选布局一致）
+        let multiRow = NSStackView()
+        multiRow.orientation = .horizontal
+        multiRow.spacing = 12
+        multiRow.alignment = .top
+        multiRow.translatesAutoresizingMaskIntoConstraints = false
+        multiRow.isHidden = true
+        multiContentRow = multiRow
+
+        // 多选大图标：缩略图堆叠容器（仿访达，最多堆叠 4 个选中项的缩略图）
+        let multiIcon = FFMiniThumbnailStackView()
+        multiIcon.translatesAutoresizingMaskIntoConstraints = false
+        multiIconView = multiIcon
+        multiRow.addArrangedSubview(multiIcon)
+        NSLayoutConstraint.activate([
+            multiIcon.widthAnchor.constraint(equalToConstant: 96),
+            multiIcon.heightAnchor.constraint(equalToConstant: 96),
+        ])
+
+        // 多选两列
+        let multiColumns = NSStackView()
+        multiColumns.orientation = .horizontal
+        multiColumns.spacing = 16
+        multiColumns.alignment = .top
+        multiColumns.translatesAutoresizingMaskIntoConstraints = false
+        multiColumns.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        // 左列：数量 / 总大小 / 包含类型
+        let multiCol1 = NSStackView()
+        multiCol1.orientation = .vertical
+        multiCol1.spacing = 4
+        multiCol1.alignment = .leading
+        multiCol1.translatesAutoresizingMaskIntoConstraints = false
+        multiCol1.addArrangedSubview(makeInfoRow(label: makeLabel("数量"), value: multiCountField))
+        multiCol1.addArrangedSubview(makeInfoRow(label: makeLabel("总大小"), value: multiSizeField))
+        multiCol1.addArrangedSubview(makeInfoRow(label: makeLabel("包含类型"), value: multiTypesField))
+
+        // 右列：包含标签
+        let multiCol2 = NSStackView()
+        multiCol2.orientation = .vertical
+        multiCol2.spacing = 4
+        multiCol2.alignment = .leading
+        multiCol2.translatesAutoresizingMaskIntoConstraints = false
+        multiCol2.addArrangedSubview(makeInfoRow(label: makeLabel("包含标签"), value: multiTagsContainer))
+
+        multiColumns.addArrangedSubview(multiCol1)
+        multiColumns.addArrangedSubview(multiCol2)
+        multiRow.addArrangedSubview(multiColumns)
+
+        expandedStack.addArrangedSubview(multiRow)
 
         // 文件类型专属信息容器（内容行下方）
         fileTypeInfoContainer.orientation = .vertical
@@ -427,6 +595,17 @@ class ExpandableDetailsBar: NSView {
     /// 更新显示的文件信息（任务要求接口）
     func update(with entry: FileEntry?) {
         self.entry = entry
+        self.selectedFiles = entry.map { [$0] } ?? []
+        self.selectedCount = (entry != nil) ? 1 : 0
+        refresh()
+    }
+
+    /// v0.7.4 修订: 更新完整选中数组（单选/多选/未选统一入口）
+    /// - Parameter files: 当前选中的文件数组（空 = 未选中；1 个 = 单选；>=2 = 多选）
+    func update(with files: [FileEntry]) {
+        self.selectedFiles = files
+        self.selectedCount = files.count
+        self.entry = files.count == 1 ? files.first : (files.isEmpty ? nil : files.first)
         refresh()
     }
 
@@ -440,6 +619,7 @@ class ExpandableDetailsBar: NSView {
     func update(file: FileEntry?, selectedCount: Int) {
         self.entry = file
         self.selectedCount = selectedCount
+        self.selectedFiles = file.map { [$0] } ?? []
         refresh()
     }
 
@@ -447,7 +627,11 @@ class ExpandableDetailsBar: NSView {
     /// - Parameters:
     ///   - itemCount: 当前文件夹的项目数
     ///   - diskFree: 磁盘可用空间描述（如 "42.8 GB 可用"），为 nil 时仅显示项目数
-    func updateStatus(itemCount: Int, diskFree: String? = nil) {
+    func updateStatus(itemCount: Int, diskFree: String? = nil, currentDirectoryPath: String? = nil) {
+        // v0.7.4 修订 4：记录当前所在文件夹路径（未选中时显示该文件夹图标）
+        if let path = currentDirectoryPath {
+            self.currentDirectoryPath = path
+        }
         if statusLabel == nil {
             let label = NSTextField(labelWithString: "")
             label.font = NSFont.systemFont(ofSize: 11)
@@ -509,6 +693,11 @@ class ExpandableDetailsBar: NSView {
     private func computedExpandedHeight() -> CGFloat {
         // 问题 7：专属信息合并到主信息列后按单列计算——主信息 5 行 + 专属信息行数
         var extra: CGFloat = 0
+        if selectedCount > 1 {
+            // v0.7.4 修订 4：多选与单选同布局（图标 + 两列），行数约 4 行（数量/总大小/类型/标签），
+            // 基准高度与单选一致，略加高容纳标签药丸行
+            return 192 + 16
+        }
         if let entry = entry {
             let infoRows = gatherFileInfo(entry: entry).count
             let totalRows = 5 + infoRows  // 种类/大小/位置/创建/修改 + 专属信息
@@ -545,6 +734,8 @@ class ExpandableDetailsBar: NSView {
             ThumbnailManager.shared.cancelGeneration(for: oldPath)
             thumbnailLoadPath = nil
             bigIconView.image = nil
+            // E2: 文件切换时重置缩略图标志，允许新文件的工作区图标显示
+            didReceiveThumbnail = false
         }
         // 任务 F11-7: 文件变化时也清除工作区图标请求标记，避免旧回调覆盖新选中项图标
         if iconLoadPath != nil && iconLoadPath != entry?.path {
@@ -565,31 +756,58 @@ class ExpandableDetailsBar: NSView {
         } else {
             compactNameField.stringValue = "未选择文件"
             compactSubField?.stringValue = ""
-            // 问题6: 使用更精致的 tray.full.fill 填充图标替代简陋的 outline 图标
-            setPlaceholderIcon(symbol: "tray.full.fill")
+            // v0.7.4 修订 4：未选中时显示当前所在文件夹的图标（而非通用占位图标）
+            if let dirPath = currentDirectoryPath {
+                setRealFileIcon(for: dirPath)
+            } else {
+                setPlaceholderIcon(symbol: "tray.full.fill")
+            }
         }
 
-        // expanded 字段：种类 / 大小 / 位置 / 创建日期 / 修改日期
+        // expanded 字段：名称 / 种类 / 大小 / 位置 / 创建日期 / 修改日期
         // 第二列：标签 / 文件说明 / 文件来源
         // 底部：文件类型专属信息
         // 任务 F11-6: bigIconView 已在 setPlaceholderIcon/setRealFileIcon 中与 smallIconView 同步设置
-        guard let entry = entry, selectedCount <= 1 else {
-            let placeholder = selectedCount > 1 ? "已选中 \(selectedCount) 项" : "未选择文件"
-            typeField.stringValue = placeholder
-            sizeField.stringValue = ""
-            locationField.stringValue = ""
-            createdField.stringValue = ""
-            modifiedField.stringValue = ""
-            tagsField.stringValue = ""
-            descriptionField.stringValue = ""
-            sourceField.stringValue = ""
+        guard let entry = entry else {
+            // v0.7.4 修订 项 4：未选中任何项目 → 隐藏所有信息与多选汇总，自动收起且不可展开
+            for row in infoRows { row.isHidden = true }
+            singleContentRow.isHidden = true
+            multiContentRow.isHidden = true
             clearFileTypeSpecificInfo()
-            // bigIconView 已在上方 compact 分支的 setPlaceholderIcon 中同步，此处无需重复设置
             clearTags()
             showNoTagsPlaceholder()
+            if isExpanded {
+                isExpanded = false
+            }
+            chevronButton.isEnabled = false
             return
         }
 
+        // 多选（2 个及以上）：与单选同布局（图标 + 两列），内容为汇总信息
+        if selectedCount > 1 {
+            for row in infoRows { row.isHidden = true }
+            clearFileTypeSpecificInfo()
+            clearTags()
+            showNoTagsPlaceholder()
+            singleContentRow.isHidden = true
+            multiContentRow.isHidden = false
+            // 多选图标：缩略图堆叠（取前 4 个选中项的缩略图）
+            multiIconView.update(with: Array(selectedFiles.prefix(4)))
+            populateMultiSelectSummary()
+            chevronButton.isEnabled = true
+            if isExpanded {
+                heightConstraint.constant = computedExpandedHeight()
+            }
+            return
+        }
+
+        // 单选：显示所有信息行，隐藏多选汇总
+        for row in infoRows { row.isHidden = false }
+        singleContentRow.isHidden = false
+        multiContentRow.isHidden = true
+        chevronButton.isEnabled = true
+
+        nameField.stringValue = entry.name
         typeField.stringValue = entry.kindDescription
         sizeField.stringValue = entry.formattedSize
         locationField.stringValue = entry.path
@@ -605,9 +823,6 @@ class ExpandableDetailsBar: NSView {
         sourceField.stringValue = getWhereFrom(path: entry.path)
 
         updateTags(path: entry.path)
-        // 标签字段文本（保留为属性但不显示，药丸容器为可视化主体）
-        let tags = TagBridge.shared.getTags(path: entry.path)
-        tagsField.stringValue = tags.isEmpty ? "无" : tags.map { $0.name }.joined(separator: ", ")
 
         // 文件类型专属信息（分辨率 / EXIF / 时长 / 编码 等）
         updateFileTypeSpecificInfo(entry: entry)
@@ -617,6 +832,136 @@ class ExpandableDetailsBar: NSView {
         }
 
         if isExpanded { loadThumbnail() }
+    }
+
+    // MARK: - v0.7.4 项 4: 多选汇总
+
+    /// 计算并填充多选汇总信息：数量 / 总大小 / 包含类型（带数量）/ 包含标签
+    /// E3: 总大小（目录递归）与标签读取（xattr）在后台队列计算，避免大目录/多文件卡主线程；
+    /// 数量与类型聚合是纯内存操作，留在主线程即时显示。
+    private func populateMultiSelectSummary() {
+        let files = selectedFiles
+        let count = files.count
+
+        // 数量行
+        multiCountField.stringValue = "已选中 \(count) 项"
+
+        // 包含类型（带数量）：按 kindDescription 聚合（纯内存，主线程即时）
+        var typeCounts: [String: Int] = [:]
+        for f in files {
+            typeCounts[f.kindDescription, default: 0] += 1
+        }
+        let typeText = typeCounts.sorted { $0.value > $1.value }
+            .map { "\($0.key) \($0.value)" }
+            .joined(separator: " · ")
+        multiTypesField.stringValue = "包含类型：\(typeText.isEmpty ? "无" : typeText)"
+
+        // E3: 总大小 + 标签读取放后台（目录递归扫描 + getxattr 是磁盘 I/O）
+        multiSelectGeneration += 1
+        let generation = multiSelectGeneration
+        let dirPaths = files.filter { $0.isDirectory }.map { $0.path }
+        let fileSizes = files.reduce(into: 0 as UInt64) { total, f in
+            if !f.isDirectory { total += f.size }
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var totalSize = fileSizes
+            for dir in dirPaths {
+                totalSize += self.directorySize(path: dir)
+            }
+            var tagSet: [String: Tag] = [:]
+            for f in files {
+                for tag in TagBridge.shared.getTags(path: f.path) {
+                    tagSet[tag.name] = tag
+                }
+            }
+            DispatchQueue.main.async { [self] in
+                guard self.multiSelectGeneration == generation else { return }
+                self.multiSizeField.stringValue = "总大小：\(self.formatBytes(totalSize))"
+                // 包含标签：去重后显示药丸
+                for v in self.multiTagsContainer.arrangedSubviews {
+                    self.multiTagsContainer.removeArrangedSubview(v)
+                    v.removeFromSuperview()
+                }
+                if tagSet.isEmpty {
+                    let none = NSTextField(labelWithString: "包含标签：无")
+                    none.font = NSFont.systemFont(ofSize: 10)
+                    none.textColor = NSColor.tertiaryLabelColor
+                    none.translatesAutoresizingMaskIntoConstraints = false
+                    self.multiTagsContainer.addArrangedSubview(none)
+                } else {
+                    let label = NSTextField(labelWithString: "包含标签：")
+                    label.font = NSFont.systemFont(ofSize: 10)
+                    label.textColor = NSColor.secondaryLabelColor
+                    label.translatesAutoresizingMaskIntoConstraints = false
+                    self.multiTagsContainer.addArrangedSubview(label)
+                    for tag in tagSet.values.sorted(by: { $0.name < $1.name }) {
+                        self.multiTagsContainer.addArrangedSubview(self.makeSummaryTagPill(tag: tag))
+                    }
+                }
+            }
+        }
+    }
+
+    /// 多选汇总标签药丸（小号，仅展示）
+    private func makeSummaryTagPill(tag: Tag) -> NSView {
+        let pillHeight: CGFloat = 16
+        let pill = SquircleMaskedView()
+        pill.wantsLayer = true
+        let tagColor = NSColor(hex: tag.color) ?? .systemBlue
+        pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
+        pill.squircleRadius = pillHeight / 2
+        pill.translatesAutoresizingMaskIntoConstraints = false
+
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = tagColor.cgColor
+        dot.layer?.cornerRadius = 3
+        dot.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: tag.name)
+        label.font = NSFont.systemFont(ofSize: 9)
+        label.textColor = NSColor.labelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        pill.addSubview(dot)
+        pill.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            dot.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 5),
+            dot.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 6),
+            dot.heightAnchor.constraint(equalToConstant: 6),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 4),
+            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -5),
+            pill.heightAnchor.constraint(equalToConstant: pillHeight),
+        ])
+        return pill
+    }
+
+    /// 递归计算文件夹大小
+    private func directorySize(path: String) -> UInt64 {
+        let fm = FileManager.default
+        var total: UInt64 = 0
+        if let enumerator = fm.enumerator(atPath: path) {
+            while let file = enumerator.nextObject() as? String {
+                let fullPath = (path as NSString).appendingPathComponent(file)
+                if let attrs = try? fm.attributesOfItem(atPath: fullPath),
+                   let size = attrs[.size] as? UInt64 {
+                    total += size
+                }
+            }
+        }
+        return total
+    }
+
+    /// 字节数格式化（B/KB/MB/GB）
+    private func formatBytes(_ bytes: UInt64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useBytes, .useKB, .useMB, .useGB, .useTB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
     }
 
     // MARK: - Icon Helpers
@@ -646,6 +991,7 @@ class ExpandableDetailsBar: NSView {
     /// 快速连续点击不同文件时主线程被 LaunchServices 查询阻塞。
     /// 现改为：缓存命中同步显示；未命中先清 tint（保留占位），后台异步获取后回调更新。
     /// contentTintColor 置 nil 避免多色非模板图标被染色。
+    /// E2: 缩略图已加载时不覆盖 bigIconView（避免工作区图标回调覆盖缩略图）。
     /// - Parameter path: 文件绝对路径
     private func setRealFileIcon(for path: String) {
         // 真实图标为多色非模板图像，清除占位灰色 tint，确保显示原生色彩
@@ -657,7 +1003,10 @@ class ExpandableDetailsBar: NSView {
         if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: iconPointSize) {
             iconLoadPath = nil
             smallIconView.image = cached
-            bigIconView.image = cached
+            // E2: 缩略图已显示时不覆盖大图标（小图标始终用工作区图标）
+            if !didReceiveThumbnail {
+                bigIconView.image = cached
+            }
             return
         }
 
@@ -668,7 +1017,10 @@ class ExpandableDetailsBar: NSView {
             // 校验仍显示同一文件（避免快速切换选中时旧回调覆盖）
             guard self.iconLoadPath == path else { return }
             self.smallIconView.image = image
-            self.bigIconView.image = image
+            // E2: 缩略图已显示时不覆盖大图标
+            if !self.didReceiveThumbnail {
+                self.bigIconView.image = image
+            }
         }
     }
 
@@ -685,6 +1037,8 @@ class ExpandableDetailsBar: NSView {
             guard let self = self, let image = image else { return }
             // 防止过期回调覆盖当前显示
             guard self.thumbnailLoadPath == path, self.isExpanded else { return }
+            // E2: 缩略图成功加载后置位标志，阻止工作区图标回调覆盖
+            self.didReceiveThumbnail = true
             self.bigIconView.image = image
         }
     }
@@ -791,13 +1145,16 @@ class ExpandableDetailsBar: NSView {
         guard let info = sender.representedObject as? [String: String],
               let tagName = info["tagName"],
               let path = info["path"] else { return }
+        // 移除前找到该标签（用于撤销恢复）
+        let tag = TagBridge.shared.getTags(path: path).first(where: { $0.name == tagName })
         _ = TagBridge.shared.removeTagByName(tagName, path: path)
+        if let tag = tag {
+            onUndoableTagChange?(.remove, tag, path)
+        }
         // 刷新详情栏标签药丸显示
         updateTags(path: path)
-        // 更新标签文本字段（药丸容器下方的文本兜底）
-        let tags = TagBridge.shared.getTags(path: path)
-        tagsField.stringValue = tags.isEmpty ? "无" : tags.map { $0.name }.joined(separator: ", ")
         // 通知文件列表刷新（文件列表中的内联药丸需同步更新）
+        let tags = TagBridge.shared.getTags(path: path)
         NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": tags])
     }
 
@@ -825,6 +1182,143 @@ class ExpandableDetailsBar: NSView {
         descriptionField.backgroundColor = NSColor.textBackgroundColor
         window?.makeFirstResponder(descriptionField)
         descriptionField.selectText(nil)
+    }
+
+    // MARK: - v0.7.4 项 3：文件名编辑（单击改名）
+
+    /// 单击名称字段，进入编辑模式（与文件说明的交互一致，仅触发方式为单击）
+    @objc private func beginEditingName() {
+        guard entry != nil else { return }
+        nameField.isEditable = true
+        nameField.isBezeled = true
+        nameField.drawsBackground = true
+        nameField.backgroundColor = NSColor.textBackgroundColor
+        window?.makeFirstResponder(nameField)
+        // 默认选中不含后缀部分（与访达重命名一致）
+        if let editor = nameField.currentEditor() {
+            let name = nameField.stringValue as NSString
+            let extRange = name.range(of: ".", options: .backwards)
+            if extRange.location == NSNotFound || extRange.location == 0 {
+                editor.selectAll(nil)
+            } else {
+                editor.selectedRange = NSRange(location: 0, length: extRange.location)
+            }
+        }
+    }
+
+    /// 名称编辑结束（回车或失焦）：通过 onRename 回调执行改名
+    private func commitNameEditing() {
+        guard let entry = entry else { return }
+        let newName = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty, newName != entry.name else {
+            // 名字为空或未变：还原显示并退出编辑
+            nameField.isEditable = false
+            nameField.isBezeled = false
+            nameField.drawsBackground = false
+            nameField.stringValue = entry.name
+            return
+        }
+        // 退出编辑样式（数据由回调更新，refresh 会重绘名称）
+        nameField.isEditable = false
+        nameField.isBezeled = false
+        nameField.drawsBackground = false
+        onRename?(entry.path, newName)
+    }
+
+    // MARK: - v0.7.4 项 4：标签编辑按钮
+
+    /// 点击标签行编辑按钮：弹出下拉菜单（与右键菜单标签子菜单同款样式）。
+    /// - 顶部：列出所有标签（彩色圆点 + 名称，当前文件已有的打勾 ✓）
+    /// - 分隔线
+    /// - "新建标签..."（统一走 FFCreateTagDialog）
+    @objc private func editTagsClicked() {
+        guard let entry = entry, let window = window else { return }
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let currentTags = TagBridge.shared.getTags(path: entry.path)
+        let currentTagIds = Set(currentTags.map { $0.id })
+        let currentTagNames = Set(currentTags.map { $0.name })
+
+        let allTags = FFCreateTagDialog.loadAllSidebarTags()
+        for tag in allTags {
+            let item = NSMenuItem(title: tag.name, action: #selector(toggleTagFromDetailsBar(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["tagName": tag.name, "path": entry.path]
+            item.image = makeMenuDotImage(colorHex: tag.color)
+            if currentTagIds.contains(tag.id) || currentTagNames.contains(tag.name) {
+                item.state = .on
+            }
+            menu.addItem(item)
+        }
+
+        if !allTags.isEmpty {
+            menu.addItem(.separator())
+        }
+
+        let createItem = NSMenuItem(title: "新建标签...", action: #selector(createTagFromDetailsBar(_:)), keyEquivalent: "")
+        createItem.target = self
+        createItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
+        menu.addItem(createItem)
+
+        // v0.7.4 修订：菜单从按钮右下角弹出。
+        // 历史 Bug：convert(_:to: nil) 返回的是窗口坐标，但 popUp 的 at: 需要
+        // in: 视图（tagsEditButton）的本地坐标——混用导致菜单偏移。
+        // 修复：直接传按钮本地坐标（右下角 = 按钮宽度, 高度处向下弹出）。
+        menu.popUp(positioning: nil, at: NSPoint(x: tagsEditButton.bounds.width, y: 0), in: tagsEditButton)
+    }
+
+    /// 创建彩色圆点 NSImage（菜单项图标）
+    private func makeMenuDotImage(colorHex: String) -> NSImage {
+        let size = NSSize(width: 12, height: 12)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let color = NSColor(hex: colorHex) ?? .systemBlue
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 8, height: 8)).fill()
+        image.unlockFocus()
+        return image
+    }
+
+    /// 下拉菜单项：勾选/取消标签（与右键菜单 toggleTagOnFile 同逻辑）
+    @objc private func toggleTagFromDetailsBar(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let tagName = info["tagName"],
+              let path = info["path"] else { return }
+
+        let currentTags = TagBridge.shared.getTags(path: path)
+        let tag = currentTags.first(where: { $0.name == tagName })
+            ?? FFCreateTagDialog.loadAllSidebarTags().first(where: { $0.name == tagName })
+
+        if let tag = tag, currentTags.contains(where: { $0.name == tagName }) {
+            _ = TagBridge.shared.removeTagByName(tagName, path: path)
+            onUndoableTagChange?(.remove, tag, path)
+        } else if let tag = tag {
+            _ = TagBridge.shared.addTag(tag, path: path)
+            onUndoableTagChange?(.add, tag, path)
+        }
+
+        // 刷新详情栏标签显示
+        updateTags(path: path)
+        let updatedTags = TagBridge.shared.getTags(path: path)
+        // 通知文件列表刷新
+        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil,
+                                        userInfo: ["tags": updatedTags])
+    }
+
+    /// 下拉菜单项：新建标签（统一走 FFCreateTagDialog，创建后应用到当前文件）
+    @objc private func createTagFromDetailsBar(_ sender: Any?) {
+        guard let entry = entry, let window = window else { return }
+        FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { [weak self] tag in
+            guard let self = self else { return }
+            _ = TagBridge.shared.addTag(tag, path: entry.path)
+            self.onUndoableTagChange?(.add, tag, entry.path)
+            self.updateTags(path: entry.path)
+            let updatedTags = TagBridge.shared.getTags(path: entry.path)
+            NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil,
+                                            userInfo: ["tags": updatedTags])
+        }
     }
 
     // MARK: - 文件来源（kMDItemWhereFroms）
@@ -1220,7 +1714,13 @@ extension ExpandableDetailsBar: NSTextFieldDelegate {
 
     /// 文件说明编辑结束（焦点离开或按回车）：保存到 UserDefaults 并退出编辑模式
     func controlTextDidEndEditing(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField, field === descriptionField else { return }
+        guard let field = obj.object as? NSTextField, field === descriptionField else {
+            // v0.7.4 项 3：名称字段编辑结束 → 提交改名
+            if let field = obj.object as? NSTextField, field === nameField {
+                commitNameEditing()
+            }
+            return
+        }
         let path = entry?.path ?? ""
         if !path.isEmpty {
             setFileDescription(path: path, description: field.stringValue)
@@ -1230,25 +1730,4 @@ extension ExpandableDetailsBar: NSTextFieldDelegate {
         field.isBezeled = false
         field.drawsBackground = false
     }
-}
-
-// MARK: - FFMouseInterceptorView
-
-/// 鼠标拦截视图：覆盖在详情栏玻璃背景上方，确保所有落到详情栏区域的鼠标事件
-/// 都被本视图消费（mouseDown/ mouseMoved 等返回空实现），不再穿透到下层的文件列表。
-///
-/// 关键点：
-/// 1. NSView 默认 `mouseDown` 会把事件继续传递给下一 responder（通常父 view），
-///    最终可能到达窗口的其他兄弟视图（包括下层的文件列表）——这是穿透根因。
-///    本类重写 mouse 事件为空实现，主动「吃掉」事件，终止传递。
-/// 2. 子视图（详情栏内的图标、标签等控件）的 hitTest 优先级高于父视图，
-///    鼠标落在控件上时仍返回控件，本拦截器只兜底"控件之间的空白区域"。
-private final class FFMouseInterceptorView: NSView {
-    override func mouseDown(with event: NSEvent) { }
-    override func mouseUp(with event: NSEvent) { }
-    override func mouseDragged(with event: NSEvent) { }
-    override func mouseMoved(with event: NSEvent) { }
-    override func rightMouseDown(with event: NSEvent) { }
-    override func rightMouseUp(with event: NSEvent) { }
-    override func rightMouseDragged(with event: NSEvent) { }
 }

@@ -72,6 +72,7 @@ final class FFQuickLookTableView: NSTableView {
 // MARK: - FFDebug (file-based debug logger)
 
 /// 文件日志工具：写入 /tmp/ff-debug.log，不依赖系统日志
+/// G4: 仅 DEBUG 编译生效（release 零开销）；常驻 FileHandle 避免每次日志 open/close。
 enum FFDebug {
     private static let logPath = "/tmp/ff-debug.log"
     private static let queue = DispatchQueue(label: "ff.debug.log")
@@ -81,26 +82,38 @@ enum FFDebug {
         return f
     }()
 
+    /// 常驻写入句柄（首次使用时打开，进程生命周期内复用）
+    private static var persistentHandle: FileHandle?
+
     static func log(_ msg: String) {
+        #if DEBUG
         queue.async {
             let ts = formatter.string(from: Date())
             let line = "[\(ts)] \(msg)\n"
-            if let data = line.data(using: .utf8) {
-                if FileManager.default.fileExists(atPath: logPath) {
-                    if let handle = FileHandle(forWritingAtPath: logPath) {
-                        handle.seekToEndOfFile()
-                        handle.write(data)
-                        handle.closeFile()
-                    }
-                } else {
-                    FileManager.default.createFile(atPath: logPath, contents: data)
-                }
+            guard let data = line.data(using: .utf8) else { return }
+            let handle: FileHandle
+            if let existing = persistentHandle {
+                handle = existing
+            } else if FileManager.default.fileExists(atPath: logPath),
+                      let opened = FileHandle(forWritingAtPath: logPath) {
+                persistentHandle = opened
+                handle = opened
+            } else {
+                FileManager.default.createFile(atPath: logPath, contents: nil)
+                guard let created = FileHandle(forWritingAtPath: logPath) else { return }
+                persistentHandle = created
+                handle = created
             }
+            handle.seekToEndOfFile()
+            handle.write(data)
         }
+        #endif
     }
 
     static func clear() {
+        #if DEBUG
         try? FileManager.default.removeItem(atPath: logPath)
+        #endif
     }
 }
 
@@ -510,16 +523,30 @@ public class FileListView: NSView {
                 .store(in: &cancellables)
             reloadData()
             // 重命名等"数量不变"操作：state sink 只比较数量不刷新，需强制 reloadData
+            // v0.7.4 修复：先移除旧 observer 再注册——viewModel 被多次赋值时，
+            // 不加 removeObserver 会累积重复监听，post 一次通知触发 N 次 forceReload
+            // （实测日志出现 25 次重复 forceReload 风暴）。
+            NotificationCenter.default.removeObserver(self, name: .fileListContentChanged, object: nil)
             NotificationCenter.default.addObserver(
-                self, selector: #selector(forceReload),
+                self, selector: #selector(forceReload(_:)),
                 name: .fileListContentChanged, object: nil
             )
         }
     }
 
-    @objc private func forceReload() {
-        FFDebug.log("FileListView.forceReload")
-        reloadData()
+    /// 内容变更强制刷新（重命名等数量不变操作）。
+    /// v0.7.4 修复 3：通知携带目录路径。若本面板显示的目录 = 变更目录，
+    /// 说明数据可能过期（尤其对侧面板未随 renameFile 刷新），先 refresh() 重读磁盘再 reloadData。
+    /// 若目录不同（如右面板显示别的目录），仅重渲染即可。
+    @objc private func forceReload(_ notification: Notification) {
+        let changedPath = (notification.userInfo?["path"] as? String) ?? ""
+        if let vm = viewModel, !changedPath.isEmpty, vm.currentPath == changedPath {
+            FFDebug.log("FileListView.forceReload: 目录匹配 \(changedPath)，refresh 重读磁盘")
+            vm.refresh()
+        } else {
+            FFDebug.log("FileListView.forceReload")
+            reloadData()
+        }
     }
 
     // 任务 F10-8: 上次刷新时记录的分组/排序状态，用于检测变化决定是否刷新
@@ -537,6 +564,15 @@ public class FileListView: NSView {
         }
         var rows: [FFDisplayRow] = []
         let groups = viewModel.groupedFiles
+
+        // v0.7.4 决定性诊断：rebuildDisplayRows 时对比 groupedFiles 与 state.files
+        let groupNames = groups.flatMap { $0.entries.map { $0.name } }
+        let stateNames = viewModel.state.files.map { $0.name }
+        if groupNames != stateNames {
+            FFDebug.log("[RENDER-DIAG] rebuildDisplayRows: groupedFiles 与 state.files 不一致!")
+            FFDebug.log("[RENDER-DIAG]   groupedFiles=\(groupNames)")
+            FFDebug.log("[RENDER-DIAG]   state.files=\(stateNames)")
+        }
 
         // 预构建 path → index 字典，避免循环内 firstIndex(where:) 的 O(n²) 搜索
         var pathToIndex: [String: Int] = [:]
@@ -687,6 +723,9 @@ public class FileListView: NSView {
         if let observer = clipViewObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        // G3: 移除 selector 版通知观察者（selector 观察者不会随 dealloc 自动移除，
+        // 不清理则视图销毁后通知仍会向已释放对象发消息）
+        NotificationCenter.default.removeObserver(self, name: .fileListContentChanged, object: nil)
     }
 
     // MARK: - UI Setup
@@ -1384,8 +1423,9 @@ extension FileListView: NSTableViewDataSource {
         case "size": field = .size
         default: field = .name
         }
+        // G3: 显式 reloadData 删除——setSortField → applySort → state.files @Published
+        // sink 已触发 reloadData，保留此处会每次排序双重全量 reload。
         viewModel.setSortField(field, ascending: descriptor.ascending)
-        tableView.reloadData()
     }
 }
 
@@ -1437,7 +1477,12 @@ extension FileListView: NSTableViewDelegate {
         case "name":
             // v0.6.9: 根据 showFileExtensions 设置决定是否显示文件后缀
             let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
-            cellView.textField?.stringValue = showExtensions ? entry.name : entry.displayName
+            let displayName = showExtensions ? entry.name : entry.displayName
+            cellView.textField?.stringValue = displayName
+            // v0.7.4 决定性诊断：打印实际渲染到 cell 的文件名（仅 row 0 和包含改名关键词时）
+            if row < 3 || entry.name.contains("logo") || entry.name.contains("测试") {
+                FFDebug.log("[RENDER-DIAG] viewFor row=\(row) entry.name=\(entry.name) displayAs=\(displayName) path=\(entry.path)")
+            }
             // 隐藏文件灰色，系统保护文件红色
             if entry.isSystemProtected {
                 cellView.textField?.textColor = NSColor.systemRed
@@ -1850,9 +1895,9 @@ extension FileListView: NSTableViewDelegate {
 
 extension FileListView {
     /// 重写 mouseDown，先激活面板再传递事件给 tableView 处理选中
+    /// G3: 激活已由 tableViewSelectionDidChange 统一处理，此处不再重复触发（单次点击曾激活两次）
     public override func mouseDown(with event: NSEvent) {
         FFDebug.log("FileListView.mouseDown hit=\(hitTest(event.locationInWindow))")
-        onActivatePane?()
         super.mouseDown(with: event)
     }
 

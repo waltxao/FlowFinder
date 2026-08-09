@@ -205,6 +205,17 @@ class SettingsSectionView: NSView {
         }
     }
 
+    /// 布局诊断：记录卡片实际 frame 与内容容器宽度（定位"卡片占半边/内容溢出"）
+    /// 每次 layout 都记录（节流：仅当 frame 变化时打印，避免刷屏）
+    private var lastLoggedFrame: NSRect = .zero
+    public override func layout() {
+        super.layout()
+        if frame != lastLoggedFrame {
+            lastLoggedFrame = frame
+            FFDebug.log("[LAYOUT-DIAG] SettingsSectionView '\(titleLabel.stringValue)' frame=\(frame) width=\(frame.width) rowsStack.w=\(rowsStack.frame.width) contentContainer.w=\(contentContainer.frame.width)")
+        }
+    }
+
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupUI()
@@ -264,10 +275,10 @@ class SettingsSectionView: NSView {
         rowsStack.orientation = .vertical
         rowsStack.spacing = 4
         rowsStack.detachesHiddenViews = false
-        // 修复设置页内部布局：rowsStack 默认 alignment=.leading，子视图（设置行/全宽内容
-        // 如 AppearanceSettingsView 主题选择器）只按 intrinsic 宽度排布——主题按钮等
-        // 内容会塌缩/溢出卡片。设为 .width 让所有行/内容撑满卡片内容区，居中布局正常。
-        rowsStack.alignment = .width
+        // v0.7.4 根因修复：不再设 rowsStack.alignment = .width！
+        // 运行时证据（LAYOUT-DIAG）：.width alignment 与 addRow/addContentView 的
+        // 显式 leading/trailing 约束冲突，导致含 setFullWidthContent 的卡片右对齐塌缩。
+        // 行的全宽由 addRow/addContentView 的显式约束保证，不依赖 alignment。
         rowsStack.translatesAutoresizingMaskIntoConstraints = false
 
         contentContainer.addSubview(iconView)
@@ -306,20 +317,28 @@ class SettingsSectionView: NSView {
         ])
     }
 
-    /// 添加一行（自动填充宽度到 stack）
-    /// 注意：不再手动加 leading/trailing 约束——rowsStack.alignment = .width 已由 NSStackView
-    /// 内部统一撑满子视图，手动约束会与内部约束冲突导致布局错乱（内容靠右挤/卡片占半边）。
+    /// 添加一行（全宽嵌入卡片内容区）
+    /// v0.7.4 彻底修复：显式加 leading/trailing 约束钉到 rowsStack 边缘，
+    /// 不依赖 rowsStack.alignment=.width 的隐式行为。
+    /// 运行时证据（LAYOUT-DIAG）：.width alignment 对部分视图不可靠
+    /// （主题卡片塌缩为 286pt 而非全宽 531），显式约束彻底解决。
     func addRow(_ row: SettingsRowView) {
         row.translatesAutoresizingMaskIntoConstraints = false
         rowsStack.addArrangedSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor),
+        ])
     }
 
     /// 添加一个任意内容视图（全宽嵌入，与 addRow 行为一致）
-    /// 用于自带完整布局的内容块（如 AppearanceSettingsView 三态主题切换器），
-    /// 避免塞入 SettingsRowView.controlContainer（无宽度约束）导致塌缩。
     func addContentView(_ view: NSView) {
         view.translatesAutoresizingMaskIntoConstraints = false
         rowsStack.addArrangedSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor),
+        ])
     }
 }
 
@@ -438,7 +457,8 @@ extension SettingsRowView {
 // MARK: - SettingsActionTarget
 
 /// 闭包桥接目标对象：避免每行单独创建 NSObject 子类
-private class SettingsActionTarget: NSObject {
+/// C1: internal（非 private）——SettingsWindowController 在分区切换时调用 removeAll 清理
+class SettingsActionTarget: NSObject {
     static let shared = SettingsActionTarget()
     private var toggleHandlers: [ObjectIdentifier: (Bool) -> Void] = [:]
     private var popupHandlers: [ObjectIdentifier: (Int) -> Void] = [:]
@@ -464,6 +484,21 @@ private class SettingsActionTarget: NSObject {
     }
     func register(button: NSButton, handler: @escaping () -> Void) {
         buttonHandlers[ObjectIdentifier(button)] = handler
+    }
+
+    /// 清空全部已注册 handler。
+    /// 设置分区切换时调用：每次切换都会整页重建控件，旧控件的注册项永不再被触发，
+    /// 不清空会导致字典无界增长。SettingsActionTarget 是单例（static let shared），
+    /// 进程生命周期内不会 deinit，故只能靠分区切换时显式清理。
+    /// 保留"同一控件重复注册时后者覆盖前者"的语义：一次分区构建内每个控件只注册一次，
+    /// 重复注册同一控件的场景仍按字典赋值覆盖。
+    func removeAll() {
+        toggleHandlers.removeAll()
+        popupHandlers.removeAll()
+        segmentedHandlers.removeAll()
+        sliderHandlers.removeAll()
+        textFieldHandlers.removeAll()
+        buttonHandlers.removeAll()
     }
 
     @objc func toggleChanged(_ sender: NSSwitch) {

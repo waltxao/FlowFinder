@@ -63,4 +63,14 @@ public final class TaskSchedulerManager: ObservableObject {
             FFLog.error("TaskSchedulerManager: 取消任务失败: \(error.localizedDescription)", log: FFLog.task)
         }
     }
+
+    /// 清除已完成/失败的任务历史（保留正在执行及取消的任务）
+    public func clearCompletedTasks() {
+        do {
+            try CoreBridge.shared.clearCompletedTasks()
+            refreshTasks()
+        } catch {
+            FFLog.error("TaskSchedulerManager: 清除已完成任务失败: \(error.localizedDescription)", log: FFLog.task)
+        }
+    }
 }
