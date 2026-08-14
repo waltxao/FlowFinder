@@ -6,7 +6,7 @@
 
 **流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 玻璃态双栏
 
-![Version](https://img.shields.io/badge/version-0.7.4-blue)
+![Version](https://img.shields.io/badge/version-0.7.5-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-green)
 ![Swift](https://img.shields.io/badge/Swift-5.9+-F05138)
 ![Rust](https://img.shields.io/badge/Rust-2021+-DEA584)
@@ -115,7 +115,7 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 ## 更新日志
 
-### v0.7.5（开发中，未发布）
+### v0.7.5（2026-08-14）
 
 > 安全加固 + 独立 FTS5 内容索引 + 测试与发布基建。完整清单见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -201,8 +201,8 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 | 文件 | 说明 | 适用架构 |
 |------|------|---------|
-| `FlowFinder-0.7.4.dmg` | DMG 安装镜像 | Apple Silicon |
-| `FlowFinder-0.7.4.zip` | ZIP 压缩包（含 .app） | Apple Silicon |
+| `FlowFinder-0.7.5.dmg` | DMG 安装镜像 | Apple Silicon |
+| `FlowFinder-0.7.5.zip` | ZIP 压缩包（含 .app） | Apple Silicon |
 
 ### 安装步骤
 
