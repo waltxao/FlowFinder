@@ -4,9 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FlowFinder — macOS 原生文件管理器</title>
-    <meta name="description" content="FlowFinder 是一款专为 macOS 打造的原生文件管理器，采用 Swift & AppKit + Rust Core 架构。">
-    <link rel="icon" type="image/png" href="images/app-icon-256.png" />
-    <link rel="apple-touch-icon" href="images/app-icon-256.png" />
+    <meta name="description" content="FlowFinder（流方达）是一款专为 macOS 打造的原生文件管理器，采用 Swift & AppKit + Rust Core 架构，玻璃态双栏体验。">
+    <link rel="canonical" href="https://waltxao.github.io/FlowFinder/" />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="color-scheme" content="dark" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FlowFinder" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:title" content="FlowFinder — macOS 原生文件管理器" />
+    <meta property="og:description" content="FlowFinder（流方达）— Swift & AppKit 构建、Rust Core 驱动、玻璃态双栏的 macOS 原生文件管理器，目录读取快 10-30 倍。" />
+    <meta property="og:url" content="https://waltxao.github.io/FlowFinder/" />
+    <meta property="og:image" content="https://waltxao.github.io/FlowFinder/images/app-mockup-main.jpg" />
+    <meta property="og:image:width" content="2560" />
+    <meta property="og:image:height" content="1440" />
+    <meta property="og:image:alt" content="FlowFinder 主界面预览" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="FlowFinder — macOS 原生文件管理器" />
+    <meta name="twitter:description" content="FlowFinder（流方达）— Swift & AppKit 构建、Rust Core 驱动、玻璃态双栏的 macOS 原生文件管理器。" />
+    <meta name="twitter:image" content="https://waltxao.github.io/FlowFinder/images/app-mockup-main.jpg" />
+    <link rel="icon" type="image/png" sizes="256x256" href="images/app-icon-256.png" />
+    <link rel="apple-touch-icon" sizes="256x256" href="images/app-icon-256.png" />
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -14,12 +32,15 @@
             --accent: #0A84FF;
             --accent-light: #409CFF;
             --accent-dark: #0071E3;
+            /* 按钮底色/按下态：白字对比 4.70:1 / 5.97:1（#0A84FF 白字仅 3.65:1，不达 AA） */
+            --accent-active: #0060C9;
             --bg: #000000;
             --bg-secondary: #0a0a0a;
             --bg-card: rgba(28, 28, 30, 0.72);
             --text: #f5f5f7;
             --text-secondary: #a1a1a6;
-            --text-tertiary: #6e6e73;
+            /* WCAG AA：旧值 #6e6e73 与纯黑底对比 4.27:1，不达 4.5:1；#86868b 为 5.76:1 */
+            --text-tertiary: #86868b;
             --border: rgba(255, 255, 255, 0.1);
             --blur: saturate(180%) blur(20px);
         }
@@ -30,8 +51,50 @@
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Noto Sans CJK SC", sans-serif;
             background: var(--bg);
             color: var(--text);
-            overflow-x: hidden;
             -webkit-font-smoothing: antialiased;
+        }
+
+        /* 锚点目标避开 fixed nav */
+        section[id], main[id] { scroll-margin-top: 80px; }
+
+        /* 键盘焦点可见性（全局） */
+        :focus-visible {
+            outline: 2px solid var(--accent-light);
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
+        /* 跳到主内容 */
+        .skip-link {
+            position: fixed;
+            top: -80px;
+            left: 16px;
+            z-index: 2000;
+            background: var(--accent-dark);
+            color: #ffffff;
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: top 0.2s ease;
+        }
+
+        .skip-link:focus-visible {
+            top: 12px;
+            outline: 2px solid #ffffff;
+            outline-offset: 2px;
+        }
+
+        /* 屏幕阅读器专用 */
+        .visually-hidden {
+            position: absolute;
+            width: 1px; height: 1px;
+            padding: 0; margin: -1px;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            white-space: nowrap;
+            border: 0;
         }
 
         /* Animated gradient background */
@@ -45,8 +108,8 @@
                         radial-gradient(ellipse at 50% 50%, rgba(48, 209, 88, 0.05) 0%, transparent 70%);
         }
 
-        /* Navigation */
-        nav {
+        /* Navigation（限定 .site-nav，避免命中页脚 nav） */
+        .site-nav {
             position: fixed;
             top: 0; left: 0; right: 0;
             z-index: 1000;
@@ -57,14 +120,21 @@
             padding: 14px 0;
         }
 
-        nav .container {
+        .site-nav .container {
             max-width: 1100px;
             margin: 0 auto;
             padding: 0 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            row-gap: 10px;
         }
+
+        /* 视觉顺序：logo | 链接 | 操作；DOM 顺序：logo | 操作 | 链接（Tab 从按钮进入菜单） */
+        .site-nav .logo { order: 1; }
+        .site-nav .nav-links { order: 2; }
+        .site-nav .nav-actions { order: 3; }
 
         .logo {
             display: flex;
@@ -86,6 +156,12 @@
             font-size: 18px;
         }
 
+        .nav-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
         .nav-links {
             display: flex;
             gap: 32px;
@@ -102,6 +178,25 @@
 
         .nav-links a:hover { color: var(--text); }
 
+        /* 移动端菜单按钮（桌面隐藏） */
+        .menu-toggle {
+            display: none;
+            width: 40px;
+            height: 40px;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .menu-toggle svg { width: 20px; height: 20px; }
+        .menu-toggle[aria-expanded="false"] .icon-close { display: none; }
+        .menu-toggle[aria-expanded="true"] .icon-open { display: none; }
+
         .btn {
             display: inline-flex;
             align-items: center;
@@ -111,18 +206,18 @@
             font-size: 14px;
             font-weight: 600;
             text-decoration: none;
-            transition: all 0.2s;
+            transition: background-color 0.2s, transform 0.2s, border-color 0.2s, color 0.2s;
             cursor: pointer;
             border: none;
         }
 
         .btn-primary {
-            background: var(--accent);
+            background: var(--accent-dark);
             color: white;
         }
 
         .btn-primary:hover {
-            background: var(--accent-dark);
+            background: var(--accent-active);
             transform: scale(1.02);
         }
 
@@ -235,6 +330,7 @@
 
         .screenshot-container img {
             width: 100%;
+            height: auto;
             display: block;
         }
 
@@ -264,9 +360,10 @@
             margin: 0 auto;
         }
 
+        /* min() 保证窄屏下轨道收缩至容器宽度，不产生横向溢出 */
         .feature-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
             gap: 24px;
         }
 
@@ -348,7 +445,9 @@
         .arch-layer-header {
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 12px;
+            row-gap: 6px;
             margin-bottom: 16px;
         }
 
@@ -412,10 +511,10 @@
         }
         .arch-link .arrow { color: #30D158; font-size: 15px; }
 
-        /* 模块网格 */
+        /* 模块网格：min(200px,100%) 保证容器窄于 200px 时轨道随容器收缩，杜绝溢出 */
         .arch-modules {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
             gap: 10px;
         }
 
@@ -436,6 +535,7 @@
             font-weight: 600;
             color: var(--text);
             font-family: "SF Mono", "Fira Code", monospace;
+            overflow-wrap: anywhere;
         }
         .arch-module-desc {
             font-size: 11.5px;
@@ -447,10 +547,17 @@
         .arch-module-rust { color: #FF9F0A; }
         .arch-module-ffi { color: #30D158; }
 
+        /* 性能表：窄屏下容器内横向滚动（键盘可聚焦），不撑破文档 */
+        .table-scroll {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+        }
+
         .perf-table {
             width: 100%;
+            min-width: 560px;
             border-collapse: collapse;
-            margin-top: 32px;
         }
 
         .perf-table th, .perf-table td {
@@ -493,7 +600,7 @@
             padding: 48px;
         }
 
-        .download-card h3 {
+        .download-card h2 {
             font-size: 28px;
             font-weight: 700;
             margin-bottom: 12px;
@@ -547,343 +654,460 @@
         }
 
         @media (max-width: 768px) {
-            .nav-links { display: none; }
+            .site-nav .container { justify-content: space-between; }
+
+            /* 移动端导航：链接折叠进按钮展开的面板 */
+            .nav-links {
+                display: none;
+                position: absolute;
+                top: 100%;
+                left: 0; right: 0;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0;
+                background: rgba(12, 12, 14, 0.96);
+                backdrop-filter: var(--blur);
+                -webkit-backdrop-filter: var(--blur);
+                border-bottom: 1px solid var(--border);
+                padding: 4px 24px 12px;
+            }
+
+            .nav-links.nav-open { display: flex; }
+
+            .nav-links a {
+                padding: 14px 4px;
+                font-size: 16px;
+                border-bottom: 1px solid var(--border);
+            }
+            .nav-links a:last-child { border-bottom: none; }
+
+            .menu-toggle { display: inline-flex; }
+
             .hero-stats { gap: 24px; }
             .stat-value { font-size: 32px; }
+
+            /* FFI 层取消内缩 margin，避免 375px 下挤压溢出 */
+            .arch-layer-ffi { margin: 0; }
+
+            /* 模块单列，minmax(0,1fr) 允许收缩，长代码标识换行不裁剪 */
+            .arch-modules { grid-template-columns: minmax(0, 1fr); }
+
+            .arch-layer { padding: 20px 20px; }
+
+            .download-card { padding: 32px 24px; }
+        }
+
+        /* 减少动态效果：仅关闭非必要动画（本页无功能性动画，全部过渡/滚动平滑可禁用） */
+        @media (prefers-reduced-motion: reduce) {
+            html { scroll-behavior: auto; }
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="bg-gradient"></div>
+    <div class="bg-gradient" aria-hidden="true"></div>
+
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
 
     <!-- Navigation -->
-    <nav>
+    <nav class="site-nav" aria-label="主导航">
         <div class="container">
-            <a href="#" class="logo">
-                <img src="images/app-icon-256.png" width="32" height="32" alt="FlowFinder" style="border-radius: 8px;" />
+            <a href="#main-content" class="logo">
+                <img src="images/app-icon-256.png" width="32" height="32" alt="FlowFinder 图标" style="border-radius: 8px;" />
                 FlowFinder
             </a>
-            <div class="nav-links">
+            <div class="nav-actions">
+                <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" rel="noopener noreferrer" class="btn btn-primary">下载</a>
+                <button id="menu-toggle" class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="打开导航菜单">
+                    <svg class="icon-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                        <line x1="4" y1="7" x2="20" y2="7" />
+                        <line x1="4" y1="12" x2="20" y2="12" />
+                        <line x1="4" y1="17" x2="20" y2="17" />
+                    </svg>
+                    <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="nav-links" id="site-nav">
                 <a href="#features">功能</a>
                 <a href="#architecture">架构</a>
                 <a href="#performance">性能</a>
                 <a href="#download">下载</a>
-                <a href="https://github.com/waltxao/FlowFinder" target="_blank">GitHub</a>
+                <a href="https://github.com/waltxao/FlowFinder" target="_blank" rel="noopener noreferrer">GitHub</a>
             </div>
-            <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" class="btn btn-primary">下载</a>
         </div>
     </nav>
 
-    <!-- Hero -->
-    <section class="hero">
-        <div class="hero-badge">
-            <span>✨</span>
-            <span>v0.7.4 现已发布</span>
-        </div>
-        <h1>FlowFinder</h1>
-        <p class="tagline"><strong>流方达</strong> · macOS 原生文件管理器 — Swift & AppKit 构建，Rust Core 驱动，玻璃态双栏体验</p>
-        <div class="hero-cta">
-            <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" class="btn btn-primary btn-large">
-                <span>⬇</span> 下载 v0.7.4
-            </a>
-            <a href="https://github.com/waltxao/FlowFinder" target="_blank" class="btn btn-secondary btn-large">
-                <span>⌥</span> 查看源码
-            </a>
-        </div>
-        <div class="hero-stats">
-            <div class="stat">
-                <div class="stat-value">10-30x</div>
-                <div class="stat-label">目录读取加速</div>
+    <main id="main-content" tabindex="-1">
+        <!-- Hero -->
+        <section class="hero">
+            <div class="hero-badge">
+                <span aria-hidden="true">✨</span>
+                <span>v0.7.4 现已发布</span>
             </div>
-            <div class="stat">
-                <div class="stat-value">~20 MB</div>
-                <div class="stat-label">内存占用</div>
+            <h1>FlowFinder</h1>
+            <p class="tagline"><strong>流方达</strong> · macOS 原生文件管理器 — Swift & AppKit 构建，Rust Core 驱动，玻璃态双栏体验</p>
+            <div class="hero-cta">
+                <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-large">
+                    <span aria-hidden="true">⬇</span> 下载 v0.7.4
+                </a>
+                <a href="https://github.com/waltxao/FlowFinder" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-large">
+                    <span aria-hidden="true">⌥</span> 查看源码
+                </a>
             </div>
-            <div class="stat">
-                <div class="stat-value">0.5s</div>
-                <div class="stat-label">启动时间</div>
+            <div class="hero-stats">
+                <div class="stat">
+                    <div class="stat-value">10-30x</div>
+                    <div class="stat-label">目录读取加速</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">~20 MB</div>
+                    <div class="stat-label">内存占用</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">0.5s</div>
+                    <div class="stat-label">启动时间</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">100%</div>
+                    <div class="stat-label">原生体验</div>
+                </div>
             </div>
-            <div class="stat">
-                <div class="stat-value">100%</div>
-                <div class="stat-label">原生体验</div>
-            </div>
-        </div>
-    </section>
+        </section>
 
-    <!-- Screenshot -->
-    <section class="screenshot-section">
-        <div class="screenshot-container">
-            <img src="images/app-mockup-main.jpg" alt="FlowFinder 主界面" loading="lazy">
-        </div>
-    </section>
+        <!-- Screenshot -->
+        <section class="screenshot-section" aria-label="界面预览">
+            <div class="screenshot-container">
+                <img src="images/app-mockup-main.jpg" alt="FlowFinder 主界面" width="2560" height="1440" loading="lazy" decoding="async">
+            </div>
+        </section>
 
-    <!-- Features -->
-    <section class="features" id="features">
-        <div class="section-title">
-            <h2>核心功能</h2>
-            <p>为 macOS 用户打造的全方位文件管理体验</p>
-        </div>
-        <div class="feature-grid">
-            <div class="feature-card">
-                <div class="feature-icon icon-blue">🪟</div>
-                <h3>玻璃态双栏</h3>
-                <p>NSVisualEffectView 系统级毛玻璃材质，左右独立导航，自动跟随深浅色主题，完全匹配 macOS 原生视觉。</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon icon-orange">⚡</div>
-                <h3>Rust Core 引擎</h3>
-                <p>getattrlistbulk 批量读取、BLAKE3 哈希、rayon 并行处理，性能远超 WebView 方案，目录读取快 10-30 倍。</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon icon-green">🔀</div>
-                <h3>跨面板操作</h3>
-                <p>一键复制（⌘⇧C）/ 移动（⌘⇧X）到对侧面板，文件夹可直接在对侧打开，冲突自动追加「副本 N」。</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon icon-purple">👁</div>
-                <h3>Quick Look 预览</h3>
-                <p>QLPreviewPanel 原生浮动预览，空格键即可快速查看文件内容，无需打开第三方应用。</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon icon-red">🔍</div>
-                <h3>重复文件检测</h3>
-                <p>三阶段 BLAKE3 哈希检测（大小分组 → 部分哈希 → 完整哈希），实时进度，安全删除到废纸篓。</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon icon-teal">🤖</div>
-                <h3>AI 智能打标</h3>
-                <p>支持 OpenAI / Claude / Ollama 多模型，隐私隔离仅发送文件名，标签与 macOS 原生标签双向同步。</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon icon-blue">📁</div>
-                <h3>原生拖拽</h3>
-                <p>NSDraggingSource/Destination，同卷移动、跨卷复制、Cmd 键切换，行为与 Finder 完全一致。</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon icon-green">💾</div>
-                <h3>APFS CoW 复制</h3>
-                <p>利用 clonefile 系统调用实现 APFS 卷零拷贝复制，大文件瞬时复制完成，不占用额外磁盘空间。</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon icon-orange">🌐</div>
-                <h3>SMB 网络共享</h3>
-                <p>渐进式加载、LRU 目录缓存、rayon 并行操作、断连自动重连，流畅访问网络驱动器。</p>
-            </div>
-        </div>
-    </section>
-
-    <!-- Architecture -->
-    <section class="architecture" id="architecture">
-        <div class="arch-container">
+        <!-- Features -->
+        <section class="features" id="features">
             <div class="section-title">
-                <h2>架构设计</h2>
-                <p>Swift & AppKit 负责 UI，Rust Core 提供高性能后端，FFI 桥接</p>
+                <h2>核心功能</h2>
+                <p>为 macOS 用户打造的全方位文件管理体验</p>
             </div>
-            <div class="arch-layers">
-
-                <!-- 第 1 层：Swift & AppKit UI -->
-                <div class="arch-layer arch-layer-ui">
-                    <div class="arch-layer-header">
-                        <span class="arch-layer-badge">LAYER 1</span>
-                        <span class="arch-layer-title">Swift &amp; AppKit UI 层</span>
-                        <span class="arch-layer-sub">macOS 原生体验 · 进程内调用</span>
-                    </div>
-                    <div class="arch-modules">
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-accent">FileListView / FileGridView</div>
-                            <div class="arch-module-desc">NSTableView / NSCollectionView 双视图，分组 + 内联重命名</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-accent">NSSplitView 双栏</div>
-                            <div class="arch-module-desc">左右双面板 + 详情栏，独立导航历史</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-accent">Quick Look</div>
-                            <div class="arch-module-desc">QLPreviewPanel 空格预览，双面板 firstResponder 守卫</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-accent">Spotlight 全局搜索</div>
-                            <div class="arch-module-desc">NSMetadataQuery 系统级索引搜索</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-accent">原生拖拽</div>
-                            <div class="arch-module-desc">NSDraggingSource / Destination，跨面板与外部应用</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-accent">SMB 网络共享</div>
-                            <div class="arch-module-desc">NetFS 挂载管理，连接/卸载/自动重连</div>
-                        </div>
-                    </div>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon icon-blue" aria-hidden="true">🪟</div>
+                    <h3>玻璃态双栏</h3>
+                    <p>NSVisualEffectView 系统级毛玻璃材质，左右独立导航，自动跟随深浅色主题，完全匹配 macOS 原生视觉。</p>
                 </div>
-
-                <!-- 层间连接 -->
-                <div class="arch-link">
-                    <span>Swift FFI 声明</span>
-                    <span class="arrow">⇅</span>
-                    <span>extern "C" 回调</span>
+                <div class="feature-card">
+                    <div class="feature-icon icon-orange" aria-hidden="true">⚡</div>
+                    <h3>Rust Core 引擎</h3>
+                    <p>getattrlistbulk 批量读取、BLAKE3 哈希、rayon 并行处理，性能远超 WebView 方案，目录读取快 10-30 倍。</p>
                 </div>
-
-                <!-- 第 2 层：FFI 桥接 -->
-                <div class="arch-layer arch-layer-ffi">
-                    <div class="arch-layer-header">
-                        <span class="arch-layer-badge">FFI</span>
-                        <span class="arch-layer-title">C ABI 桥接层</span>
-                        <span class="arch-layer-sub">@_silgen_name · 零拷贝指针传递</span>
-                    </div>
-                    <div class="arch-modules">
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-ffi">ffi/mod.rs</div>
-                            <div class="arch-module-desc">3000+ 行导出：文件操作 / 去重 / 搜索 / 任务 / 缓存 / 设置 / 卷管理</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-ffi">ff_ffi.h</div>
-                            <div class="arch-module-desc">C 头文件契约，Swift FFIFunctions.swift 与 Rust 双向对齐</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-ffi">回调上下文</div>
-                            <div class="arch-module-desc">Unmanaged 生命周期管理，进度 / 结果 / 任务事件回调</div>
-                        </div>
-                    </div>
+                <div class="feature-card">
+                    <div class="feature-icon icon-green" aria-hidden="true">🔀</div>
+                    <h3>跨面板操作</h3>
+                    <p>一键复制（⌘⇧C）/ 移动（⌘⇧X）到对侧面板，文件夹可直接在对侧打开，冲突自动追加「副本 N」。</p>
                 </div>
-
-                <!-- 层间连接 -->
-                <div class="arch-link">
-                    <span>Rust Core</span>
-                    <span class="arrow">▼</span>
+                <div class="feature-card">
+                    <div class="feature-icon icon-purple" aria-hidden="true">👁</div>
+                    <h3>Quick Look 预览</h3>
+                    <p>QLPreviewPanel 原生浮动预览，空格键即可快速查看文件内容，无需打开第三方应用。</p>
                 </div>
-
-                <!-- 第 3 层：Rust Core -->
-                <div class="arch-layer arch-layer-rust">
-                    <div class="arch-layer-header">
-                        <span class="arch-layer-badge">LAYER 2</span>
-                        <span class="arch-layer-title">Rust Core 引擎</span>
-                        <span class="arch-layer-sub">cdylib 动态库 · 内存安全 · 零 GC</span>
-                    </div>
-                    <div class="arch-modules">
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">bulk_read</div>
-                            <div class="arch-module-desc">getattrlistbulk(2) 批量读取目录项</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">scanner / dedup_engine</div>
-                            <div class="arch-module-desc">三阶段 BLAKE3 哈希去重扫描</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">fsevents</div>
-                            <div class="arch-module-desc">FSEventStreamCreate 事件驱动监听（300ms 去抖）</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">file_ops / cow_copy</div>
-                            <div class="arch-module-desc">APFS copy-on-write 克隆，EOPNOTSUPP 自动回退</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">path_guard</div>
-                            <div class="arch-module-desc">写操作路径安全校验（拒绝逃逸 / 根目录操作）</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">dir_cache / sqlite_cache</div>
-                            <div class="arch-module-desc">L1 内存 LRU + L2 SQLite 持久化，带 freshness 校验</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">task_scheduler</div>
-                            <div class="arch-module-desc">统一任务队列，有界并发 + 历史清理</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">search_engine</div>
-                            <div class="arch-module-desc">名称模糊匹配 + 文件类型 / 大小 / 日期过滤</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">batch_ops / parallel_ops</div>
-                            <div class="arch-module-desc">批量重命名 / 按日期分类，rayon 并行复制移动删除</div>
-                        </div>
-                        <div class="arch-module">
-                            <div class="arch-module-name arch-module-rust">tags / thumbnails</div>
-                            <div class="arch-module-desc">xattr 标签读写 + 缩略图生成缓存</div>
-                        </div>
-                    </div>
+                <div class="feature-card">
+                    <div class="feature-icon icon-red" aria-hidden="true">🔍</div>
+                    <h3>重复文件检测</h3>
+                    <p>三阶段 BLAKE3 哈希检测（大小分组 → 部分哈希 → 完整哈希），实时进度，安全删除到废纸篓。</p>
                 </div>
-
+                <div class="feature-card">
+                    <div class="feature-icon icon-teal" aria-hidden="true">🤖</div>
+                    <h3>智能打标</h3>
+                    <p>本地规则引擎基于扩展名与类型自动打标，完全离线；标签与 macOS 原生标签双向同步。LLM 多模型（OpenAI / Claude / Ollama）规划中。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon icon-blue" aria-hidden="true">📁</div>
+                    <h3>原生拖拽</h3>
+                    <p>NSDraggingSource/Destination，同卷移动、跨卷复制、Cmd 键切换，行为与 Finder 完全一致。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon icon-green" aria-hidden="true">💾</div>
+                    <h3>APFS CoW 复制</h3>
+                    <p>利用 clonefile 系统调用实现 APFS 卷零拷贝复制，大文件瞬时复制完成，不占用额外磁盘空间。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon icon-orange" aria-hidden="true">🌐</div>
+                    <h3>SMB 网络共享</h3>
+                    <p>渐进式加载、LRU 目录缓存、rayon 并行操作、断连自动重连，流畅访问网络驱动器。</p>
+                </div>
             </div>
-        </div>
-    </section>
+        </section>
 
-    <!-- Performance -->
-    <section class="features" id="performance" style="padding-top: 80px;">
-        <div class="section-title">
-            <h2>性能对比</h2>
-            <p>相较于原 Tauri + React 版本的显著提升</p>
-        </div>
-        <table class="perf-table">
-            <thead>
-                <tr>
-                    <th>指标</th>
-                    <th>原版（Tauri）</th>
-                    <th>新版（Native）</th>
-                    <th>提升</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>目录列表（冷）</td>
-                    <td>~15-30 ms</td>
-                    <td>~0.5-1.0 ms</td>
-                    <td class="improvement">10-30x</td>
-                </tr>
-                <tr>
-                    <td>目录列表（热）</td>
-                    <td>~5-10 ms</td>
-                    <td>~0.2-0.5 ms</td>
-                    <td class="improvement">10-20x</td>
-                </tr>
-                <tr>
-                    <td>内存占用</td>
-                    <td>~50-100 MB</td>
-                    <td>~20-30 MB</td>
-                    <td class="improvement">2-3x</td>
-                </tr>
-                <tr>
-                    <td>启动时间</td>
-                    <td>~2-3s</td>
-                    <td>~0.5s</td>
-                    <td class="improvement">4-6x</td>
-                </tr>
-                <tr>
-                    <td>二进制大小</td>
-                    <td>~80-100 MB</td>
-                    <td>~15-20 MB</td>
-                    <td class="improvement">5-6x</td>
-                </tr>
-            </tbody>
-        </table>
-    </section>
+        <!-- Architecture -->
+        <section class="architecture" id="architecture">
+            <div class="arch-container">
+                <div class="section-title">
+                    <h2>架构设计</h2>
+                    <p>Swift & AppKit 负责 UI，Rust Core 提供高性能后端，FFI 桥接</p>
+                </div>
+                <div class="arch-layers">
 
-    <!-- Download -->
-    <section class="download" id="download">
-        <div class="download-card">
-            <h3>立即下载</h3>
-            <p>获取 FlowFinder（流方达）v0.7.4，体验原生 macOS 文件管理</p>
-            <div class="download-options">
-                <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" class="btn btn-primary btn-large">
-                    <span>⬇</span> 下载 DMG
-                </a>
-                <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" class="btn btn-secondary btn-large">
-                    <span>📦</span> 下载 ZIP
-                </a>
+                    <!-- 第 1 层：Swift & AppKit UI -->
+                    <div class="arch-layer arch-layer-ui">
+                        <div class="arch-layer-header">
+                            <span class="arch-layer-badge">LAYER 1</span>
+                            <span class="arch-layer-title">Swift &amp; AppKit UI 层</span>
+                            <span class="arch-layer-sub">macOS 原生体验 · 进程内调用</span>
+                        </div>
+                        <div class="arch-modules">
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-accent">FileListView / FileGridView</div>
+                                <div class="arch-module-desc">NSTableView / NSCollectionView 双视图，分组 + 内联重命名</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-accent">NSSplitView 双栏</div>
+                                <div class="arch-module-desc">左右双面板 + 详情栏，独立导航历史</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-accent">Quick Look</div>
+                                <div class="arch-module-desc">QLPreviewPanel 空格预览，双面板 firstResponder 守卫</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-accent">Spotlight 全局搜索</div>
+                                <div class="arch-module-desc">NSMetadataQuery 系统级索引搜索</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-accent">原生拖拽</div>
+                                <div class="arch-module-desc">NSDraggingSource / Destination，跨面板与外部应用</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-accent">SMB 网络共享</div>
+                                <div class="arch-module-desc">NetFS 挂载管理，连接/卸载/自动重连</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 层间连接 -->
+                    <div class="arch-link">
+                        <span>Swift FFI 声明</span>
+                        <span class="arrow">⇅</span>
+                        <span>extern "C" 回调</span>
+                    </div>
+
+                    <!-- 第 2 层：FFI 桥接 -->
+                    <div class="arch-layer arch-layer-ffi">
+                        <div class="arch-layer-header">
+                            <span class="arch-layer-badge">FFI</span>
+                            <span class="arch-layer-title">C ABI 桥接层</span>
+                            <span class="arch-layer-sub">@_silgen_name · 零拷贝指针传递</span>
+                        </div>
+                        <div class="arch-modules">
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-ffi">ffi/mod.rs</div>
+                                <div class="arch-module-desc">4800+ 行导出：文件操作 / 去重 / 搜索 / 任务 / 缓存 / 设置 / 卷管理</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-ffi">ff_ffi.h</div>
+                                <div class="arch-module-desc">C 头文件契约，Swift FFIFunctions.swift 与 Rust 双向对齐</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-ffi">回调上下文</div>
+                                <div class="arch-module-desc">Unmanaged 生命周期管理，进度 / 结果 / 任务事件回调</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 层间连接 -->
+                    <div class="arch-link">
+                        <span>Rust Core</span>
+                        <span class="arrow">▼</span>
+                    </div>
+
+                    <!-- 第 3 层：Rust Core -->
+                    <div class="arch-layer arch-layer-rust">
+                        <div class="arch-layer-header">
+                            <span class="arch-layer-badge">LAYER 2</span>
+                            <span class="arch-layer-title">Rust Core 引擎</span>
+                            <span class="arch-layer-sub">cdylib 动态库 · 内存安全 · 零 GC</span>
+                        </div>
+                        <div class="arch-modules">
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">bulk_read</div>
+                                <div class="arch-module-desc">getattrlistbulk(2) 批量读取目录项</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">scanner / dedup_engine</div>
+                                <div class="arch-module-desc">三阶段 BLAKE3 哈希去重扫描</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">fsevents</div>
+                                <div class="arch-module-desc">FSEventStreamCreate 事件驱动监听（300ms 去抖）</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">file_ops / cow_copy</div>
+                                <div class="arch-module-desc">APFS copy-on-write 克隆，EOPNOTSUPP 自动回退</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">path_guard</div>
+                                <div class="arch-module-desc">写操作路径安全校验（拒绝逃逸 / 根目录操作）</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">dir_cache / sqlite_cache</div>
+                                <div class="arch-module-desc">L1 内存 LRU + L2 SQLite 持久化，带 freshness 校验</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">task_scheduler</div>
+                                <div class="arch-module-desc">统一任务队列，有界并发 + 历史清理</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">search_engine</div>
+                                <div class="arch-module-desc">名称模糊匹配 + 文件类型 / 大小 / 日期过滤</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">batch_ops / parallel_ops</div>
+                                <div class="arch-module-desc">批量重命名 / 按日期分类，rayon 并行复制移动删除</div>
+                            </div>
+                            <div class="arch-module">
+                                <div class="arch-module-name arch-module-rust">tags / thumbnails</div>
+                                <div class="arch-module-desc">xattr 标签读写 + 缩略图生成缓存</div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
             </div>
-            <p class="sys-req">需要 macOS 13.0+（Apple Silicon） · 当前为 alpha 版本</p>
-        </div>
-    </section>
+        </section>
+
+        <!-- Performance -->
+        <section class="features" id="performance" style="padding-top: 80px;">
+            <div class="section-title">
+                <h2>性能对比</h2>
+                <p>相较于原 Tauri + React 版本的显著提升</p>
+            </div>
+            <div class="table-scroll" role="region" aria-label="性能对比表" tabindex="0">
+                <table class="perf-table">
+                    <caption class="visually-hidden">FlowFinder Native 与原 Tauri 版本的性能对比</caption>
+                    <thead>
+                        <tr>
+                            <th>指标</th>
+                            <th>原版（Tauri）</th>
+                            <th>新版（Native）</th>
+                            <th>提升</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>目录列表（冷）</td>
+                            <td>~15-30 ms</td>
+                            <td>~0.5-1.0 ms</td>
+                            <td class="improvement">10-30x</td>
+                        </tr>
+                        <tr>
+                            <td>目录列表（热）</td>
+                            <td>~5-10 ms</td>
+                            <td>~0.2-0.5 ms</td>
+                            <td class="improvement">10-20x</td>
+                        </tr>
+                        <tr>
+                            <td>内存占用</td>
+                            <td>~50-100 MB</td>
+                            <td>~20-30 MB</td>
+                            <td class="improvement">2-3x</td>
+                        </tr>
+                        <tr>
+                            <td>启动时间</td>
+                            <td>~2-3s</td>
+                            <td>~0.5s</td>
+                            <td class="improvement">4-6x</td>
+                        </tr>
+                        <tr>
+                            <td>二进制大小</td>
+                            <td>~80-100 MB</td>
+                            <td>~15-20 MB</td>
+                            <td class="improvement">5-6x</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Download -->
+        <section class="download" id="download">
+            <div class="download-card">
+                <h2>立即下载</h2>
+                <p>获取 FlowFinder（流方达）v0.7.4，体验原生 macOS 文件管理</p>
+                <div class="download-options">
+                    <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-large">
+                        <span aria-hidden="true">⬇</span> 下载 DMG
+                    </a>
+                    <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-large">
+                        <span aria-hidden="true">📦</span> 下载 ZIP
+                    </a>
+                </div>
+                <p class="sys-req">需要 macOS 13.0+（Apple Silicon） · 当前为 alpha 版本</p>
+            </div>
+        </section>
+    </main>
 
     <!-- Footer -->
     <footer>
-        <div class="footer-links">
-            <a href="https://github.com/waltxao/FlowFinder" target="_blank">GitHub</a>
-            <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank">Releases</a>
-            <a href="https://github.com/waltxao/FlowFinder/blob/main/CHANGELOG.md" target="_blank">变更日志</a>
-            <a href="https://github.com/waltxao/FlowFinder/blob/main/docs/MIGRATION_LOG.md" target="_blank">重构日志</a>
-            <a href="https://github.com/waltxao/FlowFinder/issues" target="_blank">报告问题</a>
-        </div>
+        <nav class="footer-links" aria-label="页脚导航">
+            <a href="https://github.com/waltxao/FlowFinder" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href="https://github.com/waltxao/FlowFinder/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+            <a href="https://github.com/waltxao/FlowFinder/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">变更日志</a>
+            <a href="https://github.com/waltxao/FlowFinder/blob/main/docs/MIGRATION_LOG.md" target="_blank" rel="noopener noreferrer">重构日志</a>
+            <a href="https://github.com/waltxao/FlowFinder/issues" target="_blank" rel="noopener noreferrer">报告问题</a>
+        </nav>
         <p class="copyright">© 2026 FlowFinder · MIT License · Made with ❤️ for macOS</p>
     </footer>
+
+    <script>
+        (function () {
+            var toggle = document.getElementById('menu-toggle');
+            var menu = document.getElementById('site-nav');
+            if (!toggle || !menu) return;
+            var mq = window.matchMedia('(max-width: 768px)');
+
+            function setMenu(open) {
+                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                toggle.setAttribute('aria-label', open ? '关闭导航菜单' : '打开导航菜单');
+                menu.classList.toggle('nav-open', open);
+            }
+            function closeMenu() {
+                if (toggle.getAttribute('aria-expanded') === 'true') setMenu(false);
+            }
+
+            toggle.addEventListener('click', function () {
+                setMenu(toggle.getAttribute('aria-expanded') !== 'true');
+            });
+
+            // 点击菜单内链接后收起，锚点跳转正常进行
+            menu.addEventListener('click', function (e) {
+                if (e.target.closest('a')) closeMenu();
+            });
+
+            // 点击菜单外部收起（不阻止事件，避免锁死页面交互）
+            document.addEventListener('click', function (e) {
+                if (menu.classList.contains('nav-open') &&
+                    !menu.contains(e.target) &&
+                    e.target !== toggle && !toggle.contains(e.target)) {
+                    closeMenu();
+                }
+            });
+
+            // Escape 关闭并归还焦点
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape' && menu.classList.contains('nav-open')) {
+                    closeMenu();
+                    toggle.focus();
+                }
+            });
+
+            // 切回桌面宽度时复位状态
+            window.addEventListener('resize', function () {
+                if (!mq.matches) setMenu(false);
+            });
+        })();
+    </script>
 </body>
 </html>
