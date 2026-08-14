@@ -122,14 +122,14 @@ class SettingsRowView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.15
+            ctx.duration = FFMotion.animationDuration(0.15)
             hoverBackground.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.05).cgColor
         })
     }
 
     override func mouseExited(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.15
+            ctx.duration = FFMotion.animationDuration(0.15)
             hoverBackground.layer?.backgroundColor = NSColor.clear.cgColor
         })
     }

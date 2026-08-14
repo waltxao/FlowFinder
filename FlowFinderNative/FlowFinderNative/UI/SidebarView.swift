@@ -721,6 +721,9 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         switch item as? SidebarItem {
         case .favorite(let fav):
             textField.stringValue = fav.name
+            // T13: 侧边栏条目无障碍标签（名称 + 选中状态）
+            let isSelected = outlineView.selectedRowIndexes.contains(outlineView.row(forItem: item))
+            cell.setAccessibilityLabel(FileEntryAccessibility.sidebarLabel(name: fav.name, isSelected: isSelected))
             // 任务 F10-4: 修正 F4 错误 - 收藏夹改回彩色真实图标（v0.6.6）
             // F4 错误地改为蓝色模板 SF Symbols，应使用 NSWorkspace 真实位置图标
             // 放大对齐访达 20pt，contentTintColor = nil 保留彩色（移除 F4 的 controlAccentColor）

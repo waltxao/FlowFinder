@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 // MARK: - FFOpaqueContainerView
 
@@ -90,6 +91,9 @@ enum FFUserDefaultsKeys {
     static let shortcutPreferences = "shortcut_preferences"
     // 标签（侧边栏/设置页/标签弹窗共享存储）
     static let sidebarTags = "SidebarTags"
+
+    // 任务 T12: 删除确认"不再询问"开关（全入口统一读取；勾选后跳过确认弹窗直接执行）
+    static let deleteConfirmDisabled = "delete_confirm_disabled"
 }
 
 // MARK: - FFAccent（应用级强调色源）
@@ -241,5 +245,399 @@ enum FFPaneMenuBuilder {
             }
         }
         return menu
+    }
+}
+
+// MARK: - FFPaneStateOverlayView（任务 T12：统一加载/空/错误/操作状态视图）
+
+/// 面板状态呈现模式。
+enum FFPaneOverlayMode: Equatable {
+    case content        // 正常内容，overlay 隐藏
+    case loading        // 加载中（列表为空时全屏）
+    case empty          // 空状态（全屏）
+    case error          // 错误（列表为空时全屏，否则顶部横幅）
+    case operation      // 删除/撤销/重做进行中（顶部横幅，不遮挡列表）
+}
+
+/// 错误/空状态下的"重试"语义。
+enum FFPaneRetryKind: Equatable {
+    case none           // 无重试
+    case reload         // 重新加载目录（refresh）
+    case deleteRetry    // 重试删除失败项（deleteSelected，失败项仍保留在选中集）
+}
+
+/// 面板状态 → 呈现描述（纯函数，由 PaneState 真值驱动，不复制业务状态）。
+struct FFPaneStateDescriptor: Equatable {
+    let mode: FFPaneOverlayMode
+    let isFullScreen: Bool
+    let iconName: String
+    let title: String
+    let subtitle: String
+    let showsSpinner: Bool
+    let showsRetry: Bool
+    let retryKind: FFPaneRetryKind
+
+    /// 由 PaneState 计算呈现描述。优先级：删除中 > 错误 > 加载 > 空 > 内容。
+    /// - 删除中：顶部横幅进度（不遮挡列表）
+    /// - 错误 + 列表为空：全屏错误 + 重试
+    /// - 错误 + 列表非空（删除部分失败）：顶部横幅 + 重试删除失败项
+    /// - 加载 + 列表为空：全屏加载
+    /// - 列表为空：区分首次无路径 / 搜索无结果 / 标签筛选 / 文件夹为空
+    static func make(from state: PaneState) -> FFPaneStateDescriptor {
+        if state.isDeleting {
+            let count = state.selectedFiles.count
+            return FFPaneStateDescriptor(
+                mode: .operation, isFullScreen: false,
+                iconName: "arrow.triangle.2.circlepath",
+                title: count > 0 ? "正在删除 \(count) 个项目…" : "正在处理文件操作…",
+                subtitle: "操作在后台执行，完成后列表自动更新",
+                showsSpinner: true, showsRetry: false, retryKind: .none
+            )
+        }
+
+        if let error = state.error {
+            if state.files.isEmpty {
+                let retryKind: FFPaneRetryKind = state.deleteFailedPaths.isEmpty ? .reload : .deleteRetry
+                return FFPaneStateDescriptor(
+                    mode: .error, isFullScreen: true, iconName: "exclamationmark.triangle",
+                    title: "无法加载此文件夹", subtitle: error,
+                    showsSpinner: false, showsRetry: true, retryKind: retryKind
+                )
+            }
+            let failedCount = state.deleteFailedPaths.count
+            return FFPaneStateDescriptor(
+                mode: .error, isFullScreen: false, iconName: "exclamationmark.triangle",
+                title: failedCount > 0 ? "\(failedCount) 个项目删除失败" : "操作失败",
+                subtitle: error,
+                showsSpinner: false, showsRetry: true,
+                retryKind: failedCount > 0 ? .deleteRetry : .reload
+            )
+        }
+
+        if state.isLoading && state.files.isEmpty {
+            return FFPaneStateDescriptor(
+                mode: .loading, isFullScreen: true, iconName: "",
+                title: "正在加载…", subtitle: "",
+                showsSpinner: true, showsRetry: false, retryKind: .none
+            )
+        }
+
+        if state.files.isEmpty {
+            if state.path.isEmpty {
+                return FFPaneStateDescriptor(
+                    mode: .empty, isFullScreen: true, iconName: "sidebar.left",
+                    title: "打开一个文件夹",
+                    subtitle: "在侧边栏选择一个文件夹开始浏览",
+                    showsSpinner: false, showsRetry: false, retryKind: .none
+                )
+            }
+            if !state.searchQuery.isEmpty {
+                return FFPaneStateDescriptor(
+                    mode: .empty, isFullScreen: true, iconName: "magnifyingglass",
+                    title: "未找到匹配项",
+                    subtitle: "没有名称与「\(state.searchQuery)」匹配的项目",
+                    showsSpinner: false, showsRetry: false, retryKind: .none
+                )
+            }
+            if state.tagFilter != nil {
+                return FFPaneStateDescriptor(
+                    mode: .empty, isFullScreen: true, iconName: "tag",
+                    title: "没有符合所选标签的项目",
+                    subtitle: "移除标签筛选或选择其他标签",
+                    showsSpinner: false, showsRetry: false, retryKind: .none
+                )
+            }
+            return FFPaneStateDescriptor(
+                mode: .empty, isFullScreen: true, iconName: "folder",
+                title: "此文件夹为空",
+                subtitle: "将文件拖到这里开始整理",
+                showsSpinner: false, showsRetry: false, retryKind: .none
+            )
+        }
+
+        return FFPaneStateDescriptor(
+            mode: .content, isFullScreen: false, iconName: "",
+            title: "", subtitle: "",
+            showsSpinner: false, showsRetry: false, retryKind: .none
+        )
+    }
+}
+
+/// 面板状态浮层视图：全屏（loading/empty/error）+ 顶部横幅（operation/删除部分失败）。
+/// 由 PaneState 真值驱动：自行订阅 viewModel.$state（主线程），状态回 content 时隐藏。
+/// 不遮挡列表布局——浮层是独立叠加层，列表布局与约束不受任何状态切换影响。
+final class FFPaneStateOverlayView: NSView {
+
+    weak var viewModel: PaneViewModel? {
+        didSet {
+            cancellable?.cancel()
+            guard let viewModel = viewModel else {
+                apply(FFPaneStateDescriptor.make(from: PaneState()))
+                return
+            }
+            cancellable = viewModel.$state
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] state in
+                    self?.apply(FFPaneStateDescriptor.make(from: state))
+                }
+            apply(FFPaneStateDescriptor.make(from: viewModel.state))
+        }
+    }
+
+    private var cancellable: AnyCancellable?
+    private let fullStack = NSStackView()
+    private let fullSpinner = NSProgressIndicator()
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
+    private let retryButton = NSButton(title: "重试", target: nil, action: nil)
+    private let bannerView = NSView()
+    private let bannerSpinner = NSProgressIndicator()
+    private let bannerIcon = NSImageView()
+    private let bannerLabel = NSTextField(labelWithString: "")
+    private let bannerSubtitle = NSTextField(labelWithString: "")
+    private let bannerRetryButton = NSButton(title: "重试", target: nil, action: nil)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupUI()
+        apply(FFPaneStateDescriptor.make(from: PaneState()))
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupUI()
+        apply(FFPaneStateDescriptor.make(from: PaneState()))
+    }
+
+    private func setupUI() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        fullSpinner.style = .spinning
+        fullSpinner.controlSize = .regular
+        fullSpinner.isDisplayedWhenStopped = false
+        fullSpinner.translatesAutoresizingMaskIntoConstraints = false
+
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.contentTintColor = NSColor.secondaryLabelColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        titleLabel.textColor = NSColor.labelColor
+        titleLabel.alignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        subtitleLabel.font = NSFont.systemFont(ofSize: 11)
+        subtitleLabel.textColor = NSColor.secondaryLabelColor
+        subtitleLabel.alignment = .center
+        subtitleLabel.maximumNumberOfLines = 3
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        retryButton.bezelStyle = .rounded
+        retryButton.controlSize = .small
+        retryButton.font = NSFont.systemFont(ofSize: 11)
+        retryButton.target = self
+        retryButton.action = #selector(retryTapped)
+
+        fullStack.orientation = .vertical
+        fullStack.alignment = .centerX
+        fullStack.spacing = 8
+        fullStack.translatesAutoresizingMaskIntoConstraints = false
+        fullStack.addArrangedSubview(fullSpinner)
+        fullStack.addArrangedSubview(iconView)
+        fullStack.addArrangedSubview(titleLabel)
+        fullStack.addArrangedSubview(subtitleLabel)
+        fullStack.addArrangedSubview(retryButton)
+
+        bannerView.wantsLayer = true
+        bannerView.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.98).cgColor
+        bannerView.translatesAutoresizingMaskIntoConstraints = false
+
+        bannerSpinner.style = .spinning
+        bannerSpinner.controlSize = .small
+        bannerSpinner.isDisplayedWhenStopped = false
+        bannerSpinner.translatesAutoresizingMaskIntoConstraints = false
+
+        bannerIcon.imageScaling = .scaleProportionallyDown
+        bannerIcon.contentTintColor = NSColor.systemYellow
+        bannerIcon.translatesAutoresizingMaskIntoConstraints = false
+
+        bannerLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        bannerLabel.textColor = NSColor.labelColor
+        bannerLabel.lineBreakMode = .byTruncatingTail
+        bannerLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        bannerSubtitle.font = NSFont.systemFont(ofSize: 10)
+        bannerSubtitle.textColor = NSColor.secondaryLabelColor
+        bannerSubtitle.lineBreakMode = .byTruncatingMiddle
+        bannerSubtitle.translatesAutoresizingMaskIntoConstraints = false
+
+        bannerRetryButton.bezelStyle = .rounded
+        bannerRetryButton.controlSize = .small
+        bannerRetryButton.font = NSFont.systemFont(ofSize: 10)
+        bannerRetryButton.target = self
+        bannerRetryButton.action = #selector(retryTapped)
+
+        bannerView.addSubview(bannerSpinner)
+        bannerView.addSubview(bannerIcon)
+        bannerView.addSubview(bannerLabel)
+        bannerView.addSubview(bannerSubtitle)
+        bannerView.addSubview(bannerRetryButton)
+
+        addSubview(fullStack)
+        addSubview(bannerView)
+
+        NSLayoutConstraint.activate([
+            fullStack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            fullStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            fullStack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
+            fullStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+            fullSpinner.widthAnchor.constraint(equalToConstant: 24),
+            fullSpinner.heightAnchor.constraint(equalToConstant: 24),
+            iconView.widthAnchor.constraint(equalToConstant: 40),
+            iconView.heightAnchor.constraint(equalToConstant: 40),
+
+            bannerView.topAnchor.constraint(equalTo: topAnchor),
+            bannerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bannerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            bannerSpinner.leadingAnchor.constraint(equalTo: bannerView.leadingAnchor, constant: 12),
+            bannerSpinner.centerYAnchor.constraint(equalTo: bannerView.centerYAnchor, constant: -8),
+            bannerIcon.leadingAnchor.constraint(equalTo: bannerView.leadingAnchor, constant: 12),
+            bannerIcon.centerYAnchor.constraint(equalTo: bannerView.centerYAnchor, constant: -8),
+            bannerIcon.widthAnchor.constraint(equalToConstant: 14),
+            bannerIcon.heightAnchor.constraint(equalToConstant: 14),
+
+            bannerLabel.leadingAnchor.constraint(equalTo: bannerSpinner.trailingAnchor, constant: 8),
+            bannerLabel.trailingAnchor.constraint(lessThanOrEqualTo: bannerRetryButton.leadingAnchor, constant: -8),
+            bannerLabel.topAnchor.constraint(equalTo: bannerView.topAnchor, constant: 6),
+
+            bannerSubtitle.leadingAnchor.constraint(equalTo: bannerLabel.leadingAnchor),
+            bannerSubtitle.trailingAnchor.constraint(lessThanOrEqualTo: bannerRetryButton.leadingAnchor, constant: -8),
+            bannerSubtitle.topAnchor.constraint(equalTo: bannerLabel.bottomAnchor, constant: 1),
+            bannerSubtitle.bottomAnchor.constraint(equalTo: bannerView.bottomAnchor, constant: -6),
+
+            bannerRetryButton.trailingAnchor.constraint(equalTo: bannerView.trailingAnchor, constant: -12),
+            bannerRetryButton.centerYAnchor.constraint(equalTo: bannerView.centerYAnchor),
+        ])
+    }
+
+    /// 应用状态描述：全屏/横幅二选一，content 时整体隐藏。
+    private func apply(_ descriptor: FFPaneStateDescriptor) {
+        FFDebug.log("[STATE-OVERLAY] mode=\(descriptor.mode) title=\(descriptor.title) showsRetry=\(descriptor.showsRetry) isMainThread=\(Thread.isMainThread)")
+        let showsFull = descriptor.mode != .content && descriptor.mode != .operation && descriptor.isFullScreen
+        let showsBanner = descriptor.mode != .content && !showsFull
+
+        isHidden = descriptor.mode == .content
+        fullStack.isHidden = !showsFull
+        bannerView.isHidden = !showsBanner
+
+        if showsFull {
+            if descriptor.mode == .loading {
+                fullSpinner.isHidden = false
+                fullSpinner.startAnimation(nil)
+                iconView.isHidden = true
+                subtitleLabel.isHidden = true
+                retryButton.isHidden = true
+            } else {
+                fullSpinner.isHidden = true
+                fullSpinner.stopAnimation(nil)
+                iconView.isHidden = false
+                iconView.image = NSImage(systemSymbolName: descriptor.iconName, accessibilityDescription: descriptor.title)
+                subtitleLabel.isHidden = descriptor.subtitle.isEmpty
+                subtitleLabel.stringValue = descriptor.subtitle
+                retryButton.isHidden = !descriptor.showsRetry
+            }
+            titleLabel.stringValue = descriptor.title
+        } else {
+            fullSpinner.stopAnimation(nil)
+            fullSpinner.isHidden = true
+        }
+
+        if showsBanner {
+            bannerLabel.stringValue = descriptor.title
+            bannerSubtitle.stringValue = descriptor.subtitle
+            bannerSubtitle.isHidden = descriptor.subtitle.isEmpty
+            bannerRetryButton.isHidden = !descriptor.showsRetry
+            if descriptor.showsSpinner {
+                bannerSpinner.isHidden = false
+                bannerSpinner.startAnimation(nil)
+                bannerIcon.isHidden = true
+            } else {
+                bannerSpinner.isHidden = true
+                bannerSpinner.stopAnimation(nil)
+                bannerIcon.isHidden = false
+                bannerIcon.image = NSImage(systemSymbolName: descriptor.iconName, accessibilityDescription: descriptor.title)
+            }
+        } else {
+            bannerSpinner.stopAnimation(nil)
+            bannerSpinner.isHidden = true
+        }
+    }
+
+    /// 命中穿透：仅保留"重试"按钮与顶部横幅的交互，其余区域穿透到下层列表。
+    /// 全屏空/加载/错误状态下列表为空，穿透可保留空白区右键菜单（新建文件夹等）。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, let hit = super.hitTest(point) else { return nil }
+        if hit === retryButton || hit === bannerRetryButton { return hit }
+        if hit === bannerView || hit.isDescendant(of: bannerView) { return hit }
+        return nil
+    }
+
+    /// 重试：按描述符的重试语义分派（reload → refresh；deleteRetry → 重删失败项）。
+    @objc private func retryTapped() {
+        guard let viewModel = viewModel else { return }
+        switch FFPaneStateDescriptor.make(from: viewModel.state).retryKind {
+        case .reload:
+            viewModel.refresh()
+        case .deleteRetry:
+            viewModel.deleteSelected()
+        case .none:
+            break
+        }
+    }
+}
+
+// MARK: - T13: 文件条目无障碍标签（VoiceOver）
+
+/// 文件条目无障碍标签组合纯函数（T13）。
+/// 供 FileListView/FileGridView/SearchPanel 复用，保证朗读文本一致。
+enum FileEntryAccessibility {
+    /// 组合"文件名 + 类型 + 大小"的可读标签。
+    static func label(for entry: FileEntry) -> String {
+        var parts: [String] = [entry.name]
+        parts.append(entry.kindDescription)
+        if !entry.isDirectory {
+            parts.append(entry.formattedSize)
+        }
+        return parts.joined(separator: "，")
+    }
+
+    /// 目录条目（侧边栏）标签：名称 + 选中状态后缀。
+    static func sidebarLabel(name: String, isSelected: Bool) -> String {
+        isSelected ? "\(name)，已选中" : name
+    }
+
+    /// 搜索结果的详情文本（选中搜索结果时展示）。
+    static func searchResultLabel(_ result: FFSearchResult) -> String {
+        var parts: [String] = [result.name]
+        if result.size > 0 {
+            let formatter = ByteCountFormatter()
+            formatter.allowedUnits = [.useBytes, .useKB, .useMB, .useGB]
+            formatter.countStyle = .file
+            parts.append(formatter.string(fromByteCount: Int64(result.size)))
+        }
+        return parts.joined(separator: "，")
+    }
+}
+
+// MARK: - T13: reduced-motion 动画时长
+
+/// 系统"减弱动态效果"开启时动画时长为 0（禁用动画）。
+enum FFMotion {
+    /// 返回系统 reduced-motion 感知的动画时长。
+    static func animationDuration(_ proposed: TimeInterval) -> TimeInterval {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : proposed
     }
 }

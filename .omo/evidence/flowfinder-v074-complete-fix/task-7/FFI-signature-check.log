@@ -1,0 +1,65 @@
+FFI signature comparison: rust-core/include/ff_ffi.h  vs  Swift @_silgen_name (FFIFunctions.swift)
+=============================================================================================
+
+Rust header (Content Index section):
+  1. ff_error_t ff_content_index_init(const char *db_path);
+  2. int        ff_content_index_status(void);
+  3. ff_error_t ff_content_index_start(const char *root_path, int mode, uint64_t *out_handle);
+  4. ff_error_t ff_content_index_cancel(uint64_t handle);
+  5. ff_error_t ff_content_index_pause(uint64_t handle);
+  6. ff_error_t ff_content_index_resume(uint64_t handle);
+  7. ff_error_t ff_content_index_mark_dirty(const char *path);
+  8. ff_error_t ff_content_index_query(const char *query, size_t max_results, FFSearchCallback callback, void *user_data);
+  9. char *     ff_content_index_stats(void);
+
+Swift @_silgen_name declarations:
+  1. ff_content_index_init(_ dbPath: UnsafePointer<CChar>) -> Int32
+  2. ff_content_index_status() -> Int32
+  3. ff_content_index_start(_ rootPath: UnsafePointer<CChar>, _ mode: Int32, _ outHandle: UnsafeMutablePointer<UInt64>?) -> Int32
+  4. ff_content_index_cancel(_ handle: UInt64) -> ff_error_t
+  5. ff_content_index_pause(_ handle: UInt64) -> ff_error_t
+  6. ff_content_index_resume(_ handle: UInt64) -> ff_error_t
+  7. ff_content_index_mark_dirty(_ path: UnsafePointer<CChar>) -> Int32
+  8. ff_content_index_query(_ query: UnsafePointer<CChar>, _ maxResults: Int, _ callback: @convention(c)(UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void, _ userData: UnsafeMutableRawPointer?) -> Int32
+  9. ff_content_index_stats() -> UnsafeMutablePointer<CChar>?
+
+Type mapping (C ABI-identical):
+  ff_error_t  <-> Int32            (C enum = int = 32-bit)   [note: cancel/pause/resume use ff_error_t to match header exactly]
+  const char* <-> UnsafePointer<CChar>
+  int         <-> Int32
+  uint64_t    <-> UInt64
+  uint64_t *  <-> UnsafeMutablePointer<UInt64>?
+  size_t      <-> Int
+  FFSearchCallback <-> @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void
+  void *      <-> UnsafeMutableRawPointer?
+  char * (owned) <-> UnsafeMutablePointer<CChar>?
+
+Note on cancel/pause/resume return type: the header declares `ff_error_t`, and the C function
+is ALREADY imported into Swift via the bridging header (ff_ffi.h). Redeclaring these scalar-only
+(UInt64) functions with `-> Int32` produces an ambiguous overload (same param, differing return
+type). Declaring them `-> ff_error_t` matches the header exactly and merges cleanly.
+=== automated symbol check ===
+Swift @_silgen_name content-index symbols present:
+@_silgen_name("ff_content_index_cancel")
+@_silgen_name("ff_content_index_init")
+@_silgen_name("ff_content_index_mark_dirty")
+@_silgen_name("ff_content_index_pause")
+@_silgen_name("ff_content_index_query")
+@_silgen_name("ff_content_index_resume")
+@_silgen_name("ff_content_index_start")
+@_silgen_name("ff_content_index_stats")
+@_silgen_name("ff_content_index_status")
+
+Rust header content-index functions present:
+ff_content_index_cancel
+ff_content_index_init
+ff_content_index_mark_dirty
+ff_content_index_pause
+ff_content_index_query
+ff_content_index_resume
+ff_content_index_start
+ff_content_index_stats
+ff_content_index_status
+
+=== diff (empty = all 9 match) ===
+OK: 9/9 symbols match, no diff

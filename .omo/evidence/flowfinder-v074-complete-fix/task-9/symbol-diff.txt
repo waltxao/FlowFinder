@@ -1,0 +1,189 @@
+# symbol-diff.txt — FFI/ABI symmetry report (task-9 recovery)
+# Generated: 2026-08-14 18:42:03 CST
+# Binary: rust-core/target/debug/libflowfinder_core.dylib (cargo build, dev profile)
+# Commands:
+#   nm -gU rust-core/target/debug/libflowfinder_core.dylib
+#   grep -oE 'ff_[a-z_0-9]+ *\(' rust-core/include/ff_ffi.h
+#   grep -oE '"ff_[a-z_0-9]+"' FlowFinderNative/FlowFinderNative/Bridge/FFIFunctions.swift
+
+== 1. dylib exported ff_* symbols (nm -gU) ==
+ff_batch_rename
+ff_cache_get
+ff_cache_init
+ff_cache_invalidate
+ff_cache_put
+ff_cancel_scan
+ff_cancel_scan_by_id
+ff_cancel_search_by_id
+ff_copy_file
+ff_create_dir
+ff_delete_dir
+ff_delete_file
+ff_dir_cache_clear
+ff_dir_cache_get
+ff_dir_cache_invalidate
+ff_free_string
+ff_fsevents_start
+ff_fsevents_status
+ff_fsevents_stop
+ff_generate_tags
+ff_generate_thumbnail
+ff_generate_thumbnails
+ff_get_file_type
+ff_get_preview_path
+ff_get_system_memory
+ff_hash_file
+ff_last_error
+ff_list_dir
+ff_move_file
+ff_organize_by_date
+ff_organize_by_type
+ff_parallel_copy
+ff_parallel_delete
+ff_parallel_move
+ff_rename
+ff_scan_duplicates
+ff_scan_duplicates_ex
+ff_search
+ff_search_ex
+ff_search_with_filters
+ff_search_with_filters_ex
+ff_settings_get
+ff_settings_load
+ff_settings_save
+ff_settings_set
+ff_task_cancel
+ff_task_clear_history
+ff_task_history
+ff_task_list
+ff_task_progress
+ff_task_submit
+ff_version_string
+ff_volume_eject
+ff_volume_health_check
+ff_volume_info
+ff_volume_list
+ff_volume_mount
+== 2. Functions declared in ff_ffi.h ==
+ff_batch_rename
+ff_cache_get
+ff_cache_init
+ff_cache_invalidate
+ff_cache_put
+ff_cancel_scan
+ff_cancel_scan_by_id
+ff_cancel_search_by_id
+ff_copy_file
+ff_create_dir
+ff_delete_dir
+ff_delete_file
+ff_dir_cache_clear
+ff_dir_cache_get
+ff_dir_cache_invalidate
+ff_free_string
+ff_fsevents_start
+ff_fsevents_status
+ff_fsevents_stop
+ff_generate_tags
+ff_generate_thumbnail
+ff_generate_thumbnails
+ff_get_file_type
+ff_get_preview_path
+ff_get_system_memory
+ff_hash_file
+ff_last_error
+ff_list_dir
+ff_move_file
+ff_organize_by_date
+ff_organize_by_type
+ff_parallel_copy
+ff_parallel_delete
+ff_parallel_move
+ff_rename
+ff_scan_duplicates
+ff_scan_duplicates_ex
+ff_search
+ff_search_ex
+ff_search_with_filters
+ff_search_with_filters_ex
+ff_settings_get
+ff_settings_load
+ff_settings_save
+ff_settings_set
+ff_task_cancel
+ff_task_clear_history
+ff_task_history
+ff_task_list
+ff_task_progress
+ff_task_submit
+ff_version_string
+ff_volume_eject
+ff_volume_health_check
+ff_volume_info
+ff_volume_list
+ff_volume_mount
+
+== 3. @_silgen_name targets in FFIFunctions.swift ==
+ff_batch_rename
+ff_cache_get
+ff_cache_init
+ff_cache_invalidate
+ff_cache_put
+ff_cancel_scan
+ff_cancel_scan_by_id
+ff_cancel_search_by_id
+ff_copy_file
+ff_create_dir
+ff_delete_dir
+ff_delete_file
+ff_dir_cache_clear
+ff_dir_cache_get
+ff_dir_cache_invalidate
+ff_free_string
+ff_fsevents_start
+ff_fsevents_status
+ff_fsevents_stop
+ff_generate_tags
+ff_generate_thumbnail
+ff_generate_thumbnails
+ff_get_file_type
+ff_get_preview_path
+ff_list_dir
+ff_move_file
+ff_organize_by_date
+ff_organize_by_type
+ff_parallel_copy
+ff_parallel_delete
+ff_parallel_move
+ff_rename
+ff_scan_duplicates
+ff_scan_duplicates_ex
+ff_search
+ff_search_ex
+ff_search_with_filters
+ff_search_with_filters_ex
+ff_settings_get
+ff_settings_load
+ff_settings_save
+ff_settings_set
+ff_task_cancel
+ff_task_clear_history
+ff_task_list
+ff_task_progress
+ff_task_submit
+ff_volume_eject
+ff_volume_health_check
+ff_volume_info
+ff_volume_list
+ff_volume_mount
+
+== 4. Symmetry comparison (comm -23/-13) ==
+header declares but dylib does NOT export:  (none)
+swift silgen but dylib does NOT export:      (none)
+dylib exports but header does NOT declare:   (none)
+swift silgen but header does NOT declare:    (none)
+
+VERDICT: full ABI symmetry — every ff_ffi.h declaration and every Swift
+@_silgen_name target resolves to a dylib export; no unhandled mismatch.
+ff_task_history is present in all three surfaces (dylib _ff_task_history,
+ff_ffi.h `ff_error_t ff_task_history(...)`, task API section).

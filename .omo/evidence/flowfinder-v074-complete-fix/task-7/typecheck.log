@@ -1,0 +1,119 @@
+Full-module typecheck (source .swift files only, .build excluded)
+COMMAND:
+  swiftc -typecheck \
+    -import-objc-header FlowFinderNative/FlowFinderNative/include/FlowFinderNative-Bridging-Header.h \
+    -I rust-core/include -I FlowFinderNative/FlowFinderNative/include \
+    <all FlowFinderNative/**/*.swift files>
+swiftc: swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.30.4 clang-2100.3.30.1)
+NOTE: xcodebuild unavailable (CommandLineTools only), so swiftc -typecheck is the strongest available compile check.
+
+FlowFinderNative/FlowFinderNative/UI/SidebarView.swift:89:65: warning: 'secondarySelectedControlColor' was deprecated in macOS 11.0 [#DeprecatedDeclaration]
+     |                                                                 `- warning: 'secondarySelectedControlColor' was deprecated in macOS 11.0 [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/SidebarView.swift:366:29: warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+     |                             `- warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/SettingsSectionView.swift:564:14: warning: immutable value 'idx' was never used; consider replacing with '_' or removing it [#NoUsage]
+    |              `- warning: immutable value 'idx' was never used; consider replacing with '_' or removing it [#NoUsage]
+FlowFinderNative/FlowFinderNative/UI/QuickLookPreviewView.swift:72:29: warning: use '#selector' instead of explicitly constructing a 'Selector'
+    |                             `- warning: use '#selector' instead of explicitly constructing a 'Selector'
+FlowFinderNative/FlowFinderNative/UI/MainWindowController.swift:503:52: warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+     |                                                    `- warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/MainWindowController.swift:504:29: warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+     |                             `- warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/MainWindowController.swift:1113:31: warning: value 'self' was defined but never used; consider replacing with boolean test [#NoUsage]
+     |                               `- warning: value 'self' was defined but never used; consider replacing with boolean test [#NoUsage]
+FlowFinderNative/FlowFinderNative/UI/MainWindowController.swift:1166:33: warning: variable 'self' was written to, but never read
+     |                                 `- warning: variable 'self' was written to, but never read
+FlowFinderNative/FlowFinderNative/UI/MainWindowController.swift:1454:32: warning: 'openFile' was deprecated in macOS 11.0: Use -[NSWorkspace openURL:] instead. [#DeprecatedDeclaration]
+     |                                `- warning: 'openFile' was deprecated in macOS 11.0: Use -[NSWorkspace openURL:] instead. [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/MainWindowController.swift:1628:32: warning: 'openFile' was deprecated in macOS 11.0: Use -[NSWorkspace openURL:] instead. [#DeprecatedDeclaration]
+     |                                `- warning: 'openFile' was deprecated in macOS 11.0: Use -[NSWorkspace openURL:] instead. [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/MainWindowController.swift:1811:32: warning: 'openFile' was deprecated in macOS 11.0: Use -[NSWorkspace openURL:] instead. [#DeprecatedDeclaration]
+     |                                `- warning: 'openFile' was deprecated in macOS 11.0: Use -[NSWorkspace openURL:] instead. [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/MainMenu.swift:155:52: warning: no method declared with Objective-C selector 'undo:'
+    |                                                    |- warning: no method declared with Objective-C selector 'undo:'
+FlowFinderNative/FlowFinderNative/UI/MainMenu.swift:156:52: warning: no method declared with Objective-C selector 'redo:'
+    |                                                    |- warning: no method declared with Objective-C selector 'redo:'
+FlowFinderNative/FlowFinderNative/UI/FileListView.swift:1900:51: warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+     |                                                   |- warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+FlowFinderNative/FlowFinderNative/UI/FFPaneActionsController.swift:119:32: warning: 'openFile' was deprecated in macOS 11.0: Use -[NSWorkspace openURL:] instead. [#DeprecatedDeclaration]
+    |                                `- warning: 'openFile' was deprecated in macOS 11.0: Use -[NSWorkspace openURL:] instead. [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/FFPaneActionsController.swift:229:89: warning: expression implicitly coerced from 'String?' to 'Any'
+    |                                                                                         `- warning: expression implicitly coerced from 'String?' to 'Any'
+FlowFinderNative/FlowFinderNative/UI/FFPaneActionsController.swift:235:89: warning: expression implicitly coerced from 'String?' to 'Any'
+    |                                                                                         `- warning: expression implicitly coerced from 'String?' to 'Any'
+FlowFinderNative/FlowFinderNative/UI/FFGlassView.swift:91:54: warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+    |                                                      |- warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:150:75: warning: no method declared with Objective-C selector 'undoFromMenu:'
+    |                                                                       |- warning: no method declared with Objective-C selector 'undoFromMenu:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:154:75: warning: no method declared with Objective-C selector 'redoFromMenu:'
+    |                                                                       |- warning: no method declared with Objective-C selector 'redoFromMenu:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:161:60: warning: no method declared with Objective-C selector 'openSelected:'
+    |                                                        |- warning: no method declared with Objective-C selector 'openSelected:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:165:75: warning: no method declared with Objective-C selector 'copySelected:'
+    |                                                                       |- warning: no method declared with Objective-C selector 'copySelected:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:168:74: warning: no method declared with Objective-C selector 'cutSelected:'
+    |                                                                      |- warning: no method declared with Objective-C selector 'cutSelected:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:171:76: warning: no method declared with Objective-C selector 'pasteSelected:'
+    |                                                                        |- warning: no method declared with Objective-C selector 'pasteSelected:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:176:90: warning: no method declared with Objective-C selector 'moveToOtherPane:'
+    |                                                                            |- warning: no method declared with Objective-C selector 'moveToOtherPane:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:180:95: warning: no method declared with Objective-C selector 'copyToOtherPane:'
+    |                                                                                 |- warning: no method declared with Objective-C selector 'copyToOtherPane:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:184:95: warning: no method declared with Objective-C selector 'openInOtherPane:'
+    |                                                                                 |- warning: no method declared with Objective-C selector 'openInOtherPane:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:190:80: warning: no method declared with Objective-C selector 'renameSelected:'
+    |                                                                          |- warning: no method declared with Objective-C selector 'renameSelected:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:193:86: warning: no method declared with Objective-C selector 'deleteSelected:'
+    |                                                                            |- warning: no method declared with Objective-C selector 'deleteSelected:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:200:89: warning: no method declared with Objective-C selector 'createDirectory:'
+    |                                                                               |- warning: no method declared with Objective-C selector 'createDirectory:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:206:30: warning: no method declared with Objective-C selector 'createFolderFromSelection:'
+    |                              |- warning: no method declared with Objective-C selector 'createFolderFromSelection:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:214:89: warning: no method declared with Objective-C selector 'addToFavorites:'
+    |                                                                           |- warning: no method declared with Objective-C selector 'addToFavorites:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:223:88: warning: no method declared with Objective-C selector 'generateAITags:'
+    |                                                                              |- warning: no method declared with Objective-C selector 'generateAITags:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:226:80: warning: no method declared with Objective-C selector 'duplicateScan:'
+    |                                                                        |- warning: no method declared with Objective-C selector 'duplicateScan:'
+FlowFinderNative/FlowFinderNative/UI/FFCommon.swift:231:81: warning: no method declared with Objective-C selector 'showInfoMenu:'
+    |                                                                         |- warning: no method declared with Objective-C selector 'showInfoMenu:'
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1235:38: warning: immutable value 'window' was never used; consider replacing with '_' or removing it [#NoUsage]
+     |                                      `- warning: immutable value 'window' was never used; consider replacing with '_' or removing it [#NoUsage]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1502:47: warning: 'duration' was deprecated in macOS 13.0: Use load(.duration) instead [#DeprecatedDeclaration]
+     |                                               `- warning: 'duration' was deprecated in macOS 13.0: Use load(.duration) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1508:35: warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+     |                                   `- warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1509:35: warning: 'naturalSize' was deprecated in macOS 13.0: Use load(.naturalSize) instead [#DeprecatedDeclaration]
+     |                                   `- warning: 'naturalSize' was deprecated in macOS 13.0: Use load(.naturalSize) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1509:67: warning: 'preferredTransform' was deprecated in macOS 13.0: Use load(.preferredTransform) instead [#DeprecatedDeclaration]
+     |                                                                   `- warning: 'preferredTransform' was deprecated in macOS 13.0: Use load(.preferredTransform) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1515:38: warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+     |                                      `- warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1519:76: warning: 'nominalFrameRate' was deprecated in macOS 13.0: Use load(.nominalFrameRate) instead [#DeprecatedDeclaration]
+     |                                                                        `- warning: 'nominalFrameRate' was deprecated in macOS 13.0: Use load(.nominalFrameRate) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1534:47: warning: 'duration' was deprecated in macOS 13.0: Use load(.duration) instead [#DeprecatedDeclaration]
+     |                                               `- warning: 'duration' was deprecated in macOS 13.0: Use load(.duration) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1540:35: warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+     |                                   `- warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1541:38: warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+     |                                      `- warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/ExpandableDetailsBar.swift:1545:42: warning: 'estimatedDataRate' was deprecated in macOS 13.0: Use load(.estimatedDataRate) instead [#DeprecatedDeclaration]
+     |                                          `- warning: 'estimatedDataRate' was deprecated in macOS 13.0: Use load(.estimatedDataRate) instead [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/BatchRenameWindowController.swift:551:60: warning: variable 'self' was written to, but never read
+    |                                                            `- warning: variable 'self' was written to, but never read
+FlowFinderNative/FlowFinderNative/UI/BatchRenameWindowController.swift:564:60: warning: variable 'self' was written to, but never read
+    |                                                            `- warning: variable 'self' was written to, but never read
+FlowFinderNative/FlowFinderNative/UI/BatchRenameWindowController.swift:590:60: warning: variable 'self' was written to, but never read
+    |                                                            `- warning: variable 'self' was written to, but never read
+FlowFinderNative/FlowFinderNative/UI/AppearanceSettingsView.swift:140:52: warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+    |                                                    `- warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/UI/AppearanceSettingsView.swift:141:29: warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+    |                             `- warning: 'onModeChanged' is deprecated: 使用 NotificationCenter 监听 .appearanceChanged 通知 [#DeprecatedDeclaration]
+FlowFinderNative/FlowFinderNative/Bridge/TagBridge.swift:168:17: warning: variable 'name' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+    |                 `- warning: variable 'name' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+FlowFinderNative/FlowFinderNative/Bridge/CoreBridge.swift:327:17: warning: keyword 'extension' does not need to be escaped in argument list
+     |                 `- warning: keyword 'extension' does not need to be escaped in argument list
+FlowFinderNative/FlowFinderNative/Bridge/CoreBridge.swift:344:17: warning: result of call to 'ff_cache_put' is unused [#NoUsage]
+     |                 `- warning: result of call to 'ff_cache_put' is unused [#NoUsage]
+
+RESULT: 0 errors, 108 warnings (all pre-existing; ambiguous ff_cancel_scan_by_id / ff_cancel_search_by_id errors RESOLVED by removing duplicate @_silgen_name declarations in FFIFunctions.swift)

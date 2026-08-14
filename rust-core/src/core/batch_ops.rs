@@ -5,9 +5,12 @@
 //! - Organize files by date (YYYY/MM/DD)
 //! - Organize files by file type (Images/, Documents/, etc.)
 
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use chrono::Datelike;
+
+use crate::core::safe_filename::validate_filename;
 
 /// A single rename operation.
 #[derive(Debug, Clone)]
@@ -91,26 +94,75 @@ pub fn parse_rename_pattern(
 /// Execute batch rename operations.
 ///
 /// Returns the number of successful renames.
+///
+/// # Safety contract
+///
+/// Every `new_name` is validated as a single bare file name (see
+/// [`validate_filename`]) and every target is pre-flighted before any rename
+/// runs. An invalid name (empty, separators, traversal, control characters)
+/// rejects the batch with [`io::ErrorKind::InvalidInput`]; an occupied or
+/// duplicated target rejects it with [`io::ErrorKind::AlreadyExists`]. In
+/// both cases **no file is renamed and no existing file is overwritten**.
+/// For a batch that passes validation the returned count equals the number
+/// of files actually renamed (per-file I/O failures are logged and skipped).
 pub fn batch_rename(
     items: &[RenameItem],
     progress: Option<BatchProgressCallback>,
 ) -> io::Result<usize> {
-    let total = items.len();
-    let mut succeeded = 0usize;
-
-    for (i, item) in items.iter().enumerate() {
+    // Phase 1 — validate every name and target up front so a bad item rejects
+    // the whole batch before any file is touched.
+    let mut plans = Vec::with_capacity(items.len());
+    let mut claimed: HashSet<PathBuf> = HashSet::new();
+    for item in items {
+        if let Err(msg) = validate_filename(&item.new_name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("new_name {:?} is not a valid file name: {}", item.new_name, msg),
+            ));
+        }
         let parent = Path::new(&item.original_path)
             .parent()
             .unwrap_or(Path::new(""));
         let new_path = parent.join(&item.new_name);
+        // Renaming a file onto its own current name is a no-op on the target
+        // OS and must stay allowed.
+        if new_path != Path::new(&item.original_path) {
+            if new_path.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("target already exists: {}", new_path.display()),
+                ));
+            }
+            if !claimed.insert(new_path.clone()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("duplicate target within batch: {}", new_path.display()),
+                ));
+            }
+        }
+        plans.push(new_path);
+    }
 
-        match std::fs::rename(&item.original_path, &new_path) {
+    // Phase 2 — execute; all names are legal and all targets are free, so a
+    // rename can only fail on a genuine I/O condition.
+    let total = items.len();
+    let mut succeeded = 0usize;
+
+    for (i, item) in items.iter().enumerate() {
+        let new_path = &plans[i];
+
+        match std::fs::rename(&item.original_path, new_path) {
             Ok(()) => {
                 succeeded += 1;
             }
             Err(e) => {
                 // P2-19 修复：使用 log::error! 替代 eprintln!，集成日志框架
-                log::error!("rename {} -> {} failed: {}", item.original_path, item.new_name, e);
+                log::error!(
+                    "rename {} -> {} failed: {}",
+                    item.original_path,
+                    new_path.display(),
+                    e
+                );
             }
         }
 
@@ -197,12 +249,26 @@ pub fn organize_by_date(
         let file_name = file_path.file_name().unwrap_or_default();
         let target_path = target_dir.join(file_name);
 
+        // Conflict protection: never overwrite an existing file in the target
+        // subdirectory — skip it and report via the log instead.
+        if target_path.exists() {
+            log::error!(
+                "move {} -> {} skipped: target already exists",
+                file_path.display(),
+                target_path.display()
+            );
+            if let Some(cb) = progress {
+                cb(i + 1, total, &file_name.to_string_lossy());
+            }
+            continue;
+        }
+
         match std::fs::rename(&file_path, &target_path) {
             Ok(()) => {
                 moved += 1;
             }
             Err(e) => {
-                // P2-19 修复：使用 log::error! 替代 eprintln!
+                // P2-19 修复：使用 log::error! 替代 eprintln!，集成日志框架
                 log::error!("move {} -> {} failed: {}", file_path.display(), target_path.display(), e);
             }
         }
@@ -252,12 +318,26 @@ pub fn organize_by_type(
         let file_name = file_path.file_name().unwrap_or_default();
         let target_path = target_dir.join(file_name);
 
+        // Conflict protection: never overwrite an existing file in the target
+        // subdirectory — skip it and report via the log instead.
+        if target_path.exists() {
+            log::error!(
+                "move {} -> {} skipped: target already exists",
+                file_path.display(),
+                target_path.display()
+            );
+            if let Some(cb) = progress {
+                cb(i + 1, total, &file_name.to_string_lossy());
+            }
+            continue;
+        }
+
         match std::fs::rename(&file_path, &target_path) {
             Ok(()) => {
                 moved += 1;
             }
             Err(e) => {
-                // P2-19 修复：使用 log::error! 替代 eprintln!
+                // P2-19 修复：使用 log::error! 替代 eprintln!，集成日志框架
                 log::error!("move {} -> {} failed: {}", file_path.display(), target_path.display(), e);
             }
         }
@@ -339,5 +419,262 @@ mod tests {
 
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         assert_eq!(items[0].new_name, format!("a_{}.txt", today));
+    }
+
+    // ── Wave1 regression tests (v0.7.5 fix plan, red before the fix) ──
+    //
+    // `batch_rename` joins `parent.join(new_name)` without validating
+    // `new_name`. These tests encode the CORRECT behavior (reject escapes,
+    // refuse to overwrite) and fail on the current code.
+
+    #[test]
+    fn test_batch_rename_traversal_rejected() {
+        let tmp = TempDir::new().unwrap();
+        // Source lives one level down so "../escaped.txt" resolves *inside*
+        // the TempDir — the test never writes outside its own sandbox.
+        let sub = tmp.path().join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let src = sub.join("victim.txt");
+
+        for (case, new_name) in [
+            ("dotdot-escape", "../escaped.txt"),
+            ("absolute-escape", "/ff_abs_escape_wave1.txt"),
+            ("empty-name", ""),
+        ] {
+            fs::write(&src, "payload").unwrap();
+            let items = vec![RenameItem {
+                original_path: src.to_string_lossy().into_owned(),
+                new_name: new_name.to_string(),
+            }];
+            // CORRECT: traversal / empty names are rejected.
+            let result = batch_rename(&items, None);
+            assert!(
+                result.is_err(),
+                "case {}: new_name {:?} must be rejected (path traversal), got {:?}",
+                case, new_name, result
+            );
+            // CORRECT: the source file must remain in place.
+            assert!(src.exists(), "case {}: source must not be moved by traversal", case);
+        }
+    }
+
+    #[test]
+    fn test_batch_rename_conflict_not_overwritten() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        fs::write(&a, "alpha-payload").unwrap();
+        fs::write(&b, "beta-payload").unwrap();
+
+        let items = vec![RenameItem {
+            original_path: a.to_string_lossy().into_owned(),
+            new_name: "b.txt".to_string(),
+        }];
+        // CORRECT: a rename onto an existing target must be refused.
+        let result = batch_rename(&items, None);
+        assert!(
+            result.is_err(),
+            "rename onto existing target must be rejected, got {:?}",
+            result
+        );
+        // CORRECT: the existing target's content must be preserved.
+        assert_eq!(
+            fs::read_to_string(&b).unwrap(),
+            "beta-payload",
+            "existing target must not be silently overwritten"
+        );
+        // CORRECT: the source must not be consumed.
+        assert!(a.exists(), "source must remain in place when rename is rejected");
+    }
+
+    // ── Wave1 T2 additions: validator-driven batch safety ─────────────
+
+    #[test]
+    fn test_batch_rename_valid_names_still_work() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        fs::write(&a, "alpha").unwrap();
+
+        let items = vec![RenameItem {
+            original_path: a.to_string_lossy().into_owned(),
+            new_name: "b.txt".to_string(),
+        }];
+        let result = batch_rename(&items, None);
+        assert_eq!(result.unwrap(), 1, "legal rename must succeed and count 1");
+        assert!(b.exists(), "target must exist after legal rename");
+        assert!(!a.exists(), "source must be consumed by legal rename");
+    }
+
+    #[test]
+    fn test_batch_rename_unicode_names_work() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("old.txt");
+        fs::write(&src, "payload").unwrap();
+
+        let items = vec![RenameItem {
+            original_path: src.to_string_lossy().into_owned(),
+            new_name: "照片 2024 🚀.txt".to_string(),
+        }];
+        let result = batch_rename(&items, None);
+        assert_eq!(result.unwrap(), 1, "Unicode new_name must be accepted");
+        assert!(tmp.path().join("照片 2024 🚀.txt").exists());
+    }
+
+    #[test]
+    fn test_batch_rename_conflict_rejects_whole_batch() {
+        // One conflicting item must reject the whole batch: the other item's
+        // rename must NOT be executed either.
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        let c = tmp.path().join("c.txt");
+        fs::write(&a, "alpha").unwrap();
+        fs::write(&b, "beta").unwrap();
+
+        let items = vec![
+            RenameItem {
+                original_path: a.to_string_lossy().into_owned(),
+                new_name: "c.txt".to_string(),
+            },
+            RenameItem {
+                original_path: b.to_string_lossy().into_owned(),
+                new_name: "a.txt".to_string(), // conflicts with existing a.txt
+            },
+        ];
+        let result = batch_rename(&items, None);
+        assert!(result.is_err(), "conflict must reject the whole batch");
+        assert!(a.exists(), "a.txt must not be overwritten");
+        assert!(b.exists(), "b.txt must not be consumed");
+        assert!(!c.exists(), "c.txt must not be created by a rejected batch");
+    }
+
+    #[test]
+    fn test_batch_rename_duplicate_target_rejected() {
+        // Two items resolving to the same (currently free) target must be
+        // rejected up front — otherwise the second rename would overwrite the
+        // first one's result.
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        fs::write(&a, "alpha").unwrap();
+        fs::write(&b, "beta").unwrap();
+
+        let items = vec![
+            RenameItem {
+                original_path: a.to_string_lossy().into_owned(),
+                new_name: "same.txt".to_string(),
+            },
+            RenameItem {
+                original_path: b.to_string_lossy().into_owned(),
+                new_name: "same.txt".to_string(),
+            },
+        ];
+        let result = batch_rename(&items, None);
+        assert!(result.is_err(), "duplicate target must be rejected");
+        assert!(a.exists() && b.exists(), "no source may be consumed");
+    }
+
+    #[test]
+    fn test_batch_rename_full_traversal_matrix_rejected() {
+        // Beyond the T1 cases, every path-tampering shape must be rejected at
+        // the batch level with the source left untouched.
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("victim.txt");
+        for (case, new_name) in [
+            ("current-dir", "."),
+            ("parent-dir", ".."),
+            ("dotdot-slash", "../x"),
+            ("nested", "a/b.txt"),
+            ("backslash", "a\\b.txt"),
+            ("absolute", "/abs/x.txt"),
+            ("empty", ""),
+            ("control-char", "a\u{0000}b"),
+        ] {
+            fs::write(&src, "payload").unwrap();
+            let items = vec![RenameItem {
+                original_path: src.to_string_lossy().into_owned(),
+                new_name: new_name.to_string(),
+            }];
+            let result = batch_rename(&items, None);
+            assert!(
+                result.is_err(),
+                "case {}: new_name {:?} must be rejected, got {:?}",
+                case, new_name, result
+            );
+            assert!(src.exists(), "case {}: source must not be moved", case);
+        }
+    }
+
+    #[test]
+    fn test_batch_rename_same_name_is_noop() {
+        // Renaming a file onto its own current name is a no-op and must not
+        // be reported as a conflict.
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.txt");
+        fs::write(&a, "alpha").unwrap();
+
+        let items = vec![RenameItem {
+            original_path: a.to_string_lossy().into_owned(),
+            new_name: "a.txt".to_string(),
+        }];
+        let result = batch_rename(&items, None);
+        assert_eq!(result.unwrap(), 1, "same-name rename must succeed");
+        assert!(a.exists(), "file must still exist after no-op rename");
+    }
+
+    #[test]
+    fn test_organize_by_date_skips_existing_target() {
+        let tmp = TempDir::new().unwrap();
+        // A file whose date subdir already contains a same-named file.
+        let src = tmp.path().join("photo.jpg");
+        fs::write(&src, "new payload").unwrap();
+        // Compute the exact subdir organize_by_date will derive from the
+        // file's modification time, then pre-seed a conflicting target there.
+        let modified = fs::metadata(&src)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let dt = chrono::DateTime::from_timestamp(modified, 0).unwrap();
+        let subdir = format!("{:04}/{:02}/{:02}", dt.year(), dt.month(), dt.day());
+        let target_dir = tmp.path().join(&subdir);
+        fs::create_dir_all(&target_dir).unwrap();
+        fs::write(target_dir.join("photo.jpg"), "existing payload").unwrap();
+
+        let moved = organize_by_date(&tmp.path().to_string_lossy(), "YYYY/MM/DD", None).unwrap();
+        assert_eq!(moved, 0, "conflicting file must be skipped, not moved");
+        assert_eq!(
+            fs::read_to_string(target_dir.join("photo.jpg")).unwrap(),
+            "existing payload",
+            "existing target must not be overwritten"
+        );
+        assert!(
+            src.exists(),
+            "source must remain in place when target exists"
+        );
+    }
+
+    #[test]
+    fn test_organize_by_type_skips_existing_target() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("photo.jpg"), "new payload").unwrap();
+        let target_dir = tmp.path().join("Images");
+        fs::create_dir_all(&target_dir).unwrap();
+        fs::write(target_dir.join("photo.jpg"), "existing payload").unwrap();
+
+        let moved = organize_by_type(&tmp.path().to_string_lossy(), None).unwrap();
+        assert_eq!(moved, 0, "conflicting file must be skipped, not moved");
+        assert_eq!(
+            fs::read_to_string(target_dir.join("photo.jpg")).unwrap(),
+            "existing payload",
+            "existing target must not be overwritten"
+        );
+        assert!(
+            tmp.path().join("photo.jpg").exists(),
+            "source must remain in place when target exists"
+        );
     }
 }

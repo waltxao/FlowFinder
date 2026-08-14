@@ -102,6 +102,23 @@ public class SearchPanelController: NSWindowController {
     /// D2: 主题变化监听 token
     private var appearanceObserver: NSObjectProtocol?
 
+    // MARK: - 内容索引（FTS5）状态
+
+    /// 内容索引状态栏容器（结果区表头下方）
+    private var contentIndexStatusBar: NSView!
+    /// 内容索引状态标签
+    private var contentIndexStatusLabel: NSTextField!
+    /// 内容索引构建进度条
+    private var contentIndexProgress: NSProgressIndicator!
+    /// 内容索引动作按钮（构建/取消/继续/重试/重建）
+    private var contentIndexActionButton: NSButton!
+    /// 内容索引状态轮询定时器
+    private var contentIndexPollTimer: Timer?
+    /// 当前查询的匹配路径集合（nil = 未查询 / 索引未就绪 / 内容筛选关闭）
+    private var contentMatches: Set<String>?
+    /// 内容查询是否在途（避免重复发起）
+    private var contentQueryInFlight: Bool = false
+
     // MARK: - 数据
 
     /// F9-D: scopePopup 选项索引（工具栏范围筛选 popup，与 typePopup/timePopup 配合缩小结果集）
@@ -123,6 +140,11 @@ public class SearchPanelController: NSWindowController {
 
     /// 双击结果跳转回调
     public var onNavigateToPath: ((String) -> Void)?
+
+    /// 结果详情标签（任务 T12：选中结果后动态更新，替代静态占位文案）
+    private var detailsLabel: NSTextField!
+    /// 任务 T12: 窗口是否已首次定位（首次显示 center，之后尊重 frame autosave 保存的 frame）
+    private var hasPresentedBefore = false
 
     private override init(window: NSWindow?) {
         super.init(window: window)
@@ -197,6 +219,45 @@ public class SearchPanelController: NSWindowController {
         progressIndicator.translatesAutoresizingMaskIntoConstraints = false
         resultsHeaderContainer.addSubview(progressIndicator)
 
+        // 内容索引状态栏（结果区表头下方，常驻显示索引状态 + 动作入口）
+        contentIndexStatusBar = makeSolidContainer()
+        contentIndexStatusBar.translatesAutoresizingMaskIntoConstraints = false
+
+        contentIndexStatusLabel = NSTextField(labelWithString: "内容索引：")
+        contentIndexStatusLabel.font = NSFont.systemFont(ofSize: 11)
+        contentIndexStatusLabel.textColor = NSColor.secondaryLabelColor
+        contentIndexStatusLabel.lineBreakMode = .byTruncatingTail
+        contentIndexStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        contentIndexProgress = NSProgressIndicator()
+        contentIndexProgress.style = .bar
+        contentIndexProgress.controlSize = .small
+        contentIndexProgress.isIndeterminate = true
+        contentIndexProgress.isDisplayedWhenStopped = false
+        contentIndexProgress.translatesAutoresizingMaskIntoConstraints = false
+
+        contentIndexActionButton = NSButton(title: "构建索引", target: self, action: #selector(contentIndexActionClicked))
+        contentIndexActionButton.bezelStyle = .rounded
+        contentIndexActionButton.controlSize = .small
+        contentIndexActionButton.font = NSFont.systemFont(ofSize: 11)
+        contentIndexActionButton.translatesAutoresizingMaskIntoConstraints = false
+
+        contentIndexStatusBar.addSubview(contentIndexStatusLabel)
+        contentIndexStatusBar.addSubview(contentIndexProgress)
+        contentIndexStatusBar.addSubview(contentIndexActionButton)
+
+        NSLayoutConstraint.activate([
+            contentIndexStatusLabel.leadingAnchor.constraint(equalTo: contentIndexStatusBar.leadingAnchor, constant: 12),
+            contentIndexStatusLabel.centerYAnchor.constraint(equalTo: contentIndexStatusBar.centerYAnchor),
+
+            contentIndexProgress.leadingAnchor.constraint(equalTo: contentIndexStatusLabel.trailingAnchor, constant: 8),
+            contentIndexProgress.centerYAnchor.constraint(equalTo: contentIndexStatusBar.centerYAnchor),
+            contentIndexProgress.trailingAnchor.constraint(equalTo: contentIndexActionButton.leadingAnchor, constant: -8),
+
+            contentIndexActionButton.trailingAnchor.constraint(equalTo: contentIndexStatusBar.trailingAnchor, constant: -12),
+            contentIndexActionButton.centerYAnchor.constraint(equalTo: contentIndexStatusBar.centerYAnchor),
+        ])
+
         // 结果列表
         scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -239,14 +300,16 @@ public class SearchPanelController: NSWindowController {
         // 保留 8pt 圆角卡片样式。
         let detailsBar = makeSolidContainer(cornerRadius: 8)
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
-        let detailsLabel = NSTextField(labelWithString: "选择一个结果以查看详情")
+        detailsLabel = NSTextField(wrappingLabelWithString: "选择一个结果以查看详情")
         detailsLabel.font = NSFont.systemFont(ofSize: 11)
         detailsLabel.textColor = NSColor.tertiaryLabelColor
+        detailsLabel.maximumNumberOfLines = 2
         detailsLabel.translatesAutoresizingMaskIntoConstraints = false
         detailsBar.addSubview(detailsLabel)
 
         // 组装结果区
         resultsPane.addSubview(resultsHeaderContainer)
+        resultsPane.addSubview(contentIndexStatusBar)
         resultsPane.addSubview(scrollView)
         resultsPane.addSubview(detailsBar)
 
@@ -298,9 +361,14 @@ public class SearchPanelController: NSWindowController {
             progressIndicator.trailingAnchor.constraint(equalTo: resultsHeaderContainer.trailingAnchor, constant: -12),
             progressIndicator.centerYAnchor.constraint(equalTo: resultsHeaderContainer.centerYAnchor),
 
+            contentIndexStatusBar.leadingAnchor.constraint(equalTo: resultsPane.leadingAnchor),
+            contentIndexStatusBar.trailingAnchor.constraint(equalTo: resultsPane.trailingAnchor),
+            contentIndexStatusBar.topAnchor.constraint(equalTo: resultsHeaderContainer.bottomAnchor),
+            contentIndexStatusBar.heightAnchor.constraint(equalToConstant: 26),
+
             scrollView.leadingAnchor.constraint(equalTo: resultsPane.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: resultsPane.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: resultsHeaderContainer.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: contentIndexStatusBar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
 
             detailsBar.leadingAnchor.constraint(equalTo: resultsPane.leadingAnchor, constant: 8),
@@ -371,6 +439,7 @@ public class SearchPanelController: NSWindowController {
         // 大搜索框（32pt 高）
         searchField = NSSearchField()
         searchField.placeholderString = "输入搜索关键词..."
+        searchField.setAccessibilityLabel("搜索关键词")
         searchField.target = self
         searchField.action = #selector(searchClicked)
         searchField.translatesAutoresizingMaskIntoConstraints = false
@@ -453,11 +522,25 @@ public class SearchPanelController: NSWindowController {
         // 显示窗口并置前
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
-        window?.center()
+        // 任务 T12: 仅首次显示时居中；之后尊重 setFrameAutosaveName 恢复的用户 frame，
+        // 避免每次打开覆盖用户调整过的窗口位置/尺寸。
+        if !hasPresentedBefore {
+            window?.center()
+            hasPresentedBefore = true
+        }
         // 设置搜索框为第一响应者
         DispatchQueue.main.async { [weak self] in
             self?.window?.makeFirstResponder(self?.searchField)
         }
+        // 启动内容索引状态轮询（窗口可见期间）
+        startContentIndexPolling()
+    }
+
+    /// 关闭面板时停掉仍在跑的本地 Rust 搜索与内容索引状态轮询，避免后台继续遍历
+    public override func close() {
+        SearchBridge.shared.cancelSearch()
+        stopContentIndexPolling()
+        super.close()
     }
 
     // MARK: - Actions
@@ -487,6 +570,8 @@ public class SearchPanelController: NSWindowController {
     private func performSearch() {
         guard !currentQuery.isEmpty else {
             searchGeneration += 1
+            contentMatches = nil
+            contentQueryInFlight = false
             results = []
             filteredResults = []
             resultsTableView.reloadData()
@@ -496,6 +581,11 @@ public class SearchPanelController: NSWindowController {
 
         // D1: 自增代次，使旧搜索的迟到回调被丢弃
         searchGeneration += 1
+        // 实际停掉仍在跑的本地 Rust 搜索（不再只是丢弃迟到结果）
+        SearchBridge.shared.cancelSearch()
+        // 清空内容匹配缓存：新查询需重新走一次索引查询
+        contentMatches = nil
+        contentQueryInFlight = false
         let generation = searchGeneration
         results = []
         filteredResults = []
@@ -614,10 +704,48 @@ public class SearchPanelController: NSWindowController {
         }
     }
 
-    /// 根据筛选侧边栏配置过滤结果并重载表格
+    /// 根据筛选侧边栏配置过滤结果并重载表格。
+    /// 内容包含时先确保索引查询在途（异步），其余筛选同步执行。
     private func applyFiltersAndReload() {
         let config = filterSidebar.config
-        // 读取工具栏 popup 状态
+        if config.matchContent && !currentQuery.isEmpty {
+            ensureContentMatches(for: currentQuery)
+        } else {
+            contentMatches = nil
+        }
+        reloadFilteredResults()
+    }
+
+    /// 确保当前查询的内容匹配集合已就绪：索引就绪时异步发起一次索引查询，
+    /// 未就绪时内容筛选禁用（不回退到主线程逐文件读取）。
+    private func ensureContentMatches(for query: String) {
+        guard ContentIndexBridge.shared.status() == .ready else {
+            contentMatches = nil
+            return
+        }
+        if contentMatches != nil || contentQueryInFlight { return }
+        contentQueryInFlight = true
+        let generation = searchGeneration
+        let escaped = escapeContentQuery(query)
+        ContentIndexBridge.shared.query(escaped, maxResults: 500) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard self.searchGeneration == generation else { return }
+                self.contentQueryInFlight = false
+                switch result {
+                case .success(let matches):
+                    self.contentMatches = matches
+                case .failure:
+                    self.contentMatches = []
+                }
+                self.reloadFilteredResults()
+            }
+        }
+    }
+
+    /// 实际执行筛选（同步，纯内存集合成员判断）+ 重载表格。
+    private func reloadFilteredResults() {
+        let config = filterSidebar.config
         let scopeIndex = ScopePopupIndex(rawValue: scopePopup.indexOfSelectedItem) ?? .all
         let typeIndex = typePopup.indexOfSelectedItem
         let timeIndex = timePopup.indexOfSelectedItem
@@ -636,6 +764,8 @@ public class SearchPanelController: NSWindowController {
                 return normalizePath(custom)
             }
         }()
+
+        let query = currentQuery
 
         filteredResults = results.filter { result in
             // 范围筛选：只保留路径以指定前缀开头的结果
@@ -666,9 +796,6 @@ public class SearchPanelController: NSWindowController {
                 }
                 if let cutoff = cutoff, modDate < cutoff { return false }
             }
-            // D3: 搜索条件筛选（matchFileName/matchContent/caseSensitive 在此客户端过滤实现；
-            // Rust ff_search 仅按文件名模糊匹配，不做内容搜索——客户端兜底覆盖两种模式）
-            let query = currentQuery
             // 文件名包含：默认开启；关闭时不再要求文件名匹配（但 Rust 端已按文件名返回结果，
             // 关闭此开关时保留所有返回项，不额外排除）
             if config.matchFileName && !query.isEmpty {
@@ -678,11 +805,12 @@ public class SearchPanelController: NSWindowController {
                     if !result.name.lowercased().contains(query.lowercased()) { return false }
                 }
             }
-            // 内容包含：需读取文件内容匹配（仅文本类文件；二进制/大文件跳过）
+            // 内容包含：用索引查询的匹配路径 Set 做 O(1) 成员判断，不再逐文件读取
             if config.matchContent && !query.isEmpty {
-                if !fileContainsText(path: result.path, query: query, caseSensitive: config.caseSensitive) {
+                if let matches = contentMatches, !matches.contains(result.path) {
                     return false
                 }
+                // contentMatches == nil：索引未就绪/查询未完成，内容筛选禁用（不过滤、不读文件）
             }
             return true
         }
@@ -695,15 +823,128 @@ public class SearchPanelController: NSWindowController {
         }
     }
 
-    /// D3: 读取文件内容检查是否包含查询文本（文本类小文件；二进制或 >4MB 跳过）
-    private func fileContainsText(path: String, query: String, caseSensitive: Bool) -> Bool {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe),
-              data.count <= 4 * 1024 * 1024 else { return false }
-        guard let content = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return false }
-        if caseSensitive {
-            return content.contains(query)
+    /// FTS5 phrase 查询转义（契约 §8.4）：双引号包裹 + 内部双引号翻倍，
+    /// 避免空格/引号/AND/OR/NEAR 被当作 FTS5 语法，实现子串式包含匹配。
+    private func escapeContentQuery(_ query: String) -> String {
+        let escaped = query.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+    }
+
+    // MARK: - 内容索引状态
+
+    /// 内容索引状态栏描述（纯函数，供 UI 与单元测试共用）。
+    /// 契约 §6.2 逐状态唯一映射：label / 是否显示进度 / 动作按钮文案与可见性。
+    struct ContentIndexStatusDescriptor: Equatable {
+        let label: String
+        let showsProgress: Bool
+        let showsActionButton: Bool
+        let actionTitle: String
+    }
+
+    static func contentIndexStatusDescriptor(status: ContentIndexStatus,
+                                             stats: ContentIndexStats?) -> ContentIndexStatusDescriptor {
+        switch status {
+        case .empty:
+            return ContentIndexStatusDescriptor(label: "内容索引尚未构建",
+                                                showsProgress: false, showsActionButton: true, actionTitle: "构建索引")
+        case .indexing:
+            let paused = stats?.paused ?? false
+            return ContentIndexStatusDescriptor(label: paused ? "内容索引构建已暂停" : "正在构建内容索引…",
+                                                showsProgress: true, showsActionButton: true,
+                                                actionTitle: paused ? "继续" : "取消")
+        case .ready:
+            return ContentIndexStatusDescriptor(label: "内容索引就绪（\(stats?.documentCount ?? 0) 个文件）",
+                                                showsProgress: false, showsActionButton: true, actionTitle: "重建")
+        case .error:
+            return ContentIndexStatusDescriptor(label: "内容索引错误：\(stats?.error ?? "未知错误")",
+                                                showsProgress: false, showsActionButton: true, actionTitle: "重试")
+        case .cancelled:
+            return ContentIndexStatusDescriptor(label: "内容索引构建已取消",
+                                                showsProgress: false, showsActionButton: true, actionTitle: "继续构建")
+        case .unavailable:
+            return ContentIndexStatusDescriptor(label: "内容搜索不可用",
+                                                showsProgress: false, showsActionButton: false, actionTitle: "")
         }
-        return content.lowercased().contains(query.lowercased())
+    }
+
+    /// 结果详情文案（纯函数，供选中回调与单元测试共用）。
+    /// - nil：无选中占位
+    /// - 非 nil：第一行 名称 · 大小 · 修改时间，第二行完整路径
+    static func detailsText(for result: FFSearchResult?) -> String {
+        guard let result = result else { return "选择一个结果以查看详情" }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        let sizeText = formatter.string(fromByteCount: Int64(result.size))
+        let dateText = result.modified > 0 ? FFFormat.date(Date(timeIntervalSince1970: TimeInterval(result.modified))) : "未知时间"
+        return "\(result.name) · \(sizeText) · 修改于 \(dateText)\n\(result.path)"
+    }
+
+    private func startContentIndexPolling() {
+        stopContentIndexPolling()
+        updateContentIndexStatusUI()
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.updateContentIndexStatusUI()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        contentIndexPollTimer = timer
+    }
+
+    private func stopContentIndexPolling() {
+        contentIndexPollTimer?.invalidate()
+        contentIndexPollTimer = nil
+    }
+
+    /// 内容索引状态机 → 状态行 UI（契约 §6.2 逐状态唯一映射，映射表抽为纯函数供测试）。
+    private func updateContentIndexStatusUI() {
+        let status = ContentIndexBridge.shared.status()
+        let stats = ContentIndexBridge.shared.stats()
+        let descriptor = Self.contentIndexStatusDescriptor(status: status, stats: stats)
+
+        contentIndexStatusLabel.stringValue = descriptor.label
+
+        if descriptor.showsProgress {
+            if let stats = stats, stats.totalCandidates > 0 {
+                contentIndexProgress.isIndeterminate = false
+                contentIndexProgress.maxValue = Double(stats.totalCandidates)
+                contentIndexProgress.doubleValue = Double(stats.processed)
+            } else {
+                contentIndexProgress.isIndeterminate = true
+            }
+            contentIndexProgress.isHidden = false
+            contentIndexProgress.startAnimation(nil)
+        } else {
+            contentIndexProgress.isHidden = true
+            contentIndexProgress.stopAnimation(nil)
+        }
+
+        contentIndexActionButton.isHidden = !descriptor.showsActionButton
+        if descriptor.showsActionButton {
+            contentIndexActionButton.title = descriptor.actionTitle
+        }
+    }
+
+    @objc private func contentIndexActionClicked() {
+        let status = ContentIndexBridge.shared.status()
+        switch status {
+        case .empty, .error, .cancelled:
+            startContentIndexBuild(mode: .incremental)
+        case .indexing:
+            if ContentIndexBridge.shared.stats()?.paused == true {
+                ContentIndexBridge.shared.resume()
+            } else {
+                ContentIndexBridge.shared.cancel()
+            }
+        case .ready:
+            startContentIndexBuild(mode: .rebuild)
+        case .unavailable:
+            break
+        }
+        updateContentIndexStatusUI()
+    }
+
+    private func startContentIndexBuild(mode: ContentIndexMode) {
+        let root = NSHomeDirectory()
+        _ = ContentIndexBridge.shared.start(rootPath: root, mode: mode)
     }
 
     /// F9-D: 规范化路径：去掉末尾的 "/"（根目录 "/" 除外），统一用于前缀比较
@@ -753,6 +994,18 @@ extension SearchPanelController: NSTableViewDataSource {
 // MARK: - NSTableViewDelegate
 
 extension SearchPanelController: NSTableViewDelegate {
+    /// 任务 T12: 选中结果后更新详情栏（替代静态"选择一个结果以查看详情"死 UI）。
+    /// 无选中时回退占位文案；文案由纯函数 detailsText 生成（可单测）。
+    public func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let tableView = notification.object as? NSTableView, tableView === resultsTableView else { return }
+        let row = resultsTableView.selectedRow
+        guard row >= 0, row < filteredResults.count else {
+            detailsLabel?.stringValue = Self.detailsText(for: nil)
+            return
+        }
+        detailsLabel?.stringValue = Self.detailsText(for: filteredResults[row])
+    }
+
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < filteredResults.count else { return nil }
         let result = filteredResults[row]
@@ -766,6 +1019,8 @@ extension SearchPanelController: NSTableViewDelegate {
                 ?? FFSearchNameCell()
             cell.identifier = cellID
             cell.configure(name: result.name, path: result.path)
+            // T13: 搜索结果行无障碍标签（文件名 + 大小）
+            cell.setAccessibilityLabel(FileEntryAccessibility.searchResultLabel(result))
             return cell
         }
 

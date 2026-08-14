@@ -47,6 +47,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 失败时仅记录日志，不阻断启动 —— L1 内存缓存仍然可用。
         initPersistentDirectoryCache()
 
+        // 初始化独立内容索引（FTS5）。db 路径位于
+        // ~/Library/Application Support/FlowFinder/content_index.sqlite。
+        // 失败时仅记录日志，不阻断启动 —— 搜索面板会显示对应状态并提供重建入口。
+        initContentIndex()
+
         // 创建主窗口
         let controller = MainWindowController()
         controller.showWindow(nil)
@@ -102,6 +107,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("[FlowFinder] L2 directory cache initialized at \(dbURL.path)")
         } catch {
             NSLog("[FlowFinder] Failed to initialize L2 directory cache at \(dbURL.path): \(error)")
+        }
+    }
+
+    /// 初始化独立内容索引（FTS5）。
+    ///
+    /// 在 `~/Library/Application Support/FlowFinder/` 下解析 `content_index.sqlite`
+    /// 路径并调用 `ContentIndexBridge.shared.initialize(dbPath:)`。目录创建复用
+    /// `initPersistentDirectoryCache` 已有的 appDir 逻辑。失败仅打印日志，不抛错、
+    /// 不阻断主界面 —— 搜索面板会通过状态机展示 error/empty 并提供重建入口。
+    private func initContentIndex() {
+        let fm = FileManager.default
+        let appSupportURL: URL
+        do {
+            appSupportURL = try fm.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+        } catch {
+            NSLog("[FlowFinder] Failed to locate Application Support directory: \(error)")
+            return
+        }
+
+        let appDir = appSupportURL.appendingPathComponent("FlowFinder", isDirectory: true)
+        let dbURL = appDir.appendingPathComponent("content_index.sqlite", isDirectory: false)
+
+        do {
+            try fm.createDirectory(
+                at: appDir,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            NSLog("[FlowFinder] Failed to create cache directory at \(appDir.path): \(error)")
+            return
+        }
+
+        do {
+            try ContentIndexBridge.shared.initialize(dbPath: dbURL.path)
+            NSLog("[FlowFinder] Content index initialized at \(dbURL.path)")
+        } catch {
+            NSLog("[FlowFinder] Failed to initialize content index at \(dbURL.path): \(error)")
         }
     }
 

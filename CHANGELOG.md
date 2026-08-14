@@ -4,6 +4,72 @@
 
 ---
 
+## [0.7.5] — 未发布（Unreleased）
+
+> 安全加固 + 独立内容索引 + 测试与发布基建（开发中，尚未发布）
+
+### 🔒 安全与数据保护
+- **批量重命名路径穿越修复**：`new_name` 专用文件名校验（拒绝 `/`、`\`、`..`、绝对路径、控制字符、空名）
+- **批量/整理操作冲突策略**：目标已存在时默认拒绝，不再静默覆盖（`batch_rename` / `organize_by_date` / `organize_by_type`）
+- **path_guard 全写入口接入**：复制/移动/删除/重命名/批量/并行操作均经路径安全校验
+- **FSEvents 生命周期状态化**：`starting/active/failed/stopped` 状态机 + `ff_fsevents_status`，启动失败可观察（不再假成功）
+- **取消隔离**：去重扫描/搜索按实例独立取消（`ff_scan_duplicates_ex` + `ff_cancel_scan_by_id`），全局取消标志移除
+
+### ⚡ 性能与可靠
+- **独立 SQLite FTS5 内容索引**：「内容包含」搜索改为后台可取消的索引查询（`content_index.sqlite` 独立于目录缓存，checkpoint 断点续建、增量失效、损坏自动备份重建）
+- **删除/撤销/重做后台化**：不再阻塞主线程；`isDeleting` / `deleteFailedPaths` / `paneFileOperationChanged` 状态机
+- **缓存并发修复**：SQLite WAL + busy_timeout + 连接池；空目录可缓存命中；缩略图清理节流
+- **标签+搜索组合过滤修复**：同时激活时取交集
+- **FFDebug 门控**：仅 DEBUG 编译生效 + 常驻句柄
+
+### 🧪 测试与工程
+- **可执行 Swift XCTest target**：`FlowFinderNativeTests` shared scheme，`make swift-test` 走 xcodebuild（65+ tests）
+- **FFI ABI/所有权锁定**：布局断言、回调借用契约、符号三方对比
+- **任务生命周期测试**：提交→进度→取消→历史→清空全链路
+- **fsevents 测试并发隔离**（12 处测试锁）
+
+### 🎨 界面
+- **主流程状态视图**：加载/空目录/错误+重试/删除进度统一呈现（`FFPaneStateOverlayView`）
+- **删除确认统一**：菜单/右键/键盘/重复扫描共用 `DeleteConfirmDialog.confirmDelete`
+- **搜索面板**：结果详情动态更新、窗口位置记忆（不再每次居中）
+- **主流程无障碍**：VoiceOver 标签、键盘焦点、动态字体、reduced-motion、列表/网格交互一致
+- **Pages 站**：375/768/1280 响应式修复、移动导航菜单、skip link、OG/canonical 元数据、对比度达标
+
+---
+
+## [0.7.4] — 2026-08-09
+
+> 全量稳定性修复 + FSEvents 真实现
+
+### 核心引擎（Rust Core）
+- **文件监听重写**：占位轮询 → 真实 FSEventStream（事件驱动 + 300ms 去抖）
+- **任务历史清理**：`ff_task_clear_history`，「清除已完成」按钮真正生效
+- **设置键名对齐**：`appearance_mode` ↔ `appearance.theme` 互通
+
+### 修复
+- 重命名拦截含 `/` 文件名；删除失败项保留并展示
+- 搜索竞态修复（代次校验）；主题跟随修复
+- 对话框统一键盘交互（Enter/Esc/自动聚焦）；标签药丸流式换行
+- 设置页快捷键真实生效；`SettingsActionTarget` 泄漏修复
+- 网格空格 QuickLook firstResponder 守卫；排序/面板激活双触发修复
+- 删除死代码 `ProgressDialog`；重复扫描删除统一「不再询问」标志
+
+---
+
+## [0.7.2] — 2026-08-07
+
+> 设置页全面大修 + 液态玻璃视觉重设计 + 撤销/重做与冲突处理修复
+
+- **设置页全面大修**：侧边栏导航 + 分区卡片布局（SettingsWindowController/SettingsSectionView 重构）
+- **液态玻璃视觉重设计**：DesignTokens/FFGlassView 层级与透明度体系重构
+- **撤销/重做闭环修复**：反向注册补全、对称注册、统一串行队列、注册延后到文件操作完成（消除 ⌘Z→⌘⇧Z 竞态与循环失效）
+- **复制/移动冲突弹窗**：替换/保留两者/跳过；部分失败时撤销数组对齐
+- **QuickLook 修复**：空格键在 tableView 层拦截转发；修饰键捕获实现访达拖拽语义
+- **详情栏**：动态高度、`.app` 版本号、两列均衡、路径点击交互
+- **收藏夹自绘高亮 / 搜索栏弹性 / 玻璃裁剪与亮线 / 工具面板高度** 等三轮 7 项修复
+
+---
+
 ## [0.7.0] — 2026-08-02
 
 > 11 项 UI 修复批量

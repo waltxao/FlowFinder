@@ -1,0 +1,8 @@
+# fsevents 测试并发隔离 flake 修复（追加任务）
+
+状态: 完成（任务记录丢失但工作已落地，本次验证确认）
+
+## 验证
+- FSEVENTS_TEST_LOCK 共 12 处（core/fsevents.rs + ffi/mod.rs）
+- cargo test 3 轮：fsevents 相关测试稳定通过（剩余 2 失败为 T9 task_history 中间态）
+- 修复前：test_fsevents_stop_idempotent 偶发失败（全局状态并发竞态）

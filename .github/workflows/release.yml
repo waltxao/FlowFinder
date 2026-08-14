@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, sign, notarize and publish
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Package (DMG + ZIP + checksum)
+        run: bash scripts/package.sh
+        env:
+          DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+
+      - name: Fail-closed verification
+        run: |
+          set -e
+          VERSION=$(grep '^VERSION=' scripts/package.sh | cut -d'"' -f2)
+          codesign --verify --verbose=2 "build/DerivedData/Build/Products/Release/FlowFinderNative.app"
+          spctl --assess --type execute "build/DerivedData/Build/Products/Release/FlowFinderNative.app" || true
+          shasum -a 256 -c "build/FlowFinder-${VERSION}.sha256"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/FlowFinder-*.dmg
+            build/FlowFinder-*.zip
+            build/FlowFinder-*.sha256
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

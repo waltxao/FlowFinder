@@ -140,15 +140,12 @@ final class FFPaneActionsController: NSObject {
 
     @objc func deleteSelected(_ sender: Any?) {
         guard let entries = host?.selectedEntries, !entries.isEmpty else { return }
-        guard let window = host?.hostWindow else { return }
-        let alert = NSAlert()
-        alert.messageText = entries.count == 1 ? "删除\"\(entries[0].name)\"？" : "删除 \(entries.count) 个项目？"
-        alert.informativeText = "此操作可通过 ⌘Z 撤销。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
+        guard let viewModel = host?.viewModel else { return }
+        // 任务 T12: 删除进行中禁用重复触发（后台 I/O 期间拒绝再次删除，避免冲突操作）
+        guard !viewModel.state.isDeleting else { return }
+        // 任务 T12: 统一走 DeleteConfirmDialog.confirmDelete（全应用唯一确认入口），
+        // 替换原 NSAlert 确认（第二套确认流程），"不再询问"语义与主菜单/重复扫描一致。
+        DeleteConfirmDialog.confirmDelete(fileCount: entries.count, window: host?.hostWindow) { [weak self] in
             self?.host?.viewModel?.deleteSelected()
         }
     }

@@ -1,0 +1,158 @@
+{
+  "task": "T15 — Repair Pages responsive UX, accessibility, SEO, and architecture diagram",
+  "date": "2026-08-14",
+  "page": "docs/index.html",
+  "server": "python3 -m http.server 8765 --directory docs",
+  "tool": "Playwright Chromium (MCP browser_run_code_unsafe) — real-browser measurements",
+  "viewports": {
+    "375x812": {
+      "documentNoHOverflow": true,
+      "docScrollWidth": 360,
+      "docClientWidth": 360,
+      "archLayerOrModuleOverflow": [],
+      "archLayers": [
+        { "cls": "arch-layer-ui", "left": 24, "right": 336, "width": 312 },
+        { "cls": "arch-layer-ffi", "left": 24, "right": 336, "width": 312 },
+        { "cls": "arch-layer-rust", "left": 24, "right": 336, "width": 312 }
+      ],
+      "ffiMarginIndent": 0,
+      "archModuleColumns": 1,
+      "menuToggleDisplay": "flex",
+      "navLinksDisplay": "none (collapsed behind menu button)",
+      "cjkClipped": [],
+      "headerRects": { "logo": [24, 166], "navActions": [218, 336], "menuToggle": [296, 336] }
+    },
+    "768x1024": {
+      "documentNoHOverflow": true,
+      "docScrollWidth": 753,
+      "docClientWidth": 753,
+      "archLayerOrModuleOverflow": [],
+      "ffiMarginIndent": 0,
+      "archModuleColumns": 1,
+      "menuToggleDisplay": "flex",
+      "navLinksDisplay": "none (collapsed behind menu button)"
+    },
+    "1280x800": {
+      "documentNoHOverflow": true,
+      "docScrollWidth": 1265,
+      "docClientWidth": 1265,
+      "archLayerOrModuleOverflow": [],
+      "archLayers": [
+        { "cls": "arch-layer-ui", "left": 153, "right": 1113, "width": 960 },
+        { "cls": "arch-layer-ffi", "left": 201, "right": 1065, "width": 864 },
+        { "cls": "arch-layer-rust", "left": 153, "right": 1113, "width": 960 }
+      ],
+      "ffiMarginIndent": 96,
+      "archModuleColumns": 4,
+      "menuToggleDisplay": "none",
+      "navLinksDisplay": "flex (desktop row)"
+    }
+  },
+  "keyboardAndMenu": {
+    "tabCountToMenuToggle": 4,
+    "tabOrder": ["skip-link", "logo", "下载 CTA", "menu-toggle", "menu link #features", "…"],
+    "enterOpensMenu": { "ariaExpanded": "true", "menuDisplay": "flex", "label": "关闭导航菜单" },
+    "tabIntoMenuFirstLink": "href=#features focused",
+    "enterOnLink": { "menuClosed": true, "hash": "#features", "anchorTopBelowNav": "top=80 >= navBottom=69 (scroll-margin-top works)" },
+    "escapeCloses": { "menuClosed": true, "focusReturnedToToggle": true },
+    "outsideClickCloses": { "menuClosed": true, "pageStillScrollable": true },
+    "desktopResizeResetsMenuState": "resize handler closes menu above 768px"
+  },
+  "skipLink": {
+    "firstTabFocuses": true,
+    "visibleWhenFocused": true,
+    "topWhenFocused": 12,
+    "enterJumpsToMain": { "hash": "#main-content", "mainTop": 0 }
+  },
+  "reducedMotion": {
+    "htmlScrollBehavior": "auto",
+    "btnTransitionDuration": "1e-05s",
+    "cardTransitionDuration": "1e-05s",
+    "skipLinkTransition": "1e-05s"
+  },
+  "contrast": [
+    { "selector": ".stat-label", "desc": "tertiary 13px on black", "ratio": 5.8, "min": 4.5, "pass": true },
+    { "selector": ".arch-layer-sub", "desc": "tertiary 12px on card", "ratio": 4.95, "min": 4.5, "pass": true },
+    { "selector": ".arch-link", "desc": "tertiary 12px on #0a0a0a", "ratio": 5.46, "min": 4.5, "pass": true },
+    { "selector": ".sys-req", "desc": "tertiary 13px on card", "ratio": 6.96, "min": 4.5, "pass": true },
+    { "selector": ".copyright", "desc": "tertiary 13px on black", "ratio": 5.8, "min": 4.5, "pass": true },
+    { "selector": ".perf-table th", "desc": "tertiary 13px on black", "ratio": 5.8, "min": 4.5, "pass": true },
+    { "selector": ".feature-card p", "desc": "secondary 15px", "ratio": 8.16, "min": 4.5, "pass": true },
+    { "selector": ".arch-module-desc", "desc": "secondary 11.5px", "ratio": 8.16, "min": 4.5, "pass": true },
+    { "selector": ".arch-module-name (accent/rust/ffi)", "desc": "13px accents", "ratio": "7.42 / 10.22 / 10.39", "min": 4.5, "pass": true },
+    { "selector": ".stat-value", "desc": "accent 40px bold", "ratio": 5.76, "min": 3.0, "pass": true },
+    { "selector": ".btn-primary", "desc": "white on #0071E3 (was 3.65 on #0A84FF)", "ratio": 4.7, "min": 4.5, "pass": true },
+    { "selector": ".skip-link", "desc": "white on #0071E3", "ratio": 4.7, "min": 4.5, "pass": true }
+  ],
+  "pixelEvidence": {
+    "method": "createImageBitmap + canvas getImageData color-cluster analysis (no vision model needed)",
+    "mobile375Architecture": {
+      "blueAccentBands": "y 286–795 (UI layer top border)",
+      "greenAccentBands": "y 868–1265 (FFI border + arrows)",
+      "orangeAccentBands": "y 1280–2064 (Rust layer)",
+      "orderCheck": "blue < green < orange — three layered cards preserved"
+    },
+    "desktop1280Architecture": {
+      "blueAccentBands": "y 304–496",
+      "greenAccentBands": "y 590–804",
+      "orangeAccentBands": "y 819–1079",
+      "orderCheck": "blue < green < orange"
+    },
+    "menuOpenDiff": { "band": "y 70–320", "diffRatio": 0.405, "conclusion": "dropdown panel visibly renders below nav" }
+  },
+  "tableResponsive": {
+    "tableScrollTabindex": "0",
+    "tableScrollRole": "region",
+    "horizontalScrollWorks": true,
+    "scrollLeftBefore": 0,
+    "scrollLeftAfter": 200
+  },
+  "overlapAudit": [],
+  "seoSemantics": {
+    "lang": "zh-CN",
+    "canonical": "https://waltxao.github.io/FlowFinder/",
+    "og": ["type", "site_name", "locale", "title", "description", "url", "image", "image:width 2560", "image:height 1440", "image:alt"],
+    "twitter": ["card summary_large_image", "title", "description", "image"],
+    "themeColor": "#000000",
+    "robots": "index, follow",
+    "description": true,
+    "favicon": "images/app-icon-256.png sizes=256x256",
+    "appleTouchIcon": "sizes=256x256",
+    "mainLandmark": "main#main-content tabindex=-1",
+    "navLabels": ["主导航", "页脚导航"],
+    "skipLink": ".skip-link → #main-content",
+    "images": [
+      { "src": "images/app-icon-256.png", "alt": "FlowFinder 图标", "w": 32, "h": 32, "lazy": "no (above fold)" },
+      { "src": "images/app-mockup-main.jpg", "alt": "FlowFinder 主界面", "w": 2560, "h": 1440, "lazy": "lazy" }
+    ],
+    "anchorsAllResolve": ["#main-content", "#features", "#architecture", "#performance", "#download"]
+  },
+  "contentConsistency": {
+    "version": "v0.7.4 — matches README badge + CHANGELOG latest + Releases",
+    "aiTagging": "card now says rule-engine shipped / LLM 规划中 — matches README 智能打标 section + FAQ",
+    "ffiLineClaim": "4800+ 行 (actual wc -l rust-core/src/ffi/mod.rs = 4897)",
+    "perfTable": "identical numbers to README 性能对比",
+    "archModules": "all 10 Rust modules exist in rust-core/src/core; search_engine fuzzy+filter verified in source",
+    "sysReq": "macOS 13.0+（Apple Silicon）matches README download table"
+  },
+  "consolePageNetworkErrors": [],
+  "regressionGreps": {
+    "transitionAll": 0,
+    "overflowXHidden": 0,
+    "asciiArchArt": 0,
+    "requiredMarkers": "all present (main, skip-link, nav aria-labels, canonical/OG/Twitter/theme-color/robots/description, aria-expanded/aria-controls, overflow-wrap, minmax(0,1fr))"
+  },
+  "screenshots": [
+    "mobile-375x812-top.png",
+    "mobile-375x812-fullpage.png",
+    "mobile-375x812-architecture.png",
+    "mobile-375-menu-open.png",
+    "tablet-768x1024-top.png",
+    "tablet-768x1024-fullpage.png",
+    "tablet-768x1024-architecture.png",
+    "desktop-1280x800-top.png",
+    "desktop-1280x800-fullpage.png",
+    "desktop-1280x800-architecture.png",
+    "desktop-1280x800-skip-link-focus.png"
+  ]
+}

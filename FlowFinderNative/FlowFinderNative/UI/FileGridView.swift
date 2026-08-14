@@ -37,6 +37,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
             nameLabel.stringValue = showExtensions ? entry.name : entry.displayName
             pathLabel.stringValue = entry.path
+            // T13: 网格 item 无障碍标签（文件名 + 类型 + 大小）
+            view.setAccessibilityLabel(FileEntryAccessibility.label(for: entry))
             // 任务 F11-7: 复位缩略图标志（item 重新绑定文件）
             didReceiveThumbnail = false
 
@@ -525,6 +527,9 @@ public class FileGridView: NSView {
     // state.selectedFiles 变更 -> @Published 发射形成循环（与 FileListView.isReloading 对称）
     private var isReloading: Bool = false
 
+    /// 任务 T12: 面板状态浮层（加载/空/错误+重试/删除进度），由 PaneState 真值驱动
+    private let stateOverlayView = FFPaneStateOverlayView()
+
     // 问题 7 根因修复：拖拽过程中持续捕获修饰键（用于 ⌘ 判断，访达语义）。
     // 在 draggingEntered/draggingUpdated 中持续写入，draggingEnded 复位。
     private var lastDragModifierFlags: NSEvent.ModifierFlags = []
@@ -535,6 +540,8 @@ public class FileGridView: NSView {
             cancellables.removeAll()
             collectionView.dataSource = self
             collectionView.delegate = self
+            // 任务 T12: 状态浮层绑定（由 PaneState 真值驱动，独立于网格刷新逻辑）
+            stateOverlayView.viewModel = viewModel
             // 任务 F10-8: 初始构建分组缓存
             rebuildDisplayEntries()
             viewModel?.$state
@@ -751,6 +758,16 @@ public class FileGridView: NSView {
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        // 任务 T12: 状态浮层叠加在 scrollView 之上（独立叠加层，不参与网格布局）
+        stateOverlayView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stateOverlayView)
+        NSLayoutConstraint.activate([
+            stateOverlayView.topAnchor.constraint(equalTo: topAnchor),
+            stateOverlayView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stateOverlayView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stateOverlayView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
         // 注册为拖拽目标（接收拖入的文件 URL）

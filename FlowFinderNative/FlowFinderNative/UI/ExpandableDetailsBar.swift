@@ -678,7 +678,7 @@ class ExpandableDetailsBar: NSView {
         }
         if animated {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.25
+                context.duration = FFMotion.animationDuration(0.25)
                 context.allowsImplicitAnimation = true
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 performLayout()

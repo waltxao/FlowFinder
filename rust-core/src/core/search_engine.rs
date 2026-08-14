@@ -4,9 +4,28 @@
 //! - [`search_files`] — simple text search across file names
 //! - [`search_with_filters`] — advanced search with file type, size, and date filters
 
-use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use walkdir::WalkDir;
+
+/// Execution limits and cooperative-cancellation configuration for a search.
+#[derive(Debug, Clone)]
+pub struct SearchConfig {
+    /// Stop after delivering this many results. `0` means unlimited.
+    pub max_results: usize,
+    /// Maximum directory recursion depth (`None` = unlimited). A depth of
+    /// `1` visits only the root's immediate children.
+    pub max_depth: Option<usize>,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            max_results: 500,
+            max_depth: None,
+        }
+    }
+}
 
 /// Filter criteria for advanced file search.
 #[derive(Debug, Clone, Default)]
@@ -58,20 +77,34 @@ pub fn fuzzy_match(haystack: &str, needle: &str) -> bool {
 
 /// Search for files matching `query` under `root_path`.
 ///
-/// Results are delivered through the callback as they are found.
+/// Results are delivered through the callback as they are found. The walk
+/// polls `cancel_token` at every entry and stops early when it is set; it
+/// also stops after `config.max_results` results and never descends deeper
+/// than `config.max_depth`.
 // P2-17 修复：改为回调消费结果模式，不返回 Vec，避免双重克隆。
 pub fn search_files<F>(
     root_path: &str,
     query: &str,
+    config: &SearchConfig,
+    cancel_token: &AtomicBool,
     callback: &mut F,
 ) -> Result<(), std::io::Error>
 where
     F: FnMut(SearchResult),
 {
-    for entry in WalkDir::new(root_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    let mut walker = WalkDir::new(root_path);
+    if let Some(depth) = config.max_depth {
+        walker = walker.max_depth(depth);
+    }
+
+    let mut delivered = 0usize;
+    for entry in walker.into_iter().filter_map(|e| e.ok()) {
+        if cancel_token.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if config.max_results != 0 && delivered >= config.max_results {
+            break;
+        }
         let name = entry.file_name().to_string_lossy().to_string();
         if fuzzy_match(&name, query) {
             let meta = entry.metadata().ok();
@@ -94,6 +127,7 @@ where
             };
             // 回调直接消费 result，无需克隆
             callback(result);
+            delivered += 1;
         }
     }
 
@@ -102,12 +136,17 @@ where
 
 /// Search for files with advanced filters.
 ///
-/// Results are delivered through the callback as they are found.
+/// Results are delivered through the callback as they are found. The walk
+/// polls `cancel_token` at every entry and stops early when it is set; it
+/// also stops after `config.max_results` results and never descends deeper
+/// than `config.max_depth`.
 // P2-17 修复：改为回调消费结果模式，不返回 Vec，避免双重克隆。
 pub fn search_with_filters<F>(
     root_path: &str,
     query: &str,
     filters: &SearchFilters,
+    config: &SearchConfig,
+    cancel_token: &AtomicBool,
     callback: &mut F,
 ) -> Result<(), std::io::Error>
 where
@@ -121,10 +160,19 @@ where
             .collect()
     });
 
-    for entry in WalkDir::new(root_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    let mut walker = WalkDir::new(root_path);
+    if let Some(depth) = config.max_depth {
+        walker = walker.max_depth(depth);
+    }
+
+    let mut delivered = 0usize;
+    for entry in walker.into_iter().filter_map(|e| e.ok()) {
+        if cancel_token.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if config.max_results != 0 && delivered >= config.max_results {
+            break;
+        }
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Name filter (fuzzy match)
@@ -187,6 +235,7 @@ where
         };
         // 回调直接消费 result，无需克隆
         callback(result);
+        delivered += 1;
     }
 
     Ok(())
@@ -221,9 +270,12 @@ mod tests {
     fn test_search_files_empty_dir() {
         let tmp = std::env::temp_dir();
         let mut results: Vec<SearchResult> = Vec::new();
+        let cancel = AtomicBool::new(false);
         let _ = search_files(
             &tmp.to_string_lossy(),
             "nonexistent_file_xyz_123",
+            &SearchConfig::default(),
+            &cancel,
             &mut |r| results.push(r),
         );
         // Should return empty results for non-matching query
@@ -245,10 +297,13 @@ mod tests {
         };
 
         let mut results: Vec<SearchResult> = Vec::new();
+        let cancel = AtomicBool::new(false);
         let _ = search_with_filters(
             &tmp.path().to_string_lossy(),
             "test",
             &filters,
+            &SearchConfig::default(),
+            &cancel,
             &mut |r| results.push(r),
         );
 
@@ -270,14 +325,175 @@ mod tests {
         };
 
         let mut results: Vec<SearchResult> = Vec::new();
+        let cancel = AtomicBool::new(false);
         let _ = search_with_filters(
             &tmp.path().to_string_lossy(),
             "",
             &filters,
+            &SearchConfig::default(),
+            &cancel,
             &mut |r| results.push(r),
         );
 
         assert_eq!(results.len(), 1, "Should find only .txt file");
         assert!(results[0].name.ends_with(".txt"));
+    }
+
+    #[test]
+    fn test_search_max_results_boundary() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for i in 0..10 {
+            std::fs::write(tmp.path().join(format!("data_{}.txt", i)), "x").unwrap();
+        }
+        let cancel = AtomicBool::new(false);
+
+        // Cap of 3 → exactly 3 results, even though 10 match.
+        let capped = SearchConfig {
+            max_results: 3,
+            max_depth: None,
+        };
+        let mut results: Vec<SearchResult> = Vec::new();
+        let _ = search_files(
+            &tmp.path().to_string_lossy(),
+            "data",
+            &capped,
+            &cancel,
+            &mut |r| results.push(r),
+        );
+        assert_eq!(results.len(), 3, "max_results cap must be respected");
+
+        // max_results = 0 → unlimited.
+        let unlimited = SearchConfig {
+            max_results: 0,
+            max_depth: None,
+        };
+        let mut all: Vec<SearchResult> = Vec::new();
+        let _ = search_files(
+            &tmp.path().to_string_lossy(),
+            "data",
+            &unlimited,
+            &cancel,
+            &mut |r| all.push(r),
+        );
+        assert_eq!(all.len(), 10, "max_results=0 must not cap results");
+    }
+
+    #[test]
+    fn test_search_max_depth() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let deep = tmp.path().join("sub").join("deep");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(tmp.path().join("top.txt"), "x").unwrap();
+        std::fs::write(tmp.path().join("sub").join("mid.txt"), "x").unwrap();
+        std::fs::write(deep.join("deep.txt"), "x").unwrap();
+
+        let config = SearchConfig {
+            max_results: 0,
+            max_depth: Some(1),
+        };
+        let cancel = AtomicBool::new(false);
+        let mut results: Vec<SearchResult> = Vec::new();
+        let _ = search_with_filters(
+            &tmp.path().to_string_lossy(),
+            "",
+            &SearchFilters::default(),
+            &config,
+            &cancel,
+            &mut |r| results.push(r),
+        );
+
+        assert!(
+            results.iter().any(|r| r.name == "top.txt"),
+            "depth-1 search must include the root's direct children"
+        );
+        assert!(
+            !results.iter().any(|r| r.name == "mid.txt"),
+            "depth-1 search must not descend into sub/"
+        );
+        assert!(
+            !results.iter().any(|r| r.name == "deep.txt"),
+            "depth-1 search must not reach depth 2"
+        );
+    }
+
+    #[test]
+    fn test_search_cancel_mid_walk() {
+        use std::sync::atomic::{AtomicBool as AB, AtomicUsize, Ordering as Ord};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        // A large flat directory so the walk outlasts the cancel request.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let total = 8000;
+        for i in 0..total {
+            std::fs::write(tmp.path().join(format!("file_{:05}.txt", i)), "x").unwrap();
+        }
+
+        let cancel = Arc::new(AB::new(false));
+        let cancel_in_thread = Arc::clone(&cancel);
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_in_thread = Arc::clone(&count);
+        let first_result = Arc::new(AB::new(false));
+        let first_in_thread = Arc::clone(&first_result);
+
+        let config = SearchConfig {
+            max_results: 0,
+            max_depth: None,
+        };
+        let filters = SearchFilters::default();
+
+        let handle = std::thread::spawn(move || {
+            let _ = search_with_filters(
+                &tmp.path().to_string_lossy(),
+                "",
+                &filters,
+                &config,
+                &cancel_in_thread,
+                &mut |_| {
+                    count_in_thread.fetch_add(1, Ord::Relaxed);
+                    first_in_thread.store(true, Ord::Relaxed);
+                },
+            );
+        });
+
+        // Wait for the walk to start delivering results, then cancel mid-walk.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !first_result.load(Ord::Relaxed) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(first_result.load(Ord::Relaxed), "walk should have started");
+        cancel.store(true, Ord::Relaxed);
+
+        handle.join().unwrap();
+
+        let delivered = count.load(Ord::Relaxed);
+        assert!(
+            delivered < total,
+            "cancelled walk must stop early: delivered {} of {}",
+            delivered,
+            total
+        );
+        // Callbacks are synchronous: once the search returns, no more can
+        // arrive, so the count is stable.
+        assert_eq!(delivered, count.load(Ord::Relaxed), "no late callbacks");
+    }
+
+    #[test]
+    fn test_search_pre_cancelled_emits_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for i in 0..20 {
+            std::fs::write(tmp.path().join(format!("file_{}.txt", i)), "x").unwrap();
+        }
+
+        let cancel = AtomicBool::new(true);
+        let mut results: Vec<SearchResult> = Vec::new();
+        let _ = search_files(
+            &tmp.path().to_string_lossy(),
+            "",
+            &SearchConfig::default(),
+            &cancel,
+            &mut |r| results.push(r),
+        );
+        assert!(results.is_empty(), "pre-cancelled search must emit nothing");
     }
 }

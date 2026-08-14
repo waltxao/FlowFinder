@@ -1,0 +1,166 @@
+warning: unused import: `std::path::PathBuf`
+   --> src/core/file_ops.rs:116:9
+    |
+116 |     use std::path::PathBuf;
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::collections::HashMap`
+ --> src/core/search_engine.rs:7:5
+  |
+7 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> src/ffi/mod.rs:18:5
+   |
+18 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/core/search_engine.rs:43:9
+   |
+43 |     let mut haystack_chars = haystack_lower.chars();
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `max_size`
+  --> src/core/thumbnails.rs:29:39
+   |
+29 | pub fn generate_thumbnail(path: &str, max_size: u32) -> io::Result<PathBuf> {
+   |                                       ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_size`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+    --> src/ffi/mod.rs:3348:9
+     |
+3348 |         unsafe {
+     |         ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `EXDEV` is never used
+  --> src/core/cow_copy.rs:33:7
+   |
+33 | const EXDEV: i32 = 18;
+   |       ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `ENOTSUP` is never used
+  --> src/core/cow_copy.rs:35:7
+   |
+35 | const ENOTSUP: i32 = 102;
+   |       ^^^^^^^
+
+warning: constant `FF_ERR_IO` is never used
+  --> src/core/task_scheduler.rs:28:7
+   |
+28 | const FF_ERR_IO: c_int = -3;
+   |       ^^^^^^^^^
+
+warning: field `running` is never read
+   --> src/core/task_scheduler.rs:162:5
+    |
+156 | pub struct TaskScheduler {
+    |            ------------- field in this struct
+...
+162 |     running: AtomicBool,
+    |     ^^^^^^^
+
+warning: methods `get_task` and `set_max_concurrent` are never used
+   --> src/core/task_scheduler.rs:239:8
+    |
+167 | impl TaskScheduler {
+    | ------------------ methods in this implementation
+...
+239 |     fn get_task(&self, id: u64) -> Option<Arc<Mutex<Task>>> {
+    |        ^^^^^^^^
+...
+256 |     fn set_max_concurrent(&self, max: usize) {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: constant `kCFStringEncodingUTF8` should have an upper case name
+   --> src/core/fsevents.rs:106:15
+    |
+106 |     pub const kCFStringEncodingUTF8: CFStringEncoding = 0x0800_0100;
+    |               ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(non_upper_case_globals)]` (part of `#[warn(nonstandard_style)]`) on by default
+help: convert the identifier to upper case
+    |
+106 -     pub const kCFStringEncodingUTF8: CFStringEncoding = 0x0800_0100;
+106 +     pub const K_CFSTRING_ENCODING_UTF8: CFStringEncoding = 0x0800_0100;
+    |
+
+warning: constant `kFSEventStreamEventIdSinceNow` should have an upper case name
+   --> src/core/fsevents.rs:108:15
+    |
+108 |     pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = 0xFFFF_FFFF_FFFF_FFFF;
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: convert the identifier to upper case
+    |
+108 -     pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = 0xFFFF_FFFF_FFFF_FFFF;
+108 +     pub const K_FSEVENT_STREAM_EVENT_ID_SINCE_NOW: FSEventStreamEventId = 0xFFFF_FFFF_FFFF_FFFF;
+    |
+
+warning: constant `kFSEventStreamCreateFlagFileEvents` should have an upper case name
+   --> src/core/fsevents.rs:110:15
+    |
+110 |     pub const kFSEventStreamCreateFlagFileEvents: FSEventStreamCreateFlags = 0x0000_0010;
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: convert the identifier to upper case
+    |
+110 -     pub const kFSEventStreamCreateFlagFileEvents: FSEventStreamCreateFlags = 0x0000_0010;
+110 +     pub const K_FSEVENT_STREAM_CREATE_FLAG_FILE_EVENTS: FSEventStreamCreateFlags = 0x0000_0010;
+    |
+
+warning: comparison is useless due to type limits
+   --> src/core/volumes.rs:717:17
+    |
+717 |         assert!(volumes.len() >= 0);
+    |                 ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `flowfinder-core` (lib test) generated 15 warnings (run `cargo fix --lib -p flowfinder-core --tests` to apply 8 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/flowfinder_core-7140d56ef26ccece)
+
+running 26 tests
+test core::batch_ops::tests::test_file_type_category ... ok
+test core::batch_ops::tests::test_batch_rename_conflict_not_overwritten ... ok
+test core::batch_ops::tests::test_batch_rename_conflict_rejects_whole_batch ... ok
+test core::batch_ops::tests::test_batch_rename_valid_names_still_work ... ok
+test core::batch_ops::tests::test_parse_rename_pattern_basic ... ok
+test core::batch_ops::tests::test_parse_rename_pattern_padded_index ... ok
+test core::batch_ops::tests::test_parse_rename_pattern_with_date ... ok
+test core::batch_ops::tests::test_batch_rename_same_name_is_noop ... ok
+test core::safe_filename::tests::accepts_dotfiles ... ok
+test core::batch_ops::tests::test_batch_rename_duplicate_target_rejected ... ok
+test core::safe_filename::tests::accepts_names_with_extension ... ok
+test core::batch_ops::tests::test_parse_rename_pattern_zero_index ... ok
+test core::safe_filename::tests::accepts_normal_unicode_names ... ok
+test core::safe_filename::tests::rejects_control_characters ... ok
+test core::safe_filename::tests::rejects_current_and_parent_dir ... ok
+test core::safe_filename::tests::rejects_empty_name ... ok
+test core::safe_filename::tests::rejects_path_separators ... ok
+test core::batch_ops::tests::test_batch_rename_full_traversal_matrix_rejected ... ok
+test core::batch_ops::tests::test_batch_rename_unicode_names_work ... ok
+test core::batch_ops::tests::test_batch_rename_traversal_rejected ... ok
+test core::batch_ops::tests::test_organize_by_date_skips_existing_target ... ok
+test ffi::tests::test_ff_batch_rename_valid_returns_count ... ok
+test core::batch_ops::tests::test_organize_by_type_skips_existing_target ... ok
+test ffi::tests::test_ff_batch_rename_conflict_maps_to_io ... ok
+test ffi::tests::test_ff_batch_rename_invalid_new_name_maps_to_invalid_path ... ok
+test core::batch_ops::tests::test_organize_by_type ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 121 filtered out; finished in 0.01s
+

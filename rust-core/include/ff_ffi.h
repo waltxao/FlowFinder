@@ -108,14 +108,41 @@ ff_error_t ff_scan_duplicates(const char *path,
                               FFDedupProgressCallback progress_callback,
                               FFDedupGroupCallback group_callback,
                               void *user_data);
+/* Like ff_scan_duplicates, but writes a per-scan cancel handle to
+ * *out_handle before the scan starts. Pass NULL to ignore the handle.
+ * Cancel the scan with ff_cancel_scan_by_id(handle). */
+ff_error_t ff_scan_duplicates_ex(const char *path,
+                                 FFDedupProgressCallback progress_callback,
+                                 FFDedupGroupCallback group_callback,
+                                 void *user_data,
+                                 uint64_t *out_handle);
+/* Cancel the current (first-started) active scan. Each scan owns an
+ * independent cancel flag, so other in-flight scans are unaffected. */
 void ff_cancel_scan(void);
+/* Cancel a specific scan by its handle. Returns FF_OK if cancelled,
+ * FF_ERR_NOT_FOUND if no running scan matches the handle. */
+ff_error_t ff_cancel_scan_by_id(uint64_t handle);
 
 /* ── File search API ───────────────────────────────────────── */
+typedef struct {
+    size_t max_results;  /* 0 = unlimited */
+    size_t max_depth;    /* 0 = unlimited */
+} FFSearchOptions;
+
 ff_error_t ff_search(const char *path, const char *query,
-                       FFSearchCallback callback, void *user_data);
+                     FFSearchCallback callback, void *user_data);
+ff_error_t ff_search_ex(const char *path, const char *query,
+                        const FFSearchOptions *options, uint64_t *out_handle,
+                        FFSearchCallback callback, void *user_data);
 ff_error_t ff_search_with_filters(const char *path, const char *query,
-                                   const FFSearchFilters *filters,
-                                   FFSearchCallback callback, void *user_data);
+                                  const FFSearchFilters *filters,
+                                  FFSearchCallback callback, void *user_data);
+ff_error_t ff_search_with_filters_ex(const char *path, const char *query,
+                                     const FFSearchFilters *filters,
+                                     const FFSearchOptions *options,
+                                     uint64_t *out_handle,
+                                     FFSearchCallback callback, void *user_data);
+ff_error_t ff_cancel_search_by_id(uint64_t handle);
 
 /* ── QuickLook preview API ─────────────────────────────────── */
 ff_error_t ff_get_preview_path(const char *path,
@@ -138,6 +165,58 @@ ff_error_t ff_dir_cache_clear(void);
 typedef void (*FSEventCallback)(const char *path, void *user_data);
 ff_error_t ff_fsevents_start(const char *path, FSEventCallback callback, void *user_data);
 ff_error_t ff_fsevents_stop(int32_t handle);
+
+/* FSEvents watcher lifecycle status codes (ff_fsevents_status). */
+#define FF_FSEVENTS_STATUS_STOPPED  0
+#define FF_FSEVENTS_STATUS_STARTING 1
+#define FF_FSEVENTS_STATUS_ACTIVE   2
+#define FF_FSEVENTS_STATUS_FAILED   3
+
+/* Returns the current FSEvents watcher lifecycle status:
+ * one of the FF_FSEVENTS_STATUS_* values above. */
+ff_error_t ff_fsevents_status(void);
+
+/* ── Content Index (FTS5) API ───────────────────────────────── */
+
+/* Content-index lifecycle status codes (ff_content_index_status). */
+#define FF_CONTENT_INDEX_STATUS_EMPTY        0
+#define FF_CONTENT_INDEX_STATUS_INDEXING     1
+#define FF_CONTENT_INDEX_STATUS_READY        2
+#define FF_CONTENT_INDEX_STATUS_ERROR        3
+#define FF_CONTENT_INDEX_STATUS_CANCELLED    4
+#define FF_CONTENT_INDEX_STATUS_UNAVAILABLE  5
+
+/* Content-index build modes (ff_content_index_start). */
+#define FF_CONTENT_INDEX_MODE_INCREMENTAL    0
+#define FF_CONTENT_INDEX_MODE_REBUILD        1
+
+/* Initialize the independent content index at db_path (resolved by Swift).
+ * Idempotent; path is set once per process. FTS5 missing → unavailable. */
+ff_error_t ff_content_index_init(const char *db_path);
+
+/* Query the status machine; returns an FF_CONTENT_INDEX_STATUS_* value. */
+int ff_content_index_status(void);
+
+/* Start a build on a background thread. mode = FF_CONTENT_INDEX_MODE_*.
+ * The cancel handle is written to *out_handle before the build starts;
+ * pass NULL to ignore it. */
+ff_error_t ff_content_index_start(const char *root_path, int mode,
+                                  uint64_t *out_handle);
+
+/* Cancel / pause / resume a specific build by its handle. */
+ff_error_t ff_content_index_cancel(uint64_t handle);
+ff_error_t ff_content_index_pause(uint64_t handle);
+ff_error_t ff_content_index_resume(uint64_t handle);
+
+/* Mark a path dirty for incremental processing (O(1), no I/O). */
+ff_error_t ff_content_index_mark_dirty(const char *path);
+
+/* Content query. Non-ready state returns FF_ERR_NOT_FOUND. */
+ff_error_t ff_content_index_query(const char *query, size_t max_results,
+                                  FFSearchCallback callback, void *user_data);
+
+/* Stats JSON (status/paused/document_count/...). Free with ff_free_string. */
+char *ff_content_index_stats(void);
 
 /* ── Batch Rename & Organize API (Sub-project 6) ─────────── */
 typedef struct {
@@ -199,6 +278,13 @@ ff_error_t ff_task_submit(const char *name, const char *description,
 ff_error_t ff_task_cancel(const char *task_id);
 ff_error_t ff_task_list(void (*callback)(const FFTaskInfo *task, void *user_data),
                         void *user_data);
+/* Like ff_task_list, but enumerates the task *history* (tasks already
+ * moved out of the active map). No Swift caller currently uses this
+ * entry point; it is exported for C clients and API symmetry.
+ * Callback receives the same FFTaskInfo struct with the same borrow
+ * contract: pointers are valid only for the duration of the callback. */
+ff_error_t ff_task_history(void (*callback)(const FFTaskInfo *task, void *user_data),
+                           void *user_data);
 ff_error_t ff_task_progress(const char *task_id, double *out_progress);
 ff_error_t ff_task_clear_history(void);
 

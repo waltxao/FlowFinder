@@ -1,0 +1,323 @@
+   Compiling flowfinder-core v0.6.9 (/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/rust-core)
+warning: unused import: `std::path::PathBuf`
+   --> src/core/file_ops.rs:116:9
+    |
+116 |     use std::path::PathBuf;
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/core/search_engine.rs:62:9
+   |
+62 |     let mut haystack_chars = haystack_lower.chars();
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+    --> src/ffi/mod.rs:4195:9
+     |
+4195 |         unsafe {
+     |         ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `EXDEV` is never used
+  --> src/core/cow_copy.rs:33:7
+   |
+33 | const EXDEV: i32 = 18;
+   |       ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `ENOTSUP` is never used
+  --> src/core/cow_copy.rs:35:7
+   |
+35 | const ENOTSUP: i32 = 102;
+   |       ^^^^^^^
+
+warning: constant `FF_ERR_IO` is never used
+  --> src/core/task_scheduler.rs:28:7
+   |
+28 | const FF_ERR_IO: c_int = -3;
+   |       ^^^^^^^^^
+
+warning: field `running` is never read
+   --> src/core/task_scheduler.rs:176:5
+    |
+170 | struct TaskSchedulerInner {
+    |        ------------------ field in this struct
+...
+176 |     running: AtomicBool,
+    |     ^^^^^^^
+
+warning: methods `get_task` and `set_max_concurrent` are never used
+   --> src/core/task_scheduler.rs:255:8
+    |
+181 | impl TaskScheduler {
+    | ------------------ methods in this implementation
+...
+255 |     fn get_task(&self, id: u64) -> Option<Arc<Mutex<Task>>> {
+    |        ^^^^^^^^
+...
+274 |     fn set_max_concurrent(&self, max: usize) {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: constant `kCFStringEncodingUTF8` should have an upper case name
+   --> src/core/fsevents.rs:106:15
+    |
+106 |     pub const kCFStringEncodingUTF8: CFStringEncoding = 0x0800_0100;
+    |               ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(non_upper_case_globals)]` (part of `#[warn(nonstandard_style)]`) on by default
+help: convert the identifier to upper case
+    |
+106 -     pub const kCFStringEncodingUTF8: CFStringEncoding = 0x0800_0100;
+106 +     pub const K_CFSTRING_ENCODING_UTF8: CFStringEncoding = 0x0800_0100;
+    |
+
+warning: constant `kFSEventStreamEventIdSinceNow` should have an upper case name
+   --> src/core/fsevents.rs:108:15
+    |
+108 |     pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = 0xFFFF_FFFF_FFFF_FFFF;
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: convert the identifier to upper case
+    |
+108 -     pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = 0xFFFF_FFFF_FFFF_FFFF;
+108 +     pub const K_FSEVENT_STREAM_EVENT_ID_SINCE_NOW: FSEventStreamEventId = 0xFFFF_FFFF_FFFF_FFFF;
+    |
+
+warning: constant `kFSEventStreamCreateFlagFileEvents` should have an upper case name
+   --> src/core/fsevents.rs:110:15
+    |
+110 |     pub const kFSEventStreamCreateFlagFileEvents: FSEventStreamCreateFlags = 0x0000_0010;
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: convert the identifier to upper case
+    |
+110 -     pub const kFSEventStreamCreateFlagFileEvents: FSEventStreamCreateFlags = 0x0000_0010;
+110 +     pub const K_FSEVENT_STREAM_CREATE_FLAG_FILE_EVENTS: FSEventStreamCreateFlags = 0x0000_0010;
+    |
+
+warning: comparison is useless due to type limits
+   --> src/core/volumes.rs:724:17
+    |
+724 |         assert!(volumes.len() >= 0);
+    |                 ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `flowfinder-core` (lib test) generated 12 warnings (run `cargo fix --lib -p flowfinder-core --tests` to apply 5 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s
+     Running unittests src/lib.rs (target/debug/deps/flowfinder_core-7140d56ef26ccece)
+
+running 202 tests
+test core::batch_ops::tests::test_file_type_category ... ok
+test core::batch_ops::tests::test_batch_rename_same_name_is_noop ... ok
+test core::batch_ops::tests::test_batch_rename_conflict_not_overwritten ... ok
+test core::batch_ops::tests::test_batch_rename_duplicate_target_rejected ... ok
+test core::batch_ops::tests::test_batch_rename_valid_names_still_work ... ok
+test core::batch_ops::tests::test_batch_rename_unicode_names_work ... ok
+test core::batch_ops::tests::test_batch_rename_conflict_rejects_whole_batch ... ok
+test core::batch_ops::tests::test_batch_rename_traversal_rejected ... ok
+test core::batch_ops::tests::test_parse_rename_pattern_zero_index ... ok
+test core::batch_ops::tests::test_parse_rename_pattern_basic ... ok
+test core::batch_ops::tests::test_parse_rename_pattern_padded_index ... ok
+test core::batch_ops::tests::test_parse_rename_pattern_with_date ... ok
+test core::batch_ops::tests::test_organize_by_date_skips_existing_target ... ok
+test core::content_index::tests::test_decode_latin1_fallback ... ok
+test core::content_index::tests::test_decode_utf16_be_bom ... ok
+test core::content_index::tests::test_decode_utf8_bom ... ok
+test core::content_index::tests::test_decode_utf16_le_bom ... ok
+test core::content_index::tests::test_decode_utf8_strict ... ok
+test core::batch_ops::tests::test_batch_rename_full_traversal_matrix_rejected ... ok
+test core::batch_ops::tests::test_organize_by_type ... ok
+test core::batch_ops::tests::test_organize_by_type_skips_existing_target ... ok
+test core::content_index::tests::test_is_indexable_allowlist ... ok
+test core::content_index::ffi_tests::test_ffi_init_build_query_stats_cancel_flow ... ok
+test core::content_index::tests::test_corruption_backup_and_rebuild ... ok
+test core::content_index::tests::test_cancel_commits_checkpoint_then_resume ... ok
+test core::content_index::tests::test_dirty_update_and_delete ... ok
+test core::content_index::tests::test_fts5_available_in_bundled_sqlite ... ok
+test core::content_index::tests::test_full_build_and_query ... ok
+test core::content_index::tests::test_future_version_untouched ... ok
+test core::dedup_engine::tests::run_scan_respects_cancel_token ... ok
+test core::dedup_engine::tests::test_full_hash_large_file ... ok
+test core::dedup_engine::tests::test_partial_hash_small_file ... ok
+test core::dedup_engine::tests::test_same_file_same_hash ... ok
+test core::file_ops::tests::test_copy_dir_recursive ... ok
+test core::file_ops::tests::test_copy_file ... ok
+test core::file_ops::tests::test_copy_file_overwrite ... ok
+test core::file_ops::tests::test_create_dir ... ok
+test core::file_ops::tests::test_create_dir_nested ... ok
+test core::file_ops::tests::test_delete_dir ... ok
+test core::file_ops::tests::test_delete_file ... ok
+test core::file_ops::tests::test_delete_file_not_found ... ok
+test core::file_ops::tests::test_move_file_same_volume ... ok
+test core::file_ops::tests::test_rename ... ok
+test core::file_ops::tests::test_rename_dir ... ok
+test core::content_index::tests::test_identity_unchanged_not_reindexed ... ok
+test core::content_index::tests::test_init_idempotent_preserves_data ... ok
+test core::content_index::tests::test_oversize_and_binary_skipped ... ok
+test core::fsevents::tests::test_fsevents_start_failure_failed_status ... ok
+test core::fsevents::tests::test_fsevents_start_failure_reported ... ok
+test core::fsevents::tests::test_fsevents_start_stop ... ok
+test core::dedup_engine::tests::run_scan_empty_dir_emits_done ... ok
+test core::parallel_ops::tests::test_parallel_copy_files ... ok
+test core::parallel_ops::tests::test_parallel_delete_files ... ok
+test core::parallel_ops::tests::test_parallel_move_files ... ok
+test core::path_guard::tests::accepts_normal_absolute_path ... ok
+test core::path_guard::tests::allows_filesystem_root_for_readonly ... ok
+test core::path_guard::tests::rejects_empty_path ... ok
+test core::path_guard::tests::rejects_filesystem_root_for_mutating ... ok
+test core::path_guard::tests::rejects_parent_dir_components ... ok
+test core::path_guard::tests::rejects_relative_path ... ok
+test core::safe_filename::tests::accepts_dotfiles ... ok
+test core::safe_filename::tests::accepts_names_with_extension ... ok
+test core::safe_filename::tests::accepts_normal_unicode_names ... ok
+test core::safe_filename::tests::rejects_control_characters ... ok
+test core::safe_filename::tests::rejects_current_and_parent_dir ... ok
+test core::safe_filename::tests::rejects_empty_name ... ok
+test core::safe_filename::tests::rejects_path_separators ... ok
+test core::search_engine::tests::test_fuzzy_match_basic ... ok
+test core::search_engine::tests::test_fuzzy_match_case_insensitive ... ok
+test core::search_engine::tests::test_fuzzy_match_empty ... ok
+test core::fsevents::tests::test_fsevents_start_stop_cycles ... ok
+test core::search_engine::tests::test_search_files_empty_dir ... ok
+test core::search_engine::tests::test_search_max_depth ... ok
+test core::fsevents::tests::test_fsevents_start_success_active ... ok
+test core::fsevents::tests::test_fsevents_stop_idempotent ... ok
+test core::fsevents::tests::test_fsevents_stop_without_start ... ok
+test core::search_engine::tests::test_search_with_filters_size ... ok
+test core::search_engine::tests::test_search_with_filters_file_type ... ok
+test core::settings::tests::test_parse_bool ... ok
+test core::settings::tests::test_settings_default ... ok
+test core::search_engine::tests::test_search_max_results_boundary ... ok
+test core::sqlite_cache::tests::test_cache_empty_dir_roundtrip ... ok
+test core::sqlite_cache::tests::test_cache_invalidate ... ok
+test core::search_engine::tests::test_search_pre_cancelled_emits_nothing ... ok
+test core::sqlite_cache::tests::test_cache_put_and_get ... ok
+test core::sqlite_cache::tests::test_init_cache_sets_user_version ... ok
+test core::sqlite_cache::tests::test_is_cache_fresh ... ok
+test core::tags::tests::test_classify_audio_extensions ... ok
+test core::tags::tests::test_classify_archive_extensions ... ok
+test core::tags::tests::test_classify_code_extensions ... ok
+test core::tags::tests::test_classify_document_extensions ... ok
+test core::tags::tests::test_classify_extension_case_insensitive ... ok
+test core::tags::tests::test_classify_image_extensions ... ok
+test core::tags::tests::test_classify_unknown_extension ... ok
+test core::tags::tests::test_classify_video_extensions ... ok
+test core::sqlite_cache::tests::test_pragma_wal_and_busy_timeout_configured ... ok
+test core::tags::tests::test_generate_tags_directory ... ok
+test core::tags::tests::test_generate_tags_image_file ... ok
+test core::tags::tests::test_generate_tags_nonexistent_path ... ok
+test core::tags::tests::test_generate_tags_large_file ... ok
+test core::tags::tests::test_generate_tags_no_extension ... ok
+test core::tags::tests::test_generate_tags_presentation ... ok
+test core::tags::tests::test_generate_tags_unknown_type ... ok
+test core::tags::tests::test_generate_tags_uppercase_extension ... ok
+test core::tags::tests::test_generate_tags_spreadsheet ... ok
+test core::tags::tests::test_tags_to_json_empty ... ok
+test core::tags::tests::test_tags_to_json_escapes_special_chars ... ok
+test core::tags::tests::test_tags_to_json_multiple ... ok
+test core::tags::tests::test_generate_tags_video_file ... ok
+test core::task_scheduler::tests::test_ff_task_clear_history_returns_ok ... ok
+test core::tags::tests::test_tags_to_json_single ... ok
+test core::task_scheduler::tests::test_task_clear_history ... ok
+test core::task_scheduler::tests::test_task_priority_from_i32 ... ok
+test core::task_scheduler::tests::test_task_scheduler_submit ... ok
+test core::task_scheduler::tests::test_task_type_from_str ... ok
+test core::thumbnails::tests::test_cleanup_throttle_logic ... ok
+test core::thumbnails::tests::test_cleanup_only_scans_once_within_interval ... ok
+test core::thumbnails::tests::test_generate_thumbnail_returns_not_generated ... ok
+test core::thumbnails::tests::test_get_thumbnail_cache_path ... ok
+test core::thumbnails::tests::test_is_supported_format ... ok
+test core::thumbnails::tests::test_generate_thumbnail_serves_fresh_cache ... ok
+test core::volumes::tests::test_health_check ... ok
+test core::volumes::tests::test_volume_manager_get_size ... ok
+test core::volumes::tests::test_volume_type_from_str ... ok
+test ffi::tests::test_abi_ff_duplicate_file_layout ... ok
+test ffi::tests::test_abi_ff_duplicate_group_layout ... ok
+test ffi::tests::test_abi_ff_entry_ref_layout ... ok
+test ffi::tests::test_abi_ff_rename_item_layout ... ok
+test ffi::tests::test_abi_ff_search_filters_layout ... ok
+test ffi::tests::test_abi_ff_search_options_layout ... ok
+test ffi::tests::test_abi_ff_search_result_layout ... ok
+test ffi::tests::test_abi_ff_task_info_layout ... ok
+test ffi::tests::test_abi_ff_volume_info_layout ... ok
+test core::volumes::tests::test_volume_manager_list ... ok
+test core::task_scheduler::tests::test_task_scheduler_cancel ... ok
+test ffi::tests::test_ff_batch_rename_conflict_maps_to_io ... ok
+test ffi::tests::test_ff_batch_rename_invalid_new_name_maps_to_invalid_path ... ok
+test ffi::tests::test_ff_batch_rename_valid_returns_count ... ok
+test ffi::tests::test_ff_cache_get_empty_dir_l2_hit ... ok
+test ffi::tests::test_ff_cache_get_miss ... ok
+test ffi::tests::test_ff_cache_init_null ... ok
+test ffi::tests::test_ff_cache_invalidate ... ok
+test ffi::tests::test_ff_cache_invalidate_null ... ok
+test ffi::tests::test_ff_cache_l2_recovery_after_l1_clear ... ok
+test ffi::tests::test_ff_dir_cache_clear ... ok
+test ffi::tests::test_ff_free_string_null ... ok
+test core::sqlite_cache::tests::test_concurrent_read_write_no_sqlite_busy ... ok
+test core::content_index::tests::test_pause_blocks_then_resume ... ok
+test core::content_index::tests::test_resume_skips_committed_checkpoint ... ok
+test core::content_index::tests::test_root_unreadable_sets_error ... ok
+test ffi::tests::test_ff_generate_tags_directory ... ok
+test ffi::tests::test_ff_generate_tags_image_file ... ok
+test ffi::tests::test_ff_generate_tags_nonexistent_file ... ok
+test ffi::tests::test_ff_generate_tags_null_path ... ok
+test ffi::tests::test_ff_generate_tags_unknown_type_returns_empty_array ... ok
+test ffi::tests::test_ff_get_file_type ... ok
+test ffi::tests::test_ff_get_file_type_no_extension ... ok
+test ffi::tests::test_ff_get_file_type_null ... ok
+test core::content_index::tests::test_schema_created_and_user_version_stamped ... ok
+test ffi::tests::test_ff_parallel_copy_empty ... ok
+test ffi::tests::test_ff_parallel_copy_null_inputs ... ok
+test ffi::tests::test_ff_parallel_copy ... ok
+test ffi::tests::test_ff_parallel_copy_partial_failure ... ok
+test ffi::tests::test_ff_parallel_delete_null_inputs ... ok
+test ffi::tests::test_ff_parallel_delete ... ok
+test ffi::tests::test_ff_parallel_move ... ok
+test core::content_index::tests::test_stats_reflects_document_count ... ok
+test ffi::tests::test_ff_settings_get_invalid_key ... ok
+test ffi::tests::test_ff_settings_get_set ... ok
+test ffi::tests::test_ff_settings_load ... ok
+test ffi::tests::test_ff_settings_save ... ok
+test ffi::tests::test_ff_settings_set_null ... ok
+test ffi::tests::test_ff_task_cancel_non_numeric_id ... ok
+test ffi::tests::test_ff_task_cancel_not_found ... ok
+test ffi::tests::test_ff_task_cancel_null ... ok
+test ffi::tests::test_ff_search_ex_max_results ... ok
+test ffi::tests::test_ff_task_history_null_callback ... ok
+test ffi::tests::test_ff_fsevents_callback_receives_path ... ok
+test ffi::tests::test_ff_task_list_null_callback ... ok
+test ffi::tests::test_ff_task_progress_not_found ... ok
+test ffi::tests::test_ff_task_progress_null_args ... ok
+test ffi::tests::test_ff_task_submit ... ok
+test ffi::tests::test_ff_task_submit_invalid_type ... ok
+test ffi::tests::test_ff_task_submit_null_name ... ok
+test ffi::tests::test_ff_task_submit_null_out_id ... ok
+test ffi::tests::test_ff_version_string ... ok
+test ffi::tests::test_ff_volume_eject_null ... ok
+test ffi::tests::test_ff_volume_health_check_null ... ok
+test ffi::tests::test_ff_volume_info_null ... ok
+test ffi::tests::test_ff_volume_list ... ok
+test ffi::tests::test_ff_volume_mount_null ... ok
+test ffi::tests::test_ff_fsevents_start_failure_reported ... ok
+test ffi::tests::test_rust_string_to_c_roundtrip ... ok
+test ffi::tests::test_ff_fsevents_start_stop ... ok
+test ffi::tests::test_ff_fsevents_status_transitions ... ok
+test ffi::tests::test_ff_task_history_completed_then_cleared ... ok
+test ffi::tests::test_ff_task_lifecycle_submit_progress_cancel_history_clear ... ok
+test core::search_engine::tests::test_search_cancel_mid_walk ... ok
+test ffi::tests::test_dedup_cancel_isolated ... ok
+test ffi::tests::test_new_scan_does_not_clear_previous_cancel ... ok
+test ffi::tests::test_dedup_cancel_noarg_isolated ... ok
+test ffi::tests::test_ff_search_ex_cancel_mid_walk ... ok
+
+test result: ok. 202 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.84s
+

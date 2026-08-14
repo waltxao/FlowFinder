@@ -2,6 +2,21 @@ import Foundation
 import Combine
 import AppKit  // v0.7.4 项 6: createFolderFromSelection 使用 NSWindow 弹冲突框
 
+// MARK: - 任务 T10 通知
+
+extension Notification.Name {
+    /// 任务 T10: 删除/撤销/重做文件系统操作状态变更通知。
+    /// 后台 I/O 完成回主线程更新 state 后发出，供 Wave4 T12 的 UI 订阅
+    /// （展示删除进度/失败详情）。本任务只保证状态机与通知正确，不改 UI 外观。
+    ///
+    /// userInfo 键（均可选，按操作类型填充）:
+    /// - "path": String，操作发生的目录路径
+    /// - "deletedCount": Int，成功移入废纸篓/删除的条目数
+    /// - "restoredCount": Int，成功恢复的条目数
+    /// - "failedPaths": [String]，失败的路径列表（typed）
+    static let paneFileOperationChanged = Notification.Name("PaneFileOperationChanged")
+}
+
 // MARK: - SortField
 
 enum SortField: String, CaseIterable {
@@ -46,6 +61,12 @@ struct PaneState {
     /// nil 表示未筛选；非 nil 表示仅显示含该标签的文件。
     /// 再次点击同一标签时置 nil 取消筛选。
     var tagFilter: Tag?
+    /// 任务 T10: 删除/撤销/重做文件系统操作进行中标志。
+    /// 后台 I/O 执行期间为 true，完成回主线程后置 false。供 Wave4 T12 UI 展示进度/禁用重复操作。
+    var isDeleting: Bool = false
+    /// 任务 T10: 最近一次删除/恢复失败的路径列表（typed 结构化失败文件名列表）。
+    /// 空数组表示无失败。供 Wave4 T12 UI 统一展示失败详情。
+    var deleteFailedPaths: [String] = []
 }
 
 // MARK: - PaneViewModel
@@ -88,6 +109,10 @@ public class PaneViewModel: ObservableObject {
     /// 每次发起新 loadDirectory 时自增，后台完成回主线程时校验代次一致才应用结果，
     /// 避免快速导航时旧后台加载覆盖新加载（竞态导致显示错误目录内容）。
     private var loadGeneration: Int = 0
+    /// 任务 T10: 删除/撤销/重做文件系统操作代次。
+    /// 每次发起新的删除/撤销/重做时自增；后台完成回主线程时校验代次一致才应用结果，
+    /// 避免快速连续操作（删除→删除、删除→撤销→重做）的后台完成回调互相覆盖 UI 状态。
+    private var deleteOperationGeneration: Int = 0
     /// 重命名后待发的内容变更通知标志（加载完成后发出，确保视图读到新数据）
     private var pendingContentChangeNotification = false
 
@@ -390,40 +415,60 @@ public class PaneViewModel: ObservableObject {
         let toDelete = state.selectedFiles
         guard !toDelete.isEmpty else { return }
 
-        // 使用 FileManager.trashItem 移到废纸篓（与 macOS Finder 行为一致），
-        // 并保留 trashURL 用于撤销时恢复。trashItem 必须在主线程调用，
-        // deleteSelected 由菜单/右键菜单触发，已在主线程。
-        var trashedItems: [(originalPath: String, trashURL: URL)] = []
-        var failedPaths: [String] = []
-        var failedCount = 0
+        // 任务 T10: 代次自增标记本次删除操作，后台完成回调按代次校验避免快速连续操作互相覆盖。
+        let generation = { self.deleteOperationGeneration += 1; return self.deleteOperationGeneration }()
+        state.isDeleting = true
+        state.deleteFailedPaths = []
+        state.error = nil
 
-        for entry in toDelete {
-            let url = URL(fileURLWithPath: entry.path)
-            do {
-                var resultingURL: NSURL?
-                try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
-                if let trashURL = resultingURL as URL? {
-                    trashedItems.append((originalPath: entry.path, trashURL: trashURL))
+        // 任务 T10: 文件系统 I/O（trashItem）移到后台队列，避免大量文件/慢盘/SMB 阻塞主线程。
+        // 主线程只负责 UndoManager 注册与 UI 更新（在后台完成回调 finishDelete 内进行）。
+        FFDebug.log("[DELETE-DIAG] deleteSelected 派发后台 count=\(toDelete.count) generation=\(generation) isMainThread=\(Thread.isMainThread)")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            FFDebug.log("[DELETE-DIAG] deleteSelected 后台开始 count=\(toDelete.count) isMainThread=\(Thread.isMainThread)")
+            var trashedItems: [(originalPath: String, trashURL: URL)] = []
+            var failedPaths: [String] = []
+            for entry in toDelete {
+                let url = URL(fileURLWithPath: entry.path)
+                do {
+                    var resultingURL: NSURL?
+                    try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
+                    if let trashURL = resultingURL as URL? {
+                        trashedItems.append((originalPath: entry.path, trashURL: trashURL))
+                    }
+                } catch {
+                    failedPaths.append(entry.path)
                 }
-            } catch {
-                failedCount += 1
-                failedPaths.append(entry.path)
+            }
+            FFDebug.log("[DELETE-DIAG] deleteSelected 后台完成 成功=\(trashedItems.count) 失败=\(failedPaths.count)")
+            DispatchQueue.main.async {
+                guard self.deleteOperationGeneration == generation else {
+                    FFDebug.log("[DELETE-DIAG] deleteSelected 丢弃过期完成 generation=\(generation) 当前=\(self.deleteOperationGeneration)")
+                    return
+                }
+                self.finishDelete(toDelete: toDelete, trashedItems: trashedItems, failedPaths: failedPaths)
             }
         }
+    }
+
+    /// 任务 T10: 后台删除完成后的主线程收尾。
+    /// 负责：注册撤销（必须主线程）、多目录缓存失效、失败项保留选中集、更新错误状态、发通知、刷新列表。
+    private func finishDelete(toDelete: [FileEntry],
+                              trashedItems: [(originalPath: String, trashURL: URL)],
+                              failedPaths: [String]) {
+        state.isDeleting = false
+        state.deleteFailedPaths = failedPaths
 
         if !trashedItems.isEmpty {
             // 失效所有涉及目录的父缓存（多目录选择时逐目录失效，而非只失效第一个）
-            var parentDirs = Set<String>()
-            for item in trashedItems {
-                parentDirs.insert((item.originalPath as NSString).deletingLastPathComponent)
-            }
+            let parentDirs = Self.parentDirectories(of: trashedItems.map { $0.originalPath })
             for dir in parentDirs {
                 try? CoreBridge.shared.invalidateCache(path: dir)
             }
 
             // 注册撤销：从废纸篓恢复（moveItem 回原路径）。undoTrashRestore 会同步注册 redo（redoTrashRestore），
-            // 而 redoTrashRestore 处理器内又会注册反向 undo（= undoTrashRestore），
-            // 从而形成无限撤销/重做闭环。
+            // 而 redoTrashRestore 处理器内又会注册反向 undo（= undoTrashRestore），从而形成无限撤销/重做闭环。
             let items = trashedItems
             let originalDir = items.first.map { ($0.originalPath as NSString).deletingLastPathComponent } ?? ""
             let actionName = "删除 \(items.count) 个项目"
@@ -431,57 +476,92 @@ public class PaneViewModel: ObservableObject {
                 vm.undoTrashRestore(items: items, originalDir: originalDir, actionName: actionName)
             }
             undoManager?.setActionName(actionName)
+        }
 
+        // 失败项保留在选中集（便于用户重试），成功项已移除
+        if !failedPaths.isEmpty {
+            let remaining = toDelete.filter { failedPaths.contains($0.path) }
+            state.selectedFiles = remaining
+            state.error = "\(failedPaths.count) 个项目删除失败：\(failedPaths.joined(separator: ", "))"
+        } else {
             state.selectedFiles.removeAll()
+        }
+
+        if !trashedItems.isEmpty || !failedPaths.isEmpty {
             loadDirectory()
         }
 
-        if failedCount > 0 {
-            // 失败项保留在选中集，便于用户重试；成功项已移除
-            if !failedPaths.isEmpty {
-                let remaining = toDelete.filter { failedPaths.contains($0.path) }
-                state.selectedFiles = remaining
-                if !remaining.isEmpty {
-                    state.selectedFiles = remaining
-                    loadDirectory()
-                }
-            }
-            state.error = "\(failedCount) 个项目删除失败：\(failedPaths.joined(separator: ", "))"
-        }
+        // 任务 T10: 状态变更通知（供 Wave4 T12 UI 订阅）
+        NotificationCenter.default.post(
+            name: .paneFileOperationChanged,
+            object: nil,
+            userInfo: [
+                "path": state.path,
+                "deletedCount": trashedItems.count,
+                "failedPaths": failedPaths,
+            ]
+        )
     }
 
     // MARK: - 删除撤销辅助（无限撤销/重做闭环）
 
     /// 撤销"删除"：从废纸篓恢复文件（moveItem 回原路径），并同步注册 redo（redoTrashRestore）。
     /// redoTrashRestore 处理器内又会注册反向 undo（= undoTrashRestore），从而形成无限撤销/重做闭环：
-    /// 撤销→重做→撤销→重做…可无限进行。trashItem/moveItem 须在主线程调用（deleteSelected 已在主线程）。
+    /// 撤销→重做→撤销→重做…可无限进行。
     func undoTrashRestore(items: [(originalPath: String, trashURL: URL)], originalDir: String, actionName: String) {
         // 必须先注册 redo 再执行恢复：registerUndo 在撤销会话内（isUndoing）会路由到 redo 栈，
-        // 否则重做栈可能为空，撤销后无法重做。
+        // 否则重做栈可能为空，撤销后无法重做。registerUndo 必须在主线程（此处即主线程）。
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.redoTrashRestore(items: items, actionName: actionName)
         }
-        var restoreFailed = 0
-        for (originalPath, trashURL) in items {
-            do {
-                try FileManager.default.moveItem(at: trashURL, to: URL(fileURLWithPath: originalPath))
-            } catch {
-                // I3: 原路径已被占用等原因导致恢复失败，记录并反馈
-                restoreFailed += 1
+
+        // 任务 T10: moveItem I/O 移到后台队列，避免阻塞主线程。
+        let generation = { self.deleteOperationGeneration += 1; return self.deleteOperationGeneration }()
+        state.isDeleting = true
+        state.deleteFailedPaths = []
+        state.error = nil
+
+        FFDebug.log("[DELETE-DIAG] undoTrashRestore 派发后台 count=\(items.count) generation=\(generation) isMainThread=\(Thread.isMainThread)")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var restoreFailed = 0
+            var failedPaths: [String] = []
+            for (originalPath, trashURL) in items {
+                do {
+                    try FileManager.default.moveItem(at: trashURL, to: URL(fileURLWithPath: originalPath))
+                } catch {
+                    // I3: 原路径已被占用等原因导致恢复失败，记录并反馈
+                    restoreFailed += 1
+                    failedPaths.append(originalPath)
+                }
             }
-        }
-        // 失效缓存以反映恢复
-        if let firstPath = items.first?.originalPath {
-            let dir = (firstPath as NSString).deletingLastPathComponent
-            try? CoreBridge.shared.invalidateCache(path: dir)
-        }
-        if restoreFailed > 0 {
-            state.error = "\(restoreFailed) 个项目无法恢复（原路径已被占用）"
-        }
-        // I4: 仅当 VM 仍在原目录时才刷新（用户可能已导航离开），
-        // 文件已恢复到原位置，用户导航回去后自然可见。
-        if state.path == originalDir {
-            loadDirectory()
+            DispatchQueue.main.async {
+                guard self.deleteOperationGeneration == generation else { return }
+                self.state.isDeleting = false
+                self.state.deleteFailedPaths = failedPaths
+                // 失效缓存以反映恢复（多目录逐目录失效，与 deleteSelected 一致）
+                let parentDirs = Self.parentDirectories(of: items.map { $0.originalPath })
+                for dir in parentDirs {
+                    try? CoreBridge.shared.invalidateCache(path: dir)
+                }
+                if restoreFailed > 0 {
+                    self.state.error = "\(restoreFailed) 个项目无法恢复（原路径已被占用）"
+                }
+                // I4: 仅当 VM 仍在原目录时才刷新（用户可能已导航离开），
+                // 文件已恢复到原位置，用户导航回去后自然可见。
+                if self.state.path == originalDir {
+                    self.loadDirectory()
+                }
+                NotificationCenter.default.post(
+                    name: .paneFileOperationChanged,
+                    object: nil,
+                    userInfo: [
+                        "path": self.state.path,
+                        "restoredCount": items.count - restoreFailed,
+                        "failedPaths": failedPaths,
+                    ]
+                )
+            }
         }
     }
 
@@ -490,14 +570,52 @@ public class PaneViewModel: ObservableObject {
     /// 从而形成无限撤销/重做闭环。
     func redoTrashRestore(items: [(originalPath: String, trashURL: URL)], actionName: String) {
         // 先注册反向 undo 再执行移入废纸篓：registerUndo 在重做会话内（isRedoing）路由到 undo 栈。
+        // registerUndo 必须在主线程（此处即主线程）。
         undoManager?.registerUndo(withTarget: self) { vm in
             let originalDir = items.first.map { ($0.originalPath as NSString).deletingLastPathComponent } ?? ""
             vm.undoTrashRestore(items: items, originalDir: originalDir, actionName: actionName)
         }
-        for (originalPath, _) in items {
-            try? FileManager.default.trashItem(at: URL(fileURLWithPath: originalPath), resultingItemURL: nil)
+
+        // 任务 T10: trashItem I/O 移到后台队列，避免阻塞主线程。
+        let generation = { self.deleteOperationGeneration += 1; return self.deleteOperationGeneration }()
+        state.isDeleting = true
+        state.deleteFailedPaths = []
+        state.error = nil
+
+        FFDebug.log("[DELETE-DIAG] redoTrashRestore 派发后台 count=\(items.count) generation=\(generation) isMainThread=\(Thread.isMainThread)")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var failedPaths: [String] = []
+            for (originalPath, _) in items {
+                do {
+                    try FileManager.default.trashItem(at: URL(fileURLWithPath: originalPath), resultingItemURL: nil)
+                } catch {
+                    failedPaths.append(originalPath)
+                }
+            }
+            DispatchQueue.main.async {
+                guard self.deleteOperationGeneration == generation else { return }
+                self.state.isDeleting = false
+                self.state.deleteFailedPaths = failedPaths
+                let parentDirs = Self.parentDirectories(of: items.map { $0.originalPath })
+                for dir in parentDirs {
+                    try? CoreBridge.shared.invalidateCache(path: dir)
+                }
+                if !failedPaths.isEmpty {
+                    self.state.error = "\(failedPaths.count) 个项目无法重新删除"
+                }
+                self.loadDirectory()
+                NotificationCenter.default.post(
+                    name: .paneFileOperationChanged,
+                    object: nil,
+                    userInfo: [
+                        "path": self.state.path,
+                        "deletedCount": items.count - failedPaths.count,
+                        "failedPaths": failedPaths,
+                    ]
+                )
+            }
         }
-        loadDirectory()
     }
 
     func renameFile(_ oldPath: String, to newName: String) {
@@ -749,6 +867,38 @@ public class PaneViewModel: ObservableObject {
         undoManager?.setActionName("移除标签")
     }
 
+    // MARK: - 任务 T10: 组合过滤纯函数
+
+    /// 综合应用标签筛选 + 搜索查询过滤（取交集）的纯函数。
+    /// 抽为静态纯函数以便单元测试（无 FFI/dylib/文件 I/O 依赖）。
+    /// - 标签筛选：仅保留 tags 含该标签的条目（按 id 或 name 匹配）
+    /// - 搜索过滤：name 包含匹配（大小写不敏感）
+    /// - 两者同时激活时取交集（先标签后查询、先查询后标签结果一致）
+    /// 不含显示配置过滤（隐藏/系统文件），由调用方 `applyDisplayFilter` 单独处理。
+    static func filterEntries(_ entries: [FileEntry], tagFilter: Tag?, searchQuery: String) -> [FileEntry] {
+        var result = entries
+        if let tagFilter = tagFilter {
+            result = result.filter { entry in
+                entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+            }
+        }
+        if !searchQuery.isEmpty {
+            let query = searchQuery.lowercased()
+            result = result.filter { $0.name.lowercased().contains(query) }
+        }
+        return result
+    }
+
+    /// 任务 T10: 从路径列表提取父目录集合（用于多目录缓存失效）。
+    /// 抽为静态纯函数以便单元测试（无 I/O 依赖）。
+    static func parentDirectories(of paths: [String]) -> Set<String> {
+        var dirs = Set<String>()
+        for path in paths {
+            dirs.insert((path as NSString).deletingLastPathComponent)
+        }
+        return dirs
+    }
+
     // MARK: - Private
 
     private func loadDirectory() {
@@ -873,58 +1023,52 @@ public class PaneViewModel: ObservableObject {
         // （loadDirectory 的初始分页走 applyFilterPaginated，不经过此处）
         cancelPagination()
         // 任务 F11-8: 综合应用标签筛选 + 搜索过滤，结果均基于 allFiles（原始列表）
-        var filtered = allFiles
+        let tagFilter = state.tagFilter
+        let searchQuery = state.searchQuery
         // v0.6.9: 显示配置过滤（隐藏文件 / 系统文件）
-        filtered = applyDisplayFilter(filtered)
-        // 1. 标签筛选：仅保留含该标签的文件（TagBridge.getTags 检查是否含该标签）
-        if let tagFilter = state.tagFilter {
-            // B7: 批量后台读取标签（xattr 是磁盘 I/O），避免大目录在主线程逐文件 getxattr 卡顿。
-            // 优先使用 FileEntry 已缓存的 tags；未缓存的路径收集后统一后台读取。
-            let uncached = filtered.filter { $0.tags.isEmpty }
-            let cached = filtered.filter { !$0.tags.isEmpty }
-            let pathsToRead = uncached.map { $0.path }
-            if pathsToRead.isEmpty {
-                // 全部已缓存，主线程直接过滤（纯内存操作）
-                filtered = cached.filter { entry in
-                    entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
-                }
-                state.files = filtered
-                return
-            }
-            // 快照当前筛选条件，后台读取完成后校验未变才应用
-            let generation = loadGeneration
-            let capturedQuery = state.searchQuery
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                guard let self = self else { return }
-                var tagMap: [String: [Tag]] = [:]
-                for path in pathsToRead {
-                    tagMap[path] = TagBridge.shared.getTags(path: path)
-                }
-                DispatchQueue.main.async {
-                    guard self.loadGeneration == generation else { return }
-                    guard self.state.tagFilter?.id == tagFilter.id else { return }
-                    guard self.state.searchQuery == capturedQuery else { return }
-                    // 用后台读取的标签补齐 entry.tags，再做过滤
-                    let allEntries = filtered.map { entry -> FileEntry in
-                        guard entry.tags.isEmpty, let tags = tagMap[entry.path] else { return entry }
-                        var updated = entry
-                        updated.tags = tags
-                        return updated
-                    }
-                    let result = allEntries.filter { entry in
-                        entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
-                    }
-                    self.state.files = result
-                }
-            }
+        let displayFiltered = applyDisplayFilter(allFiles)
+
+        // 无标签筛选：直接走纯函数过滤（搜索 + 标签交集），同步完成
+        guard let tagFilter = tagFilter else {
+            state.files = Self.filterEntries(displayFiltered, tagFilter: nil, searchQuery: searchQuery)
             return
         }
-        // 2. 搜索过滤：从（已标签筛选的）列表中按名称匹配
-        if !state.searchQuery.isEmpty {
-            let query = state.searchQuery.lowercased()
-            filtered = filtered.filter { $0.name.lowercased().contains(query) }
+
+        // 标签筛选：已缓存标签的条目直接过滤；未缓存的标签后台读取（xattr I/O）后补全再过滤。
+        // 任务 T10 修复：tagFilter 与 searchQuery 同时激活时取交集（此前提前 return 漏掉搜索过滤）。
+        let uncached = displayFiltered.filter { $0.tags.isEmpty }
+        let cached = displayFiltered.filter { !$0.tags.isEmpty }
+
+        if uncached.isEmpty {
+            // 全部已缓存，主线程直接过滤（纯内存操作）
+            state.files = Self.filterEntries(cached, tagFilter: tagFilter, searchQuery: searchQuery)
+            return
         }
-        state.files = filtered
+
+        // 快照当前筛选条件，后台读取完成后校验未变才应用
+        let pathsToRead = uncached.map { $0.path }
+        let generation = loadGeneration
+        let capturedQuery = searchQuery
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var tagMap: [String: [Tag]] = [:]
+            for path in pathsToRead {
+                tagMap[path] = TagBridge.shared.getTags(path: path)
+            }
+            DispatchQueue.main.async {
+                guard self.loadGeneration == generation else { return }
+                guard self.state.tagFilter?.id == tagFilter.id else { return }
+                guard self.state.searchQuery == capturedQuery else { return }
+                // 用后台读取的标签补齐 entry.tags，再做标签+搜索交集过滤
+                let completed = displayFiltered.map { entry -> FileEntry in
+                    guard entry.tags.isEmpty, let tags = tagMap[entry.path] else { return entry }
+                    var updated = entry
+                    updated.tags = tags
+                    return updated
+                }
+                self.state.files = Self.filterEntries(completed, tagFilter: tagFilter, searchQuery: searchQuery)
+            }
+        }
     }
 
     // MARK: - 任务 F11-11: 大目录分页加载（C5）
@@ -958,14 +1102,10 @@ public class PaneViewModel: ObservableObject {
             return
         }
 
-        // 综合标签 + 搜索过滤（与 applyFilter 相同逻辑，结果为完整过滤列表）
-        var filtered = allFiles
-        // v0.6.9: 显示配置过滤（隐藏文件 / 系统文件）
-        filtered = applyDisplayFilter(filtered)
-        if !state.searchQuery.isEmpty {
-            let query = state.searchQuery.lowercased()
-            filtered = filtered.filter { $0.name.lowercased().contains(query) }
-        }
+        // 综合标签 + 搜索过滤（与 applyFilter 相同逻辑，结果为完整过滤列表）。
+        // 此处 tagFilter 必为 nil（上方已对非 nil 情况 early return 到 applyFilter），
+        // 故仅需应用显示配置 + 搜索过滤。
+        let filtered = Self.filterEntries(applyDisplayFilter(allFiles), tagFilter: nil, searchQuery: state.searchQuery)
 
         // 捕获快照，供追加批次校验（避免闭包内读取 self.state 造成竞态）
         let generation = loadGeneration

@@ -459,6 +459,13 @@ pub type FFHealthCallback = extern "C" fn(
 /// - `callback` — Called for each volume.
 /// - `user_data` — Opaque pointer passed to callback.
 ///
+/// # Callback borrow contract
+///
+/// The `FFVolumeInfo` pointer (and its string fields) is valid only for the
+/// duration of the callback invocation; the Rust side frees the backing
+/// `CString`s immediately after the callback returns. The callback must
+/// **not** retain the pointer or any field for later use.
+///
 /// # Returns
 /// - `FF_OK` on success.
 #[no_mangle]

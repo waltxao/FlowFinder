@@ -42,12 +42,24 @@ public final class DuplicateScanBridge {
                 Unmanaged<DedupScanContext>.fromOpaque(contextPtr).release()
             }
 
+            // Rust 在扫描开始前把本次扫描的句柄写入 outHandle，主线程的
+            // cancelScan() 借它调用 ff_cancel_scan_by_id 只取消这一次扫描。
+            // 写入是单字对齐写，跨线程读在 macOS 上是良性竞态，不会撕裂。
+            let handlePtr = UnsafeMutablePointer<UInt64>.allocate(capacity: 1)
+            handlePtr.initialize(to: 0)
+            self.currentScanHandlePtr = handlePtr
+            defer {
+                self.currentScanHandlePtr = nil
+                handlePtr.deallocate()
+            }
+
             let result = path.withCString { cPath in
-                ff_scan_duplicates(
+                ff_scan_duplicates_ex(
                     cPath,
                     dedupProgressCallback,
                     dedupGroupCallback,
-                    contextPtr
+                    contextPtr,
+                    handlePtr
                 )
             }
 
@@ -60,10 +72,17 @@ public final class DuplicateScanBridge {
         }
     }
 
-    /// Cancel an ongoing duplicate scan
+    /// Cancel the ongoing scan by its per-scan handle (falls back to the
+    /// legacy whole-API cancel when the handle is not yet registered).
     public func cancelScan() {
-        ff_cancel_scan()
+        if let handlePtr = currentScanHandlePtr, handlePtr.pointee != 0 {
+            ff_cancel_scan_by_id(handlePtr.pointee)
+        } else {
+            ff_cancel_scan()
+        }
     }
+
+    private var currentScanHandlePtr: UnsafeMutablePointer<UInt64>?
 
     private func getLastError() -> String {
         guard let cString = ff_last_error() else {
@@ -108,9 +127,26 @@ public final class SearchBridge {
                 Unmanaged<SearchContext>.fromOpaque(contextPtr).release()
             }
 
+            // Same per-search handle box as the scan bridge: Rust writes the
+            // handle before the walk starts so cancelSearch() can cancel only
+            // this search via ff_cancel_search_by_id.
+            let handlePtr = UnsafeMutablePointer<UInt64>.allocate(capacity: 1)
+            handlePtr.initialize(to: 0)
+            self.currentSearchHandlePtr = handlePtr
+            defer {
+                self.currentSearchHandlePtr = nil
+                handlePtr.deallocate()
+            }
+
+            // ff_search (legacy) used Rust's default of 500 results; keep that
+            // behaviour explicitly here with the same option values.
+            var options = FFSearchOptions_C(max_results: 500, max_depth: 0)
+
             let result = path.withCString { cPath in
                 query.withCString { cQuery in
-                    ff_search(cPath, cQuery, searchCallback, contextPtr)
+                    withUnsafePointer(to: &options) { optPtr in
+                        ff_search_ex(cPath, cQuery, optPtr, handlePtr, searchCallback, contextPtr)
+                    }
                 }
             }
 
@@ -122,6 +158,15 @@ public final class SearchBridge {
             }
         }
     }
+
+    /// Cancel the ongoing search by its per-search handle.
+    public func cancelSearch() {
+        if let handlePtr = currentSearchHandlePtr, handlePtr.pointee != 0 {
+            ff_cancel_search_by_id(handlePtr.pointee)
+        }
+    }
+
+    private var currentSearchHandlePtr: UnsafeMutablePointer<UInt64>?
 
     private func getLastError() -> String {
         guard let cString = ff_last_error() else {

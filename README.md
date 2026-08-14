@@ -115,6 +115,33 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 ## 更新日志
 
+### v0.7.5（开发中，未发布）
+
+> 安全加固 + 独立 FTS5 内容索引 + 测试与发布基建。完整清单见 [CHANGELOG.md](CHANGELOG.md)。
+
+**安全与数据保护**
+- 批量重命名路径穿越修复：专用文件名校验（拒绝 `/`、`..`、绝对路径、控制字符、空名）
+- 批量/整理操作冲突策略：目标已存在默认拒绝，不再静默覆盖
+- FSEvents 生命周期状态化（starting/active/failed/stopped），启动失败可观察
+- 去重扫描/搜索按实例独立取消
+
+**性能与可靠**
+- 独立 SQLite FTS5 内容索引：「内容包含」搜索改为后台可取消索引查询（断点续建、增量失效、损坏自愈）
+- 删除/撤销/重做后台化，不再阻塞主线程
+- 缓存并发修复（WAL + busy_timeout + 连接池）；空目录可缓存；缩略图清理节流
+- 标签 + 搜索组合过滤取交集
+
+**工程与测试**
+- 可执行 Swift XCTest target（`make swift-test` 走 xcodebuild）
+- FFI ABI/所有权锁定 + 符号三方对比
+- 任务生命周期、fsevents 并发隔离等测试补齐
+
+**界面**
+- 主流程状态视图（加载/空/错误+重试/删除进度）
+- 删除确认全入口统一；搜索面板结果详情与窗口位置记忆
+- 主流程无障碍（VoiceOver/键盘/动态字体/reduced-motion）
+- Pages 站响应式与可访问性修复
+
 ### v0.7.4（2026-08-09）
 
 **核心引擎（Rust Core）**
@@ -261,19 +288,26 @@ make run
 ### 手动构建
 
 ```bash
+# 推荐：一条命令完成 Rust + Xcode Release 构建与 DMG 打包
+bash scripts/package.sh
+
+# 或分步手动构建（无 shared app scheme 时使用 -target）：
 # 1. 构建 Rust Core 库
 cd rust-core
 cargo build --release
 
-# 2. 构建 Swift 项目
+# 2. 构建 Swift 应用（-target 无需 shared scheme；若本地已有 shared scheme 也可用 -scheme）
 cd ../FlowFinderNative
-xcodebuild -project FlowFinderNative.xcodeproj \
-           -scheme FlowFinderNative \
-           -configuration Release \
-           -destination 'platform=macOS'
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  xcodebuild -project FlowFinderNative.xcodeproj \
+             -target FlowFinderNative \
+             -configuration Release
 
-# 3. 产物位于 build/Release/FlowFinderNative.app
+# 3. 产物位于 build/DerivedData/Build/Products/Release/FlowFinderNative.app
 ```
+
+> `scripts/package.sh` 会同时生成 `build/FlowFinder-<版本>.dmg`；签名与公证参数见
+> `scripts/package.sh` 顶部说明（无 Developer ID 时产 ad-hoc 本地签名）。
 
 ### 测试
 
@@ -284,7 +318,7 @@ make test
 # 仅 Rust 单元测试
 make rust-test
 
-# 仅 Swift 单元测试
+# 仅 Swift 单元测试（XCTest，经 xcodebuild 运行）
 make swift-test
 
 # 集成测试
@@ -293,6 +327,24 @@ make integration-test
 # 性能基准测试
 bash scripts/benchmark.sh
 ```
+
+> ⚠️ Swift 单元测试是 **XCTest**，必须通过 `xcodebuild test` 运行（`swift test`
+> 无法运行 XCTest）。`make swift-test` 会自动定位 `/Applications/Xcode*.app`
+> 并调用 `xcodebuild test -scheme FlowFinderNativeTests`。手动等价命令：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  xcodebuild test \
+    -project FlowFinderNative/FlowFinderNative.xcodeproj \
+    -scheme FlowFinderNativeTests \
+    -destination 'platform=macOS' \
+    CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
+```
+
+测试宿主 App 的 HOME 被 scheme 重定向到 `/tmp/flowfinder-test-home`（隔离测试，
+避免扫描开发者真实的 iCloud 同步 `~/Desktop` / `~/Documents`，其 `getattrlistbulk`
+元数据读取在 XCTest harness 下可能阻塞）。若未安装完整 Xcode（仅 Command Line
+Tools），`xcodebuild` 不可用，Swift XCTest 无法运行 —— 这是环境限制，Rust 测试不受影响。
 
 ### 项目结构
 

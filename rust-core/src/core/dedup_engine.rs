@@ -165,13 +165,10 @@ fn build_file(path: &str, size: u64) -> DuplicateFile {
 /// confirmed so far. This lets the frontend cancel a long-running scan
 /// without leaving the background task spinning.
 ///
-/// The token is taken as a `&AtomicBool` (rather than `Arc<AtomicBool>`)
-/// so the FFI layer can share a single process-global flag —
-/// `DEDUP_CANCEL` in `ffi/mod.rs` — between `ff_cancel_scan()` (which
-/// sets it) and `ff_scan_duplicates()` (which passes it here). With an
-/// `Arc<AtomicBool>` the FFI would have to fabricate a fresh local flag
-/// per call, and `ff_cancel_scan()` would have no way to reach inside
-/// the running scan — making the cancel button a no-op.
+/// The token is taken as a `&AtomicBool` so the FFI layer can hand each
+/// scan its own private flag (owned by the FFI cancellation registry in
+/// `ffi/mod.rs`). Every `ff_scan_duplicates` call allocates a fresh flag,
+/// so cancelling one scan never affects another in-flight scan.
 pub fn run_scan(
     paths: Vec<String>,
     on_event: &impl EventEmitter,

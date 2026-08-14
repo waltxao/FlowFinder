@@ -130,12 +130,15 @@ class FFModalSheet: NSWindow {
         titleLabel.textColor = .labelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerView.addSubview(titleLabel)
+        // T13: 隐藏标题栏的 sheet 需显式给窗口设置无障碍标题（VoiceOver 朗读弹窗名）
+        setAccessibilityTitle(title)
 
         closeButton = NSButton()
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.bezelStyle = .inline
         closeButton.image = NSImage(systemSymbolName: "xmark",
                                     accessibilityDescription: "关闭")
+        closeButton.setAccessibilityLabel("关闭")
         closeButton.imagePosition = .imageOnly
         closeButton.contentTintColor = .secondaryLabelColor
         closeButton.isBordered = false

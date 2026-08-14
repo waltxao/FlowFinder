@@ -65,6 +65,12 @@
 		FF0000000000000000200067 /* SquircleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200068; };
 		FF0000000000000000200069 /* ToolOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006A; };
 		FF000000000000000020006B /* FFFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006C; };
+		FF10002A000000000000002A /* ContentIndexBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000290000000000000029; };
+		FF1000310000000000000031 /* MainWindowController+MenuActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000300000000000000030; };
+		FF1000230000000000000023 /* FlowFinderNativeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000200000000000000020; };
+		FF1000240000000000000024 /* ContentIndexBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000210000000000000021; };
+		FF1000250000000000000025 /* PaneStateDeleteFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000220000000000000022; };
+		FF1000270000000000000027 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FF1000260000000000000026; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -128,6 +134,13 @@
 		FF000000000000000020006A /* ToolOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOverlayView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006C /* FFFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFFormat.swift; sourceTree = "<group>"; };
 		FF00000000000000002000A2 /* FFMiniThumbnailStackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFMiniThumbnailStackView.swift; sourceTree = "<group>"; };
+		FF1000290000000000000029 /* ContentIndexBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentIndexBridge.swift; sourceTree = "<group>"; };
+		FF1000300000000000000030 /* MainWindowController+MenuActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MainWindowController+MenuActions.swift"; sourceTree = "<group>"; };
+		FF1000200000000000000020 /* FlowFinderNativeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowFinderNativeTests.swift; sourceTree = "<group>"; };
+		FF1000210000000000000021 /* ContentIndexBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentIndexBridgeTests.swift; sourceTree = "<group>"; };
+		FF1000220000000000000022 /* PaneStateDeleteFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneStateDeleteFilterTests.swift; sourceTree = "<group>"; };
+		FF1000010000000000000001 /* FlowFinderNativeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FlowFinderNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FF1000260000000000000026 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -138,6 +151,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FF0000540000000000000054 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FF1000280000000000000028 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FF1000270000000000000027 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -145,6 +173,7 @@
 			isa = PBXGroup;
 			children = (
 				FF0000400000000000000040 /* FlowFinderNative */,
+				FF10002B000000000000002B /* FlowFinderNativeTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -211,6 +240,7 @@
 				FF0000000000000000200068 /* SquircleView.swift */,
 				FF000000000000000020006A /* ToolOverlayView.swift */,
 				FF000000000000000020006C /* FFFormat.swift */,
+				FF1000300000000000000030 /* MainWindowController+MenuActions.swift */,
 		);
 		path = UI;
 		sourceTree = "<group>";
@@ -242,6 +272,7 @@
 				FF000000000000000020000C /* ThemeManager.swift */,
 				FF0000000000000000200010 /* ThumbnailManager.swift */,
 				FF0000000000000000200064 /* FFLog.swift */,
+				FF1000290000000000000029 /* ContentIndexBridge.swift */,
 );
 			path = Bridge;
 			sourceTree = "<group>";
@@ -252,6 +283,25 @@
 				FF00001B000000000000001B /* Info.plist */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		FF0000620000000000000062 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FF0000100000000000000010 /* FlowFinderNative */,
+				FF1000010000000000000001 /* FlowFinderNativeTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FF10002B000000000000002B /* FlowFinderNativeTests */ = {
+			isa = PBXGroup;
+			children = (
+				FF1000200000000000000020 /* FlowFinderNativeTests.swift */,
+				FF1000210000000000000021 /* ContentIndexBridgeTests.swift */,
+				FF1000220000000000000022 /* PaneStateDeleteFilterTests.swift */,
+			);
+			path = Tests/FlowFinderNativeTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -276,7 +326,42 @@
 			productReference = FF0000100000000000000010 /* FlowFinderNative */;
 			productType = "com.apple.product-type.application";
 		};
+		FF1000100000000000000010 /* FlowFinderNativeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FF1000110000000000000011 /* Build configuration list for PBXNativeTarget "FlowFinderNativeTests" */;
+			buildPhases = (
+				FF10002C000000000000002C /* Sources */,
+				FF1000280000000000000028 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FF1000130000000000000013 /* PBXTargetDependency */,
+			);
+			name = FlowFinderNativeTests;
+			productName = FlowFinderNativeTests;
+			productReference = FF1000010000000000000001 /* FlowFinderNativeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		FF1000120000000000000012 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FF0000600000000000000060 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FF0000500000000000000050;
+			remoteInfo = FlowFinderNative;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		FF1000130000000000000013 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FF0000500000000000000050 /* FlowFinderNative */;
+			targetProxy = FF1000120000000000000012 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		FF0000600000000000000060 /* Project object */ = {
@@ -295,6 +380,7 @@
 			projectRoot = "";
 			targets = (
 				FF0000500000000000000050 /* FlowFinderNative */,
+				FF1000100000000000000010 /* FlowFinderNativeTests */,
 			);
 		};
 /* End PBXProject section */
@@ -330,7 +416,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n\n# Determine build mode based on CONFIGURATION\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n    BUILD_MODE=\"Release\"\nelse\n    BUILD_MODE=\"Debug\"\nfi\n\n# Run the Rust build script\n\"${SRCROOT}/../scripts/build-rust.sh\" \"${BUILD_MODE}\"\n";
+			shellScript = "set -e\n\n# Determine build mode based on CONFIGURATION\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n    BUILD_MODE=\"Release\"\nelse\n    BUILD_MODE=\"Debug\"\nfi\n\n# Run the Rust build script\n\"${SRCROOT}/../scripts/build-rust.sh\" \"${BUILD_MODE}\"\n\n# Fix install name (relink fallback keeps cargo absolute path)\nDYLIB_PATH=\"${SRCROOT}/FlowFinderNative/Libraries/libflowfinder_core.dylib\"\nif [ -f \"${DYLIB_PATH}\" ]; then\n    install_name_tool -id @rpath/libflowfinder_core.dylib \"${DYLIB_PATH}\" 2>/dev/null || true\n    codesign --force --sign - \"${DYLIB_PATH}\" 2>/dev/null || true\nfi\n";
 		};
 		FF0000550000000000000055 /* Copy Dylib */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -350,7 +436,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n\n# Copy the Rust dylib into the app bundle's Frameworks directory\nDYLIB_SRC=\"${SRCROOT}/FlowFinderNative/Libraries/libflowfinder_core.dylib\"\nFRAMEWORKS_DIR=\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/Frameworks\"\nDYLIB_DST=\"${FRAMEWORKS_DIR}/libflowfinder_core.dylib\"\n\nmkdir -p \"${FRAMEWORKS_DIR}\"\n\nif [ -f \"${DYLIB_SRC}\" ]; then\n    cp \"${DYLIB_SRC}\" \"${DYLIB_DST}\"\n    chmod +x \"${DYLIB_DST}\"\n    # Ensure install_name is @rpath (in case build-rust.sh didn't run)\n    install_name_tool -id @rpath/libflowfinder_core.dylib \"${DYLIB_DST}\" 2>/dev/null || true\n    echo \"Copied dylib to Frameworks: ${DYLIB_DST}\"\nelse\n    echo \"Warning: Rust dylib not found at ${DYLIB_SRC}\"\nfi\n";
+			shellScript = "set -e\n\n# Copy the Rust dylib into the app bundle's Frameworks directory\nDYLIB_SRC=\"${SRCROOT}/FlowFinderNative/Libraries/libflowfinder_core.dylib\"\nFRAMEWORKS_DIR=\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/Frameworks\"\nDYLIB_DST=\"${FRAMEWORKS_DIR}/libflowfinder_core.dylib\"\n\nmkdir -p \"${FRAMEWORKS_DIR}\"\n\nif [ -f \"${DYLIB_SRC}\" ]; then\n    cp \"${DYLIB_SRC}\" \"${DYLIB_DST}\"\n    chmod +x \"${DYLIB_DST}\"\n    # Ensure install_name is @rpath (in case build-rust.sh didn't run)\n    install_name_tool -id @rpath/libflowfinder_core.dylib \"${DYLIB_DST}\" 2>/dev/null || true\n    codesign --force --sign - \"${DYLIB_DST}\" 2>/dev/null || true\n    echo \"Copied dylib to Frameworks: ${DYLIB_DST}\"\nelse\n    echo \"Warning: Rust dylib not found at ${DYLIB_SRC}\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -413,11 +499,23 @@
 				FF0000000000000000200065 /* FFCommon.swift in Sources */,
 				FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */,
 				FF0000000000000000200067 /* SquircleView.swift in Sources */,
+				FF10002A000000000000002A /* ContentIndexBridge.swift in Sources */,
+				FF1000310000000000000031 /* MainWindowController+MenuActions.swift in Sources */,
 				FF0000000000000000200069 /* ToolOverlayView.swift in Sources */,
 				FF000000000000000020006B /* FFFormat.swift in Sources */,
 		);
 		runOnlyForDeploymentPostprocessing = 0;
 	};
+		FF10002C000000000000002C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FF1000230000000000000023 /* FlowFinderNativeTests.swift in Sources */,
+				FF1000240000000000000024 /* ContentIndexBridgeTests.swift in Sources */,
+				FF1000250000000000000025 /* PaneStateDeleteFilterTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -628,6 +726,54 @@
 			};
 			name = Release;
 		};
+		FF1000150000000000000015 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../rust-core/include",
+				);
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.flowfinder.native.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FlowFinderNative.app/Contents/MacOS/FlowFinderNative";
+			};
+			name = Debug;
+		};
+		FF1000160000000000000016 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../rust-core/include",
+				);
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.flowfinder.native.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FlowFinderNative.app/Contents/MacOS/FlowFinderNative";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -645,6 +791,15 @@
 			buildConfigurations = (
 				FF0000800000000000000080 /* Debug */,
 				FF0000810000000000000081 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FF1000110000000000000011 /* Build configuration list for PBXNativeTarget "FlowFinderNativeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FF1000150000000000000015 /* Debug */,
+				FF1000160000000000000016 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

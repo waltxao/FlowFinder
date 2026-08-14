@@ -73,7 +73,17 @@ public struct FFSearchResult {
     public let isDir: Bool
 }
 
-/// Search filter criteria
+/// Search filter criteria.
+///
+/// ⚠️ DEAD FOR FFI — do NOT pass an instance of this struct by pointer to
+/// `ff_search_with_filters` / `ff_search_with_filters_ex`. Its Swift layout
+/// (Optional<String> / Optional<UInt64> / Optional<Int64>) does NOT match the
+/// C `FFSearchFilters` layout declared in `ff_ffi.h` (plain values + `has_*`
+/// presence flags). The C functions take `UnsafeRawPointer?` and expect a
+/// pointer to the C-layout struct; passing `&filters` here would be an ABI
+/// mismatch. This type is retained only as a Swift value object for
+/// constructing/reading filter values in tests; no production caller passes
+/// it across the FFI boundary.
 public struct FFSearchFilters {
     public var fileTypes: String?
     public var minSize: UInt64?
@@ -123,6 +133,19 @@ public struct FFSearchResult_C {
     public var size: UInt64
     public var modified: Int64
     public var is_dir: Bool
+}
+
+/// C-compatible search execution options (matches Rust FFSearchOptions).
+/// `max_results` caps delivered results (0 = unlimited); `max_depth` caps
+/// directory recursion (0 = unlimited).
+public struct FFSearchOptions_C {
+    public var max_results: Int
+    public var max_depth: Int
+
+    public init(max_results: Int = 0, max_depth: Int = 0) {
+        self.max_results = max_results
+        self.max_depth = max_depth
+    }
 }
 
 // MARK: - FFI Function Declarations
@@ -278,6 +301,28 @@ public func ff_scan_duplicates(
 @_silgen_name("ff_cancel_scan")
 public func ff_cancel_scan()
 
+/// Scan for duplicate files, exposing a per-scan cancellation handle.
+/// The handle is written to `outHandle` before the scan starts, so another
+/// thread can cancel this specific scan via `ff_cancel_scan_by_id`.
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_scan_duplicates_ex")
+public func ff_scan_duplicates_ex(
+    _ path: UnsafePointer<CChar>,
+    _ progressCallback: @convention(c) (Int, Int, UnsafeMutableRawPointer?) -> Void,
+    _ groupCallback: @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void,
+    _ userData: UnsafeMutableRawPointer?,
+    _ outHandle: UnsafeMutablePointer<UInt64>?
+) -> Int32
+
+/// Cancel a specific duplicate scan by its handle.
+/// - Returns: 0 when the scan was found and cancelled; -4 (not found) when
+///   no running scan with `handle` exists.
+///
+/// Note: Declared in `ff_ffi.h` (imported via the bridging header as
+/// `ff_error_t ff_cancel_scan_by_id(uint64_t)`); no `@_silgen_name`
+/// redeclaration here — a same-param redeclaration with a differing return
+/// type would collide with the C import and make calls ambiguous.
+
 // MARK: - File Search FFI Declarations
 
 /// Search for files matching query under path
@@ -299,7 +344,9 @@ public func ff_search(
 /// - Parameters:
 ///   - path: Root directory path (C string)
 ///   - query: Search query (C string)
-///   - filters: Pointer to filter criteria struct
+///   - filters: Pointer to a C-layout `FFSearchFilters` struct (see ff_ffi.h:
+///     plain value fields + `has_*` presence flags). Passing a pointer to the
+///     Swift `FFSearchFilters` value type is an ABI mismatch — do not do it.
 ///   - callback: Called for each matching result
 ///   - userData: User data pointer passed to callback
 /// - Returns: 0 on success, non-zero error code on failure
@@ -311,6 +358,43 @@ public func ff_search_with_filters(
     _ callback: @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void,
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32
+
+/// Search for files with execution options and a per-search cancellation handle.
+/// The handle is written to `outHandle` before the walk starts, so another
+/// thread can cancel this specific search via `ff_cancel_search_by_id`.
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_search_ex")
+public func ff_search_ex(
+    _ path: UnsafePointer<CChar>,
+    _ query: UnsafePointer<CChar>,
+    _ options: UnsafePointer<FFSearchOptions_C>?,
+    _ outHandle: UnsafeMutablePointer<UInt64>?,
+    _ callback: @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void,
+    _ userData: UnsafeMutableRawPointer?
+) -> Int32
+
+/// Search for files with advanced filters, execution options, and a
+/// per-search cancellation handle.
+/// - Returns: 0 on success, non-zero error code on failure
+@_silgen_name("ff_search_with_filters_ex")
+public func ff_search_with_filters_ex(
+    _ path: UnsafePointer<CChar>,
+    _ query: UnsafePointer<CChar>,
+    _ filters: UnsafeRawPointer?,
+    _ options: UnsafePointer<FFSearchOptions_C>?,
+    _ outHandle: UnsafeMutablePointer<UInt64>?,
+    _ callback: @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void,
+    _ userData: UnsafeMutableRawPointer?
+) -> Int32
+
+/// Cancel a specific search by its handle.
+/// - Returns: 0 when the search was found and cancelled; -4 (not found) when
+///   no running search with `handle` exists.
+///
+/// Note: Declared in `ff_ffi.h` (imported via the bridging header as
+/// `ff_error_t ff_cancel_search_by_id(uint64_t)`); no `@_silgen_name`
+/// redeclaration here — a same-param redeclaration with a differing return
+/// type would collide with the C import and make calls ambiguous.
 
 // MARK: - QuickLook Preview FFI Declarations
 
@@ -422,6 +506,118 @@ public func ff_fsevents_start(
 /// - Returns: 0 on success, non-zero error code on failure
 @_silgen_name("ff_fsevents_stop")
 public func ff_fsevents_stop(_ handle: Int32) -> Int32
+
+/// FSEvents watcher lifecycle status codes (returned by ff_fsevents_status)
+public enum FSEventsStatus: Int32 {
+    /// No watcher is running (initial state, or after stop)
+    case stopped = 0
+    /// A worker thread has been spawned and stream setup is in progress
+    case starting = 1
+    /// The FSEventStream is running and delivering callbacks
+    case active = 2
+    /// The last start attempt failed during setup; no watcher is running
+    case failed = 3
+}
+
+/// Query the current FSEvents watcher lifecycle status
+/// - Returns: A FSEventsStatus raw value
+@_silgen_name("ff_fsevents_status")
+public func ff_fsevents_status() -> Int32
+
+// MARK: - Content Index (FTS5) FFI Declarations
+
+/// Content-index lifecycle status codes (returned by `ff_content_index_status`).
+/// Raw values match the `FF_CONTENT_INDEX_STATUS_*` #defines in `ff_ffi.h`.
+public enum ContentIndexStatus: Int32 {
+    /// No indexed data (first launch / pre-rebuild / after clear).
+    case empty = 0
+    /// Build in progress (paused builds stay here; see stats `paused`).
+    case indexing = 1
+    /// Ready: queryable.
+    case ready = 2
+    /// Build / init failed (generic).
+    case error = 3
+    /// Build cancelled by the user; checkpoint retained.
+    case cancelled = 4
+    /// Terminal: FTS5 not compiled into the SQLite build.
+    case unavailable = 5
+}
+
+/// Content-index build modes (passed to `ff_content_index_start`).
+/// Raw values match the `FF_CONTENT_INDEX_MODE_*` #defines in `ff_ffi.h`.
+public enum ContentIndexMode: Int32 {
+    /// Incremental: resume from checkpoint / process dirty set / full walk.
+    case incremental = 0
+    /// Full rebuild: temp file + atomic replace.
+    case rebuild = 1
+}
+
+/// Initialize the independent content index at `dbPath` (resolved by Swift).
+/// Idempotent; the path is set once per process. FTS5 missing → unavailable.
+/// - Parameter dbPath: Path to `content_index.sqlite` (C string, borrowed).
+/// - Returns: 0 on success, non-zero error code on failure.
+@_silgen_name("ff_content_index_init")
+public func ff_content_index_init(_ dbPath: UnsafePointer<CChar>) -> Int32
+
+/// Query the content-index status machine.
+/// - Returns: A `ContentIndexStatus` raw value.
+@_silgen_name("ff_content_index_status")
+public func ff_content_index_status() -> Int32
+
+/// Start a content-index build on a background thread.
+/// - Parameters:
+///   - rootPath: Root directory to index (C string, borrowed).
+///   - mode: A `ContentIndexMode` raw value (incremental = 0, rebuild = 1).
+///   - outHandle: Written with the cancel handle *before* the build starts;
+///     pass nil to ignore it.
+/// - Returns: 0 on success, non-zero error code on failure.
+@_silgen_name("ff_content_index_start")
+public func ff_content_index_start(
+    _ rootPath: UnsafePointer<CChar>,
+    _ mode: Int32,
+    _ outHandle: UnsafeMutablePointer<UInt64>?
+) -> Int32
+
+/// Cancel a specific content-index build by its handle (batch-boundary).
+/// - Returns: 0 when cancelled; -4 (not found) when no build matches the handle.
+@_silgen_name("ff_content_index_cancel")
+public func ff_content_index_cancel(_ handle: UInt64) -> ff_error_t
+
+/// Pause a specific content-index build by its handle (batch-boundary).
+/// - Returns: 0 when paused; -4 (not found) when no build matches the handle.
+@_silgen_name("ff_content_index_pause")
+public func ff_content_index_pause(_ handle: UInt64) -> ff_error_t
+
+/// Resume a specific paused content-index build by its handle.
+/// - Returns: 0 when resumed; -4 (not found) when no build matches the handle.
+@_silgen_name("ff_content_index_resume")
+public func ff_content_index_resume(_ handle: UInt64) -> ff_error_t
+
+/// Mark a path dirty for incremental processing (O(1), no I/O).
+/// - Parameter path: Changed path (C string, borrowed).
+/// - Returns: 0 on success, non-zero error code on failure.
+@_silgen_name("ff_content_index_mark_dirty")
+public func ff_content_index_mark_dirty(_ path: UnsafePointer<CChar>) -> Int32
+
+/// Run a one-shot content query. Non-ready state returns FF_ERR_NOT_FOUND.
+/// - Parameters:
+///   - query: FTS5 MATCH expression (already escaped by Swift, C string, borrowed).
+///   - maxResults: Result cap (> 0; 0 is treated as 500 by Rust).
+///   - callback: Called for each match with an `FFSearchResult` pointer.
+///   - userData: Opaque pointer passed to the callback.
+/// - Returns: 0 on success; -4 (not found) when the index is not ready.
+@_silgen_name("ff_content_index_query")
+public func ff_content_index_query(
+    _ query: UnsafePointer<CChar>,
+    _ maxResults: Int,
+    _ callback: @convention(c) (UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void,
+    _ userData: UnsafeMutableRawPointer?
+) -> Int32
+
+/// Return the stats JSON (§7.3). The caller must free with `ff_free_string`.
+/// - Returns: Heap-allocated JSON string, or nil on error.
+@_silgen_name("ff_content_index_stats")
+public func ff_content_index_stats() -> UnsafeMutablePointer<CChar>?
 
 // MARK: - Batch Rename & Organize (Sub-project 6) FFI Declarations
 

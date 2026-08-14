@@ -20,7 +20,8 @@ use std::ffi::{CStr, CString};
 use std::io;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 // ── L2 persistent cache db path ────────────────────────────────────
 //
@@ -29,6 +30,14 @@ use std::sync::OnceLock;
 // in-memory cache (`dir_cache`) is used — preserving backward compatibility.
 
 static CACHE_DB_PATH: OnceLock<String> = OnceLock::new();
+
+// ── Content index db path ────────────────────────────────────────────
+//
+// Path to the independent `content_index.sqlite` database (§1 of the
+// content-index contract). Set once via `ff_content_index_init`; resolved by
+// Swift, never by Rust.
+
+static CONTENT_INDEX_DB_PATH: OnceLock<String> = OnceLock::new();
 
 // ── Error codes ─────────────────────────────────────────────────────
 
@@ -253,6 +262,13 @@ fn ffi_catch_u64<F: FnOnce() -> u64>(f: F) -> u64 {
 /// - `path` — NUL-terminated UTF-8 path string.
 /// - `callback` — Function called for each directory entry.
 /// - `user_data` — Opaque pointer passed to the callback.
+///
+/// # Callback borrow contract
+///
+/// The `FFEntryRef` pointer (and every string field inside it) is valid only
+/// for the duration of the callback invocation. The Rust side owns the
+/// backing `CString`s and drops them immediately after the callback returns.
+/// The callback must **not** retain the pointer or copy it for later use.
 ///
 /// # Returns
 ///
@@ -749,11 +765,122 @@ pub extern "C" fn ff_rename(src: *const c_char, dst: *const c_char) -> c_int {
     })
 }
 
+// ── Cooperative cancellation registry ───────────────────────────────
+//
+// Every long-running FFI operation (duplicate scan or search) is registered
+// under a process-unique handle with its own *private* `Arc<AtomicBool>`
+// cancel flag. `ff_cancel_scan()` / `ff_cancel_scan_by_id()` /
+// `ff_cancel_search_by_id()` set the flag of the targeted operation only, so
+// cancelling one scan never affects another — and starting a new scan cannot
+// reset a previously cancelled scan, because the flags are not shared.
+//
+// This replaces the old process-global `DEDUP_CANCEL`, which every scan
+// reset on start and which `ff_cancel_scan()` cleared globally.
+//
+// The registry is a plain `Mutex<HashMap>`: the critical sections are only
+// the register/query/deregister points, never the scan itself.
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OpKind {
+    Scan,
+    Search,
+    Index,
+}
+
+struct ActiveOp {
+    kind: OpKind,
+    cancel: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
+}
+
+static NEXT_OP_ID: AtomicU64 = AtomicU64::new(1);
+static ACTIVE_OPS: LazyLock<Mutex<HashMap<u64, ActiveOp>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// RAII guard that deregisters an operation from [`ACTIVE_OPS`] when dropped.
+struct OpGuard {
+    id: u64,
+}
+
+impl OpGuard {
+    /// Allocate a fresh, isolated cancel flag and register it as an active
+    /// operation of `kind`. Returns the guard (deregisters on drop) and the
+    /// operation's private cancel flag.
+    fn register(kind: OpKind) -> (Self, Arc<AtomicBool>) {
+        let (guard, cancel, _pause) = Self::register_full(kind);
+        (guard, cancel)
+    }
+
+    /// Like [`register`](Self::register), but also returns a private pause
+    /// flag (used by cancellable/pause-aware content-index builds).
+    fn register_full(kind: OpKind) -> (Self, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let id = NEXT_OP_ID.fetch_add(1, Ordering::Relaxed);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        ACTIVE_OPS
+            .lock()
+            .unwrap()
+            .insert(id, ActiveOp {
+                kind,
+                cancel: Arc::clone(&cancel),
+                pause: Arc::clone(&pause),
+            });
+        (OpGuard { id }, cancel, pause)
+    }
+}
+
+impl Drop for OpGuard {
+    fn drop(&mut self) {
+        ACTIVE_OPS.lock().unwrap().remove(&self.id);
+    }
+}
+
+/// Set the cancel flag of the active operation with `id` if it is of `kind`.
+/// Returns `FF_OK` when found, `FF_ERR_NOT_FOUND` when no such operation is
+/// registered (it already finished, or never existed).
+fn cancel_op(id: u64, kind: OpKind) -> c_int {
+    let ops = ACTIVE_OPS.lock().unwrap();
+    match ops.get(&id) {
+        Some(op) if op.kind == kind => {
+            op.cancel.store(true, Ordering::Relaxed);
+            FF_OK
+        }
+        _ => {
+            set_last_error("no active operation with the given handle".to_string());
+            FF_ERR_NOT_FOUND
+        }
+    }
+}
+
+fn pause_op(id: u64, kind: OpKind) -> c_int {
+    let ops = ACTIVE_OPS.lock().unwrap();
+    match ops.get(&id) {
+        Some(op) if op.kind == kind => {
+            op.pause.store(true, Ordering::Relaxed);
+            FF_OK
+        }
+        _ => {
+            set_last_error("no active operation with the given handle".to_string());
+            FF_ERR_NOT_FOUND
+        }
+    }
+}
+
+fn resume_op(id: u64, kind: OpKind) -> c_int {
+    let ops = ACTIVE_OPS.lock().unwrap();
+    match ops.get(&id) {
+        Some(op) if op.kind == kind => {
+            op.pause.store(false, Ordering::Relaxed);
+            FF_OK
+        }
+        _ => {
+            set_last_error("no active operation with the given handle".to_string());
+            FF_ERR_NOT_FOUND
+        }
+    }
+}
+
 // ── Duplicate File Detection ──────────────────────────────────────
-
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static DEDUP_CANCEL: AtomicBool = AtomicBool::new(false);
 
 /// Scan for duplicate files under `path`.
 ///
@@ -763,6 +890,14 @@ static DEDUP_CANCEL: AtomicBool = AtomicBool::new(false);
 /// - `progress_callback` — Called with (scanned, total) progress updates.
 /// - `group_callback` — Called for each duplicate group found.
 /// - `user_data` — Opaque pointer passed to callbacks.
+///
+/// # Callback borrow contract
+///
+/// The `FFDuplicateGroup` pointer (and every string field inside it,
+/// including the `files` array) is valid only for the duration of the
+/// callback invocation; the Rust side drops the backing `CString`s
+/// immediately after the callback returns. The callback must **not** retain
+/// the pointer or any field for later use.
 ///
 /// # Returns
 ///
@@ -782,118 +917,316 @@ pub extern "C" fn ff_scan_duplicates(
     user_data: *mut c_void,
 ) -> c_int {
     ffi_catch_int(|| {
-        if path.is_null() {
-            set_last_error("path is null".to_string());
-            return FF_ERR_INVALID_PATH;
-        }
-
-        let path_str = unsafe {
-            match CStr::from_ptr(path).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    set_last_error("path is not valid UTF-8".to_string());
-                    return FF_ERR_INVALID_PATH;
-                }
-            }
-        };
-
-        // Reset cancel flag
-        DEDUP_CANCEL.store(false, Ordering::Relaxed);
-
-        struct CallbackEmitter {
-            progress: FFDedupProgressCallback,
-            group: FFDedupGroupCallback,
-            user_data: *mut c_void,
-        }
-
-        impl crate::core::dedup_engine::EventEmitter for CallbackEmitter {
-            fn emit(&self, event: crate::core::dedup_engine::DedupEvent) {
-                match event {
-                    crate::core::dedup_engine::DedupEvent::Progress { scanned, total } => {
-                        let total_val = total.unwrap_or(0);
-                        (self.progress)(scanned, total_val, self.user_data);
-                    }
-                    crate::core::dedup_engine::DedupEvent::GroupFound { group } => {
-                        // P0-3 修复：使用 RAII Vec<CString> 保持所有权，
-                        // 仅借用裸指针给回调。回调返回后（即使 panic）所有 CString 自动释放。
-                        let mut id_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
-                        let mut path_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
-                        let mut name_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
-
-                        let files: Vec<FFDuplicateFile> = group
-                            .files
-                            .iter()
-                            .map(|f| {
-                                let id_c = CString::new(f.id.as_bytes()).ok();
-                                let path_c = CString::new(f.path.as_bytes()).ok();
-                                let name_c = CString::new(f.name.as_bytes()).ok();
-                                let file = FFDuplicateFile {
-                                    id: id_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                                    path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                                    name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                                    size: f.size,
-                                    modified: f.modified,
-                                };
-                                // 将 CString 推入 Vec 保持所有权
-                                if let Some(c) = id_c { id_cstrings.push(c); }
-                                if let Some(c) = path_c { path_cstrings.push(c); }
-                                if let Some(c) = name_c { name_cstrings.push(c); }
-                                file
-                            })
-                            .collect();
-
-                        let group_id_c = CString::new(group.id.as_bytes()).ok();
-                        let group_hash_c = CString::new(group.hash.as_bytes()).ok();
-
-                        let group_c = FFDuplicateGroup {
-                            id: group_id_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                            hash: group_hash_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                            size: group.size,
-                            files: files.as_ptr(),
-                            file_count: files.len(),
-                        };
-
-                        (self.group)(&group_c, self.user_data);
-                        // files, *_cstrings, group_id_c, group_hash_c 在此自动 drop
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let emitter = CallbackEmitter {
-            progress: progress_callback,
-            group: group_callback,
-            user_data,
-        };
-
-        // Pass the *global* `DEDUP_CANCEL` flag directly to `run_scan` so that
-        // `ff_cancel_scan()` (which sets the same flag) actually interrupts the
-        // in-flight scan. Previously a fresh local `Arc<AtomicBool>` was created
-        // here, which `ff_cancel_scan()` had no reference to — the cancel
-        // button was effectively a no-op.
-        let _groups = crate::core::dedup_engine::run_scan(
-            vec![path_str.to_string()],
-            &emitter,
-            &DEDUP_CANCEL,
-        );
-
-        clear_last_error();
-        FF_OK
+        scan_duplicates_impl(path, progress_callback, group_callback, user_data, ptr::null_mut())
     })
 }
 
+/// Scan for duplicate files, exposing a per-scan cancellation handle.
+///
+/// Identical to [`ff_scan_duplicates`], except that the freshly allocated
+/// handle is written to `*out_handle` *before* the scan starts, so a caller
+/// on another thread can cancel this specific scan via
+/// [`ff_cancel_scan_by_id`] while it is running. Passing `NULL` for
+/// `out_handle` behaves exactly like [`ff_scan_duplicates`].
+#[no_mangle]
+pub extern "C" fn ff_scan_duplicates_ex(
+    path: *const c_char,
+    progress_callback: FFDedupProgressCallback,
+    group_callback: FFDedupGroupCallback,
+    user_data: *mut c_void,
+    out_handle: *mut u64,
+) -> c_int {
+    ffi_catch_int(|| {
+        scan_duplicates_impl(path, progress_callback, group_callback, user_data, out_handle)
+    })
+}
+
+/// Shared body for [`ff_scan_duplicates`] / [`ff_scan_duplicates_ex`].
+fn scan_duplicates_impl(
+    path: *const c_char,
+    progress_callback: FFDedupProgressCallback,
+    group_callback: FFDedupGroupCallback,
+    user_data: *mut c_void,
+    out_handle: *mut u64,
+) -> c_int {
+    if path.is_null() {
+        set_last_error("path is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    // Each scan owns an isolated cancel flag; the guard deregisters it as
+    // soon as the scan returns, so a cancel request issued afterwards is a
+    // clean no-op (`FF_ERR_NOT_FOUND`) rather than hitting a stale flag.
+    let (_guard, cancel) = OpGuard::register(OpKind::Scan);
+    if !out_handle.is_null() {
+        // Write the handle before scanning so another thread can cancel us.
+        unsafe {
+            *out_handle = _guard.id;
+        }
+    }
+
+    struct CallbackEmitter {
+        progress: FFDedupProgressCallback,
+        group: FFDedupGroupCallback,
+        user_data: *mut c_void,
+    }
+
+    impl crate::core::dedup_engine::EventEmitter for CallbackEmitter {
+        fn emit(&self, event: crate::core::dedup_engine::DedupEvent) {
+            match event {
+                crate::core::dedup_engine::DedupEvent::Progress { scanned, total } => {
+                    let total_val = total.unwrap_or(0);
+                    (self.progress)(scanned, total_val, self.user_data);
+                }
+                crate::core::dedup_engine::DedupEvent::GroupFound { group } => {
+                    // P0-3 修复：使用 RAII Vec<CString> 保持所有权，
+                    // 仅借用裸指针给回调。回调返回后（即使 panic）所有 CString 自动释放。
+                    let mut id_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
+                    let mut path_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
+                    let mut name_cstrings: Vec<CString> = Vec::with_capacity(group.files.len());
+
+                    let files: Vec<FFDuplicateFile> = group
+                        .files
+                        .iter()
+                        .map(|f| {
+                            let id_c = CString::new(f.id.as_bytes()).ok();
+                            let path_c = CString::new(f.path.as_bytes()).ok();
+                            let name_c = CString::new(f.name.as_bytes()).ok();
+                            let file = FFDuplicateFile {
+                                id: id_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                                path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                                name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                                size: f.size,
+                                modified: f.modified,
+                            };
+                            // 将 CString 推入 Vec 保持所有权
+                            if let Some(c) = id_c { id_cstrings.push(c); }
+                            if let Some(c) = path_c { path_cstrings.push(c); }
+                            if let Some(c) = name_c { name_cstrings.push(c); }
+                            file
+                        })
+                        .collect();
+
+                    let group_id_c = CString::new(group.id.as_bytes()).ok();
+                    let group_hash_c = CString::new(group.hash.as_bytes()).ok();
+
+                    let group_c = FFDuplicateGroup {
+                        id: group_id_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                        hash: group_hash_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                        size: group.size,
+                        files: files.as_ptr(),
+                        file_count: files.len(),
+                    };
+
+                    (self.group)(&group_c, self.user_data);
+                    // files, *_cstrings, group_id_c, group_hash_c 在此自动 drop
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let emitter = CallbackEmitter {
+        progress: progress_callback,
+        group: group_callback,
+        user_data,
+    };
+
+    // The per-scan `cancel` flag is passed to `run_scan`, which polls it
+    // cooperatively. It is private to this scan, so `ff_cancel_scan_by_id`
+    // (and only that) can interrupt it.
+    let _groups = crate::core::dedup_engine::run_scan(
+        vec![path_str.to_string()],
+        &emitter,
+        &cancel,
+    );
+
+    clear_last_error();
+    FF_OK
+}
+
 /// Cancel an ongoing duplicate scan.
+///
+/// Backward-compatible form that cancels the "current" scan: the one that
+/// started first and is still running. Each scan owns an independent cancel
+/// flag, so this never affects any other in-flight scan. Prefer
+/// [`ff_cancel_scan_by_id`] when the target scan's handle is known.
 #[no_mangle]
 pub extern "C" fn ff_cancel_scan() {
     ffi_catch_void(|| {
-        DEDUP_CANCEL.store(true, Ordering::Relaxed);
+        let ops = ACTIVE_OPS.lock().unwrap();
+        let oldest = ops
+            .iter()
+            .filter(|(_, op)| op.kind == OpKind::Scan)
+            .map(|(id, _)| *id)
+            .min();
+        if let Some(id) = oldest {
+            ops.get(&id).unwrap().cancel.store(true, Ordering::Relaxed);
+        }
     })
+}
+
+/// Cancel a specific duplicate scan by its handle.
+///
+/// Returns `FF_OK` when the scan was found and cancelled, and
+/// `FF_ERR_NOT_FOUND` when no running scan with `handle` exists (it already
+/// completed or the handle is invalid).
+#[no_mangle]
+pub extern "C" fn ff_cancel_scan_by_id(handle: u64) -> c_int {
+    ffi_catch_int(|| cancel_op(handle, OpKind::Scan))
 }
 
 // ── File Search ─────────────────────────────────────────────────────
 
+/// C-compatible search execution options.
+///
+/// `max_results` caps the number of delivered results (`0` = unlimited);
+/// `max_depth` caps directory recursion (`0` = unlimited).
+#[repr(C)]
+pub struct FFSearchOptions {
+    pub max_results: usize,
+    pub max_depth: usize,
+}
+
+fn parse_search_options(options: *const FFSearchOptions) -> crate::core::search_engine::SearchConfig {
+    if options.is_null() {
+        crate::core::search_engine::SearchConfig::default()
+    } else {
+        let o = unsafe { &*options };
+        crate::core::search_engine::SearchConfig {
+            max_results: o.max_results,
+            max_depth: if o.max_depth == 0 { None } else { Some(o.max_depth) },
+        }
+    }
+}
+
+fn parse_ff_search_filters(filters: *const FFSearchFilters) -> crate::core::search_engine::SearchFilters {
+    if filters.is_null() {
+        return crate::core::search_engine::SearchFilters::default();
+    }
+    let f = unsafe { &*filters };
+    crate::core::search_engine::SearchFilters {
+        file_types: if f.has_file_types && !f.file_types.is_null() {
+            Some(unsafe { CStr::from_ptr(f.file_types).to_string_lossy().to_string() })
+        } else {
+            None
+        },
+        min_size: if f.has_min_size { Some(f.min_size) } else { None },
+        max_size: if f.has_max_size { Some(f.max_size) } else { None },
+        modified_after: if f.has_modified_after { Some(f.modified_after) } else { None },
+        modified_before: if f.has_modified_before { Some(f.modified_before) } else { None },
+    }
+}
+
+/// Shared body for the four search entry points.
+///
+/// Registers a per-search cancel flag (handle written to `*out_handle`
+/// before the walk starts, when non-null) and runs the walk with the
+/// configured limits. Cancellation is cooperative: the walk polls the flag
+/// at every entry and returns early.
+fn search_impl(
+    path: *const c_char,
+    query: *const c_char,
+    options: *const FFSearchOptions,
+    filters: Option<&crate::core::search_engine::SearchFilters>,
+    out_handle: *mut u64,
+    callback: FFSearchCallback,
+    user_data: *mut c_void,
+) -> c_int {
+    if path.is_null() || query.is_null() {
+        set_last_error("path or query is null".to_string());
+        return FF_ERR_INVALID_PATH;
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("path is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    let query_str = unsafe {
+        match CStr::from_ptr(query).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_last_error("query is not valid UTF-8".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        }
+    };
+
+    let config = parse_search_options(options);
+
+    let (_guard, cancel) = OpGuard::register(OpKind::Search);
+    if !out_handle.is_null() {
+        unsafe {
+            *out_handle = _guard.id;
+        }
+    }
+
+    let mut cb = |result: crate::core::search_engine::SearchResult| {
+        // P0-3 修复：使用 RAII CString 保持所有权，回调 panic 时自动释放
+        let path_c = CString::new(result.path.as_bytes()).ok();
+        let name_c = CString::new(result.name.as_bytes()).ok();
+        let result_c = FFSearchResult {
+            path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+            name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+            size: result.size,
+            modified: result.modified,
+            is_dir: result.is_dir,
+        };
+        callback(&result_c, user_data);
+        // path_c, name_c 在此自动 drop
+    };
+
+    let outcome = match filters {
+        Some(f) => crate::core::search_engine::search_with_filters(
+            path_str,
+            query_str,
+            f,
+            &config,
+            &cancel,
+            &mut cb,
+        ),
+        None => crate::core::search_engine::search_files(
+            path_str,
+            query_str,
+            &config,
+            &cancel,
+            &mut cb,
+        ),
+    };
+
+    match outcome {
+        Ok(_) => {
+            clear_last_error();
+            FF_OK
+        }
+        Err(e) => {
+            let msg = format!("search failed: {}", e);
+            set_last_error(msg);
+            FF_ERR_IO
+        }
+    }
+}
+
 /// Search for files matching `query` under `path`.
+///
+/// Backward-compatible form of [`ff_search_ex`] with default options
+/// (max 500 results, unlimited depth, no cancellation handle).
 ///
 /// # Arguments
 ///
@@ -901,6 +1234,13 @@ pub extern "C" fn ff_cancel_scan() {
 /// - `query` — NUL-terminated UTF-8 search query.
 /// - `callback` — Called for each matching result.
 /// - `user_data` — Opaque pointer passed to the callback.
+///
+/// # Callback borrow contract
+///
+/// The `FFSearchResult` pointer (and its string fields) is valid only for
+/// the duration of the callback invocation; the Rust side drops the backing
+/// `CString`s immediately after the callback returns. The callback must
+/// **not** retain the pointer for later use.
 ///
 /// # Returns
 ///
@@ -919,59 +1259,27 @@ pub extern "C" fn ff_search(
     callback: FFSearchCallback,
     user_data: *mut c_void,
 ) -> c_int {
-    ffi_catch_int(|| {
-        if path.is_null() || query.is_null() {
-            set_last_error("path or query is null".to_string());
-            return FF_ERR_INVALID_PATH;
-        }
+    ffi_catch_int(|| search_impl(path, query, ptr::null(), None, ptr::null_mut(), callback, user_data))
+}
 
-        let path_str = unsafe {
-            match CStr::from_ptr(path).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    set_last_error("path is not valid UTF-8".to_string());
-                    return FF_ERR_INVALID_PATH;
-                }
-            }
-        };
-
-        let query_str = unsafe {
-            match CStr::from_ptr(query).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    set_last_error("query is not valid UTF-8".to_string());
-                    return FF_ERR_INVALID_PATH;
-                }
-            }
-        };
-
-        let mut cb = |result: crate::core::search_engine::SearchResult| {
-            // P0-3 修复：使用 RAII CString 保持所有权，回调 panic 时自动释放
-            let path_c = CString::new(result.path.as_bytes()).ok();
-            let name_c = CString::new(result.name.as_bytes()).ok();
-            let result_c = FFSearchResult {
-                path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                size: result.size,
-                modified: result.modified,
-                is_dir: result.is_dir,
-            };
-            callback(&result_c, user_data);
-            // path_c, name_c 在此自动 drop
-        };
-
-        match crate::core::search_engine::search_files(path_str, query_str, &mut cb) {
-            Ok(_) => {
-                clear_last_error();
-                FF_OK
-            }
-            Err(e) => {
-                let msg = format!("search failed: {}", e);
-                set_last_error(msg);
-                FF_ERR_IO
-            }
-        }
-    })
+/// Search for files matching `query` under `path`, with execution options
+/// and a per-search cancellation handle.
+///
+/// The freshly allocated handle is written to `*out_handle` *before* the
+/// walk starts, so a caller on another thread can cancel this specific
+/// search via [`ff_cancel_search_by_id`] while it is running. Passing
+/// `NULL` for `options` uses the defaults (max 500 results, unlimited
+/// depth); passing `NULL` for `out_handle` skips handle reporting.
+#[no_mangle]
+pub extern "C" fn ff_search_ex(
+    path: *const c_char,
+    query: *const c_char,
+    options: *const FFSearchOptions,
+    out_handle: *mut u64,
+    callback: FFSearchCallback,
+    user_data: *mut c_void,
+) -> c_int {
+    ffi_catch_int(|| search_impl(path, query, options, None, out_handle, callback, user_data))
 }
 
 /// C-compatible search filters.
@@ -990,6 +1298,9 @@ pub struct FFSearchFilters {
 }
 
 /// Search for files with advanced filters.
+///
+/// Backward-compatible form of [`ff_search_with_filters_ex`] with default
+/// options (max 500 results, unlimited depth, no cancellation handle).
 ///
 /// # Arguments
 ///
@@ -1018,75 +1329,43 @@ pub extern "C" fn ff_search_with_filters(
     user_data: *mut c_void,
 ) -> c_int {
     ffi_catch_int(|| {
-        if path.is_null() || query.is_null() {
-            set_last_error("path or query is null".to_string());
-            return FF_ERR_INVALID_PATH;
-        }
-
-        let path_str = unsafe {
-            match CStr::from_ptr(path).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    set_last_error("path is not valid UTF-8".to_string());
-                    return FF_ERR_INVALID_PATH;
-                }
-            }
-        };
-
-        let query_str = unsafe {
-            match CStr::from_ptr(query).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    set_last_error("query is not valid UTF-8".to_string());
-                    return FF_ERR_INVALID_PATH;
-                }
-            }
-        };
-
-        let rust_filters = if filters.is_null() {
-            crate::core::search_engine::SearchFilters::default()
-        } else {
-            let f = unsafe { &*filters };
-            crate::core::search_engine::SearchFilters {
-                file_types: if f.has_file_types && !f.file_types.is_null() {
-                    Some(unsafe { CStr::from_ptr(f.file_types).to_string_lossy().to_string() })
-                } else {
-                    None
-                },
-                min_size: if f.has_min_size { Some(f.min_size) } else { None },
-                max_size: if f.has_max_size { Some(f.max_size) } else { None },
-                modified_after: if f.has_modified_after { Some(f.modified_after) } else { None },
-                modified_before: if f.has_modified_before { Some(f.modified_before) } else { None },
-            }
-        };
-
-        let mut cb = |result: crate::core::search_engine::SearchResult| {
-            // P0-3 修复：使用 RAII CString 保持所有权，回调 panic 时自动释放
-            let path_c = CString::new(result.path.as_bytes()).ok();
-            let name_c = CString::new(result.name.as_bytes()).ok();
-            let result_c = FFSearchResult {
-                path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
-                size: result.size,
-                modified: result.modified,
-                is_dir: result.is_dir,
-            };
-            callback(&result_c, user_data);
-            // path_c, name_c 在此自动 drop
-        };
-
-        match crate::core::search_engine::search_with_filters(path_str, query_str, &rust_filters, &mut cb) {
-            Ok(_) => {
-                clear_last_error();
-                FF_OK
-            }
-            Err(e) => {
-                let msg = format!("search_with_filters failed: {}", e);
-                set_last_error(msg);
-                FF_ERR_IO
-            }
-        }
+        let rust_filters = parse_ff_search_filters(filters);
+        search_impl(path, query, ptr::null(), Some(&rust_filters), ptr::null_mut(), callback, user_data)
     })
+}
+
+/// Search for files with advanced filters, with execution options and a
+/// per-search cancellation handle.
+///
+/// The freshly allocated handle is written to `*out_handle` *before* the
+/// walk starts, so a caller on another thread can cancel this specific
+/// search via [`ff_cancel_search_by_id`] while it is running. Passing
+/// `NULL` for `options` uses the defaults (max 500 results, unlimited
+/// depth); passing `NULL` for `out_handle` skips handle reporting.
+#[no_mangle]
+pub extern "C" fn ff_search_with_filters_ex(
+    path: *const c_char,
+    query: *const c_char,
+    filters: *const FFSearchFilters,
+    options: *const FFSearchOptions,
+    out_handle: *mut u64,
+    callback: FFSearchCallback,
+    user_data: *mut c_void,
+) -> c_int {
+    ffi_catch_int(|| {
+        let rust_filters = parse_ff_search_filters(filters);
+        search_impl(path, query, options, Some(&rust_filters), out_handle, callback, user_data)
+    })
+}
+
+/// Cancel a specific search by its handle.
+///
+/// Returns `FF_OK` when the search was found and cancelled, and
+/// `FF_ERR_NOT_FOUND` when no running search with `handle` exists (it
+/// already completed or the handle is invalid).
+#[no_mangle]
+pub extern "C" fn ff_cancel_search_by_id(handle: u64) -> c_int {
+    ffi_catch_int(|| cancel_op(handle, OpKind::Search))
 }
 
 // ── QuickLook Preview ─────────────────────────────────────────────
@@ -1627,6 +1906,255 @@ pub extern "C" fn ff_fsevents_stop(_handle: c_int) -> c_int {
     })
 }
 
+/// FSEvents watcher lifecycle status codes (returned by `ff_fsevents_status`).
+pub const FF_FSEVENTS_STATUS_STOPPED: c_int = 0;
+pub const FF_FSEVENTS_STATUS_STARTING: c_int = 1;
+pub const FF_FSEVENTS_STATUS_ACTIVE: c_int = 2;
+pub const FF_FSEVENTS_STATUS_FAILED: c_int = 3;
+
+/// Query the current FSEvents watcher lifecycle status.
+///
+/// # Returns
+/// One of `FF_FSEVENTS_STATUS_STOPPED` (0), `FF_FSEVENTS_STATUS_STARTING`
+/// (1), `FF_FSEVENTS_STATUS_ACTIVE` (2), or `FF_FSEVENTS_STATUS_FAILED` (3).
+#[no_mangle]
+pub extern "C" fn ff_fsevents_status() -> c_int {
+    ffi_catch_int(|| {
+        clear_last_error();
+        crate::core::fsevents::status().as_c_int()
+    })
+}
+
+// ── Content Index (FTS5) ───────────────────────────────────────────
+
+/// Content-index lifecycle status codes (§6).
+pub const FF_CONTENT_INDEX_STATUS_EMPTY: c_int = 0;
+pub const FF_CONTENT_INDEX_STATUS_INDEXING: c_int = 1;
+pub const FF_CONTENT_INDEX_STATUS_READY: c_int = 2;
+pub const FF_CONTENT_INDEX_STATUS_ERROR: c_int = 3;
+pub const FF_CONTENT_INDEX_STATUS_CANCELLED: c_int = 4;
+pub const FF_CONTENT_INDEX_STATUS_UNAVAILABLE: c_int = 5;
+
+/// Content-index build modes (§8.1).
+pub const FF_CONTENT_INDEX_MODE_INCREMENTAL: c_int = 0;
+pub const FF_CONTENT_INDEX_MODE_REBUILD: c_int = 1;
+
+/// Initialize the independent content index at `db_path`.
+///
+/// Opens/creates `content_index.sqlite`, creates the schema, detects FTS5
+/// (terminal `unavailable` if missing), and handles corruption + migration.
+/// The path is set once per process (`OnceLock` semantics).
+#[no_mangle]
+pub extern "C" fn ff_content_index_init(db_path: *const c_char) -> c_int {
+    ffi_catch_int(|| {
+        if db_path.is_null() {
+            set_last_error("db_path is null".to_string());
+            return FF_ERR_INVALID_PATH;
+        }
+        let db_path_str = unsafe {
+            match CStr::from_ptr(db_path).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    set_last_error("db_path is not valid UTF-8".to_string());
+                    return FF_ERR_INVALID_PATH;
+                }
+            }
+        };
+        match crate::core::content_index::init(db_path_str) {
+            Ok(()) => {
+                let _ = CONTENT_INDEX_DB_PATH.set(db_path_str.to_string());
+                clear_last_error();
+                FF_OK
+            }
+            Err(e) => {
+                set_last_error(format!("content_index::init failed: {}", e));
+                FF_ERR_IO
+            }
+        }
+    })
+}
+
+/// Query the content-index status machine (§6).
+#[no_mangle]
+pub extern "C" fn ff_content_index_status() -> c_int {
+    ffi_catch_int(|| {
+        clear_last_error();
+        crate::core::content_index::status().as_c_int()
+    })
+}
+
+/// Start a content-index build on a background thread.
+///
+/// `mode` = `FF_CONTENT_INDEX_MODE_INCREMENTAL` (0) or `_REBUILD` (1).
+/// The freshly allocated cancel handle is written to `*out_handle` before
+/// the build starts; `NULL` ignores it.
+#[no_mangle]
+pub extern "C" fn ff_content_index_start(
+    root_path: *const c_char,
+    mode: c_int,
+    out_handle: *mut u64,
+) -> c_int {
+    ffi_catch_int(|| {
+        if root_path.is_null() {
+            set_last_error("root_path is null".to_string());
+            return FF_ERR_INVALID_PATH;
+        }
+        let root = unsafe {
+            match CStr::from_ptr(root_path).to_str() {
+                Ok(s) => s.to_string(),
+                Err(_) => {
+                    set_last_error("root_path is not valid UTF-8".to_string());
+                    return FF_ERR_INVALID_PATH;
+                }
+            }
+        };
+        let mode = match crate::core::content_index::Mode::from_int(mode) {
+            Some(m) => m,
+            None => {
+                set_last_error("invalid content index mode".to_string());
+                return FF_ERR_INVALID_PATH;
+            }
+        };
+        let db_path = match CONTENT_INDEX_DB_PATH.get() {
+            Some(p) => p.clone(),
+            None => {
+                set_last_error("content index not initialized".to_string());
+                return FF_ERR_IO;
+            }
+        };
+
+        let (guard, cancel, pause) = OpGuard::register_full(OpKind::Index);
+        if !out_handle.is_null() {
+            unsafe {
+                *out_handle = guard.id;
+            }
+        }
+        let prior = match crate::core::content_index::begin_build() {
+            Ok(p) => p,
+            Err(e) => {
+                set_last_error(format!("cannot start build: {}", e));
+                return FF_ERR_GENERIC;
+            }
+        };
+
+        std::thread::spawn(move || {
+            let _guard = guard;
+            crate::core::content_index::run_build(&db_path, &root, mode, prior, &cancel, &pause);
+        });
+
+        clear_last_error();
+        FF_OK
+    })
+}
+
+/// Cancel a specific content-index build by its handle.
+#[no_mangle]
+pub extern "C" fn ff_content_index_cancel(handle: u64) -> c_int {
+    ffi_catch_int(|| cancel_op(handle, OpKind::Index))
+}
+
+/// Pause a specific content-index build by its handle (batch-boundary).
+#[no_mangle]
+pub extern "C" fn ff_content_index_pause(handle: u64) -> c_int {
+    ffi_catch_int(|| pause_op(handle, OpKind::Index))
+}
+
+/// Resume a specific paused content-index build by its handle.
+#[no_mangle]
+pub extern "C" fn ff_content_index_resume(handle: u64) -> c_int {
+    ffi_catch_int(|| resume_op(handle, OpKind::Index))
+}
+
+/// Mark a path dirty for incremental processing (O(1), no I/O).
+#[no_mangle]
+pub extern "C" fn ff_content_index_mark_dirty(path: *const c_char) -> c_int {
+    ffi_catch_int(|| {
+        if path.is_null() {
+            set_last_error("path is null".to_string());
+            return FF_ERR_INVALID_PATH;
+        }
+        let path_str = unsafe {
+            match CStr::from_ptr(path).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    set_last_error("path is not valid UTF-8".to_string());
+                    return FF_ERR_INVALID_PATH;
+                }
+            }
+        };
+        crate::core::content_index::mark_dirty(path_str);
+        clear_last_error();
+        FF_OK
+    })
+}
+
+/// Run a content query. Non-ready state returns `FF_ERR_NOT_FOUND`.
+#[no_mangle]
+pub extern "C" fn ff_content_index_query(
+    query: *const c_char,
+    max_results: usize,
+    callback: FFSearchCallback,
+    user_data: *mut c_void,
+) -> c_int {
+    ffi_catch_int(|| {
+        if query.is_null() {
+            set_last_error("query is null".to_string());
+            return FF_ERR_INVALID_PATH;
+        }
+        if crate::core::content_index::status() != crate::core::content_index::Status::Ready {
+            set_last_error("content index not ready".to_string());
+            return FF_ERR_NOT_FOUND;
+        }
+        let query_str = unsafe {
+            match CStr::from_ptr(query).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    set_last_error("query is not valid UTF-8".to_string());
+                    return FF_ERR_INVALID_PATH;
+                }
+            }
+        };
+        let db_path = match CONTENT_INDEX_DB_PATH.get() {
+            Some(p) => p.clone(),
+            None => {
+                set_last_error("content index not initialized".to_string());
+                return FF_ERR_NOT_FOUND;
+            }
+        };
+        let cap = if max_results == 0 { 500 } else { max_results };
+
+        let mut cb = |result: crate::core::search_engine::SearchResult| {
+            let path_c = CString::new(result.path.as_bytes()).ok();
+            let name_c = CString::new(result.name.as_bytes()).ok();
+            let result_c = FFSearchResult {
+                path: path_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                name: name_c.as_ref().map(|c| c.as_ptr() as *mut c_char).unwrap_or(std::ptr::null_mut()),
+                size: result.size,
+                modified: result.modified,
+                is_dir: result.is_dir,
+            };
+            callback(&result_c, user_data);
+        };
+
+        match crate::core::content_index::query(&db_path, query_str, cap, &mut cb) {
+            Ok(()) => {
+                clear_last_error();
+                FF_OK
+            }
+            Err(e) => {
+                set_last_error(format!("content index query failed: {}", e));
+                FF_ERR_IO
+            }
+        }
+    })
+}
+
+/// Return the stats JSON (§7.3). Must be freed with `ff_free_string`.
+#[no_mangle]
+pub extern "C" fn ff_content_index_stats() -> *mut c_char {
+    ffi_catch_ptr(|| rust_string_to_c(crate::core::content_index::stats_json()))
+}
+
 // ── Batch Rename & Organize ────────────────────────────────────────
 
 /// C-compatible batch rename item.
@@ -1696,7 +2224,13 @@ pub extern "C" fn ff_batch_rename(
             }
             Err(e) => {
                 set_last_error(format!("batch_rename failed: {}", e));
-                FF_ERR_IO
+                // An invalid new_name (traversal / empty / control chars) is
+                // an input error, not an I/O failure.
+                if e.kind() == io::ErrorKind::InvalidInput {
+                    FF_ERR_INVALID_PATH
+                } else {
+                    FF_ERR_IO
+                }
             }
         }
     })
@@ -2308,18 +2842,29 @@ pub type FFTaskListCallback = extern "C" fn(
 
 /// List all tasks (FFI wrapper with FFTaskInfo struct).
 ///
+/// Each `FFTaskInfo` is stack-allocated per iteration; its string fields
+/// point into local `CString`s that are dropped immediately after the
+/// callback returns. The callback must **not** retain the pointer or any
+/// string field beyond the call.
+///
 /// # Arguments
-/// - `callback` — Called for each task with raw task info pointer
+/// - `callback` — Called for each task with raw task info pointer. Must be non-null.
 /// - `user_data` — Opaque pointer passed to callback
 ///
 /// # Returns
 /// - `FF_OK` on success
+/// - `FF_ERR_INVALID_PATH` if `callback` is null
 #[no_mangle]
 pub extern "C" fn ff_task_list(
     callback: extern "C" fn(*const FFTaskInfo, *mut c_void),
     user_data: *mut c_void,
 ) -> c_int {
     ffi_catch_int(|| {
+        if callback as usize == 0 {
+            set_last_error("callback is null".to_string());
+            return FF_ERR_INVALID_PATH;
+        }
+
         let tasks = crate::core::task_scheduler::scheduler().list_tasks();
 
         for task in tasks {
@@ -2355,6 +2900,79 @@ pub extern "C" fn ff_task_list(
             callback(&ff_task, user_data);
 
             // 释放本次迭代分配的所有 CString（修复 description 内存泄漏）
+            if !id_c.is_null() { unsafe { let _ = CString::from_raw(id_c); } }
+            if !name_c.is_null() { unsafe { let _ = CString::from_raw(name_c); } }
+            if !desc_c.is_null() { unsafe { let _ = CString::from_raw(desc_c); } }
+        }
+
+        FF_OK
+    })
+}
+
+/// Get task history (tasks already moved out of the active map).
+///
+/// Uses the same `FFTaskInfo` struct callback as [`ff_task_list`], and the
+/// exact same RAII string ownership contract: every C string is owned by a
+/// local `CString` that is dropped immediately after the callback returns.
+/// The callback must **not** retain the `FFTaskInfo` pointer or any of its
+/// string fields beyond the call.
+///
+/// # Arguments
+/// - `callback` — Called for each historical task. Must be non-null.
+/// - `user_data` — Opaque pointer passed to callback.
+///
+/// # Returns
+/// - `FF_OK` on success.
+/// - `FF_ERR_INVALID_PATH` if `callback` is null.
+///
+/// # Safety
+/// - `callback` must be a valid function pointer, or null to request the
+///   invalid-path error.
+#[no_mangle]
+pub extern "C" fn ff_task_history(
+    callback: FFTaskListCallback,
+    user_data: *mut c_void,
+) -> c_int {
+    ffi_catch_int(|| {
+        if callback as usize == 0 {
+            set_last_error("callback is null".to_string());
+            return FF_ERR_INVALID_PATH;
+        }
+
+        let tasks = crate::core::task_scheduler::scheduler().get_history();
+
+        for task in tasks {
+            let id_c = rust_string_to_c(task.id.to_string());
+            let name_c = rust_string_to_c(task.task_type.as_str().to_string());
+            let desc_c = rust_string_to_c(task.params.get("description").cloned().unwrap_or_default());
+            let status_int: i32 = match task.status.as_str() {
+                "Pending" => 0,
+                "Running" => 1,
+                "Completed" => 2,
+                "Failed" => 3,
+                "Cancelled" => 4,
+                _ => 0,
+            };
+
+            let ff_task = FFTaskInfo {
+                id: id_c,
+                name: name_c,
+                description: desc_c,
+                priority: match task.priority {
+                    crate::core::task_scheduler::TaskPriority::Low => 0,
+                    crate::core::task_scheduler::TaskPriority::Normal => 1,
+                    crate::core::task_scheduler::TaskPriority::High => 2,
+                    crate::core::task_scheduler::TaskPriority::Critical => 2, // clamp to High (no Critical in C enum)
+                },
+                status: status_int,
+                progress: task.progress,
+                created_at: task.created_at as i64,
+                started_at: task.started_at.unwrap_or(0) as i64,
+                completed_at: task.completed_at.unwrap_or(0) as i64,
+            };
+
+            callback(&ff_task, user_data);
+
             if !id_c.is_null() { unsafe { let _ = CString::from_raw(id_c); } }
             if !name_c.is_null() { unsafe { let _ = CString::from_raw(name_c); } }
             if !desc_c.is_null() { unsafe { let _ = CString::from_raw(desc_c); } }
@@ -2500,803 +3118,4 @@ pub extern "C" fn ff_generate_tags(path: *const c_char) -> *mut c_char {
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rust_string_to_c_roundtrip() {
-        let original = "hello world".to_string();
-        let c_ptr = rust_string_to_c(original.clone());
-        assert!(!c_ptr.is_null());
-        unsafe {
-            let cstr = CStr::from_ptr(c_ptr);
-            assert_eq!(cstr.to_str().unwrap(), "hello world");
-            let _ = CString::from_raw(c_ptr);
-        }
-    }
-
-    #[test]
-    fn test_ff_free_string_null() {
-        // Should not panic.
-        ff_free_string(ptr::null_mut());
-    }
-
-    #[test]
-    fn test_ff_version_string() {
-        let ptr = ff_version_string();
-        assert!(!ptr.is_null());
-        unsafe {
-            let cstr = CStr::from_ptr(ptr);
-            assert!(!cstr.to_str().unwrap().is_empty());
-            let _ = CString::from_raw(ptr);
-        }
-    }
-
-    #[test]
-    fn test_ff_get_file_type() {
-        let path = CString::new("/test/document.pdf").unwrap();
-        let ptr = ff_get_file_type(path.as_ptr());
-        assert!(!ptr.is_null());
-        unsafe {
-            let cstr = CStr::from_ptr(ptr);
-            assert_eq!(cstr.to_str().unwrap(), "pdf");
-            let _ = CString::from_raw(ptr);
-        }
-    }
-
-    #[test]
-    fn test_ff_get_file_type_no_extension() {
-        let path = CString::new("/test/README").unwrap();
-        let ptr = ff_get_file_type(path.as_ptr());
-        assert!(!ptr.is_null());
-        unsafe {
-            let cstr = CStr::from_ptr(ptr);
-            assert_eq!(cstr.to_str().unwrap(), "");
-            let _ = CString::from_raw(ptr);
-        }
-    }
-
-    #[test]
-    fn test_ff_get_file_type_null() {
-        let ptr = ff_get_file_type(ptr::null());
-        assert!(ptr.is_null());
-    }
-
-    #[test]
-    fn test_ff_cache_invalidate() {
-        let path = CString::new("/tmp/test_cache").unwrap();
-        let result = ff_cache_invalidate(path.as_ptr());
-        assert_eq!(result, FF_OK);
-    }
-
-    #[test]
-    fn test_ff_cache_invalidate_null() {
-        let result = ff_cache_invalidate(ptr::null());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
-
-    #[test]
-    fn test_ff_cache_get_miss() {
-        let path = CString::new("/nonexistent/path/xyz123").unwrap();
-        let result = ff_cache_get(path.as_ptr(), dummy_callback, ptr::null_mut());
-        assert_eq!(result, FF_ERR_NOT_FOUND);
-    }
-
-    #[test]
-    fn test_ff_dir_cache_clear() {
-        let result = ff_dir_cache_clear();
-        assert_eq!(result, FF_OK);
-    }
-
-    #[test]
-    fn test_ff_cache_init_null() {
-        let result = ff_cache_init(ptr::null());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
-
-    // ── L1 + L2 two-tier cache integration ──────────────────────────
-    //
-    // Verifies the full FFI flow: ff_cache_init → ff_cache_put writes to
-    // both L1 and L2; clearing L1 (dir_cache::clear) forces an L1 miss;
-    // ff_cache_get must then recover the entries from L2 and deliver them
-    // through the callback.
-    //
-    // The global `CACHE_DB_PATH` is a `OnceLock<String>` — once set by the
-    // first `ff_cache_init` call it cannot be reset. Tests in the same
-    // process therefore share whichever path was set first; this test is
-    // written to be robust to that constraint (it queries a unique dir path
-    // that no other test populates).
-
-    #[test]
-    fn test_ff_cache_l2_recovery_after_l1_clear() {
-        use std::sync::Mutex as StdMutex;
-        // A process-global lock so this test doesn't race with other tests
-        // that touch the cache while we're mid-verify.
-        static L2_TEST_LOCK: StdMutex<()> = StdMutex::new(());
-
-        let _guard = L2_TEST_LOCK.lock().unwrap();
-
-        // Use a fresh temp file for the SQLite db. If a prior test in this
-        // process already called ff_cache_init, the OnceLock will retain the
-        // old path — that's fine: init_cache is idempotent (CREATE TABLE IF
-        // NOT EXISTS) and we still verify the L2 round-trip below.
-        let tmp = tempfile::NamedTempFile::new().expect("create temp file");
-        let db_path = tmp.path().to_str().expect("utf-8 path").to_string();
-        let db_path_c = CString::new(db_path.clone()).unwrap();
-        let init_result = ff_cache_init(db_path_c.as_ptr());
-        assert_eq!(init_result, FF_OK, "ff_cache_init should succeed");
-
-        // Currently-active global db path (may differ from `db_path` if a
-        // prior test in this process already initialized the OnceLock).
-        let active_db = CACHE_DB_PATH.get().map(|s| s.as_str()).unwrap_or(&db_path);
-
-        // Unique dir path to avoid collisions with other tests.
-        let dir_path_str =
-            "/tmp/flowfinder_test_l2_recovery_unique_8f3a2c";
-        let dir_path = CString::new(dir_path_str).unwrap();
-
-        // Build Rust-owned skeletons first — used both for seeding L2
-        // directly (if needed) and as the source of truth for the entries.
-        let skeletons: Vec<crate::core::scanner::FileEntrySkeleton> = vec![
-            crate::core::scanner::FileEntrySkeleton {
-                id: "/tmp/flowfinder_test_l2_recovery_unique_8f3a2c/alpha.txt".to_string(),
-                name: "alpha.txt".to_string(),
-                path: "/tmp/flowfinder_test_l2_recovery_unique_8f3a2c/alpha.txt".to_string(),
-                is_dir: false,
-                is_file: true,
-                is_symlink: false,
-                is_hidden: false,
-                extension: "txt".to_string(),
-                size: 100,
-                modified: 1_000,
-                created: 900,
-                is_system_protected: false,
-                metadata_loaded: true,
-            },
-            crate::core::scanner::FileEntrySkeleton {
-                id: "/tmp/flowfinder_test_l2_recovery_unique_8f3a2c/beta_dir".to_string(),
-                name: "beta_dir".to_string(),
-                path: "/tmp/flowfinder_test_l2_recovery_unique_8f3a2c/beta_dir".to_string(),
-                is_dir: true,
-                is_file: false,
-                is_symlink: false,
-                is_hidden: false,
-                extension: String::new(),
-                size: 0,
-                modified: 2_000,
-                created: 1_900,
-                is_system_protected: false,
-                metadata_loaded: true,
-            },
-        ];
-
-        // Build matching FFEntryRef array with heap-allocated C strings.
-        let name1 = CString::new("alpha.txt").unwrap().into_raw();
-        let path1 = CString::new("/tmp/flowfinder_test_l2_recovery_unique_8f3a2c/alpha.txt")
-            .unwrap()
-            .into_raw();
-        let ext1 = CString::new("txt").unwrap().into_raw();
-        let name2 = CString::new("beta_dir").unwrap().into_raw();
-        let path2 = CString::new("/tmp/flowfinder_test_l2_recovery_unique_8f3a2c/beta_dir")
-            .unwrap()
-            .into_raw();
-        let ext2 = CString::new("").unwrap().into_raw();
-
-        let entries: [FFEntryRef; 2] = [
-            FFEntryRef {
-                name: name1,
-                path: path1,
-                extension: ext1,
-                is_dir: false,
-                is_file: true,
-                is_symlink: false,
-                is_hidden: false,
-                is_system_protected: false,
-                size: 100,
-                modified: 1_000,
-                created: 900,
-            },
-            FFEntryRef {
-                name: name2,
-                path: path2,
-                extension: ext2,
-                is_dir: true,
-                is_file: false,
-                is_symlink: false,
-                is_hidden: false,
-                is_system_protected: false,
-                size: 0,
-                modified: 2_000,
-                created: 1_900,
-            },
-        ];
-
-        // ff_cache_put → writes L1 (and L2 if the global path is set).
-        let put_result = ff_cache_put(dir_path.as_ptr(), entries.as_ptr(), entries.len());
-        assert_eq!(put_result, FF_OK, "ff_cache_put should succeed");
-
-        // Reclaim the C strings we handed to ff_cache_put (the FFI copies
-        // them into Rust-owned Strings internally — the raw pointers are
-        // no longer needed after ff_cache_put returns).
-        for raw in [name1, path1, ext1, name2, path2, ext2] {
-            unsafe { let _ = CString::from_raw(raw); }
-        }
-
-        // Defensive: ensure L2 actually has the rows for our dir path,
-        // seeding directly via sqlite_cache::cache_put if the global
-        // OnceLock pointed elsewhere (e.g. a prior test set a different
-        // path). Without this, the recovery assertion below would be
-        // vacuous in such a scenario.
-        let seeded = matches!(
-            crate::core::sqlite_cache::cache_get(active_db, dir_path_str),
-            Ok(Some(v)) if !v.is_empty()
-        );
-        if !seeded {
-            crate::core::sqlite_cache::cache_put(active_db, dir_path_str, &skeletons)
-                .expect("seed L2 directly");
-        }
-
-        // Clear L1 so the next ff_cache_get MUST come from L2.
-        crate::core::dir_cache::clear();
-
-        // Collect entries delivered via the callback.
-        #[derive(Default)]
-        struct Collector {
-            names: Vec<String>,
-            is_dirs: Vec<bool>,
-            sizes: Vec<u64>,
-        }
-
-        extern "C" fn collect_cb(
-            entry: *const FFEntryRef,
-            user_data: *mut c_void,
-        ) {
-            unsafe {
-                let entry = &*entry;
-                let collector = &mut *(user_data as *mut Collector);
-                collector.names.push(
-                    CStr::from_ptr(entry.name).to_string_lossy().to_string(),
-                );
-                collector.is_dirs.push(entry.is_dir);
-                collector.sizes.push(entry.size);
-            }
-        }
-
-        let mut collector = Collector::default();
-        let get_result = ff_cache_get(
-            dir_path.as_ptr(),
-            collect_cb,
-            &mut collector as *mut Collector as *mut c_void,
-        );
-
-        assert_eq!(
-            get_result, FF_OK,
-            "ff_cache_get must recover from L2 after L1 clear"
-        );
-        assert_eq!(
-            collector.names.len(),
-            2,
-            "callback should receive both entries"
-        );
-        assert!(collector.names.contains(&"alpha.txt".to_string()));
-        assert!(collector.names.contains(&"beta_dir".to_string()));
-        assert!(collector.is_dirs.contains(&true));
-        assert!(collector.is_dirs.contains(&false));
-        assert!(collector.sizes.contains(&100));
-
-        // Cleanup: invalidate the L2 row for our dir path so re-runs stay clean.
-        let _ = crate::core::sqlite_cache::cache_invalidate(active_db, dir_path_str);
-        crate::core::dir_cache::clear();
-    }
-
-    #[test]
-    fn test_ff_fsevents_start_stop() {
-        extern "C" fn test_callback(_path: *const c_char, _user_data: *mut c_void) {}
-
-        let path = CString::new("/tmp").unwrap();
-        let result = ff_fsevents_start(path.as_ptr(), test_callback, ptr::null_mut());
-        assert_eq!(result, FF_OK);
-
-        let result = ff_fsevents_stop(0);
-        assert_eq!(result, FF_OK);
-    }
-
-    extern "C" fn dummy_callback(_entry: *const FFEntryRef, _user_data: *mut c_void) {}
-
-    // ── Settings Tests ────────────────────────────────────────────────
-
-    #[test]
-    fn test_ff_settings_load() {
-        let ptr = ff_settings_load();
-        assert!(!ptr.is_null());
-        unsafe {
-            let cstr = CStr::from_ptr(ptr);
-            let json = cstr.to_str().unwrap();
-            assert!(json.contains("general"));
-            assert!(json.contains("appearance"));
-            assert!(json.contains("shortcuts"));
-            assert!(json.contains("advanced"));
-            let _ = CString::from_raw(ptr);
-        }
-    }
-
-    #[test]
-    fn test_ff_settings_get_set() {
-        // Set a value
-        let key = CString::new("appearance.theme").unwrap();
-        let value = CString::new("dark").unwrap();
-        let result = ff_settings_set(key.as_ptr(), value.as_ptr());
-        assert_eq!(result, FF_OK);
-
-        // Get the value back
-        let result = ff_settings_get(key.as_ptr());
-        assert!(!result.is_null());
-        unsafe {
-            let cstr = CStr::from_ptr(result);
-            assert_eq!(cstr.to_str().unwrap(), "dark");
-            let _ = CString::from_raw(result);
-        }
-    }
-
-    #[test]
-    fn test_ff_settings_get_invalid_key() {
-        let key = CString::new("invalid.key").unwrap();
-        let result = ff_settings_get(key.as_ptr());
-        assert!(result.is_null());
-    }
-
-    #[test]
-    fn test_ff_settings_set_null() {
-        let result = ff_settings_set(std::ptr::null(), std::ptr::null());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
-
-    #[test]
-    fn test_ff_settings_save() {
-        let json = r#"{"general":{"default_directory":"/test","show_hidden_files":true,"confirm_delete":false},"appearance":{"theme":"light","icon_size":48,"font_size":14},"shortcuts":{"new_window":"Cmd+N","close_window":"Cmd+W","search":"Cmd+F","refresh":"Cmd+R","delete":"Cmd+Backspace","copy":"Cmd+C","paste":"Cmd+V","select_all":"Cmd+A"},"advanced":{"cache_size_mb":200,"thumbnail_quality":90,"fsevents_enabled":false}}"#;
-        let c_json = CString::new(json).unwrap();
-        let result = ff_settings_save(c_json.as_ptr());
-        assert_eq!(result, FF_OK);
-
-        // Verify the saved value
-        let key = CString::new("appearance.theme").unwrap();
-        let result = ff_settings_get(key.as_ptr());
-        assert!(!result.is_null());
-        unsafe {
-            let cstr = CStr::from_ptr(result);
-            assert_eq!(cstr.to_str().unwrap(), "light");
-            let _ = CString::from_raw(result);
-        }
-    }
-
-    // ── Task Scheduler Tests ──────────────────────────────────────────
-
-    #[test]
-    fn test_ff_task_submit() {
-        let name = CString::new("copy").unwrap();
-        let description = CString::new("test description").unwrap();
-        let mut out_task_id: *mut c_char = std::ptr::null_mut();
-
-        let result = crate::core::task_scheduler::ff_task_submit(
-            name.as_ptr(),
-            description.as_ptr(),
-            1,
-            &mut out_task_id,
-        );
-        assert_eq!(result, FF_OK);
-        assert!(!out_task_id.is_null());
-        unsafe {
-            let _ = CString::from_raw(out_task_id);
-        }
-    }
-
-    #[test]
-    fn test_ff_task_submit_invalid_type() {
-        let name = CString::new("invalid").unwrap();
-        let mut out_task_id: *mut c_char = std::ptr::null_mut();
-        let result = crate::core::task_scheduler::ff_task_submit(
-            name.as_ptr(),
-            std::ptr::null(),
-            1,
-            &mut out_task_id,
-        );
-        assert_eq!(result, FF_ERR_GENERIC);
-    }
-
-    #[test]
-    fn test_ff_task_cancel_not_found() {
-        let task_id = CString::new("99999").unwrap();
-        let result = crate::core::task_scheduler::ff_task_cancel(task_id.as_ptr());
-        assert_eq!(result, FF_ERR_NOT_FOUND);
-    }
-
-    // ── Volume Management Tests ─────────────────────────────────────
-
-    #[test]
-    fn test_ff_volume_list() {
-        extern "C" fn volume_callback(
-            _volume: *const FFVolumeInfo,
-            _user_data: *mut c_void,
-        ) {}
-
-        let result = crate::core::volumes::ff_volume_list(volume_callback, std::ptr::null_mut());
-        assert_eq!(result, FF_OK);
-    }
-
-    #[test]
-    fn test_ff_volume_info_null() {
-        let result = crate::core::volumes::ff_volume_info(std::ptr::null(), std::ptr::null_mut());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
-
-    #[test]
-    fn test_ff_volume_health_check_null() {
-        // ff_volume_health_check 签名为 (path, out_result)，测试 null 路径
-        let result = crate::core::volumes::ff_volume_health_check(std::ptr::null(), std::ptr::null_mut());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
-
-    #[test]
-    fn test_ff_volume_eject_null() {
-        let result = crate::core::volumes::ff_volume_eject(std::ptr::null());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
-
-    #[test]
-    fn test_ff_volume_mount_null() {
-        let result = crate::core::volumes::ff_volume_mount(std::ptr::null(), std::ptr::null());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
-
-    // ── Parallel Batch Operations Tests ─────────────────────────────
-
-    extern "C" fn noop_batch_progress(
-        _completed: usize,
-        _total: usize,
-        _current_file: *const c_char,
-        _user_data: *mut c_void,
-    ) {
-    }
-
-    /// Helper: build a `Vec<CString>` plus a `Vec<*const c_char>` view into it
-    /// suitable for passing to the parallel FFI functions.
-    fn build_c_string_array(paths: &[String]) -> (Vec<CString>, Vec<*const c_char>) {
-        let cstrings: Vec<CString> = paths
-            .iter()
-            .map(|s| CString::new(s.as_str()).unwrap())
-            .collect();
-        let ptrs: Vec<*const c_char> = cstrings.iter().map(|cs| cs.as_ptr()).collect();
-        (cstrings, ptrs)
-    }
-
-    #[test]
-    fn test_ff_parallel_copy() {
-        use std::fs;
-        use tempfile::tempdir;
-
-        let src_dir = tempdir().unwrap();
-        let dst_dir = tempdir().unwrap();
-        let n: usize = 5;
-
-        let srcs: Vec<String> = (0..n)
-            .map(|i| {
-                let path = src_dir.path().join(format!("parallel_copy_{}.txt", i));
-                fs::write(&path, format!("content-{}", i)).unwrap();
-                path.to_str().unwrap().to_string()
-            })
-            .collect();
-
-        let dst_dir_c = CString::new(dst_dir.path().to_str().unwrap()).unwrap();
-        let (_cstrings, ptrs) = build_c_string_array(&srcs);
-
-        let result = ff_parallel_copy(
-            ptrs.as_ptr(),
-            ptrs.len(),
-            dst_dir_c.as_ptr(),
-            noop_batch_progress,
-            ptr::null_mut(),
-        );
-
-        assert_eq!(result as usize, n, "all {} files should copy successfully", n);
-
-        // Verify destination files exist with correct contents.
-        for i in 0..n {
-            let dst = dst_dir.path().join(format!("parallel_copy_{}.txt", i));
-            assert!(dst.exists(), "destination file {} should exist", i);
-            assert_eq!(
-                fs::read_to_string(&dst).unwrap(),
-                format!("content-{}", i),
-                "destination content must match source"
-            );
-        }
-    }
-
-    #[test]
-    fn test_ff_parallel_move() {
-        use std::fs;
-        use tempfile::tempdir;
-
-        let src_dir = tempdir().unwrap();
-        let dst_dir = tempdir().unwrap();
-        let n: usize = 3;
-
-        let srcs: Vec<String> = (0..n)
-            .map(|i| {
-                let path = src_dir.path().join(format!("parallel_move_{}.txt", i));
-                fs::write(&path, format!("content-{}", i)).unwrap();
-                path.to_str().unwrap().to_string()
-            })
-            .collect();
-
-        let dst_dir_c = CString::new(dst_dir.path().to_str().unwrap()).unwrap();
-        let (_cstrings, ptrs) = build_c_string_array(&srcs);
-
-        let result = ff_parallel_move(
-            ptrs.as_ptr(),
-            ptrs.len(),
-            dst_dir_c.as_ptr(),
-            noop_batch_progress,
-            ptr::null_mut(),
-        );
-
-        assert_eq!(result as usize, n, "all {} files should move successfully", n);
-
-        // Files must exist in destination with correct content …
-        for i in 0..n {
-            let dst = dst_dir.path().join(format!("parallel_move_{}.txt", i));
-            assert!(dst.exists(), "destination file {} should exist", i);
-            assert_eq!(
-                fs::read_to_string(&dst).unwrap(),
-                format!("content-{}", i),
-                "destination content must match source"
-            );
-        }
-        // … and be gone from the source.
-        for src in &srcs {
-            assert!(
-                !std::path::Path::new(src).exists(),
-                "source should be gone after move: {}",
-                src
-            );
-        }
-    }
-
-    #[test]
-    fn test_ff_parallel_copy_null_inputs() {
-        let dst_dir_c = CString::new("/tmp").unwrap();
-        // Non-zero count with null srcs array → FF_ERR_INVALID_PATH.
-        assert_eq!(
-            ff_parallel_copy(
-                ptr::null(),
-                3,
-                dst_dir_c.as_ptr(),
-                noop_batch_progress,
-                ptr::null_mut(),
-            ),
-            FF_ERR_INVALID_PATH
-        );
-        // Null dst_dir → FF_ERR_INVALID_PATH.
-        assert_eq!(
-            ff_parallel_copy(
-                ptr::null(),
-                0,
-                ptr::null(),
-                noop_batch_progress,
-                ptr::null_mut(),
-            ),
-            FF_ERR_INVALID_PATH
-        );
-    }
-
-    #[test]
-    fn test_ff_parallel_delete() {
-        use std::fs;
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let n: usize = 5;
-
-        let paths: Vec<String> = (0..n)
-            .map(|i| {
-                let path = dir.path().join(format!("parallel_del_{}.txt", i));
-                fs::write(&path, b"to-be-deleted").unwrap();
-                path.to_str().unwrap().to_string()
-            })
-            .collect();
-
-        let (_cstrings, ptrs) = build_c_string_array(&paths);
-
-        let result = ff_parallel_delete(
-            ptrs.as_ptr(),
-            ptrs.len(),
-            noop_batch_progress,
-            ptr::null_mut(),
-        );
-
-        assert_eq!(result as usize, n, "all {} files should be deleted", n);
-
-        for p in &paths {
-            assert!(!std::path::Path::new(p).exists(), "path should be gone: {}", p);
-        }
-    }
-
-    #[test]
-    fn test_ff_parallel_delete_null_inputs() {
-        // Non-zero count with null paths array → FF_ERR_INVALID_PATH.
-        assert_eq!(
-            ff_parallel_delete(ptr::null(), 2, noop_batch_progress, ptr::null_mut()),
-            FF_ERR_INVALID_PATH
-        );
-    }
-
-    #[test]
-    fn test_ff_parallel_copy_empty() {
-        use tempfile::tempdir;
-
-        let dst_dir = tempdir().unwrap();
-        let dst_dir_c = CString::new(dst_dir.path().to_str().unwrap()).unwrap();
-        // Empty input array (count = 0) — should succeed with 0 copies.
-        let result = ff_parallel_copy(
-            ptr::null(),
-            0,
-            dst_dir_c.as_ptr(),
-            noop_batch_progress,
-            ptr::null_mut(),
-        );
-        assert_eq!(result, 0);
-    }
-
-    /// Partial-failure path: of 5 source paths, only the first 3 exist on
-    /// disk. `ff_parallel_copy` must return 3 (the success count), and
-    /// `ff_last_error()` must contain the `summarize_parallel_failures`
-    /// summary (`"2/5 failed: ..."`).
-    #[test]
-    fn test_ff_parallel_copy_partial_failure() {
-        use std::fs;
-        use tempfile::tempdir;
-
-        let src_dir = tempdir().unwrap();
-        let dst_dir = tempdir().unwrap();
-
-        // Build 5 source paths but only write content to the first 3.
-        // Indices 3 and 4 are never created on disk, so their copies fail.
-        let srcs: Vec<String> = (0..5)
-            .map(|i| {
-                let path = src_dir.path().join(format!("partial_fail_{}.txt", i));
-                if i < 3 {
-                    fs::write(&path, format!("content-{}", i)).unwrap();
-                }
-                path.to_str().unwrap().to_string()
-            })
-            .collect();
-
-        let dst_dir_c = CString::new(dst_dir.path().to_str().unwrap()).unwrap();
-        let (_cstrings, ptrs) = build_c_string_array(&srcs);
-
-        let result = ff_parallel_copy(
-            ptrs.as_ptr(),
-            ptrs.len(),
-            dst_dir_c.as_ptr(),
-            noop_batch_progress,
-            ptr::null_mut(),
-        );
-
-        // Exactly the first 3 sources exist; the other 2 fail.
-        assert_eq!(
-            result, 3,
-            "expected 3 of 5 copies to succeed (sources 3 and 4 do not exist)"
-        );
-
-        // `summarize_parallel_failures` must have populated `last_error`
-        // with a string of the form `"2/5 failed: ..."`.
-        let err_ptr = ff_last_error();
-        assert!(
-            !err_ptr.is_null(),
-            "ff_last_error must be set on partial failure"
-        );
-        let err_msg = unsafe { CStr::from_ptr(err_ptr).to_string_lossy().to_string() };
-        ff_free_string(err_ptr);
-        assert!(
-            err_msg.contains("2/5 failed"),
-            "error message should contain '2/5 failed', got: {}",
-            err_msg
-        );
-
-        // The 3 successful copies must land in the destination directory
-        // with the correct contents.
-        for i in 0..3 {
-            let dst = dst_dir.path().join(format!("partial_fail_{}.txt", i));
-            assert!(dst.exists(), "destination file {} should exist", i);
-            assert_eq!(
-                fs::read_to_string(&dst).unwrap(),
-                format!("content-{}", i),
-                "destination content must match source for file {}",
-                i,
-            );
-        }
-    }
-
-    // ── ff_generate_tags tests ────────────────────────────────────
-
-    #[test]
-    fn test_ff_generate_tags_null_path() {
-        let ptr = ff_generate_tags(ptr::null());
-        assert!(ptr.is_null(), "null path should return null");
-        let err = ff_last_error();
-        assert!(!err.is_null());
-        unsafe {
-            let msg = CStr::from_ptr(err).to_string_lossy().to_string();
-            ff_free_string(err);
-            assert!(msg.contains("null"), "error should mention null, got: {}", msg);
-        }
-    }
-
-    #[test]
-    fn test_ff_generate_tags_nonexistent_file() {
-        let path = CString::new("/nonexistent/path/file.jpg").unwrap();
-        let ptr = ff_generate_tags(path.as_ptr());
-        assert!(ptr.is_null(), "nonexistent file should return null");
-        let err = ff_last_error();
-        assert!(!err.is_null());
-        unsafe {
-            ff_free_string(err);
-        }
-    }
-
-    #[test]
-    fn test_ff_generate_tags_image_file() {
-        let dir = std::env::temp_dir();
-        let path = dir.join("ff_test_ffi_tags_photo.jpg");
-        std::fs::write(&path, b"fake image").unwrap();
-
-        let c_path = CString::new(path.to_str().unwrap()).unwrap();
-        let ptr = ff_generate_tags(c_path.as_ptr());
-        let _ = std::fs::remove_file(&path);
-
-        assert!(!ptr.is_null(), "image file should return JSON");
-        unsafe {
-            let json = CStr::from_ptr(ptr).to_string_lossy().to_string();
-            ff_free_string(ptr);
-            assert!(json.contains("图片"), "JSON should contain 图片, got: {}", json);
-            assert!(json.contains("image"), "JSON should contain image, got: {}", json);
-        }
-    }
-
-    #[test]
-    fn test_ff_generate_tags_unknown_type_returns_empty_array() {
-        let dir = std::env::temp_dir();
-        let path = dir.join("ff_test_ffi_tags_unknown.xyz123");
-        std::fs::write(&path, b"data").unwrap();
-
-        let c_path = CString::new(path.to_str().unwrap()).unwrap();
-        let ptr = ff_generate_tags(c_path.as_ptr());
-        let _ = std::fs::remove_file(&path);
-
-        // 文件存在但无匹配规则 → 返回 "[]"（非 null）
-        assert!(!ptr.is_null(), "existing file should return non-null even if no tags");
-        unsafe {
-            let json = CStr::from_ptr(ptr).to_string_lossy().to_string();
-            ff_free_string(ptr);
-            assert_eq!(json, "[]", "unknown type should return empty array");
-        }
-    }
-
-    #[test]
-    fn test_ff_generate_tags_directory() {
-        let dir = std::env::temp_dir();
-        let path = dir.join("ff_test_ffi_tags_dir");
-        std::fs::create_dir_all(&path).unwrap();
-
-        let c_path = CString::new(path.to_str().unwrap()).unwrap();
-        let ptr = ff_generate_tags(c_path.as_ptr());
-        let _ = std::fs::remove_dir_all(&path);
-
-        assert!(!ptr.is_null());
-        unsafe {
-            let json = CStr::from_ptr(ptr).to_string_lossy().to_string();
-            ff_free_string(ptr);
-            assert!(json.contains("文件夹"), "directory should get 文件夹 tag, got: {}", json);
-            assert!(json.contains("folder"), "JSON should contain folder category");
-        }
-    }
-}
+mod tests;

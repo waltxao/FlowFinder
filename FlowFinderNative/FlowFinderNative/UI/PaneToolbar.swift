@@ -91,10 +91,10 @@ class PaneToolbar: NSView {
     // MARK: - Row 1: Navigation
 
     private func setupRow1() {
-        backButton = createNavButton(systemSymbol: "chevron.backward", action: #selector(backClicked))
-        forwardButton = createNavButton(systemSymbol: "chevron.forward", action: #selector(forwardClicked))
-        upButton = createNavButton(systemSymbol: "chevron.up", action: #selector(upClicked))
-        refreshButton = createNavButton(systemSymbol: "arrow.clockwise", action: #selector(refreshClicked))
+        backButton = createNavButton(systemSymbol: "chevron.backward", action: #selector(backClicked), label: "返回")
+        forwardButton = createNavButton(systemSymbol: "chevron.forward", action: #selector(forwardClicked), label: "前进")
+        upButton = createNavButton(systemSymbol: "chevron.up", action: #selector(upClicked), label: "上级目录")
+        refreshButton = createNavButton(systemSymbol: "arrow.clockwise", action: #selector(refreshClicked), label: "刷新")
 
         row1 = NSStackView(views: [backButton, forwardButton, upButton, refreshButton])
         row1.orientation = .horizontal
@@ -193,8 +193,8 @@ class PaneToolbar: NSView {
         sortPopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         groupPopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
-        listViewButton = createViewButton(systemSymbol: "list.bullet", action: #selector(listViewClicked))
-        gridViewButton = createViewButton(systemSymbol: "square.grid.2x2", action: #selector(gridViewClicked))
+        listViewButton = createViewButton(systemSymbol: "list.bullet", action: #selector(listViewClicked), label: "列表视图")
+        gridViewButton = createViewButton(systemSymbol: "square.grid.2x2", action: #selector(gridViewClicked), label: "网格视图")
 
         updateViewModeHighlight(.list)
 
@@ -206,13 +206,13 @@ class PaneToolbar: NSView {
 
         // v0.6.9+: 文件夹显示配置按钮，使用系统 SF Symbol「slider.horizontal.3」
         // 模板色自动适配浅/深色，与其他导航按钮视觉统一
-        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu))
+        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu), label: "文件夹选项")
 
         // v0.7.4 项 2 + 项 6 合并（v0.7.4 修订）：单一「新建文件夹」按钮。
         // - 未选中任何项目：点击创建空文件夹（默认名"新建文件夹"，重名自动加序号）
         // - 选中 2 个及以上：点击自动"用所选 N 个项目新建文件夹"
         // - 悬停提示随选中状态动态变化（由 setFolderSelectionCount 更新）
-        newFolderButton = createNavButton(systemSymbol: "folder.badge.plus", action: #selector(newFolderClicked))
+        newFolderButton = createNavButton(systemSymbol: "folder.badge.plus", action: #selector(newFolderClicked), label: "新建文件夹")
         newFolderButton.toolTip = "新建文件夹"
         newFolderButton.isEnabled = true
 
@@ -249,30 +249,32 @@ class PaneToolbar: NSView {
     // MARK: - Button Factory
 
     /// 创建访达风格的圆形药丸按钮
-    private func createNavButton(systemSymbol: String, action: Selector) -> NSButton {
+    private func createNavButton(systemSymbol: String, action: Selector, label: String) -> NSButton {
         let button = NSButton()
-        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: nil)
+        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: label)
         button.bezelStyle = .accessoryBarAction
         button.controlSize = .small
         button.imagePosition = .imageOnly
         button.target = self
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.setAccessibilityLabel(label)
         button.widthAnchor.constraint(equalToConstant: 28).isActive = true
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return button
     }
 
     /// 创建视图切换按钮（访达风格圆形药丸）
-    private func createViewButton(systemSymbol: String, action: Selector) -> NSButton {
+    private func createViewButton(systemSymbol: String, action: Selector, label: String) -> NSButton {
         let button = NSButton()
-        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: nil)
+        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: label)
         button.bezelStyle = .accessoryBarAction
         button.controlSize = .small
         button.imagePosition = .imageOnly
         button.target = self
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.setAccessibilityLabel(label)
         button.widthAnchor.constraint(equalToConstant: 28).isActive = true
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return button
@@ -505,7 +507,7 @@ class PaneToolbar: NSView {
 
         // 立即显示（无需动画延迟）
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.08
+            ctx.duration = FFMotion.animationDuration(0.08)
             label.animator().alphaValue = 1.0
         }
     }

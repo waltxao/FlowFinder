@@ -465,6 +465,9 @@ public class FileListView: NSView {
     // Bug 9 修复：reload 期间标志位，防止 selectionDidChange -> state 变更 -> reload 形成循环
     private var isReloading: Bool = false
 
+    /// 任务 T12: 面板状态浮层（加载/空/错误+重试/删除进度），由 PaneState 真值驱动
+    private let stateOverlayView = FFPaneStateOverlayView()
+
     /// 统一操作控制器：处理右键菜单、键盘操作、内联重命名等（与 FileGridView 共用同一套逻辑）
     private(set) lazy var actionsController: FFPaneActionsController = FFPaneActionsController(host: self)
 
@@ -479,6 +482,8 @@ public class FileListView: NSView {
             cancellables.removeAll()
             tableView.dataSource = self
             tableView.delegate = self
+            // 任务 T12: 状态浮层绑定（由 PaneState 真值驱动，独立于表格刷新逻辑）
+            stateOverlayView.viewModel = viewModel
             // 任务 F10-7: 初始同步排序描述符，使列头箭头显示在当前排序列上
             applySortDescriptorsFromViewModel()
             // 任务 F10-8: 初始构建 displayRows（分组渲染映射）
@@ -872,6 +877,16 @@ public class FileListView: NSView {
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        // 任务 T12: 状态浮层叠加在 scrollView 之上（独立叠加层，不参与列表布局）
+        stateOverlayView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stateOverlayView)
+        NSLayoutConstraint.activate([
+            stateOverlayView.topAnchor.constraint(equalTo: topAnchor),
+            stateOverlayView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stateOverlayView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stateOverlayView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
         // 注意：不调用 sizeToFit()，避免它压缩列宽导致第 5 列不可见。
@@ -1479,6 +1494,8 @@ extension FileListView: NSTableViewDelegate {
             let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
             let displayName = showExtensions ? entry.name : entry.displayName
             cellView.textField?.stringValue = displayName
+            // T13: 无障碍标签：文件名 + 类型 + 大小（VoiceOver 可读）
+            cellView.setAccessibilityLabel(FileEntryAccessibility.label(for: entry))
             // v0.7.4 决定性诊断：打印实际渲染到 cell 的文件名（仅 row 0 和包含改名关键词时）
             if row < 3 || entry.name.contains("logo") || entry.name.contains("测试") {
                 FFDebug.log("[RENDER-DIAG] viewFor row=\(row) entry.name=\(entry.name) displayAs=\(displayName) path=\(entry.path)")

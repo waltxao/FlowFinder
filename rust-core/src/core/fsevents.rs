@@ -12,11 +12,56 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
+
+/// Return code for a failed watcher setup. Mapped to `FF_ERR_IO` by the
+/// FFI layer (`ff_fsevents_start`).
+pub const FSEVENTS_ERR: i32 = -1;
+
+/// Upper bound for how long `start` waits for the worker's setup outcome.
+/// Setup is a handful of CoreFoundation calls, so this is a generous safety
+/// valve against a pathological hang rather than a real deadline.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Lifecycle status of the FSEvents watcher.
+///
+/// The status is process-global (there is at most one watcher) and is
+/// updated at every lifecycle transition so the Swift side can distinguish a
+/// running watcher from a failed start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatcherStatus {
+    /// No watcher is running (initial state, or after `stop`).
+    Stopped = 0,
+    /// A worker thread has been spawned and stream setup is in progress.
+    Starting = 1,
+    /// The FSEventStream was created and started; callbacks are being delivered.
+    Active = 2,
+    /// The last `start` attempt failed during setup; no watcher is running.
+    Failed = 3,
+}
+
+impl WatcherStatus {
+    /// C-compatible integer value for FFI export.
+    pub fn as_c_int(self) -> i32 {
+        self as i32
+    }
+}
+
+/// Current lifecycle status of the watcher. Updated by `start`/`stop` at
+/// every transition; read by `status()` (and the `ff_fsevents_status` FFI).
+static WATCHER_STATUS: Mutex<WatcherStatus> = Mutex::new(WatcherStatus::Stopped);
+
+/// Test-only hook: when set, the next `start` call fails synchronously with
+/// a deterministic setup failure (no worker thread is spawned). Lets FFI
+/// integration tests prove that `ff_fsevents_start` reports failure instead
+/// of a false success without depending on platform CF behavior.
+#[cfg(test)]
+pub(crate) static FORCE_SETUP_FAILURE: AtomicBool = AtomicBool::new(false);
 
 /// Callback type for FSEvents notifications.
 /// Arguments: (path, user_data)
@@ -206,6 +251,10 @@ mod macos {
     /// blocks in `CFRunLoopRun()` until `stop()` signals via `CFRunLoopStop`.
     /// The stream + run loop are published through shared slots so `stop()`
     /// (running on another thread) can wake the loop.
+    ///
+    /// Setup runs on the worker, so its result is reported back through a
+    /// channel and `start_macos` blocks until setup has *finished*. A failed
+    /// setup therefore returns `FSEVENTS_ERR` instead of a false success.
     pub fn start_macos(
         path: &str,
         callback: FSEventCallback,
@@ -218,6 +267,9 @@ mod macos {
         let run_loop_slot = Arc::new(Mutex::new(None::<SendPtr>));
         let ready = Arc::new(Mutex::new(false));
         let ready_cvar = Arc::new(Condvar::new());
+        // Setup-result channel: the worker sends its setup outcome here so
+        // `start_macos` can observe the real result synchronously.
+        let (setup_tx, setup_rx) = mpsc::channel::<Result<(), ()>>();
 
         let w_run_loop = run_loop_slot.clone();
         let w_ready = ready.clone();
@@ -227,7 +279,8 @@ mod macos {
         let handle = thread::spawn(move || {
             // Setup phase. Publishes the run loop + signals `ready` exactly
             // once, whether setup succeeds (before entering the run loop) or
-            // fails (before returning).
+            // fails (before returning), then reports the outcome through the
+            // setup channel so the caller can observe it synchronously.
             let setup: Result<(macos::FSEventStreamRef, *mut c_void, CFTypeRef, CFTypeRef), ()> =
                 (|| {
                     let path_c = CString::new(path_bytes).map_err(|_| ())?;
@@ -258,7 +311,7 @@ mod macos {
                     let info_box = Box::new(CallbackInfo {
                         callback,
                         user_data: user_data_addr as *mut c_void,
-                        stop_flag: w_stop,
+                        stop_flag: w_stop.clone(),
                     });
                     let info_ptr = Box::into_raw(info_box) as *mut c_void;
                     let mut context = FSEventStreamContext {
@@ -308,6 +361,20 @@ mod macos {
                     // another thread) can call CFRunLoopStop to wake us.
                     *w_ready.lock() = true;
                     w_cvar.notify_all();
+                    let _ = setup_tx.send(Ok(()));
+
+                    // A concurrent `stop()` may have arrived while setup was
+                    // running; if so, tear down immediately instead of
+                    // entering the run loop (which would otherwise block).
+                    if w_stop.load(Ordering::Acquire) {
+                        unsafe { FSEventStreamStop(stream) };
+                        unsafe { FSEventStreamInvalidate(stream) };
+                        unsafe { FSEventStreamRelease(stream) };
+                        let _ = unsafe { Box::from_raw(info_ptr as *mut CallbackInfo) };
+                        unsafe { CFRelease(paths) };
+                        unsafe { CFRelease(path_str) };
+                        return;
+                    }
 
                     // Block until CFRunLoopStop() is called from stop().
                     unsafe { CFRunLoopRun() };
@@ -323,18 +390,52 @@ mod macos {
                 Err(()) => {
                     *w_ready.lock() = true;
                     w_cvar.notify_all();
+                    let _ = setup_tx.send(Err(()));
                 }
             }
         });
 
+        // Publish the state immediately so a concurrent `stop()` can find the
+        // worker while setup is still in flight (it waits on `ready`).
         let mut global = FSEVENTS_STATE.lock();
         *global = Some(FSEventsState {
-            stop_flag,
+            stop_flag: stop_flag.clone(),
             join_handle: Some(handle),
             run_loop: run_loop_slot,
             ready: (ready, ready_cvar),
         });
-        0
+        drop(global);
+
+        // Synchronously wait for the setup outcome. No lock is held while
+        // blocked, so a concurrent `stop()` can always make progress.
+        match setup_rx.recv_timeout(SETUP_TIMEOUT) {
+            Ok(Ok(())) => {
+                if stop_flag.load(Ordering::Acquire) {
+                    // A concurrent `stop()` tore this watcher down during setup.
+                    stop_internal();
+                    *WATCHER_STATUS.lock() = WatcherStatus::Stopped;
+                    FSEVENTS_ERR
+                } else {
+                    *WATCHER_STATUS.lock() = WatcherStatus::Active;
+                    0
+                }
+            }
+            Ok(Err(())) => {
+                // Setup failed; the worker has already signaled `ready` and
+                // exited. Reclaim it through the normal stop path.
+                stop_internal();
+                *WATCHER_STATUS.lock() = WatcherStatus::Failed;
+                FSEVENTS_ERR
+            }
+            Err(_) => {
+                // Pathological: the worker did not report within the timeout.
+                // Signal it to stop and report failure; the worker self-cleans
+                // when it wakes (it checks `stop_flag` after setup).
+                stop_flag.store(true, Ordering::Release);
+                *WATCHER_STATUS.lock() = WatcherStatus::Failed;
+                FSEVENTS_ERR
+            }
+        }
     }
 }
 
@@ -363,8 +464,9 @@ static FSEVENTS_STATE: Mutex<Option<FSEventsState>> = Mutex::new(None);
 /// - `user_data` — Opaque pointer passed to the callback.
 ///
 /// # Returns
-/// - `0` on success.
-/// - `-1` on error.
+/// - `0` on success (the watcher is `Active` and callbacks are flowing).
+/// - `FSEVENTS_ERR` (`-1`) if stream setup failed before the watcher was
+///   established (the status becomes `Failed` and no watcher is running).
 ///
 /// # Safety
 /// - `path` must be a valid, NUL-terminated UTF-8 string.
@@ -373,6 +475,16 @@ pub fn start(path: &str, callback: FSEventCallback, user_data: *mut c_void) -> i
     // If a previous watcher is still registered, stop it first so we
     // don't leak its thread before overwriting the global state.
     stop_internal();
+
+    // Test-only injection: force a deterministic setup failure so FFI
+    // integration tests can prove `start` reports failure synchronously.
+    #[cfg(test)]
+    if FORCE_SETUP_FAILURE.swap(false, Ordering::AcqRel) {
+        *WATCHER_STATUS.lock() = WatcherStatus::Failed;
+        return FSEVENTS_ERR;
+    }
+
+    *WATCHER_STATUS.lock() = WatcherStatus::Starting;
 
     #[cfg(target_os = "macos")]
     {
@@ -395,7 +507,10 @@ fn start_fallback(path: &str, callback: FSEventCallback, user_data: *mut c_void)
 
     let path_c = match CString::new(path) {
         Ok(c) => c,
-        Err(_) => return -1,
+        Err(_) => {
+            *WATCHER_STATUS.lock() = WatcherStatus::Failed;
+            return -1;
+        }
     };
     let path_box = Arc::new(path_c);
     let user_data_addr = user_data as usize;
@@ -417,7 +532,13 @@ fn start_fallback(path: &str, callback: FSEventCallback, user_data: *mut c_void)
         stop_flag,
         join_handle: Some(join_handle),
     });
+    *WATCHER_STATUS.lock() = WatcherStatus::Active;
     0
+}
+
+/// Query the current watcher lifecycle status.
+pub fn status() -> WatcherStatus {
+    *WATCHER_STATUS.lock()
 }
 
 /// Internal helper: stop and join the current watcher (if any) without
@@ -449,6 +570,8 @@ fn stop_internal() {
         if let Some(handle) = state.join_handle.take() {
             let _ = handle.join();
         }
+
+        *WATCHER_STATUS.lock() = WatcherStatus::Stopped;
     }
 }
 
@@ -469,6 +592,13 @@ pub fn stop() -> i32 {
 
 // ── Tests ───────────────────────────────────────────────────────────
 
+/// `start`/`stop` operate on the single process-global `FSEVENTS_STATE`, so
+/// lifecycle tests must not run concurrently — across both the core test
+/// module and the FFI test module (which share this lock). Test-only
+/// synchronization; production code is untouched.
+#[cfg(test)]
+pub(crate) static FSEVENTS_TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,6 +608,7 @@ mod tests {
 
     #[test]
     fn test_fsevents_start_stop() {
+        let _guard = FSEVENTS_TEST_LOCK.lock();
         let result = start("/tmp", test_callback, ptr::null_mut());
         assert_eq!(result, 0);
 
@@ -487,8 +618,87 @@ mod tests {
 
     #[test]
     fn test_fsevents_stop_without_start() {
+        let _guard = FSEVENTS_TEST_LOCK.lock();
         // No watcher running → stop must report -1 (and must not panic).
         stop_internal();
         assert_eq!(stop(), -1);
+    }
+
+    #[test]
+    fn test_fsevents_start_success_active() {
+        let _guard = FSEVENTS_TEST_LOCK.lock();
+        assert_eq!(status(), WatcherStatus::Stopped);
+
+        let result = start("/tmp", test_callback, ptr::null_mut());
+        assert_eq!(result, 0);
+        assert_eq!(status(), WatcherStatus::Active);
+
+        let result = stop();
+        assert_eq!(result, 0);
+        assert_eq!(status(), WatcherStatus::Stopped);
+    }
+
+    #[test]
+    fn test_fsevents_start_failure_failed_status() {
+        let _guard = FSEVENTS_TEST_LOCK.lock();
+        // NUL byte cannot become a CString → worker setup fails.
+        let result = start("watch\0me", test_callback, ptr::null_mut());
+        assert_ne!(result, 0);
+        assert_eq!(status(), WatcherStatus::Failed);
+
+        // No watcher is running after a failed start: stop reports -1.
+        assert_eq!(stop(), -1);
+
+        // A subsequent successful start resets the status.
+        let result = start("/tmp", test_callback, ptr::null_mut());
+        assert_eq!(result, 0);
+        assert_eq!(status(), WatcherStatus::Active);
+        assert_eq!(stop(), 0);
+        assert_eq!(status(), WatcherStatus::Stopped);
+    }
+
+    #[test]
+    fn test_fsevents_stop_idempotent() {
+        let _guard = FSEVENTS_TEST_LOCK.lock();
+        stop_internal();
+        assert_eq!(stop(), -1);
+        assert_eq!(stop(), -1);
+        assert_eq!(status(), WatcherStatus::Stopped);
+    }
+
+    #[test]
+    fn test_fsevents_start_stop_cycles() {
+        let _guard = FSEVENTS_TEST_LOCK.lock();
+        for _ in 0..5 {
+            assert_eq!(start("/tmp", test_callback, ptr::null_mut()), 0);
+            assert_eq!(status(), WatcherStatus::Active);
+            assert_eq!(stop(), 0);
+            assert_eq!(status(), WatcherStatus::Stopped);
+        }
+    }
+
+    // ── Wave1 regression test (v0.7.5 fix plan, red before the fix) ──
+    //
+    // A path with an embedded NUL byte cannot become a CString, so the macOS
+    // worker's stream setup fails — yet `start_macos` returns 0 anyway.
+
+    #[test]
+    fn test_fsevents_start_failure_reported() {
+        let _guard = FSEVENTS_TEST_LOCK.lock();
+        let result = start("watch\0me", test_callback, ptr::null_mut());
+        // Clean up the (buggy) registered watcher even if the assertion
+        // below panics, so later tests do not inherit a leftover state.
+        let stop_result = stop();
+        assert_ne!(
+            result, 0,
+            "start() must report failure when the FSEvents stream cannot be created \
+             (returned 0; stop() -> {})",
+            stop_result
+        );
+        // A failed start deliberately leaves the process-global watcher
+        // status at `Failed`. Restore `Stopped` so order-dependent sibling
+        // tests (test_fsevents_start_success_active,
+        // test_fsevents_stop_idempotent) never observe leaked state.
+        *WATCHER_STATUS.lock() = WatcherStatus::Stopped;
     }
 }

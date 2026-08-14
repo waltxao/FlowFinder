@@ -6,10 +6,13 @@ final class FlowFinderNativeTests: XCTestCase {
     // MARK: - FFI Loading Tests
 
     func testLibraryCanBeLoaded() {
-        let dylibPath = Bundle.main.bundlePath + "/../Frameworks/libflowfinder_core.dylib"
+        // The dylib is bundled at Contents/Frameworks and loaded via @rpath by
+        // the "Copy Dylib to Bundle" build phase, so that is the authoritative
+        // location to assert against.
+        let bundledPath = Bundle.main.bundlePath + "/Contents/Frameworks/libflowfinder_core.dylib"
         let fileManager = FileManager.default
 
-        var libraryExists = fileManager.fileExists(atPath: dylibPath)
+        var libraryExists = fileManager.fileExists(atPath: bundledPath)
 
         if !libraryExists {
             let projectLibPath = "./FlowFinderNative/Libraries/libflowfinder_core.dylib"
@@ -137,56 +140,57 @@ final class FlowFinderNativeTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: dstPath)
     }
 
-    func testCopyFileAsync() throws {
+    func testParallelCopySingleFile() throws {
+        // The async copy path is now `parallelCopy` (rayon-backed batch copy into
+        // a destination directory, preserving basenames). It returns the number of
+        // successfully copied files and throws on a negative FFI result.
         let bridge = CoreBridge.shared
-        let tmpDir = FileManager.default.temporaryDirectory
-        let srcPath = tmpDir.appendingPathComponent("test_async_src.txt").path
-        let dstPath = tmpDir.appendingPathComponent("test_async_dst.txt").path
+        let fm = FileManager.default
+        let tmpDir = fm.temporaryDirectory
+        let srcDir = tmpDir.appendingPathComponent("ff_t11_copy_src_\(UUID().uuidString)")
+        let dstDir = tmpDir.appendingPathComponent("ff_t11_copy_dst_\(UUID().uuidString)")
+        try fm.createDirectory(at: srcDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: dstDir, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: srcDir)
+            try? fm.removeItem(at: dstDir)
+        }
 
-        try? FileManager.default.removeItem(atPath: srcPath)
-        try? FileManager.default.removeItem(atPath: dstPath)
-
+        let srcPath = srcDir.appendingPathComponent("test_async_src.txt").path
         try "async copy".write(toFile: srcPath, atomically: true, encoding: .utf8)
 
-        let expectation = self.expectation(description: "Async copy completes")
-        var copyError: CoreBridgeError?
+        let copied = try bridge.parallelCopy(srcs: [srcPath], dstDir: dstDir.path)
 
-        bridge.copyFileAsync(src: srcPath, dst: dstPath) { error in
-            copyError = error
-            expectation.fulfill()
-        }
-
-        waitForExpectations(timeout: 5.0, handler: nil)
-
-        XCTAssertNil(copyError, "Async copy should not produce an error")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: dstPath), "Destination file should exist after async copy")
-
-        try? FileManager.default.removeItem(atPath: srcPath)
-        try? FileManager.default.removeItem(atPath: dstPath)
+        XCTAssertEqual(copied, 1, "parallelCopy should report exactly one copied file")
+        let dstPath = dstDir.appendingPathComponent("test_async_src.txt").path
+        XCTAssertTrue(fm.fileExists(atPath: dstPath), "Destination file should exist after parallel copy")
     }
 
-    func testDeleteFileAsync() throws {
+    func testParallelMoveSingleFile() throws {
+        // The async move path is `parallelMove` (rayon-backed batch move). The
+        // source disappears and the destination appears, preserving the
+        // "async file operation" intent of the removed async-delete API.
         let bridge = CoreBridge.shared
-        let tmpDir = FileManager.default.temporaryDirectory
-        let filePath = tmpDir.appendingPathComponent("test_async_delete.txt").path
-
-        try? FileManager.default.removeItem(atPath: filePath)
-
-        try "async delete".write(toFile: filePath, atomically: true, encoding: .utf8)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: filePath), "File should exist before async delete")
-
-        let expectation = self.expectation(description: "Async delete completes")
-        var deleteError: CoreBridgeError?
-
-        bridge.deleteFileAsync(path: filePath) { error in
-            deleteError = error
-            expectation.fulfill()
+        let fm = FileManager.default
+        let tmpDir = fm.temporaryDirectory
+        let srcDir = tmpDir.appendingPathComponent("ff_t11_move_src_\(UUID().uuidString)")
+        let dstDir = tmpDir.appendingPathComponent("ff_t11_move_dst_\(UUID().uuidString)")
+        try fm.createDirectory(at: srcDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: dstDir, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: srcDir)
+            try? fm.removeItem(at: dstDir)
         }
 
-        waitForExpectations(timeout: 5.0, handler: nil)
+        let srcPath = srcDir.appendingPathComponent("test_async_move.txt").path
+        try "async move".write(toFile: srcPath, atomically: true, encoding: .utf8)
 
-        XCTAssertNil(deleteError, "Async delete should not produce an error")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: filePath), "File should not exist after async delete")
+        let moved = try bridge.parallelMove(srcs: [srcPath], dstDir: dstDir.path)
+
+        XCTAssertEqual(moved, 1, "parallelMove should report exactly one moved file")
+        XCTAssertFalse(fm.fileExists(atPath: srcPath), "Source file should no longer exist after parallel move")
+        let dstPath = dstDir.appendingPathComponent("test_async_move.txt").path
+        XCTAssertTrue(fm.fileExists(atPath: dstPath), "Destination file should exist after parallel move")
     }
 
     // MARK: - FileEntry Tests
@@ -222,15 +226,18 @@ final class FlowFinderNativeTests: XCTestCase {
         XCTAssertEqual(entry.displayName, "path", "Directory display name should be the name")
     }
 
-    func testFileEntryMimeType() {
-        let jpgEntry = FileEntry(path: "/test.jpg", name: "test.jpg", isDirectory: false, size: 100, modificationDate: Date())
-        XCTAssertEqual(jpgEntry.mimeType, "image/jpeg")
+    func testFileEntryKindDescription() {
+        let jpgEntry = FileEntry(path: "/test.jpg", name: "test.jpg", isDirectory: false)
+        XCTAssertEqual(jpgEntry.kindDescription, "JPEG 图像")
 
-        let pdfEntry = FileEntry(path: "/test.pdf", name: "test.pdf", isDirectory: false, size: 100, modificationDate: Date())
-        XCTAssertEqual(pdfEntry.mimeType, "application/pdf")
+        let pdfEntry = FileEntry(path: "/test.pdf", name: "test.pdf", isDirectory: false)
+        XCTAssertEqual(pdfEntry.kindDescription, "PDF 文档")
 
-        let unknownEntry = FileEntry(path: "/test.xyz", name: "test.xyz", isDirectory: false, size: 100, modificationDate: Date())
-        XCTAssertEqual(unknownEntry.mimeType, "application/octet-stream")
+        let unknownEntry = FileEntry(path: "/test.xyz", name: "test.xyz", isDirectory: false)
+        XCTAssertEqual(unknownEntry.kindDescription, "XYZ 文件")
+
+        let dirEntry = FileEntry(path: "/testdir", name: "testdir", isDirectory: true)
+        XCTAssertEqual(dirEntry.kindDescription, "文件夹")
     }
 
     func testFileEntryFormattedSize() {
@@ -239,20 +246,20 @@ final class FlowFinderNativeTests: XCTestCase {
         XCTAssertFalse(sizeString.isEmpty, "Formatted size should not be empty")
     }
 
-    // MARK: - FileEntryViewModel Tests
+    // MARK: - PaneViewModel Tests
 
     func testViewModelInitialState() {
-        let viewModel = FileEntryViewModel()
+        let viewModel = PaneViewModel()
         XCTAssertFalse(viewModel.isLoading)
-        XCTAssertNil(viewModel.errorMessage)
-        XCTAssertNotNil(viewModel.currentPath)
+        XCTAssertNil(viewModel.error)
+        XCTAssertEqual(viewModel.currentPath, "")
     }
 
-    func testViewModelNavigateToHome() {
-        let viewModel = FileEntryViewModel()
+    func testViewModelNavigateToPath() {
+        let viewModel = PaneViewModel()
         let homePath = FileManager.default.homeDirectoryForCurrentUser.path
 
-        viewModel.navigateToHome()
+        viewModel.navigate(to: homePath)
 
         XCTAssertEqual(viewModel.currentPath, homePath)
     }
@@ -266,8 +273,8 @@ final class FlowFinderNativeTests: XCTestCase {
         let invalidPath = CoreBridgeError.invalidPath("/bad/path")
         XCTAssertEqual(invalidPath.errorDescription, "Invalid path: /bad/path")
 
-        let unknown = CoreBridgeError.unknownError
-        XCTAssertEqual(unknown.errorDescription, "Unknown error occurred")
+        let conversion = CoreBridgeError.stringConversionFailed
+        XCTAssertEqual(conversion.errorDescription, "Failed to convert string to C string")
 
         let notLoaded = CoreBridgeError.rustCoreNotLoaded
         XCTAssertEqual(notLoaded.errorDescription, "Rust core library not loaded")

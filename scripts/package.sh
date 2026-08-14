@@ -26,8 +26,8 @@ SCHEME_NAME="FlowFinderNative"
 TARGET_NAME="FlowFinderNative"
 CONFIGURATION="Release"
 BUILD_DIR="$PROJECT_DIR/build"
-VERSION="0.7.4"
-BUILD_NUMBER="740"
+VERSION="0.7.5"
+BUILD_NUMBER="750"
 
 # Optional Developer ID signing (set via environment)
 DEVELOPER_ID="${DEVELOPER_ID:-}"
@@ -155,11 +155,13 @@ SELECTOR_KIND="${SELECTOR%%:*}"
 SELECTOR_NAME="${SELECTOR#*:}"
 log_success "使用 ${SELECTOR_KIND}: ${SELECTOR_NAME}"
 
-# Build the xcodebuild selector args
+# Build the xcodebuild selector args（-target 模式不支持 -derivedDataPath，改用 SYMROOT 定位产物）
 if [ "$SELECTOR_KIND" = "scheme" ]; then
     XCODEBUILD_SELECTOR=(-scheme "$SELECTOR_NAME")
+    DERIVED_DATA_ARGS=(-derivedDataPath "$BUILD_DIR/DerivedData")
 else
     XCODEBUILD_SELECTOR=(-target "$SELECTOR_NAME")
+    DERIVED_DATA_ARGS=(SYMROOT="$BUILD_DIR/DerivedData/Build/Products" OBJROOT="$BUILD_DIR/DerivedData/Build/Intermediates")
 fi
 
 # ---------------------------------------------------------------------------
@@ -174,13 +176,17 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 log_info "运行 xcodebuild (Rust core 由 build phase 自动编译)..."
+# -target 模式不支持 -derivedDataPath；统一用 SYMROOT/OBJROOT 定位产物。
+# -scheme 模式同样适用，保证两者产物路径一致。
 xcodebuild \
     -project "$XCODEPROJ" \
     "${XCODEBUILD_SELECTOR[@]}" \
     -configuration "$CONFIGURATION" \
-    -derivedDataPath "$BUILD_DIR/DerivedData" \
+    "${DERIVED_DATA_ARGS[@]}" \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    ARCHS=arm64 \
+    ONLY_ACTIVE_ARCH=YES \
     build 2>&1 | tail -30
 
 # ---------------------------------------------------------------------------
@@ -232,12 +238,13 @@ else
         --entitlements "$ENTITLEMENTS_PATH" "$APP_PATH"
 fi
 
-log_info "验证签名..."
-if codesign --verify --verbose=2 "$APP_PATH" 2>&1 | tail -5; then
-    log_success "签名验证通过"
-else
-    log_warn "签名验证返回非零状态（可能仍可本地运行）"
+log_info "验证签名（fail-closed：失败即中止发布）..."
+codesign --verify --verbose=2 "$APP_PATH"
+verify_exit=$?
+if [ $verify_exit -ne 0 ]; then
+    die "签名验证失败（codesign --verify 退出码 $verify_exit）。已阻止继续打包。"
 fi
+log_success "签名验证通过"
 
 # ---------------------------------------------------------------------------
 # [4/4] Create DMG
@@ -282,9 +289,55 @@ STAGING_DIR=""
 # Done
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# [5/5] ZIP + checksum + notarization
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== [5/5] ZIP + checksum + 公证 ==="
+
+ZIP_PATH="$BUILD_DIR/${DMG_NAME}-${VERSION}.zip"
+log_info "生成 ZIP: $ZIP_PATH"
+rm -f "$ZIP_PATH"
+ZIP_STAGING="$BUILD_DIR/zip-staging"
+rm -rf "$ZIP_STAGING"
+mkdir -p "$ZIP_STAGING"
+cp -R "$APP_PATH" "$ZIP_STAGING/${DMG_NAME}.app"
+( cd "$ZIP_STAGING" && ditto -c -k --sequesterRsrc --keepParent "${DMG_NAME}.app" "$ZIP_PATH" )
+rm -rf "$ZIP_STAGING"
+if [ ! -f "$ZIP_PATH" ]; then
+    die "ZIP 生成失败"
+fi
+log_success "ZIP 生成: $ZIP_PATH"
+
+log_info "生成 SHA256 checksums..."
+( cd "$BUILD_DIR" && shasum -a 256 "${DMG_NAME}-${VERSION}.dmg" "${DMG_NAME}-${VERSION}.zip" > "${DMG_NAME}-${VERSION}.sha256" )
+log_success "checksums: $BUILD_DIR/${DMG_NAME}-${VERSION}.sha256"
+
+# 公证（凭据存在时执行；缺失则明确警告并继续 ad-hoc 本地分发）
+NOTARY_PROFILE="${NOTARY_PROFILE:-FlowFinderNotary}"
+if [ -n "$DEVELOPER_ID" ] && { [ -n "$NOTARY_API_KEY" ] || [ -n "$NOTARY_ISSUER" ]; }; then
+    log_info "提交公证（notarytool）..."
+    xcrun notarytool submit "$ZIP_PATH"         ${NOTARY_API_KEY:+--api-key "$NOTARY_API_KEY"}         ${NOTARY_ISSUER:+--api-issuer "$NOTARY_ISSUER"}         ${NOTARY_KEY_ID:+--api-key-id "$NOTARY_KEY_ID"}         --wait --output-format json > "$BUILD_DIR/notarization.json" || {
+            log_warn "公证提交失败（详见 notarization.json）"
+        }
+    if grep -q '"status" : "Accepted"' "$BUILD_DIR/notarization.json" 2>/dev/null; then
+        log_info "公证通过，staple..."
+        xcrun stapler staple "$APP_PATH" || log_warn "staple 失败"
+        log_success "公证与 staple 完成"
+    else
+        log_warn "公证未通过；发布前请人工检查 notarization.json"
+    fi
+else
+    log_warn "未配置公证凭据（DEVELOPER_ID + NOTARY_API_KEY/NOTARY_ISSUER）。产物为 ad-hoc 本地分发，"
+    log_warn "Gatekeeper 首次打开需右键 -> 打开。CI 发布需在仓库 Secrets 配置凭据。"
+fi
+
 echo ""
 echo "=== 打包完成 ==="
 echo "DMG: $DMG_PATH"
+echo "ZIP: $ZIP_PATH"
+echo "SHA256: $BUILD_DIR/${DMG_NAME}-${VERSION}.sha256"
 if [ -f "$DMG_PATH" ]; then
     du -h "$DMG_PATH"
     log_success "FlowFinder $VERSION 打包成功"

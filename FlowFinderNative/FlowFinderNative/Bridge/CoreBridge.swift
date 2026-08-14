@@ -785,6 +785,14 @@ public final class CoreBridge {
         // 存储 ff_fsevents_start 返回的真实 handle（当前实现为 0，未来可能为正数），
         // stopFSEventsWatcher 会使用此 handle 调用 ff_fsevents_stop。
         self.fseventsWatcherHandle = ffiResult
+
+        // 状态消费：确认 watcher 已进入 active（而非 failed/starting），
+        // 使 Swift 侧能区分 failed 与 active。
+        if fseventsWatcherStatus() != .active {
+            self.fseventsContext = nil
+            self.fseventsWatcherHandle = 0
+            throw CoreBridgeError.ffiError("FSEvents watcher did not reach active state")
+        }
     }
 
     /// Stop the FSEvents watcher
@@ -811,6 +819,13 @@ public final class CoreBridge {
         guard ffiResult == 0 else {
             let errorMessage = getLastError()
             throw CoreBridgeError.ffiError(errorMessage)
+        }
+    }
+
+    /// 查询 FSEvents watcher 生命周期状态（区分 failed 与 active）。
+    func fseventsWatcherStatus() -> FSEventsStatus {
+        ffiQueue.sync {
+            FSEventsStatus(rawValue: ff_fsevents_status()) ?? .stopped
         }
     }
 

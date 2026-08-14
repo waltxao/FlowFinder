@@ -1,0 +1,870 @@
+Command line invocation:
+    /Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild test -project FlowFinderNative.xcodeproj -scheme FlowFinderNativeTests -destination platform=macOS,arch=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
+
+Build settings from command line:
+    CODE_SIGN_IDENTITY = -
+    CODE_SIGNING_REQUIRED = NO
+
+note: Using codesigning identity override: -
+ComputePackagePrebuildTargetDependencyGraph
+
+Prepare packages
+
+CreateBuildRequest
+
+SendProjectDescription
+
+CreateBuildOperation
+
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (2 targets)
+    Target 'FlowFinderNativeTests' in project 'FlowFinderNative'
+        ➜ Explicit dependency on target 'FlowFinderNative' in project 'FlowFinderNative'
+    Target 'FlowFinderNative' in project 'FlowFinderNative' (no dependencies)
+
+GatherProvisioningInputs
+
+CreateBuildDescription
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk -x c -c /dev/null
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc --version
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/usr/bin/actool --version --output-format xml1
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
+
+Build description signature: a207539630f9cecf5853fb4d1b1ca7a1
+Build description path: /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/XCBuildData/a207539630f9cecf5853fb4d1b1ca7a1.xcbuilddata
+ClangStatCache /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk /Users/waltxao/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/macosx27.0-26A5378i-45874285e5972fffeae925c4ab065928.sdkstatcache
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative.xcodeproj
+    /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk -o /Users/waltxao/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/macosx27.0-26A5378i-45874285e5972fffeae925c4ab065928.sdkstatcache
+
+CopySwiftLibs /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app (in target 'FlowFinderNative' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    builtin-swiftStdLibTool --copy --verbose --sign - --scan-executable /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/MacOS/FlowFinderNative.debug.dylib --scan-folder /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/Frameworks --scan-folder /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns --scan-folder /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/Library/SystemExtensions --scan-folder /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/Extensions --platform macosx --toolchain /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/Frameworks --strip-bitcode --strip-bitcode-tool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os --back-deploy-swift-span
+
+ProcessInfoPlistFile /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/Info.plist /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/Resources/Info.plist (in target 'FlowFinderNative' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    builtin-infoPlistUtility /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative/FlowFinderNative/Resources/Info.plist -producttype com.apple.product-type.application -genpkginfo /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PkgInfo -expandbuildsettings -platform macosx -additionalcontentfile /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative.build/assetcatalog_generated_info.plist -o /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/Info.plist
+
+ProcessInfoPlistFile /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest/Contents/Info.plist /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNativeTests.build/empty-FlowFinderNativeTests.plist (in target 'FlowFinderNativeTests' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    builtin-infoPlistUtility /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNativeTests.build/empty-FlowFinderNativeTests.plist -producttype com.apple.product-type.bundle.unit-test -expandbuildsettings -platform macosx -o /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest/Contents/Info.plist
+
+CopySwiftLibs /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest (in target 'FlowFinderNativeTests' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    builtin-swiftStdLibTool --copy --verbose --sign - --scan-executable /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest/Contents/MacOS/FlowFinderNativeTests --scan-folder /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest/Contents/Frameworks --scan-folder /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest/Contents/PlugIns --scan-folder /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest/Contents/Library/SystemExtensions --scan-folder /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest/Contents/Extensions --scan-folder /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk/System/Library/Frameworks/XCTest.framework --platform macosx --toolchain /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/PlugIns/FlowFinderNativeTests.xctest/Contents/Frameworks --strip-bitcode --scan-executable /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/libXCTestSwiftSupport.dylib --strip-bitcode-tool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNativeTests.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os --back-deploy-swift-span
+
+CodeSign /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/MacOS/FlowFinderNative.debug.dylib (in target 'FlowFinderNative' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/MacOS/FlowFinderNative.debug.dylib
+/Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/MacOS/FlowFinderNative.debug.dylib: replacing existing signature
+
+CodeSign /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/MacOS/__preview.dylib (in target 'FlowFinderNative' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/MacOS/__preview.dylib
+/Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app/Contents/MacOS/__preview.dylib: replacing existing signature
+
+CodeSign /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app (in target 'FlowFinderNative' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --entitlements /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/FlowFinderNative.build/Debug/FlowFinderNative.build/FlowFinderNative.app.xcent --timestamp\=none --generate-entitlement-der /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app
+/Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app: replacing existing signature
+
+Validate /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app (in target 'FlowFinderNative' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    builtin-validationUtility /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app -no-validate-extension -infoplist-subpath Contents/Info.plist
+
+RegisterWithLaunchServices /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app (in target 'FlowFinderNative' from project 'FlowFinderNative')
+    cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native/FlowFinderNative
+    builtin-lsregisterurl --record-path /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/XCBuildData/registered-launchservices.txt -- /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Products/Debug/FlowFinderNative.app
+
+PruneExplicitPrecompiledModules /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/ExplicitPrecompiledModules
+
+PruneExplicitPrecompiledModules /Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+
+PruneExplicitPrecompiledModules /Users/waltxao/Library/Developer/Xcode/DerivedData/SDKExplicitPrecompiledModules
+
+2026-08-14 20:24:33.010445+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.flowfinder.native, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.011019+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.flowfinder.native, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.011039+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.011046+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.041138+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.coreanimation, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.041152+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.coreanimation, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.049024+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.universalaccess, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.049042+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.universalaccess, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.049249+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.Accessibility, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.049272+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.Accessibility, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.058276+0800 FlowFinderNative[6970:118509] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-08-14 20:24:33.058298+0800 FlowFinderNative[6970:118509] [Application] Error registering app with intents framework: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-08-14 20:24:33.058535+0800 FlowFinderNative[6970:118509] [User Defaults] Disabling saving preferences for { com.apple.ImageIO, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.058570+0800 FlowFinderNative[6970:118550] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-08-14 20:24:33.058583+0800 FlowFinderNative[6970:118550] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-08-14 20:24:33.058803+0800 FlowFinderNative[6970:118572] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-08-14 20:24:33.058814+0800 FlowFinderNative[6970:118572] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-08-14 20:24:33.059016+0800 FlowFinderNative[6970:118572] [Connection] Will NOT re-try to establish the connection
+2026-08-14 20:24:33.059031+0800 FlowFinderNative[6970:118508] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-08-14 20:24:33.059043+0800 FlowFinderNative[6970:118508] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-08-14 20:24:33.072544+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.SwiftUI, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.072554+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.SwiftUI, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.106258+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.gms.availability, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.106274+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.gms.availability, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.108535+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.speech.recognition.AppleSpeechRecognition.prefs, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.108545+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.speech.recognition.AppleSpeechRecognition.prefs, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.109435+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.HIToolbox, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.114413+0800 FlowFinderNative[6970:118482] ApplePersistenceIgnoreState: Existing state will not be touched. New state will be written to /var/folders/zj/fs3hfxms3y19y854qqmtwgn40000gn/T/com.flowfinder.native.savedState
+2026-08-14 20:24:33.116411+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.inputsources, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.116419+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.inputsources, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.130898+0800 FlowFinderNative[6970:118482] [FlowFinder] L2 directory cache initialized at /tmp/flowfinder-test-home/Library/Application Support/FlowFinder/dir_cache.db
+2026-08-14 20:24:33.132346+0800 FlowFinderNative[6970:118482] [FlowFinder] Content index initialized at /tmp/flowfinder-test-home/Library/Application Support/FlowFinder/content_index.sqlite
+2026-08-14 20:24:33.141594+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.gpu, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.141610+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.opengl, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.146658+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.CoreGraphics, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.158617+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.Metal, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.158636+0800 FlowFinderNative[6970:118482] [User Defaults] Disabling saving preferences for { com.apple.Metal, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.190896+0800 FlowFinderNative[6970:118482] [CollectionView] Gesture recognizer support has been disabled because NSCollectionView subclass FlowFinderNative.DraggingCollectionView overrides either mouseDown: or mouseDragged: or mouseUp:
+2026-08-14 20:24:33.199282+0800 FlowFinderNative[6970:118482] [CollectionView] Gesture recognizer support has been disabled because NSCollectionView subclass FlowFinderNative.DraggingCollectionView overrides either mouseDown: or mouseDragged: or mouseUp:
+2026-08-14 20:24:33.202573+0800 FlowFinderNative[6970:118482] [SplitView] Gesture recognizer support has been disabled because NSSplitView subclass _TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985811FFSplitView overrides either mouseDown: or mouseDragged:
+2026-08-14 20:24:33.211890+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750970c320 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x7509522d00.height == 14   (active)>",
+    "<NSLayoutConstraint:0x750970c780 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x7509522d00.height == 18   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750970c780 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x7509522d00.height == 18   (active)>.
+2026-08-14 20:24:33.211933+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750970c320 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x7509522d00.height == 14   (active)>",
+    "<NSLayoutConstraint:0x750970c780 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x7509522d00.height == 18   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750970c780 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x7509522d00.height == 18   (active)>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.212511+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x7509c15810 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x750978ea00.height == 14   (active)>",
+    "<NSLayoutConstraint:0x7509c15c70 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x750978ea00.height == 18   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x7509c15c70 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x750978ea00.height == 18   (active)>.
+2026-08-14 20:24:33.212541+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x7509c15810 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x750978ea00.height == 14   (active)>",
+    "<NSLayoutConstraint:0x7509c15c70 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x750978ea00.height == 18   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x7509c15c70 _TtC16FlowFinderNativeP33_C05B3295666768A729F1754E2290252624BreadcrumbOverflowButton:0x750978ea00.height == 18   (active)>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+Thread Performance Checker: Thread running at User-initiated quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions
+PID: 6970, TID: 118508
+Backtrace
+=================================================================
+0   libflowfinder_core.dylib            0x00000001062f2120 _RNvMs_NtNtCs5hF2iUiFBtn_3std6thread6threadNtB4_6Thread12park_timeout + 100
+1   libflowfinder_core.dylib            0x00000001060203a4 _ZN3std4sync4mpmc7context7Context10wait_until17h24ef6071b17e3e2aE + 564
+2   libflowfinder_core.dylib            0x000000010607ab3c _ZN3std4sync4mpmc4list16Channel$LT$T$GT$4recv28_$u7b$$u7b$closure$u7d$$u7d$17ha1ee50e5abc405f0E + 232
+3   libflowfinder_core.dylib            0x0000000106017338 _ZN3std4sync4mpmc7context7Context4with28_$u7b$$u7b$closure$u7d$$u7d$17hcffb6f834085ec36E + 552
+4   libflowfinder_core.dylib            0x000000010609e060 _ZN3std6thread5local17LocalKey$LT$T$GT$8try_with17h6638a6449f28d3bdE + 172
+5   libflowfinder_core.dylib            0x0000000106016170 _ZN3std4sync4mpmc7context7Context4with17h1ffaac726db288d3E + 52
+6   libflowfinder_core.dylib            0x000000010607a9b8 _ZN3std4sync4mpmc4list16Channel$LT$T$GT$4recv17h6a44dcc29d0e8f8bE + 252
+7   libflowfinder_core.dylib            0x000000010601ed5c _ZN3std4sync4mpmc17Receiver$LT$T$GT$13recv_deadline17hea99ab866b4fd7fcE + 132
+8   libflowfinder_core.dylib            0x000000010601ec58 _ZN3std4sync4mpmc17Receiver$LT$T$GT$12recv_timeout17hcceb311cf83cdbe5E + 132
+9   libflowfinder_core.dylib            0x00000001060676b0 _ZN3std4sync4mpsc17Receiver$LT$T$GT$12recv_timeout17h6f86b9d91e93edb6E + 32
+10  libflowfinder_core.dylib            0x00000001060c8bc8 _ZN15flowfinder_core4core8fsevents5macos11start_macos17h11cb3a6fc1a1aeefE + 1456
+11  libflowfinder_core.dylib            0x000000010601b028 _ZN15flowfinder_core4core8fsevents5start17hea716da68543e9eaE + 160
+12  libflowfinder_core.dylib            0x00000001060643a4 _ZN15flowfinder_core3ffi17ff_fsevents_start28_$u7b$$u7b$closure$u7d$$u7d$17h1289d3b774c6d3a2E + 208
+13  libflowfinder_core.dylib            0x00000001060300ec _ZN115_$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..ops..function..FnOnce$LT$$LP$$RP$$GT$$GT$9call_once17h95e23a507dd37230E + 40
+14  libflowfinder_core.dylib            0x000000010607cf64 _ZN3std9panicking12catch_unwind7do_call17hdabd6b3d52633487E + 60
+15  libflowfinder_core.dylib            0x00000001060125fc __rust_try + 32
+16  libflowfinder_core.dylib            0x0000000106010850 _ZN3std5panic12catch_unwind17h6c479b814d11b389E + 96
+17  libflowfinder_core.dylib            0x000000010605f0ec _ZN15flowfinder_core3ffi13ffi_catch_int17h070d1361ec9f943eE + 44
+18  libflowfinder_core.dylib            0x000000010601d894 ff_fsevents_start + 56
+19  FlowFinderNative.debug.dylib        0x00000001054a0030 $s16FlowFinderNative10CoreBridgeC20startFSEventsWatcher4path13changeHandlerySS_ySSctKFyyYbcfU_s5Int32VSPys4Int8VGXEfU_ + 56
+20  FlowFinderNative.debug.dylib        0x00000001054a7180 $s16FlowFinderNative10CoreBridgeC20startFSEventsWatcher4path13changeHandlerySS_ySSctKFyyYbcfU_s5Int32VSPys4Int8VGXEfU_TA + 28
+21  FlowFinderNative.debug.dylib        0x0000000105424090 $ss11_StringGutsV16_slowWithCStringyxxSPys4Int8VGq_YKXEq_YKs5ErrorR_r0_lFxSRyAEGq_YKXEfU_ + 160
+22  FlowFinderNative.debug.dylib        0x0000000105424118 $ss11_StringGutsV16_slowWithCStringyxxSPys4Int8VGq_YKXEq_YKs5ErrorR_r0_lFxSRyAEGq_YKXEfU_TA + 56
+23  FlowFinderNative.debug.dylib        0x00000001054242b4 $ss22_ContiguousArrayBufferV010withUnsafeC7Pointeryqd__qd__SRyxGqd_0_YKXEqd_0_YKs5ErrorRd_0_r0_lF + 204
+24  FlowFinderNative.debug.dylib        0x0000000105424198 $ss15ContiguousArrayV23withUnsafeBufferPointeryqd__qd__SRyxGqd_0_YKXEqd_0_YKs5ErrorRd_0_r0_lF + 112
+25  FlowFinderNative.debug.dylib        0x0000000105423868 $ss11_StringGutsV16_slowWithCStringyxxSPys4Int8VGq_YKXEq_YKs5ErrorR_r0_lF + 228
+26  FlowFinderNative.debug.dylib        0x00000001054185d4 $sSS11withCStringyxxSPys4Int8VGq_YKXEq_YKs5ErrorR_r0_lF + 940
+27  FlowFinderNative.debug.dylib        0x000000010549fe94 $s16FlowFinderNative10CoreBridgeC20startFSEventsWatcher4path13changeHandlerySS_ySSctKFyyYbcfU_ + 164
+28  FlowFinderNative.debug.dylib        0x00000001053ef0ec $sIegh_IeyBh_TR + 48
+29  libdispatch.dylib                   0x00000001855eca34 _dispatch_call_block_and_release + 32
+30  libdispatch.dylib                   0x000000018560659c _dispatch_client_callout + 16
+31  libdispatch.dylib                   0x00000001855f4fc0 _dispatch_lane_serial_drain + 744
+32  libdispatch.dylib                   0x00000001855f5abc _dispatch_lane_invoke + 392
+33  libdispatch.dylib                   0x00000001855fff60 _dispatch_root_queue_drain_deferred_wlh + 284
+34  libdispatch.dylib                   0x00000001855ff864 _dispatch_workloop_worker_thread + 720
+35  libsystem_pthread.dylib             0x00000001857a9fa0 _pthread_wqthread + 292
+36  libsystem_pthread.dylib             0x00000001857a8ce0 start_wqthread + 8
+2026-08-14 20:24:33.232679+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750966fa20 FlowFinderNative.SquircleMaskedView:0x75096a8000.height == 22   (active)>",
+    "<NSLayoutConstraint:0x750966ff20 FlowFinderNative.SquircleMaskedView:0x75096a8780.height == 22   (active)>",
+    "<NSLayoutConstraint:0x75096b0460 FlowFinderNative.SquircleMaskedView:0x75096a8c80.height == 22   (active)>",
+    "<NSLayoutConstraint:0x750966f4d0 V:|-(0)-[NSStackView:0x7509517c00]   (active, names: '|':_TtC16FlowFinderNativeP33_3D0E2CC4AEA9B6E072116A4E32E984B911TagFlowView:0x7509521200 )>",
+    "<NSLayoutConstraint:0x750966f5c0 NSStackView:0x7509517c00.bottom == _TtC16FlowFinderNativeP33_3D0E2CC4AEA9B6E072116A4E32E984B911TagFlowView:0x7509521200.bottom   (active)>",
+    "<NSLayoutConstraint:0x75096b05f0 _TtC16FlowFinderNativeP33_3D0E2CC4AEA9B6E072116A4E32E984B911TagFlowView:0x7509521200.height == 80   (active)>",
+    "<NSLayoutConstraint:0x7509e14730 'NSStackView.Stack' V:[FlowFinderNative.SquircleMaskedView:0x75096a8000]-(6)-[FlowFinderNative.SquircleMaskedView:0x75096a8780]   (active)>",
+    "<NSLayoutConstraint:0x7509e14910 'NSStackView.Stack' V:[FlowFinderNative.SquircleMaskedView:0x75096a8780]-(6)-[FlowFinderNative.SquircleMaskedView:0x75096a8c80]   (active)>",
+    "<NSLayoutConstraint:0x7509e14550 'NSStackView.Edge.Min.Top' V:|-(0)-[FlowFinderNative.SquircleMaskedView:0x75096a8000]   (active, names: '|':NSStackView:0x7509517c00 )>",
+    "<NSLayoutConstraint:0x7509e14af0 'NSStackView.Edge.Min.Bottom' V:[FlowFinderNative.SquircleMaskedView:0x75096a8c80]-(0)-|   (active, names: '|':NSStackView:0x7509517c00 )>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x75096b0460 FlowFinderNative.SquircleMaskedView:0x75096a8c80.height == 22   (active)>.
+2026-08-14 20:24:33.233261+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750966fa20 FlowFinderNative.SquircleMaskedView:0x75096a8000.height == 22   (active)>",
+    "<NSLayoutConstraint:0x750966ff20 FlowFinderNative.SquircleMaskedView:0x75096a8780.height == 22   (active)>",
+    "<NSLayoutConstraint:0x75096b0460 FlowFinderNative.SquircleMaskedView:0x75096a8c80.height == 22   (active)>",
+    "<NSLayoutConstraint:0x750966f4d0 V:|-(0)-[NSStackView:0x7509517c00]   (active, names: '|':_TtC16FlowFinderNativeP33_3D0E2CC4AEA9B6E072116A4E32E984B911TagFlowView:0x7509521200 )>",
+    "<NSLayoutConstraint:0x750966f5c0 NSStackView:0x7509517c00.bottom == _TtC16FlowFinderNativeP33_3D0E2CC4AEA9B6E072116A4E32E984B911TagFlowView:0x7509521200.bottom   (active)>",
+    "<NSLayoutConstraint:0x75096b05f0 _TtC16FlowFinderNativeP33_3D0E2CC4AEA9B6E072116A4E32E984B911TagFlowView:0x7509521200.height == 80   (active)>",
+    "<NSLayoutConstraint:0x7509e14730 'NSStackView.Stack' V:[FlowFinderNative.SquircleMaskedView:0x75096a8000]-(6)-[FlowFinderNative.SquircleMaskedView:0x75096a8780]   (active)>",
+    "<NSLayoutConstraint:0x7509e14910 'NSStackView.Stack' V:[FlowFinderNative.SquircleMaskedView:0x75096a8780]-(6)-[FlowFinderNative.SquircleMaskedView:0x75096a8c80]   (active)>",
+    "<NSLayoutConstraint:0x7509e14550 'NSStackView.Edge.Min.Top' V:|-(0)-[FlowFinderNative.SquircleMaskedView:0x75096a8000]   (active, names: '|':NSStackView:0x7509517c00 )>",
+    "<NSLayoutConstraint:0x7509e14af0 'NSStackView.Edge.Min.Bottom' V:[FlowFinderNative.SquircleMaskedView:0x75096a8c80]-(0)-|   (active, names: '|':NSStackView:0x7509517c00 )>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x75096b0460 FlowFinderNative.SquircleMaskedView:0x75096a8c80.height == 22   (active)>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.257094+0800 FlowFinderNative[6970:118482] [WarnOnce] It's not legal to call -layoutSubtreeIfNeeded on a view which is already being laid out.  If you are implementing the view's -layout method, you can call -[super layout] instead.  Break on void _NSDetectedLayoutRecursion(void) to debug.  This will be logged only once.  This may break in the future.
+2026-08-14 20:24:33.340538+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af110 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509fe26c0 'GridView_leading_placement' NSGridView:0x7509d09400.leading == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09680.leading   (active)>",
+    "<NSLayoutConstraint:0x750a2333e0 'GridView_trailing_placement' (NSGridView:0x7509d09400.leading+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09680.trailing   (active, names: NSGridView:0x7509d09400.leading:0x7507cc4080, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x7509fe26c0 'GridView_leading_placement' NSGridView:0x7509d09400.leading == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09680.leading   (active)>.
+2026-08-14 20:24:33.341255+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af110 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509fe26c0 'GridView_leading_placement' NSGridView:0x7509d09400.leading == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09680.leading   (active)>",
+    "<NSLayoutConstraint:0x750a2333e0 'GridView_trailing_placement' (NSGridView:0x7509d09400.leading+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09680.trailing   (active, names: NSGridView:0x7509d09400.leading:0x7507cc4080, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x7509fe26c0 'GridView_leading_placement' NSGridView:0x7509d09400.leading == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09680.leading   (active)>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.342306+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af110 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509fe2d00 'GridView_leading_placement' NSGridView:0x7509d09400.leading == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d0a800.leading   (active)>",
+    "<NSLayoutConstraint:0x750a233a20 'GridView_trailing_placement' (NSGridView:0x7509d09400.leading+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d0a800.trailing   (active, names: NSGridView:0x7509d09400.leading:0x7507cc4080, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x7509fe2d00 'GridView_leading_placement' NSGridView:0x7509d09400.leading == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d0a800.leading   (active)>.
+2026-08-14 20:24:33.343093+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af110 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509fe2d00 'GridView_leading_placement' NSGridView:0x7509d09400.leading == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d0a800.leading   (active)>",
+    "<NSLayoutConstraint:0x750a233a20 'GridView_trailing_placement' (NSGridView:0x7509d09400.leading+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d0a800.trailing   (active, names: NSGridView:0x7509d09400.leading:0x7507cc4080, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x7509fe2d00 'GridView_leading_placement' NSGridView:0x7509d09400.leading == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d0a800.leading   (active)>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.343655+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af110 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x75091aebc0 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x75091af110 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>.
+2026-08-14 20:24:33.344093+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af110 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x75091aebc0 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x75091af110 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.344672+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x75091aebc0 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x750a2335c0 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509fe28a0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.leading   (active)>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750a2335c0 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>.
+2026-08-14 20:24:33.345105+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x75091aebc0 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x750a2335c0 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509fe28a0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.leading   (active)>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750a2335c0 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.345751+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x75091aebc0 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x750a233c00 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == NSView:0x7509d0ad00.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509fe2ee0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == NSView:0x7509d0ad00.leading   (active)>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750a233c00 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == NSView:0x7509d0ad00.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>.
+2026-08-14 20:24:33.346105+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x75091af2f0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x75091aebc0 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x750a233c00 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == NSView:0x7509d0ad00.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509fe2ee0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == NSView:0x7509d0ad00.leading   (active)>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750a233c00 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == NSView:0x7509d0ad00.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.351625+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750a0b9220 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSLayoutConstraint:0x750a0b92c0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x750a0b9180 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750a0b9220 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>.
+2026-08-14 20:24:33.352370+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750a0b9220 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>",
+    "<NSLayoutConstraint:0x750a0b92c0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x750a0b9180 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750a0b9220 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70b00, NSGridView:0x7509d09400.column-boundary:0x7507f70a40 )>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.352708+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750a0b92c0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x750a0b9180 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce3520 H:|-(4)-[NSTextField:0x7507cb0000]   (active, names: '|':_TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80 )>",
+    "<NSLayoutConstraint:0x7509ce3570 NSTextField:0x7507cb0000.trailing == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing - 4   (active)>",
+    "<NSLayoutConstraint:0x750a0b8780 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509fe28a0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.leading   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x7509ce3570 NSTextField:0x7507cb0000.trailing == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing - 4   (active)>.
+2026-08-14 20:24:33.353094+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750a0b92c0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x750a0b9180 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509ce3520 H:|-(4)-[NSTextField:0x7507cb0000]   (active, names: '|':_TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80 )>",
+    "<NSLayoutConstraint:0x7509ce3570 NSTextField:0x7507cb0000.trailing == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing - 4   (active)>",
+    "<NSLayoutConstraint:0x750a0b8780 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509fe28a0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.leading   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x7509ce3570 NSTextField:0x7507cb0000.trailing == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing - 4   (active)>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.353693+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750a0b92c0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x750a0b9180 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x750a0b8780 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509fe28a0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.leading   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750a0b8780 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>.
+2026-08-14 20:24:33.354096+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750a0b92c0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x750a0b9180 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x750a0b8780 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509fe28a0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.leading   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750a0b8780 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == _TtC16FlowFinderNativeP33_AACA0F31A187350DCDCCF8A3ACCB63E317ToolPanelCardView:0x7509d09b80.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.355128+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750a0b92c0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x750a0b9180 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x750a0b8e10 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == NSView:0x7509d0ad00.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509fe2ee0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == NSView:0x7509d0ad00.leading   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750a0b8e10 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == NSView:0x7509d0ad00.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>.
+2026-08-14 20:24:33.355398+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750a0b92c0 'NSGridColumn.explicit_size' (NSGridView:0x7509d09400.trailing - NSGridView:0x7509d09400.column-boundary) == 212   (active, names: NSGridView:0x7509d09400.trailing:0x7507cc40c0, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x750a0b9180 'NSGridColumn.explicit_size' ((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.leading) == 212   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.leading:0x7507cc4080 )>",
+    "<NSLayoutConstraint:0x750a0b8e10 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == NSView:0x7509d0ad00.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>",
+    "<NSLayoutConstraint:0x7509d40730 H:|-(12)-[NSGridView:0x7509d09400]   (active, names: '|':FlowFinderNative.ToolPanelView:0x7509d08a00 )>",
+    "<NSLayoutConstraint:0x7509d40780 NSGridView:0x7509d09400.trailing == FlowFinderNative.ToolPanelView:0x7509d08a00.trailing - 12   (active)>",
+    "<NSLayoutConstraint:0x7509d40960 FlowFinderNative.ToolPanelView:0x7509d08a00.trailing == FlowFinderNative.SidebarView:0x7509520000.trailing - 8   (active)>",
+    "<NSLayoutConstraint:0x7509d408c0 H:|-(8)-[FlowFinderNative.ToolPanelView:0x7509d08a00]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffeb70 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.minX == 0   (active, names: '|':_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80 )>",
+    "<NSAutoresizingMaskLayoutConstraint:0x7509ffebc0 h=--& v=--& FlowFinderNative.SidebarView:0x7509520000.width == 220   (active)>",
+    "<NSLayoutConstraint:0x7509ce0aa0 H:|-(0)-[_TtC16FlowFinderNativeP33_910E91A52EE22CCA1B61FD3E0A0F985820FFNoDividerSplitView:0x7507c55f80]   (active, names: '|':FlowFinderNative.FFOpaqueContainerView:0x7509cb3480 )>",
+    "<NSLayoutConstraint:0x7509fe2ee0 'GridView_leading_placement' NSGridView:0x7509d09400.column-boundary == NSView:0x7509d0ad00.leading   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750a0b8e10 'GridView_trailing_placement' (NSGridView:0x7509d09400.column-boundary+((NSGridView:0x7509d09400.column-boundary-12) - NSGridView:0x7509d09400.column-boundary)) == NSView:0x7509d0ad00.trailing   (active, names: NSGridView:0x7509d09400.column-boundary:0x7507f70a40, NSGridView:0x7509d09400.column-boundary:0x7507f70b00 )>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.373931+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750a228550 /.height == 28   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a228eb0 FlowFinderNative.DeviceCellView:0x750a1bcc00.height == 28   (active)>",
+    "<NSLayoutConstraint:0x750a2297c0 /Volumes/Iris-Data.height == 28   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>",
+    "<NSLayoutConstraint:0x750a405e50 'NSStackView.Stack.Min' V:[FlowFinderNative.DeviceCellView:0x750a1bcc00]-(>=0)-[/Volumes/Iris-Data]   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>",
+    "<NSLayoutConstraint:0x750a405c20 'NSStackView.Stack.Min' V:[/]-(>=0)-[FlowFinderNative.DeviceCellView:0x750a1bcc00]   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a4059f0 'NSStackView.Edge.Top' V:|-(>=0)-[/]   (active, names: /:0x750a1bc900, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x750a406080 'NSStackView.Edge.Bottom' V:[/Volumes/Iris-Data]-(>=0)-|   (active, names: /Volumes/Iris-Data:0x750a1bcf00, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x7509ce1ef0 V:[FlowFinderNative.DeviceHeaderView:0x7509d08000]-(0)-[NSStackView:0x7509d08780]   (active)>",
+    "<NSLayoutConstraint:0x7509ce1fe0 NSStackView:0x7509d08780.bottom == FlowFinderNative.FFGlassView:0x7509cb3980.bottom - 8   (active)>",
+    "<NSLayoutConstraint:0x7509ce1ea0 FlowFinderNative.DeviceHeaderView:0x7509d08000.height == 32   (active)>",
+    "<NSLayoutConstraint:0x7509ce1db0 V:|-(8)-[FlowFinderNative.DeviceHeaderView:0x7509d08000]   (active, names: '|':FlowFinderNative.FFGlassView:0x7509cb3980 )>",
+    "<NSLayoutConstraint:0x7509ce2080 FlowFinderNative.FFGlassView:0x7509cb3980.height == 48   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750a2297c0 /Volumes/Iris-Data.height == 28   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>.
+2026-08-14 20:24:33.374150+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750a228550 /.height == 28   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a228eb0 FlowFinderNative.DeviceCellView:0x750a1bcc00.height == 28   (active)>",
+    "<NSLayoutConstraint:0x750a2297c0 /Volumes/Iris-Data.height == 28   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>",
+    "<NSLayoutConstraint:0x750a405e50 'NSStackView.Stack.Min' V:[FlowFinderNative.DeviceCellView:0x750a1bcc00]-(>=0)-[/Volumes/Iris-Data]   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>",
+    "<NSLayoutConstraint:0x750a405c20 'NSStackView.Stack.Min' V:[/]-(>=0)-[FlowFinderNative.DeviceCellView:0x750a1bcc00]   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a4059f0 'NSStackView.Edge.Top' V:|-(>=0)-[/]   (active, names: /:0x750a1bc900, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x750a406080 'NSStackView.Edge.Bottom' V:[/Volumes/Iris-Data]-(>=0)-|   (active, names: /Volumes/Iris-Data:0x750a1bcf00, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x7509ce1ef0 V:[FlowFinderNative.DeviceHeaderView:0x7509d08000]-(0)-[NSStackView:0x7509d08780]   (active)>",
+    "<NSLayoutConstraint:0x7509ce1fe0 NSStackView:0x7509d08780.bottom == FlowFinderNative.FFGlassView:0x7509cb3980.bottom - 8   (active)>",
+    "<NSLayoutConstraint:0x7509ce1ea0 FlowFinderNative.DeviceHeaderView:0x7509d08000.height == 32   (active)>",
+    "<NSLayoutConstraint:0x7509ce1db0 V:|-(8)-[FlowFinderNative.DeviceHeaderView:0x7509d08000]   (active, names: '|':FlowFinderNative.FFGlassView:0x7509cb3980 )>",
+    "<NSLayoutConstraint:0x7509ce2080 FlowFinderNative.FFGlassView:0x7509cb3980.height == 48   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750a2297c0 /Volumes/Iris-Data.height == 28   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.375134+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750a228550 /.height == 28   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a228eb0 FlowFinderNative.DeviceCellView:0x750a1bcc00.height == 28   (active)>",
+    "<NSLayoutConstraint:0x750a405e50 'NSStackView.Stack.Min' V:[FlowFinderNative.DeviceCellView:0x750a1bcc00]-(>=0)-[/Volumes/Iris-Data]   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>",
+    "<NSLayoutConstraint:0x750a405c20 'NSStackView.Stack.Min' V:[/]-(>=0)-[FlowFinderNative.DeviceCellView:0x750a1bcc00]   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a4059f0 'NSStackView.Edge.Top' V:|-(>=0)-[/]   (active, names: /:0x750a1bc900, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x750a406080 'NSStackView.Edge.Bottom' V:[/Volumes/Iris-Data]-(>=0)-|   (active, names: /Volumes/Iris-Data:0x750a1bcf00, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x7509ce1ef0 V:[FlowFinderNative.DeviceHeaderView:0x7509d08000]-(0)-[NSStackView:0x7509d08780]   (active)>",
+    "<NSLayoutConstraint:0x7509ce1fe0 NSStackView:0x7509d08780.bottom == FlowFinderNative.FFGlassView:0x7509cb3980.bottom - 8   (active)>",
+    "<NSLayoutConstraint:0x7509ce1ea0 FlowFinderNative.DeviceHeaderView:0x7509d08000.height == 32   (active)>",
+    "<NSLayoutConstraint:0x7509ce1db0 V:|-(8)-[FlowFinderNative.DeviceHeaderView:0x7509d08000]   (active, names: '|':FlowFinderNative.FFGlassView:0x7509cb3980 )>",
+    "<NSLayoutConstraint:0x7509ce2080 FlowFinderNative.FFGlassView:0x7509cb3980.height == 48   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750a228eb0 FlowFinderNative.DeviceCellView:0x750a1bcc00.height == 28   (active)>.
+2026-08-14 20:24:33.375354+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750a228550 /.height == 28   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a228eb0 FlowFinderNative.DeviceCellView:0x750a1bcc00.height == 28   (active)>",
+    "<NSLayoutConstraint:0x750a405e50 'NSStackView.Stack.Min' V:[FlowFinderNative.DeviceCellView:0x750a1bcc00]-(>=0)-[/Volumes/Iris-Data]   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>",
+    "<NSLayoutConstraint:0x750a405c20 'NSStackView.Stack.Min' V:[/]-(>=0)-[FlowFinderNative.DeviceCellView:0x750a1bcc00]   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a4059f0 'NSStackView.Edge.Top' V:|-(>=0)-[/]   (active, names: /:0x750a1bc900, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x750a406080 'NSStackView.Edge.Bottom' V:[/Volumes/Iris-Data]-(>=0)-|   (active, names: /Volumes/Iris-Data:0x750a1bcf00, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x7509ce1ef0 V:[FlowFinderNative.DeviceHeaderView:0x7509d08000]-(0)-[NSStackView:0x7509d08780]   (active)>",
+    "<NSLayoutConstraint:0x7509ce1fe0 NSStackView:0x7509d08780.bottom == FlowFinderNative.FFGlassView:0x7509cb3980.bottom - 8   (active)>",
+    "<NSLayoutConstraint:0x7509ce1ea0 FlowFinderNative.DeviceHeaderView:0x7509d08000.height == 32   (active)>",
+    "<NSLayoutConstraint:0x7509ce1db0 V:|-(8)-[FlowFinderNative.DeviceHeaderView:0x7509d08000]   (active, names: '|':FlowFinderNative.FFGlassView:0x7509cb3980 )>",
+    "<NSLayoutConstraint:0x7509ce2080 FlowFinderNative.FFGlassView:0x7509cb3980.height == 48   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750a228eb0 FlowFinderNative.DeviceCellView:0x750a1bcc00.height == 28   (active)>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+2026-08-14 20:24:33.375993+0800 FlowFinderNative[6970:118482] [AppKit] Conflicting constraints detected: (
+    "<NSLayoutConstraint:0x750a228550 /.height == 28   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a405e50 'NSStackView.Stack.Min' V:[FlowFinderNative.DeviceCellView:0x750a1bcc00]-(>=0)-[/Volumes/Iris-Data]   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>",
+    "<NSLayoutConstraint:0x750a405c20 'NSStackView.Stack.Min' V:[/]-(>=0)-[FlowFinderNative.DeviceCellView:0x750a1bcc00]   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a4059f0 'NSStackView.Edge.Top' V:|-(>=0)-[/]   (active, names: /:0x750a1bc900, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x750a406080 'NSStackView.Edge.Bottom' V:[/Volumes/Iris-Data]-(>=0)-|   (active, names: /Volumes/Iris-Data:0x750a1bcf00, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x7509ce1ef0 V:[FlowFinderNative.DeviceHeaderView:0x7509d08000]-(0)-[NSStackView:0x7509d08780]   (active)>",
+    "<NSLayoutConstraint:0x7509ce1fe0 NSStackView:0x7509d08780.bottom == FlowFinderNative.FFGlassView:0x7509cb3980.bottom - 8   (active)>",
+    "<NSLayoutConstraint:0x7509ce1ea0 FlowFinderNative.DeviceHeaderView:0x7509d08000.height == 32   (active)>",
+    "<NSLayoutConstraint:0x7509ce1db0 V:|-(8)-[FlowFinderNative.DeviceHeaderView:0x7509d08000]   (active, names: '|':FlowFinderNative.FFGlassView:0x7509cb3980 )>",
+    "<NSLayoutConstraint:0x7509ce2080 FlowFinderNative.FFGlassView:0x7509cb3980.height == 48   (active)>"
+).
+
+Will attempt to recover by breaking <NSLayoutConstraint:0x750a228550 /.height == 28   (active, names: /:0x750a1bc900 )>.
+2026-08-14 20:24:33.376426+0800 FlowFinderNative[6970:118482] [Layout] Unable to simultaneously satisfy constraints:
+(
+    "<NSLayoutConstraint:0x750a228550 /.height == 28   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a405e50 'NSStackView.Stack.Min' V:[FlowFinderNative.DeviceCellView:0x750a1bcc00]-(>=0)-[/Volumes/Iris-Data]   (active, names: /Volumes/Iris-Data:0x750a1bcf00 )>",
+    "<NSLayoutConstraint:0x750a405c20 'NSStackView.Stack.Min' V:[/]-(>=0)-[FlowFinderNative.DeviceCellView:0x750a1bcc00]   (active, names: /:0x750a1bc900 )>",
+    "<NSLayoutConstraint:0x750a4059f0 'NSStackView.Edge.Top' V:|-(>=0)-[/]   (active, names: /:0x750a1bc900, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x750a406080 'NSStackView.Edge.Bottom' V:[/Volumes/Iris-Data]-(>=0)-|   (active, names: /Volumes/Iris-Data:0x750a1bcf00, '|':NSStackView:0x7509d08780 )>",
+    "<NSLayoutConstraint:0x7509ce1ef0 V:[FlowFinderNative.DeviceHeaderView:0x7509d08000]-(0)-[NSStackView:0x7509d08780]   (active)>",
+    "<NSLayoutConstraint:0x7509ce1fe0 NSStackView:0x7509d08780.bottom == FlowFinderNative.FFGlassView:0x7509cb3980.bottom - 8   (active)>",
+    "<NSLayoutConstraint:0x7509ce1ea0 FlowFinderNative.DeviceHeaderView:0x7509d08000.height == 32   (active)>",
+    "<NSLayoutConstraint:0x7509ce1db0 V:|-(8)-[FlowFinderNative.DeviceHeaderView:0x7509d08000]   (active, names: '|':FlowFinderNative.FFGlassView:0x7509cb3980 )>",
+    "<NSLayoutConstraint:0x7509ce2080 FlowFinderNative.FFGlassView:0x7509cb3980.height == 48   (active)>"
+)
+
+Will attempt to recover by breaking constraint 
+<NSLayoutConstraint:0x750a228550 /.height == 28   (active, names: /:0x750a1bc900 )>
+
+Set the NSUserDefault NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints to YES to have -[NSWindow visualizeConstraints:] automatically called when this happens.  And/or, set a symbolic breakpoint on LAYOUT_CONSTRAINTS_NOT_SATISFIABLE to catch this in the debugger.
+Test Suite 'All tests' started at 2026-08-14 8:24:33.437 PM.
+Test Suite 'FlowFinderNativeTests.xctest' started at 2026-08-14 8:24:33.437 PM.
+Test Suite 'ContentIndexBridgeTests' started at 2026-08-14 8:24:33.437 PM.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexBridgeSingleton]' started.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexBridgeSingleton]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexModeRawValuesMatchCConstants]' started.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexModeRawValuesMatchCConstants]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatsDecodeErrorField]' started.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatsDecodeErrorField]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatsDecodeFullJSON]' started.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatsDecodeFullJSON]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatsDecodeMalformedJSONReturnsNil]' started.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatsDecodeMalformedJSONReturnsNil]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatsDecodeNullOptionals]' started.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatsDecodeNullOptionals]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatusFromRawValue]' started.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatusFromRawValue]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatusRawValuesMatchCConstants]' started.
+Test Case '-[FlowFinderNativeTests.ContentIndexBridgeTests testContentIndexStatusRawValuesMatchCConstants]' passed (0.000 seconds).
+Test Suite 'ContentIndexBridgeTests' passed at 2026-08-14 8:24:33.446 PM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.004 (0.009) seconds
+Test Suite 'FlowFinderNativeTests' started at 2026-08-14 8:24:33.446 PM.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testCopyFile]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testCopyFile]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testCoreBridgeErrorDescriptions]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testCoreBridgeErrorDescriptions]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testCoreBridgeSingleton]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testCoreBridgeSingleton]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testCreateAndDeleteDirectory]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testCreateAndDeleteDirectory]' passed (0.002 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDeleteFile]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDeleteFile]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDuplicateFileInitialization]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDuplicateFileInitialization]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDuplicateGroupInitialization]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDuplicateGroupInitialization]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDuplicateScanBridgeCancelScan]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDuplicateScanBridgeCancelScan]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDuplicateScanBridgeSingleton]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testDuplicateScanBridgeSingleton]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testFileEntryDirectoryProperties]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testFileEntryDirectoryProperties]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testFileEntryFormattedSize]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testFileEntryFormattedSize]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testFileEntryInitialization]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testFileEntryInitialization]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testFileEntryKindDescription]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testFileEntryKindDescription]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testLibraryCanBeLoaded]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testLibraryCanBeLoaded]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testListDirectoryReturnsEntries]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testListDirectoryReturnsEntries]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testListDirectoryWithEmptyPathThrows]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testListDirectoryWithEmptyPathThrows]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testListDirectoryWithInvalidPathThrows]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testListDirectoryWithInvalidPathThrows]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testMoveFile]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testMoveFile]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testParallelCopySingleFile]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testParallelCopySingleFile]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testParallelMoveSingleFile]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testParallelMoveSingleFile]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testRenameFile]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testRenameFile]' passed (0.001 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchBridgeSingleton]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchBridgeSingleton]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchFiltersDefaultInitialization]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchFiltersDefaultInitialization]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchFiltersInitialization]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchFiltersInitialization]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchResultDirectory]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchResultDirectory]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchResultInitialization]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testSearchResultInitialization]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testViewModelInitialState]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testViewModelInitialState]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testViewModelNavigateToPath]' started.
+Test Case '-[FlowFinderNativeTests.FlowFinderNativeTests testViewModelNavigateToPath]' passed (0.000 seconds).
+Test Suite 'FlowFinderNativeTests' passed at 2026-08-14 8:24:33.468 PM.
+	 Executed 28 tests, with 0 failures (0 unexpected) in 0.016 (0.022) seconds
+Test Suite 'PaneStateDeleteFilterTests' started at 2026-08-14 8:24:33.468 PM.
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testDeleteFailureRetainsSelectionAndReportsPath]' started.
+2026-08-14 20:24:33.477269+0800 FlowFinderNative[6970:118509] [User Defaults] Disabling saving preferences for { com.apple.finder, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.477283+0800 FlowFinderNative[6970:118509] [User Defaults] Disabling saving preferences for { com.apple.finder, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.477470+0800 FlowFinderNative[6970:118509] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [2: No such file or directory] -> -43 (fnfErr - `File not found`), path: 'N/A'
+(null)
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testDeleteFailureRetainsSelectionAndReportsPath]' passed (0.010 seconds).
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testDeleteIsNonBlocking]' started.
+2026-08-14 20:24:33.494470+0800 FlowFinderNative[6970:118599] [User Defaults] Disabling saving preferences for { com.apple.desktopservices, kCFPreferencesCurrentUser, current host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.494481+0800 FlowFinderNative[6970:118599] [User Defaults] Disabling saving preferences for { com.apple.desktopservices, kCFPreferencesCurrentUser, any host, (null) } because home directory is inaccessible
+2026-08-14 20:24:33.494664+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [2: No such file or directory] -> -43 (fnfErr - `File not found`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.494716+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.496894+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.497191+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.497465+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.497725+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.497989+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.498247+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.498507+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.498759+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.499014+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.499295+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.499607+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.499916+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.500214+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.500527+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.500845+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.501157+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.501471+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.501784+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.502101+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.502405+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.502711+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.503024+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.503328+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.503639+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.503909+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.504170+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.504429+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.504684+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.504944+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.505196+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.505457+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.505715+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.505975+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.506248+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.506565+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.506872+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.507171+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.507460+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.507776+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.508087+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.508398+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.508708+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.509009+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.509314+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.509617+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.509944+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.510290+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.510643+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+2026-08-14 20:24:33.510978+0800 FlowFinderNative[6970:118599] [CopyEngine] TCFURLInfo::TranslateRawPOSIXError [17: File exists] -> -48 (dupFNErr - `duplicate filename (rename)`), path: 'N/A'
+(null)
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testDeleteIsNonBlocking]' passed (0.034 seconds).
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testFilterEntriesQueryOnlyCaseInsensitive]' started.
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testFilterEntriesQueryOnlyCaseInsensitive]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testFilterEntriesTagMatchByName]' started.
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testFilterEntriesTagMatchByName]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testFilterEntriesTagOnly]' started.
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testFilterEntriesTagOnly]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testFilterEntriesTagPlusQueryIntersection]' started.
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testFilterEntriesTagPlusQueryIntersection]' passed (0.000 seconds).
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testParentDirectoriesAcrossMultipleDirectories]' started.
+Test Case '-[FlowFinderNativeTests.PaneStateDeleteFilterTests testParentDirectoriesAcrossMultipleDirectories]' passed (0.000 seconds).
+Test Suite 'PaneStateDeleteFilterTests' passed at 2026-08-14 8:24:33.515 PM.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.046 (0.047) seconds
+Test Suite 'FlowFinderNativeTests.xctest' passed at 2026-08-14 8:24:33.515 PM.
+	 Executed 43 tests, with 0 failures (0 unexpected) in 0.065 (0.078) seconds
+Test Suite 'All tests' passed at 2026-08-14 8:24:33.515 PM.
+	 Executed 43 tests, with 0 failures (0 unexpected) in 0.065 (0.078) seconds
+2026-08-14 20:24:33.790 xcodebuild[6955:118298] [MT] IDETestOperationsObserverDebug: 1.068 elapsed -- Testing started completed.
+2026-08-14 20:24:33.790 xcodebuild[6955:118298] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-14 20:24:33.790 xcodebuild[6955:118298] [MT] IDETestOperationsObserverDebug: 1.068 sec, +1.068 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/waltxao/Library/Developer/Xcode/DerivedData/FlowFinderNative-gfgoldtwzdwmclasnsgrovzztnzq/Logs/Test/Test-FlowFinderNativeTests-2026.08.14_8-24-32-+0800.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started

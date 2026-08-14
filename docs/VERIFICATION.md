@@ -1,14 +1,25 @@
 # FlowFinder Native — Verification Checklist
 
-> **Date**: 2026-07-17
-> **Version**: 0.1.0
-> **Platform**: macOS 13.0+ (Apple Silicon / Intel)
+> **Date**: 2026-08-14
+> **Version**: 0.7.5（开发中）
+> **Platform**: macOS 13.0+ (Apple Silicon)
 
 ---
 
 ## 1. Test Results
 
-### 1.1 Rust Unit Tests (`cargo test`)
+### 1.1 Rust Unit Tests (`cargo test --all-features`)
+
+> 最新完整运行结果见 `.omo/evidence/flowfinder-v074-complete-fix/task-*/cargo-test.log`。
+> v0.7.5 基线：**202+ tests, 0 failures**（含内容索引 FTS5、取消隔离、ABI 布局、
+> 任务生命周期、fsevents 状态机等）。
+
+### 1.2 Swift XCTest (`xcodebuild test -scheme FlowFinderNativeTests`)
+
+> **65+ tests, 0 failures**（T11/T12/T13 累计）。SwiftPM 无 testTarget，
+> 必须经 xcodebuild（见 docs/DEVELOPMENT.md）。
+
+### 1.3 历史基线（v0.1.0，2026-07-17）
 
 ```
 running 11 tests

@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_int, c_void};
+use std::os::raw::{c_char, c_int};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -152,8 +152,22 @@ impl Task {
 
 // ── Task Scheduler ────────────────────────────────────────────────
 
-/// Task scheduler managing queue, execution, and history
+/// Task scheduler managing queue, execution, and history.
+///
+/// `TaskScheduler` is a cheap cloneable *handle* over the shared
+/// `TaskSchedulerInner` state. Worker threads capture a clone of the handle
+/// of the instance that spawned them, so every worker operates on the exact
+/// scheduler it belongs to — never on some other instance. (The previous
+/// design captured the process-global singleton inside the worker, which let
+/// a `TaskScheduler::new()` instance's workers corrupt the singleton's
+/// history and `active_count`.)
+#[derive(Clone)]
 pub struct TaskScheduler {
+    inner: Arc<TaskSchedulerInner>,
+}
+
+/// Shared state behind a [`TaskScheduler`] handle.
+struct TaskSchedulerInner {
     next_id: AtomicUsize,
     tasks: Mutex<HashMap<u64, Arc<Mutex<Task>>>>,
     queue: Mutex<VecDeque<u64>>,
@@ -167,35 +181,37 @@ pub struct TaskScheduler {
 impl TaskScheduler {
     pub fn new() -> Self {
         TaskScheduler {
-            next_id: AtomicUsize::new(1),
-            tasks: Mutex::new(HashMap::new()),
-            queue: Mutex::new(VecDeque::new()),
-            max_concurrent: Mutex::new(3),
-            active_count: AtomicUsize::new(0),
-            running: AtomicBool::new(true),
-            history: Mutex::new(Vec::new()),
-            history_limit: 100,
+            inner: Arc::new(TaskSchedulerInner {
+                next_id: AtomicUsize::new(1),
+                tasks: Mutex::new(HashMap::new()),
+                queue: Mutex::new(VecDeque::new()),
+                max_concurrent: Mutex::new(3),
+                active_count: AtomicUsize::new(0),
+                running: AtomicBool::new(true),
+                history: Mutex::new(Vec::new()),
+                history_limit: 100,
+            }),
         }
     }
 
     pub fn submit(&self, task_type: TaskType, priority: TaskPriority, params: HashMap<String, String>) -> u64 {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst) as u64;
+        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst) as u64;
         let task = Task::new(id, task_type, priority, params);
         let task_arc = Arc::new(Mutex::new(task));
 
         {
-            let mut tasks = self.tasks.lock();
+            let mut tasks = self.inner.tasks.lock();
             tasks.insert(id, task_arc.clone());
         }
 
         {
-            let mut queue = self.queue.lock();
+            let mut queue = self.inner.queue.lock();
             queue.push_back(id);
 
             // P0-1 修复：排序前一次性快照所有优先级到 Vec<(u64, i32)>，
             // 避免在比较函数内反复加锁（原先 O(N log N) 次重复加锁）。
             let priorities: Vec<(u64, i32)> = {
-                let tasks = self.tasks.lock();
+                let tasks = self.inner.tasks.lock();
                 queue
                     .iter()
                     .map(|&tid| {
@@ -225,7 +241,7 @@ impl TaskScheduler {
     }
 
     pub fn cancel(&self, id: u64) -> bool {
-        let tasks = self.tasks.lock();
+        let tasks = self.inner.tasks.lock();
         if let Some(task_arc) = tasks.get(&id) {
             let mut task = task_arc.lock();
             if task.status == TaskStatus::Pending || task.status == TaskStatus::Running {
@@ -237,38 +253,40 @@ impl TaskScheduler {
     }
 
     fn get_task(&self, id: u64) -> Option<Arc<Mutex<Task>>> {
-        let tasks = self.tasks.lock();
+        let tasks = self.inner.tasks.lock();
         tasks.get(&id).cloned()
     }
 
     pub fn list_tasks(&self) -> Vec<Task> {
-        let tasks = self.tasks.lock();
+        let tasks = self.inner.tasks.lock();
         tasks.values()
             .map(|arc| arc.lock().clone())
             .collect()
     }
 
-    fn get_history(&self) -> Vec<Task> {
-        let history = self.history.lock();
+    /// Returns a snapshot of the task history (completed/failed/cancelled tasks
+    /// that have been moved out of the active map).
+    pub fn get_history(&self) -> Vec<Task> {
+        let history = self.inner.history.lock();
         history.clone()
     }
 
     fn set_max_concurrent(&self, max: usize) {
-        let mut max_concurrent = self.max_concurrent.lock();
+        let mut max_concurrent = self.inner.max_concurrent.lock();
         *max_concurrent = max.max(1);
     }
 
     fn process_queue(&self) {
-        let max = *self.max_concurrent.lock();
-        let active = self.active_count.load(Ordering::SeqCst);
+        let max = *self.inner.max_concurrent.lock();
+        let active = self.inner.active_count.load(Ordering::SeqCst);
         
         if active >= max {
             return;
         }
 
-        let mut queue = self.queue.lock();
+        let mut queue = self.inner.queue.lock();
         while let Some(id) = queue.pop_front() {
-            let tasks = self.tasks.lock();
+            let tasks = self.inner.tasks.lock();
             if let Some(task_arc) = tasks.get(&id) {
                 let task_clone = task_arc.clone();
                 let mut task = task_clone.lock();
@@ -284,28 +302,27 @@ impl TaskScheduler {
                     drop(tasks);
                     drop(queue);
 
-                    self.active_count.fetch_add(1, Ordering::SeqCst);
+                    self.inner.active_count.fetch_add(1, Ordering::SeqCst);
 
-                    // Spawn a worker thread that operates on the *global*
-                    // scheduler singleton. Previously this used `clone_ref`,
-                    // which created an empty-shell scheduler (fresh empty
-                    // HashMap/VecDeque) — the worker could neither see the
-                    // task queue nor decrement the real `active_count`,
-                    // leaking tasks and breaking concurrency. By calling
-                    // `scheduler()` (a `&'static TaskScheduler`) inside the
-                    // thread, every worker shares the same queues and
-                    // counters as the caller.
+                    // Spawn a worker that operates on *this* scheduler
+                    // instance (a clone of the handle), so its history and
+                    // `active_count` stay with the instance that submitted
+                    // the task. Previously the worker captured the process-
+                    // global singleton: a `TaskScheduler::new()` instance's
+                    // workers then wrote into the singleton's history and
+                    // decremented its `active_count` (wrapping it and
+                    // stalling the singleton forever).
                     //
                     // P1-7 修复：用 catch_unwind 包装 execute_task，
                     // 确保即使任务执行过程中 panic，active_count 也一定递减
                     // 且 process_queue 被调用，避免计数器泄漏导致调度器卡死。
+                    let self_clone = self.clone();
                     thread::spawn(move || {
-                        let s = scheduler();
                         let _ = catch_unwind(AssertUnwindSafe(|| {
-                            s.execute_task(task_clone);
+                            self_clone.execute_task(task_clone);
                         }));
-                        s.active_count.fetch_sub(1, Ordering::SeqCst);
-                        s.process_queue();
+                        self_clone.inner.active_count.fetch_sub(1, Ordering::SeqCst);
+                        self_clone.process_queue();
                     });
                     return;
                 }
@@ -357,20 +374,20 @@ impl TaskScheduler {
     }
 
     fn move_to_history(&self, task: &Task) {
-        let mut history = self.history.lock();
+        let mut history = self.inner.history.lock();
         history.push(task.clone());
-        if history.len() > self.history_limit {
+        if history.len() > self.inner.history_limit {
             history.remove(0);
         }
 
         // 从活跃任务中移除
-        let mut tasks = self.tasks.lock();
+        let mut tasks = self.inner.tasks.lock();
         tasks.remove(&task.id);
     }
 
     /// 清除任务历史中已完成/失败的任务（保留 Cancelled 及仍在执行的任务）。
     pub fn clear_history(&self) {
-        let mut history = self.history.lock();
+        let mut history = self.inner.history.lock();
         history.retain(|task| {
             task.status != TaskStatus::Completed && task.status != TaskStatus::Failed
         });
@@ -384,26 +401,6 @@ static SCHEDULER: OnceLock<TaskScheduler> = OnceLock::new();
 pub fn scheduler() -> &'static TaskScheduler {
     SCHEDULER.get_or_init(|| TaskScheduler::new())
 }
-
-// ── FFI Callback Types ──────────────────────────────────────────────
-
-/// Callback for task listing
-pub type FFTaskListCallback = extern "C" fn(
-    id: u64,
-    task_type: *const c_char,
-    status: *const c_char,
-    progress: f64,
-    created_at: u64,
-    user_data: *mut c_void,
-);
-
-/// Callback for task progress updates
-pub type FFTaskProgressCallback = extern "C" fn(
-    id: u64,
-    progress: f64,
-    status: *const c_char,
-    user_data: *mut c_void,
-);
 
 // ── Public FFI API ────────────────────────────────────────────────
 
@@ -501,38 +498,7 @@ pub extern "C" fn ff_task_cancel(task_id: *const c_char) -> c_int {
 
 // ff_task_list 已移至 ffi/mod.rs，使用 FFTaskInfo 结构体指针回调（与 ff_ffi.h 对齐）
 // ff_task_progress 已移至 ffi/mod.rs，使用输出参数式 (task_id: *const c_char, out_progress: *mut f64)
-
-/// Get task history.
-///
-/// # Arguments
-/// - `callback` — Called for each historical task.
-/// - `user_data` — Opaque pointer passed to callback.
-///
-/// # Returns
-/// - `FF_OK` on success.
-#[no_mangle]
-pub extern "C" fn ff_task_history(
-    callback: FFTaskListCallback,
-    user_data: *mut c_void,
-) -> c_int {
-    let history = scheduler().get_history();
-    
-    for task in history {
-        let type_c = CString::new(task.task_type.as_str()).unwrap_or_default();
-        let status_c = CString::new(task.status.as_str()).unwrap_or_default();
-        
-        callback(
-            task.id,
-            type_c.as_ptr(),
-            status_c.as_ptr(),
-            task.progress,
-            task.created_at,
-            user_data,
-        );
-    }
-
-    FF_OK
-}
+// ff_task_history 已移至 ffi/mod.rs，使用 FFTaskInfo 结构体指针回调（与 ff_ffi.h 对齐）
 
 /// 清除任务历史中已完成/失败的任务（保留 Cancelled 及仍在执行的任务）。
 ///
@@ -543,6 +509,15 @@ pub extern "C" fn ff_task_clear_history() -> c_int {
     scheduler().clear_history();
     FF_OK
 }
+
+/// Serializes tests that mutate the *process-global* scheduler singleton
+/// (`scheduler()`) — submit/cancel/history/clear_history. The singleton's
+/// history is shared across test modules, so an uncoordinated
+/// `ff_task_clear_history` from one test can delete a task that another test
+/// has just moved into history, before its poll observes it. Test-only
+/// synchronization; production code is untouched.
+#[cfg(test)]
+pub(crate) static TASK_TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 // ── Tests ─────────────────────────────────────────────────────────
 
@@ -589,5 +564,62 @@ mod tests {
         
         // After cancellation, task should be removed from active
         thread::sleep(Duration::from_millis(50));
+    }
+
+    // ── Wave1 regression tests (v0.7.5 fix plan) ─────────────────────
+    //
+    // `ff_task_clear_history` had zero test coverage before this task.
+
+    #[test]
+    fn test_task_clear_history() {
+        let s = TaskScheduler::new();
+        let mut completed = Task::new(1, TaskType::Copy, TaskPriority::Normal, HashMap::new());
+        completed.status = TaskStatus::Completed;
+        let mut failed = Task::new(2, TaskType::Move, TaskPriority::Normal, HashMap::new());
+        failed.status = TaskStatus::Failed;
+        let mut cancelled = Task::new(3, TaskType::Scan, TaskPriority::Normal, HashMap::new());
+        cancelled.status = TaskStatus::Cancelled;
+        let mut pending = Task::new(4, TaskType::Index, TaskPriority::Normal, HashMap::new());
+        pending.status = TaskStatus::Pending;
+
+        {
+            let mut history = s.inner.history.lock();
+            history.push(completed);
+            history.push(failed);
+            history.push(cancelled.clone());
+            history.push(pending);
+        }
+
+        s.clear_history();
+
+        let history = s.get_history();
+        assert_eq!(
+            history.len(),
+            2,
+            "only Cancelled and Pending must survive clear_history, got {:?}",
+            history.iter().map(|t| t.status).collect::<Vec<_>>()
+        );
+        assert!(
+            history.iter().any(|t| t.status == TaskStatus::Cancelled),
+            "Cancelled task must be retained"
+        );
+        assert!(
+            history.iter().any(|t| t.status == TaskStatus::Pending),
+            "Pending task must be retained"
+        );
+        assert!(
+            !history.iter().any(|t| t.status == TaskStatus::Completed),
+            "Completed task must be removed"
+        );
+        assert!(
+            !history.iter().any(|t| t.status == TaskStatus::Failed),
+            "Failed task must be removed"
+        );
+    }
+
+    #[test]
+    fn test_ff_task_clear_history_returns_ok() {
+        let _guard = TASK_TEST_LOCK.lock();
+        assert_eq!(ff_task_clear_history(), FF_OK);
     }
 }

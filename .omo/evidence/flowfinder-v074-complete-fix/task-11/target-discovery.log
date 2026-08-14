@@ -1,0 +1,75 @@
+=== xcodebuild -list (Xcode 27.0 beta) ===
+Command line invocation:
+    /Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild -list
+
+Information about project "FlowFinderNative":
+    Targets:
+        FlowFinderNative
+        FlowFinderNativeTests
+
+    Build Configurations:
+        Debug
+        Release
+
+    If no build configuration is specified and -scheme is not passed then "Release" is used.
+
+    Schemes:
+        FlowFinderNativeTests
+
+
+=== xcodebuild -version ===
+Xcode 27.0
+Build version 27A5218g
+
+=== xcode-select -p (active dev dir) ===
+/Library/Developer/CommandLineTools
+
+=== scheme file present ===
+total 16
+drwxr-xr-x@ 3 waltxao  staff    96 Aug 14 19:51 .
+drwxr-xr-x@ 3 waltxao  staff    96 Aug 14 19:50 ..
+-rw-r--r--@ 1 waltxao  staff  4226 Aug 14 20:23 FlowFinderNativeTests.xcscheme
+
+=== pbxproj: test target + XCTest.framework + membership ===
+--- FlowFinderNativeTests native target ---
+294:		FF10002B000000000000002B /* FlowFinderNativeTests */ = {
+335:		FF1000100000000000000010 /* FlowFinderNativeTests */ = {
+350:			productType = "com.apple.product-type.bundle.unit-test";
+--- XCTest.framework ---
+72:		FF1000270000000000000027 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FF1000260000000000000026; };
+141:		FF1000260000000000000026 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+163:				FF1000270000000000000027 /* XCTest.framework in Frameworks */,
+--- test source build files ---
+69:		FF1000230000000000000023 /* FlowFinderNativeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000200000000000000020; };
+70:		FF1000240000000000000024 /* ContentIndexBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000210000000000000021; };
+71:		FF1000250000000000000025 /* PaneStateDeleteFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000220000000000000022; };
+518:				FF1000230000000000000023 /* FlowFinderNativeTests.swift in Sources */,
+519:				FF1000240000000000000024 /* ContentIndexBridgeTests.swift in Sources */,
+520:				FF1000250000000000000025 /* PaneStateDeleteFilterTests.swift in Sources */,
+--- ContentIndexBridge.swift in app Sources ---
+68:		FF10002A000000000000002A /* ContentIndexBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000290000000000000029; };
+510:				FF10002A000000000000002A /* ContentIndexBridge.swift in Sources */,
+--- host dependency (TEST_HOST / BUNDLE_LOADER) ---
+738:				BUNDLE_LOADER = "$(TEST_HOST)";
+757:				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FlowFinderNative.app/Contents/MacOS/FlowFinderNative";
+765:				BUNDLE_LOADER = "$(TEST_HOST)";
+784:				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FlowFinderNative.app/Contents/MacOS/FlowFinderNative";
+--- target dependency (PBXTargetDependency) ---
+345:				FF1000170000000000000017 /* PBXTargetDependency */,
+376:/* Begin PBXContainerItemProxy section */
+377:		FF1000160000000000000016 /* PBXContainerItemProxy */ = {
+378:			isa = PBXContainerItemProxy;
+384:/* End PBXContainerItemProxy section */
+386:/* Begin PBXTargetDependency section */
+387:		FF1000170000000000000017 /* PBXTargetDependency */ = {
+388:			isa = PBXTargetDependency;
+390:			targetProxy = FF1000160000000000000016 /* PBXContainerItemProxy */;
+392:/* End PBXTargetDependency section */
+
+=== stale API scan (expect zero) ===
+ZERO stale API references
+
+=== swiftc -parse all test files ===
+PARSE OK: Tests/FlowFinderNativeTests/ContentIndexBridgeTests.swift
+PARSE OK: Tests/FlowFinderNativeTests/FlowFinderNativeTests.swift
+PARSE OK: Tests/FlowFinderNativeTests/PaneStateDeleteFilterTests.swift

@@ -581,21 +581,15 @@ public class DuplicateScanWindowController: NSWindowController {
     @objc private func deleteSelected() {
         guard !allDeleteFilePaths.isEmpty else { return }
 
-        // 与 MainWindowController 语义一致：用户勾选"不再询问"后跳过确认弹窗直接删除
-        let disabled = UserDefaults.standard.bool(forKey: "delete_confirm_disabled")
-        if disabled {
-            performDelete()
-            return
-        }
-
-        let dialog = DeleteConfirmDialog(fileCount: allDeleteFilePaths.count) { [weak self] in
+        // 任务 T12: 统一走 DeleteConfirmDialog.confirmDelete（全应用唯一确认入口），
+        // 业务差异（批量数量 + 永久删除语义）通过 message/confirmButtonTitle 参数传入。
+        DeleteConfirmDialog.confirmDelete(
+            fileCount: allDeleteFilePaths.count,
+            window: window,
+            message: "确定要永久删除 \(allDeleteFilePaths.count) 个重复文件吗？此操作无法撤销。",
+            confirmButtonTitle: "永久删除"
+        ) { [weak self] in
             self?.performDelete()
-        }
-        if let window = window {
-            dialog.beginSheetModal(for: window)
-        } else {
-            // 无窗口回退（极少见），直接执行
-            performDelete()
         }
     }
 

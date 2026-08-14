@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    name: Rust core (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-core
+
+      - name: Format check
+        run: cargo fmt --check
+        working-directory: rust-core
+
+      - name: Build
+        run: cargo build --all-features
+        working-directory: rust-core
+
+      - name: Test
+        run: cargo test --all-features
+        working-directory: rust-core
+
+  swift:
+    name: Swift XCTest (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Build Rust (dylib required by app target)
+        run: bash scripts/build-rust.sh Debug
+        working-directory: .
+
+      - name: Run XCTest
+        run: |
+          mkdir -p /tmp/flowfinder-test-home/Desktop /tmp/flowfinder-test-home/Documents
+          xcodebuild test \
+            -project FlowFinderNative/FlowFinderNative.xcodeproj \
+            -scheme FlowFinderNativeTests \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO

@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "active_work_id": "flowfinder-v074-complete-fix",
+  "works": {
+    "flowfinder-v074-complete-fix": {
+      "work_id": "flowfinder-v074-complete-fix",
+      "active_plan": ".omo/plans/flowfinder-v074-complete-fix.md",
+      "plan_name": "flowfinder-v074-complete-fix",
+      "session_ids": ["codex:flowfinder-v074-complete-fix"],
+      "status": "active",
+      "worktree_path": null,
+      "delivery_mode": "direct"
+    }
+  }
+}

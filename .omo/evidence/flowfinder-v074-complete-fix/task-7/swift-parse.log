@@ -1,0 +1,17 @@
+swiftc -parse (syntax) — all new/modified Swift files
+swiftc version: swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.30.4 clang-2100.3.30.1)
+
+=== FlowFinderNative/FlowFinderNative/Bridge/FFIFunctions.swift (exit 0) ===
+OK
+=== FlowFinderNative/FlowFinderNative/Bridge/ContentIndexBridge.swift (exit 0) ===
+OK
+=== FlowFinderNative/FlowFinderNative/App/AppDelegate.swift (exit 0) ===
+OK
+=== FlowFinderNative/FlowFinderNative/UI/MainWindowController.swift (exit 0) ===
+OK
+=== FlowFinderNative/FlowFinderNative/UI/SearchPanelController.swift (exit 0) ===
+OK
+=== FlowFinderNative/Tests/FlowFinderNativeTests/ContentIndexBridgeTests.swift (exit 0) ===
+OK
+
+RESULT: ALL FILES PARSE CLEANLY
