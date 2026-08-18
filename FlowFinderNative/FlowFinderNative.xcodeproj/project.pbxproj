@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		FF0000010000000000000001 /* FlowFinderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000110000000000000011; };
+		FF0C0D0E0000000000000001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0C0D0E0000000000000011; };
 		FF0000020000000000000002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000120000000000000012; };
 		FF0000040000000000000004 /* FileListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000140000000000000014; };
 		FF0000A0000000000000000A /* ConflictResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000B0000000000000000B; };
@@ -75,7 +75,7 @@
 
 /* Begin PBXFileReference section */
 		FF0000100000000000000010 /* FlowFinderNative */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = FlowFinderNative; sourceTree = BUILT_PRODUCTS_DIR; };
-		FF0000110000000000000011 /* FlowFinderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowFinderApp.swift; sourceTree = "<group>"; };
+		FF0C0D0E0000000000000011 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		FF0000120000000000000012 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		FF0000140000000000000014 /* FileListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileListView.swift; sourceTree = "<group>"; };
 		FF0000B0000000000000000B /* ConflictResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConflictResolver.swift; sourceTree = "<group>"; };
@@ -193,7 +193,7 @@
 		FF0000410000000000000041 /* App */ = {
 			isa = PBXGroup;
 			children = (
-				FF0000110000000000000011 /* FlowFinderApp.swift */,
+				FF0C0D0E0000000000000011 /* main.swift */,
 				FF0000120000000000000012 /* AppDelegate.swift */,
 			);
 			path = App;
@@ -445,7 +445,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FF0000010000000000000001 /* FlowFinderApp.swift in Sources */,
+				FF0C0D0E0000000000000001 /* main.swift in Sources */,
 				FF0000020000000000000002 /* AppDelegate.swift in Sources */,
 				FF0000040000000000000004 /* FileListView.swift in Sources */,
 				FF0000A0000000000000000A /* ConflictResolver.swift in Sources */,
