@@ -63,7 +63,7 @@ static POOL: std::sync::OnceLock<CachePool> = std::sync::OnceLock::new();
 
 fn rget<T: rusqlite::types::FromSql>(row: &rusqlite::Row<'_>, idx: usize) -> io::Result<T> {
     row.get(idx)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+        .map_err(|e| io::Error::other(e.to_string()))
 }
 
 /// Open a connection with the production pragmas applied.
@@ -82,9 +82,9 @@ fn rget<T: rusqlite::types::FromSql>(row: &rusqlite::Row<'_>, idx: usize) -> io:
 /// normal and safe; no manual cleanup is required.
 fn open_configured_connection(db_path: &str) -> io::Result<Connection> {
     let conn = Connection::open(db_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| io::Error::other(e.to_string()))?;
     conn.busy_timeout(BUSY_TIMEOUT)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| io::Error::other(e.to_string()))?;
     // Best-effort: if WAL is unavailable (e.g. network filesystem) SQLite
     // falls back to the default journal mode and we continue with the
     // busy_timeout safety net.
@@ -123,18 +123,18 @@ pub fn init_cache(db_path: &str) -> io::Result<()> {
         // user_version is 0): drop any existing table and recreate with the
         // current schema, then stamp the new version.
         conn.execute_batch("DROP TABLE IF EXISTS dir_cache;")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
         conn.execute_batch(SCHEMA)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
         conn.execute_batch(&format!("PRAGMA user_version = {};", SCHEMA_VERSION))
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
     } else {
         // Same version — ensure the table exists (handles the edge case
         // where user_version was set but the table was deleted externally).
         // `CREATE TABLE IF NOT EXISTS` is a no-op when the table already
         // matches the schema.
         conn.execute_batch(SCHEMA)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
     }
     Ok(())
 }
@@ -153,40 +153,40 @@ pub fn cache_get(db_path: &str, dir_path: &str) -> io::Result<Option<Vec<FileEnt
     let mut stmt = conn.prepare(
         "SELECT file_path, file_name, is_dir, is_file, is_symlink, is_hidden, extension, size, modified, created, is_system_protected
          FROM dir_cache WHERE dir_path = ?1"
-    ).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    ).map_err(|e| io::Error::other(e.to_string()))?;
 
     let mut rows = stmt
         .query(params![dir_path])
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| io::Error::other(e.to_string()))?;
 
     let mut entries: Vec<FileEntrySkeleton> = Vec::new();
     let mut has_rows = false;
     while let Some(row) = rows
         .next()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+        .map_err(|e| io::Error::other(e.to_string()))?
     {
         has_rows = true;
         let path: String = row
             .get(0)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
         // Skip the empty-directory marker row.
         if path == CACHED_DIR_MARKER_FILE_PATH {
             continue;
         }
-        let name: String = rget(&row, 1)?;
+        let name: String = rget(row, 1)?;
         entries.push(FileEntrySkeleton {
             id: format!("{}:{}", name, path),
             path,
             name,
-            is_dir: rget::<i32>(&row, 2)? != 0,
-            is_file: rget::<i32>(&row, 3)? != 0,
-            is_symlink: rget::<i32>(&row, 4)? != 0,
-            is_hidden: rget::<i32>(&row, 5)? != 0,
-            extension: rget(&row, 6)?,
-            size: rget::<i64>(&row, 7)? as u64,
-            modified: rget(&row, 8)?,
-            created: rget(&row, 9)?,
-            is_system_protected: rget::<i32>(&row, 10)? != 0,
+            is_dir: rget::<i32>(row, 2)? != 0,
+            is_file: rget::<i32>(row, 3)? != 0,
+            is_symlink: rget::<i32>(row, 4)? != 0,
+            is_hidden: rget::<i32>(row, 5)? != 0,
+            extension: rget(row, 6)?,
+            size: rget::<i64>(row, 7)? as u64,
+            modified: rget(row, 8)?,
+            created: rget(row, 9)?,
+            is_system_protected: rget::<i32>(row, 10)? != 0,
             metadata_loaded: true,
         });
     }
@@ -204,10 +204,10 @@ pub fn cache_put(db_path: &str, dir_path: &str, entries: &[FileEntrySkeleton]) -
 
     let tx = conn
         .transaction()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| io::Error::other(e.to_string()))?;
 
     tx.execute("DELETE FROM dir_cache WHERE dir_path = ?1", params![dir_path])
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| io::Error::other(e.to_string()))?;
 
     let now = chrono::Utc::now().timestamp();
 
@@ -219,7 +219,7 @@ pub fn cache_put(db_path: &str, dir_path: &str, entries: &[FileEntrySkeleton]) -
          VALUES (?1, '', '', 0, 0, 0, 0, '', 0, 0, 0, 0, ?2)",
         params![dir_path, now],
     )
-    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    .map_err(|e| io::Error::other(e.to_string()))?;
 
     for entry in entries {
         tx.execute(
@@ -232,11 +232,11 @@ pub fn cache_put(db_path: &str, dir_path: &str, entries: &[FileEntrySkeleton]) -
                 entry.is_hidden as i32, entry.extension, entry.size as i64,
                 entry.modified, entry.created, entry.is_system_protected as i32, now
             ],
-        ).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        ).map_err(|e| io::Error::other(e.to_string()))?;
     }
 
     tx.commit()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| io::Error::other(e.to_string()))?;
     Ok(())
 }
 
@@ -244,7 +244,7 @@ pub fn cache_invalidate(db_path: &str, dir_path: &str) -> io::Result<()> {
     let conn = pooled_connection(db_path)?;
     let conn = conn.lock();
     conn.execute("DELETE FROM dir_cache WHERE dir_path = ?1", params![dir_path])
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| io::Error::other(e.to_string()))?;
     Ok(())
 }
 
@@ -257,7 +257,7 @@ pub fn is_cache_fresh(db_path: &str, dir_path: &str, dir_mtime: i64) -> io::Resu
         |row| row.get(0),
     ).unwrap_or(None);
 
-    Ok(cached_at.map_or(false, |ts| ts >= dir_mtime))
+    Ok(cached_at.is_some_and(|ts| ts >= dir_mtime))
 }
 
 #[cfg(test)]

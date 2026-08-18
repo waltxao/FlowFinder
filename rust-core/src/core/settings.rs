@@ -1,3 +1,6 @@
+// SAFETY(lint): C ABI 边界函数解引用 Swift 侧传入的裸指针是 FFI 固有模式，
+// 调用方（Swift）无法表达 Rust 的 unsafe 语义，该 lint 对本模块属已知误报场景。
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! Settings management with JSON file storage.
 //!
 //! Settings are stored in ~/Library/Preferences/com.flowfinder.native.json
@@ -25,7 +28,7 @@ const FF_ERR_IO: c_int = -3;
 // ── Settings Data ───────────────────────────────────────────────────
 
 /// Complete settings structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
     pub general: GeneralSettings,
     pub appearance: AppearanceSettings,
@@ -33,16 +36,6 @@ pub struct Settings {
     pub advanced: AdvancedSettings,
 }
 
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            general: GeneralSettings::default(),
-            appearance: AppearanceSettings::default(),
-            shortcuts: ShortcutsSettings::default(),
-            advanced: AdvancedSettings::default(),
-        }
-    }
-}
 
 /// General settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,7 +222,7 @@ pub fn settings_save(json: *const c_char) -> c_int {
         Err(_) => return FF_ERR_GENERIC,
     };
 
-    if let Err(_) = save_settings_to_plist(&new_settings) {
+    if save_settings_to_plist(&new_settings).is_err() {
         return FF_ERR_IO;
     }
 
@@ -356,7 +349,7 @@ pub fn settings_set(key: *const c_char, value: *const c_char) -> c_int {
     // Save to plist after modification
     drop(guard);
     if let Ok(s) = get_settings().lock() {
-        if let Err(_) = save_settings_to_plist(&*s) {
+        if save_settings_to_plist(&s).is_err() {
             return FF_ERR_IO;
         }
     }

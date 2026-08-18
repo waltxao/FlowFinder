@@ -59,7 +59,7 @@ pub fn fuzzy_match(haystack: &str, needle: &str) -> bool {
     }
     let haystack_lower = haystack.to_lowercase();
     let needle_lower = needle.to_lowercase();
-    let mut haystack_chars = haystack_lower.chars();
+    let haystack_chars = haystack_lower.chars();
     let mut needle_chars = needle_lower.chars();
 
     if let Some(mut nc) = needle_chars.next() {

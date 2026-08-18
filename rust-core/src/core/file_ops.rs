@@ -113,7 +113,6 @@ pub fn rename(src: &Path, dst: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[test]

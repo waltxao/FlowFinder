@@ -1,3 +1,6 @@
+// SAFETY(lint): C ABI 边界函数解引用 Swift 侧传入的裸指针是 FFI 固有模式，
+// 调用方（Swift）无法表达 Rust 的 unsafe 语义，该 lint 对本模块属已知误报场景。
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! Task scheduler with priority queue and concurrent execution.
 //!
 //! Supports task types: Copy, Move, Delete, Scan, Index.
@@ -11,7 +14,7 @@ use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -25,7 +28,6 @@ use serde::{Deserialize, Serialize};
 const FF_OK: c_int = 0;
 const FF_ERR_GENERIC: c_int = -1;
 const FF_ERR_INVALID_PATH: c_int = -2;
-const FF_ERR_IO: c_int = -3;
 const FF_ERR_NOT_FOUND: c_int = -4;
 
 // ── Task Types ──────────────────────────────────────────────────────
@@ -41,6 +43,8 @@ pub enum TaskType {
 }
 
 impl TaskType {
+        /// 业务解析方法（非 std::str::FromStr 实现，保持 Option/直接返回语义）。
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "copy" => Some(TaskType::Copy),
@@ -173,9 +177,14 @@ struct TaskSchedulerInner {
     queue: Mutex<VecDeque<u64>>,
     max_concurrent: Mutex<usize>,
     active_count: AtomicUsize,
-    running: AtomicBool,
     history: Mutex<Vec<Task>>,
     history_limit: usize,
+}
+
+impl Default for TaskScheduler {
+    fn default() -> Self {
+        TaskScheduler::new()
+    }
 }
 
 impl TaskScheduler {
@@ -187,7 +196,6 @@ impl TaskScheduler {
                 queue: Mutex::new(VecDeque::new()),
                 max_concurrent: Mutex::new(3),
                 active_count: AtomicUsize::new(0),
-                running: AtomicBool::new(true),
                 history: Mutex::new(Vec::new()),
                 history_limit: 100,
             }),
@@ -252,11 +260,6 @@ impl TaskScheduler {
         false
     }
 
-    fn get_task(&self, id: u64) -> Option<Arc<Mutex<Task>>> {
-        let tasks = self.inner.tasks.lock();
-        tasks.get(&id).cloned()
-    }
-
     pub fn list_tasks(&self) -> Vec<Task> {
         let tasks = self.inner.tasks.lock();
         tasks.values()
@@ -269,11 +272,6 @@ impl TaskScheduler {
     pub fn get_history(&self) -> Vec<Task> {
         let history = self.inner.history.lock();
         history.clone()
-    }
-
-    fn set_max_concurrent(&self, max: usize) {
-        let mut max_concurrent = self.inner.max_concurrent.lock();
-        *max_concurrent = max.max(1);
     }
 
     fn process_queue(&self) {
@@ -399,7 +397,7 @@ use std::sync::OnceLock;
 static SCHEDULER: OnceLock<TaskScheduler> = OnceLock::new();
 
 pub fn scheduler() -> &'static TaskScheduler {
-    SCHEDULER.get_or_init(|| TaskScheduler::new())
+    SCHEDULER.get_or_init(TaskScheduler::new)
 }
 
 // ── Public FFI API ────────────────────────────────────────────────

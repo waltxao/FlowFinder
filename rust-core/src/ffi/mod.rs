@@ -14,6 +14,9 @@
 //! - All heap-allocated strings returned to C must be freed with
 //!   `ff_free_string()`.
 
+// SAFETY(lint): C ABI 边界函数解引用 Swift 侧传入的裸指针是 FFI 固有模式，
+// 调用方（Swift）无法表达 Rust 的 unsafe 语义，该 lint 对本模块属已知误报场景。
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -61,7 +64,7 @@ pub const FF_ERR_PERMISSION_DENIED: c_int = -6;
 // P1-6 修复：thread_local 保证单线程访问，使用 RefCell 替代 Mutex，
 // 避免 .lock().unwrap() 的开销和潜在死锁。
 thread_local! {
-    static LAST_ERROR: RefCell<Option<String>> = RefCell::new(None);
+    static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn set_last_error(msg: String) {
@@ -387,7 +390,7 @@ pub extern "C" fn ff_free_string(s: *mut c_char) {
 /// Returns a heap-allocated C string. Must be freed with `ff_free_string()`.
 #[no_mangle]
 pub extern "C" fn ff_version_string() -> *mut c_char {
-    ffi_catch_ptr(|| rust_string_to_c(env!("CARGO_PKG_VERSION").to_string()))
+    ffi_catch_ptr(|| rust_string_to_c(env!("CARGO_PKG_VERSION")))
 }
 
 /// Get the system memory size in bytes.
@@ -2632,7 +2635,7 @@ pub extern "C" fn ff_generate_thumbnail(
 
         match crate::core::thumbnails::generate_thumbnail(path_str, max_size) {
             Ok(thumb_path) => {
-                let path_c = rust_string_to_c(thumb_path.to_string_lossy().to_string());
+                let path_c = rust_string_to_c(thumb_path.to_string_lossy());
                 callback(path_c, user_data);
                 if !path_c.is_null() {
                     unsafe { let _ = CString::from_raw(path_c); }
@@ -2696,7 +2699,7 @@ pub extern "C" fn ff_generate_thumbnails(
         match crate::core::thumbnails::generate_thumbnails(&path_strings, max_size) {
             Ok(thumb_paths) => {
                 for thumb_path in thumb_paths {
-                    let path_c = rust_string_to_c(thumb_path.to_string_lossy().to_string());
+                    let path_c = rust_string_to_c(thumb_path.to_string_lossy());
                     callback(path_c, user_data);
                     if !path_c.is_null() {
                         unsafe { let _ = CString::from_raw(path_c); }
@@ -2720,7 +2723,7 @@ pub extern "C" fn ff_generate_thumbnails(
 /// Returns a heap-allocated C string. Must be freed with `ff_free_string()`.
 #[no_mangle]
 pub extern "C" fn ff_settings_load() -> *mut c_char {
-    ffi_catch_ptr(|| crate::core::settings::settings_load())
+    ffi_catch_ptr(crate::core::settings::settings_load)
 }
 
 /// Save all settings from a JSON string.
@@ -2869,7 +2872,7 @@ pub extern "C" fn ff_task_list(
 
         for task in tasks {
             let id_c = rust_string_to_c(task.id.to_string());
-            let name_c = rust_string_to_c(task.task_type.as_str().to_string());
+            let name_c = rust_string_to_c(task.task_type.as_str());
             let desc_c = rust_string_to_c(task.params.get("description").cloned().unwrap_or_default());
             let status_int: i32 = match task.status.as_str() {
                 "Pending" => 0,
@@ -2943,7 +2946,7 @@ pub extern "C" fn ff_task_history(
 
         for task in tasks {
             let id_c = rust_string_to_c(task.id.to_string());
-            let name_c = rust_string_to_c(task.task_type.as_str().to_string());
+            let name_c = rust_string_to_c(task.task_type.as_str());
             let desc_c = rust_string_to_c(task.params.get("description").cloned().unwrap_or_default());
             let status_int: i32 = match task.status.as_str() {
                 "Pending" => 0,

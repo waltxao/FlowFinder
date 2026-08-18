@@ -196,16 +196,16 @@ pub fn run_scan(
     // If the user cancelled during collection, emit a final Done and return
     // the (empty) set of groups found so far.
     if is_cancelled() {
-        let _ = on_event.emit(DedupEvent::Progress {
+        on_event.emit(DedupEvent::Progress {
             scanned: 0,
             total: Some(files.len()),
         });
-        let _ = on_event.emit(DedupEvent::Done { groups: 0 });
+        on_event.emit(DedupEvent::Done { groups: 0 });
         return Vec::new();
     }
 
     let total = files.len();
-    let _ = on_event.emit(DedupEvent::Progress {
+    on_event.emit(DedupEvent::Progress {
         scanned: 0,
         total: Some(total),
     });
@@ -246,13 +246,13 @@ pub fn run_scan(
                     by_partial.entry(h).or_default().push((path.clone(), *size));
                 }
                 Err(e) => {
-                    let _ = on_event.emit(DedupEvent::Error {
+                    on_event.emit(DedupEvent::Error {
                         message: format!("{}: {}", path, e),
                     });
                 }
             }
-            if scanned % 25 == 0 || scanned >= total {
-                let _ = on_event.emit(DedupEvent::Progress {
+            if scanned.is_multiple_of(25) || scanned >= total {
+                on_event.emit(DedupEvent::Progress {
                     scanned,
                     total: Some(total),
                 });
@@ -276,7 +276,7 @@ pub fn run_scan(
                         by_full.entry(h).or_default().push((path.clone(), size));
                     }
                     Err(e) => {
-                        let _ = on_event.emit(DedupEvent::Error {
+                        on_event.emit(DedupEvent::Error {
                             message: format!("{}: {}", path, e),
                         });
                     }
@@ -300,7 +300,7 @@ pub fn run_scan(
                         .collect(),
                 };
                 // Emit immediately — do not wait for the full scan to finish.
-                let _ = on_event.emit(DedupEvent::GroupFound {
+                on_event.emit(DedupEvent::GroupFound {
                     group: group.clone(),
                 });
                 all_groups.push(group);
@@ -309,15 +309,15 @@ pub fn run_scan(
     }
 
     // Final progress + done.
-    let _ = on_event.emit(DedupEvent::Progress {
+    on_event.emit(DedupEvent::Progress {
         scanned: total,
         total: Some(total),
     });
 
     // Largest groups first for a sensible UI default ordering.
-    all_groups.sort_by(|a, b| b.size.cmp(&a.size));
+    all_groups.sort_by_key(|g| std::cmp::Reverse(g.size));
 
-    let _ = on_event.emit(DedupEvent::Done {
+    on_event.emit(DedupEvent::Done {
         groups: all_groups.len(),
     });
 

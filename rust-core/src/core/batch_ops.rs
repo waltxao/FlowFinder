@@ -234,7 +234,7 @@ pub fn organize_by_date(
             .unwrap_or(0);
 
         let dt = chrono::DateTime::from_timestamp(modified, 0)
-            .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH);
+            .unwrap_or(chrono::DateTime::UNIX_EPOCH);
 
         let subdir = match format {
             "YYYY/MM/DD" => format!("{:04}/{:02}/{:02}", dt.year(), dt.month(), dt.day()),
@@ -263,7 +263,7 @@ pub fn organize_by_date(
             continue;
         }
 
-        match std::fs::rename(&file_path, &target_path) {
+        match std::fs::rename(file_path, &target_path) {
             Ok(()) => {
                 moved += 1;
             }
@@ -332,7 +332,7 @@ pub fn organize_by_type(
             continue;
         }
 
-        match std::fs::rename(&file_path, &target_path) {
+        match std::fs::rename(file_path, &target_path) {
             Ok(()) => {
                 moved += 1;
             }

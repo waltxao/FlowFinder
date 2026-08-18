@@ -30,11 +30,6 @@ use std::path::Path;
 // - `EOPNOTSUPP`   (102) : same numeric value as ENOTSUP on macOS; kept for
 //                          documentation.
 #[cfg(target_os = "macos")]
-const EXDEV: i32 = 18;
-#[cfg(target_os = "macos")]
-const ENOTSUP: i32 = 102;
-
-#[cfg(target_os = "macos")]
 mod native {
     use std::ffi::CString;
     use std::os::raw::c_char;

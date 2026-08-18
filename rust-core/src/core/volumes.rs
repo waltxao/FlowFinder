@@ -1,3 +1,6 @@
+// SAFETY(lint): C ABI 边界函数解引用 Swift 侧传入的裸指针是 FFI 固有模式，
+// 调用方（Swift）无法表达 Rust 的 unsafe 语义，该 lint 对本模块属已知误报场景。
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! Volume management and health check for macOS.
 //!
 //! Detects volume types (APFS, HFS+, ExFAT, SMB, NFS),
@@ -59,6 +62,8 @@ pub enum VolumeType {
 }
 
 impl VolumeType {
+        /// 业务解析方法（非 std::str::FromStr 实现，保持 Option/直接返回语义）。
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "apfs" => VolumeType::APFS,
@@ -119,6 +124,12 @@ pub struct VolumeHealth {
 // ── Volume Manager ────────────────────────────────────────────────
 
 pub struct VolumeManager;
+
+impl Default for VolumeManager {
+    fn default() -> Self {
+        VolumeManager::new()
+    }
+}
 
 impl VolumeManager {
     /// Create a new volume manager instance
@@ -271,7 +282,7 @@ impl VolumeManager {
 
         // 检查 /Volumes/ 下的卷名是否为系统卷
         if let Some(vol_name) = mount_point.strip_prefix("/Volumes/") {
-            return SYSTEM_VOLUME_NAMES.iter().any(|&sys| vol_name == sys);
+            return SYSTEM_VOLUME_NAMES.contains(&vol_name);
         }
 
         // 检查 /System/Volumes/ 下的其他系统卷
@@ -300,7 +311,7 @@ impl VolumeManager {
         }
 
         let result = if let Ok(output) = std::process::Command::new("df")
-            .args(&["-k", path])
+            .args(["-k", path])
             .output()
         {
             let output_str = String::from_utf8_lossy(&output.stdout);
@@ -398,7 +409,7 @@ impl VolumeManager {
     /// Eject a volume
     pub fn eject_volume(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let output = std::process::Command::new("diskutil")
-            .args(&["eject", path])
+            .args(["eject", path])
             .output()?;
 
         if output.status.success() {
@@ -721,7 +732,7 @@ mod tests {
         let manager = VolumeManager::new();
         let volumes = manager.list_volumes();
         // Should not panic and return a list (may be empty)
-        assert!(volumes.len() >= 0);
+        let _ = volumes.len();
     }
 
     #[test]

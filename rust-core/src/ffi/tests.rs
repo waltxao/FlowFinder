@@ -1,3 +1,6 @@
+// SAFETY(lint): C ABI 边界函数解引用 Swift 侧传入的裸指针是 FFI 固有模式，
+// 调用方（Swift）无法表达 Rust 的 unsafe 语义，该 lint 对本模块属已知误报场景。
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! FFI 测试模块（从 mod.rs 拆出，T14）。
 //!
 //! 由 `mod.rs` 的 `#[cfg(test)] mod tests;` 引入；内容与原内联测试一致。
@@ -6,9 +9,6 @@ use super::*;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::ptr;
-use std::sync::{Arc, Mutex};
-
-    use super::*;
 
     #[test]
     fn test_rust_string_to_c_roundtrip() {
@@ -669,25 +669,10 @@ use std::sync::{Arc, Mutex};
         assert_eq!(result, FF_ERR_NOT_FOUND);
     }
 
-    /// A null function pointer, used to exercise the null-callback guards.
-    /// `invalid_value` is allowed because producing a null fn pointer is the
-    /// entire point of the helper; it is never called.
-    #[allow(invalid_value)]
-    fn null_task_callback() -> extern "C" fn(*const FFTaskInfo, *mut c_void) {
-        unsafe { std::mem::transmute(0usize) }
-    }
-
-    #[test]
-    fn test_ff_task_list_null_callback() {
-        let result = ff_task_list(null_task_callback(), std::ptr::null_mut());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
-
-    #[test]
-    fn test_ff_task_history_null_callback() {
-        let result = ff_task_history(null_task_callback(), std::ptr::null_mut());
-        assert_eq!(result, FF_ERR_INVALID_PATH);
-    }
+    // 注：原 test_ff_task_list_null_callback / test_ff_task_history_null_callback 通过
+    // transmute(0) 构造 null fn 指针触发 FFI 空回调守卫——该构造本身是未定义行为
+    // （clippy::undefined_transmute 提级为 error）。回调参数为非可选 fn 类型，
+    // Swift 侧无法传入 null，守卫分支实际不可达，故删除 UB 测试。
 
     #[test]
     fn test_ff_task_lifecycle_submit_progress_cancel_history_clear() {
@@ -1081,9 +1066,7 @@ use std::sync::{Arc, Mutex};
         assert!(ptr.is_null(), "nonexistent file should return null");
         let err = ff_last_error();
         assert!(!err.is_null());
-        unsafe {
-            ff_free_string(err);
-        }
+        ff_free_string(err);
     }
 
     #[test]
@@ -1250,7 +1233,7 @@ use std::sync::{Arc, Mutex};
         );
         poll_until(
             "scan A in progress",
-            || unsafe { (*(state_a as *mut ScanState)).started.load(Ordering::Relaxed) },
+            || unsafe { (*(state_a)).started.load(Ordering::Relaxed) },
             Duration::from_secs(60),
         );
 
@@ -1270,7 +1253,7 @@ use std::sync::{Arc, Mutex};
         );
         poll_until(
             "scan B in progress",
-            || unsafe { (*(state_b as *mut ScanState)).started.load(Ordering::Relaxed) },
+            || unsafe { (*(state_b)).started.load(Ordering::Relaxed) },
             Duration::from_secs(60),
         );
 
@@ -1285,8 +1268,8 @@ use std::sync::{Arc, Mutex};
         assert_eq!(thread_a.join().unwrap(), FF_OK);
         assert_eq!(thread_b.join().unwrap(), FF_OK);
 
-        let groups_a = unsafe { (*(state_a as *mut ScanState)).groups.load(Ordering::Relaxed) };
-        let groups_b = unsafe { (*(state_b as *mut ScanState)).groups.load(Ordering::Relaxed) };
+        let groups_a = unsafe { (*(state_a)).groups.load(Ordering::Relaxed) };
+        let groups_b = unsafe { (*(state_b)).groups.load(Ordering::Relaxed) };
         assert!(
             groups_a < 1500,
             "cancelled scan A must stop early: got {} of 1500 groups",
@@ -1338,7 +1321,7 @@ use std::sync::{Arc, Mutex};
         });
         poll_until(
             "scan A in progress",
-            || unsafe { (*(state_a as *mut ScanState)).started.load(Ordering::Relaxed) },
+            || unsafe { (*(state_a)).started.load(Ordering::Relaxed) },
             Duration::from_secs(60),
         );
 
@@ -1347,7 +1330,7 @@ use std::sync::{Arc, Mutex};
         });
         poll_until(
             "scan B in progress",
-            || unsafe { (*(state_b as *mut ScanState)).started.load(Ordering::Relaxed) },
+            || unsafe { (*(state_b)).started.load(Ordering::Relaxed) },
             Duration::from_secs(60),
         );
 
@@ -1357,7 +1340,7 @@ use std::sync::{Arc, Mutex};
         assert_eq!(thread_a.join().unwrap(), FF_OK);
         assert_eq!(thread_b.join().unwrap(), FF_OK);
 
-        let groups_b = unsafe { (*(state_b as *mut ScanState)).groups.load(Ordering::Relaxed) };
+        let groups_b = unsafe { (*(state_b)).groups.load(Ordering::Relaxed) };
         assert_eq!(
             groups_b, 300,
             "cancelling scan A must not affect scan B: expected 300 groups, got {}",
@@ -1406,7 +1389,7 @@ use std::sync::{Arc, Mutex};
         );
         poll_until(
             "scan A in progress",
-            || unsafe { (*(state_a as *mut ScanState)).started.load(Ordering::Relaxed) },
+            || unsafe { (*(state_a)).started.load(Ordering::Relaxed) },
             Duration::from_secs(60),
         );
 
@@ -1419,15 +1402,15 @@ use std::sync::{Arc, Mutex};
         });
         poll_until(
             "scan B in progress",
-            || unsafe { (*(state_b as *mut ScanState)).started.load(Ordering::Relaxed) },
+            || unsafe { (*(state_b)).started.load(Ordering::Relaxed) },
             Duration::from_secs(60),
         );
 
         assert_eq!(thread_a.join().unwrap(), FF_OK);
         assert_eq!(thread_b.join().unwrap(), FF_OK);
 
-        let groups_a = unsafe { (*(state_a as *mut ScanState)).groups.load(Ordering::Relaxed) };
-        let groups_b = unsafe { (*(state_b as *mut ScanState)).groups.load(Ordering::Relaxed) };
+        let groups_a = unsafe { (*(state_a)).groups.load(Ordering::Relaxed) };
+        let groups_b = unsafe { (*(state_b)).groups.load(Ordering::Relaxed) };
         assert!(
             groups_a < 2000,
             "scan A must stay cancelled after scan B started: got {} of 2000 groups",
@@ -1502,7 +1485,7 @@ use std::sync::{Arc, Mutex};
         );
         poll_until(
             "search delivering results",
-            || unsafe { (*(state as *mut SearchState)).count.load(Ordering::Relaxed) > 0 },
+            || unsafe { (*(state)).count.load(Ordering::Relaxed) > 0 },
             Duration::from_secs(30),
         );
 
@@ -1515,7 +1498,7 @@ use std::sync::{Arc, Mutex};
 
         assert_eq!(thread.join().unwrap(), FF_OK);
 
-        let delivered = unsafe { (*(state as *mut SearchState)).count.load(Ordering::Relaxed) };
+        let delivered = unsafe { (*(state)).count.load(Ordering::Relaxed) };
         assert!(
             delivered < total,
             "cancelled search must stop early: delivered {} of {}",
@@ -1525,7 +1508,7 @@ use std::sync::{Arc, Mutex};
         // Callbacks are synchronous — once the search returns, none arrive.
         assert_eq!(
             delivered,
-            unsafe { (*(state as *mut SearchState)).count.load(Ordering::Relaxed) },
+            unsafe { (*(state)).count.load(Ordering::Relaxed) },
             "no late callbacks after search returns"
         );
 
@@ -1564,7 +1547,7 @@ use std::sync::{Arc, Mutex};
         );
         assert_eq!(result, FF_OK);
 
-        let delivered = unsafe { (*(state as *mut SearchState)).count.load(Ordering::Relaxed) };
+        let delivered = unsafe { (*(state)).count.load(Ordering::Relaxed) };
         assert_eq!(delivered, 3, "max_results cap must be honoured");
 
         unsafe {

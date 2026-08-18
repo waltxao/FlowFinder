@@ -663,7 +663,7 @@ fn index_tree(
 
     for cand in &candidates {
         // Skip files already committed at-or-before the checkpoint (§7.2).
-        if skip_up_to.map_or(false, |ck| cand.path.as_str() <= ck) {
+        if skip_up_to.is_some_and(|ck| cand.path.as_str() <= ck) {
             processed += 1;
             BUILD_STATE.lock().processed = processed;
             continue;

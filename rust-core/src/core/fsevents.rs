@@ -103,10 +103,14 @@ mod macos {
     pub type FSEventStreamEventFlags = u32;
     pub type FSEventStreamCreateFlags = u32;
 
+    // Apple 官方 C 常量名（k 前缀），保持与系统 API 一致，命名 lint 豁免。
+    #[allow(non_upper_case_globals)]
     pub const kCFStringEncodingUTF8: CFStringEncoding = 0x0800_0100;
     /// Watch from "now" — do not replay the past.
+    #[allow(non_upper_case_globals)]
     pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = 0xFFFF_FFFF_FFFF_FFFF;
     /// Deliver file-level events (paths for individual file changes).
+    #[allow(non_upper_case_globals)]
     pub const kFSEventStreamCreateFlagFileEvents: FSEventStreamCreateFlags = 0x0000_0010;
 
     /// FSEvents callback signature.
