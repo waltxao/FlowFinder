@@ -1918,21 +1918,19 @@ extension FileListView {
         super.mouseDown(with: event)
     }
 
-    /// 重写 keyDown，空格键触发 QuickLook 预览，Enter 触发内联重命名
+    /// 重写 keyDown：Enter/Return 触发内联重命名，空格触发 QuickLook 预览，
+    /// Cmd+Down/Cmd+O 打开选中项，Cmd+Up 上级目录（macOS Finder 风格）。
+    /// 空格/Enter/Del 由 actionsController 统一处理，其他快捷键保留视图内兜底。
     public override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags
 
-        // Space: QuickLook 预览
-        if event.keyCode == 49 && modifiers.isEmpty {
-            // 发送通知让 MainWindowController 处理
-            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: nil, userInfo: ["side": getSide()])
-            return
-        }
-
-        // Enter / Return：触发内联重命名（委托给 actionsController）
-        if (event.keyCode == 36 || event.keyCode == 76) && modifiers.isEmpty {
-            actionsController.beginInlineRename()
-            return
+        // Space / Enter / Del：委托给 actionsController 统一处理
+        // 修复：不能用 isEmpty--Enter 自带 .numericPad 标志，改为不含 Cmd/Opt/Ctrl/Shift
+        let hasRealModifier = !modifiers.intersection([.command, .option, .control, .shift]).isEmpty
+        if !hasRealModifier && (event.keyCode == 49 || event.keyCode == 36 || event.keyCode == 76 || event.keyCode == 51) {
+            if actionsController.handlePaneKey(event.keyCode) {
+                return
+            }
         }
 
         // Bug 5 修复：Cmd+Down (keyCode 125) / Cmd+O (keyCode 31) 打开选中项（Finder 风格）
@@ -1957,7 +1955,7 @@ extension FileListView {
     }
 
     // openSelectedEntry / beginInlineRename / endInlineRename 已迁移至 FFPaneActionsController。
-    // keyDown 中的调用改为 actionsController.beginInlineRename() / actionsController.openSelectedEntry()。
+    // keyDown 统一委托 actionsController.handlePaneKey 处理空格/Enter/Del（与 FileGridView 对齐）。
 }
 
 // MARK: - Drag and Drop

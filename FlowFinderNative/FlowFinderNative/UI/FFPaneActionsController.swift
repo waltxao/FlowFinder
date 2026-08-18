@@ -189,11 +189,6 @@ final class FFPaneActionsController: NSObject {
                                         userInfo: ["name": entry.name, "path": entry.path])
     }
 
-    @objc func addTagMenu(_ sender: Any?) {
-        guard let entry = host?.clickedEntry else { return }
-        NotificationCenter.default.post(name: .fileListAddTag, object: nil, userInfo: ["path": entry.path])
-    }
-
     @objc func showInfoMenu(_ sender: Any?) {
         let targetPath = host?.clickedEntry?.path ?? host?.viewModel?.selectedFiles.first?.path
         FFLog.debug("[F10-10] showInfoMenu clicked, clickedEntry=\(host?.clickedEntry?.path ?? "nil"), fallback selectedFirst=\(host?.viewModel?.selectedFiles.first?.path ?? "nil"), final=\(targetPath ?? "nil")", log: FFLog.ui)

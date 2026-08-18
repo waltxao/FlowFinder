@@ -136,13 +136,13 @@ extension Notification.Name {
 
 /// 统一构建文件面板右键菜单：FileListView 与 FileGridView 共用同一套菜单结构与 action
 /// （架构统一：两种视图只是排列方式不同，右键操作完全一致）。
-/// 所有 item 的 action 用 Selector 字符串引用——两个视图都实现了同名 @objc 方法，
-/// target 传入实际视图，运行时按 selector 分派到对应视图的实现。
+/// 所有 item 的 action 用 Selector 字符串引用，target 传入 FFPaneActionsController
+/// （v0.7.3 起两个视图的操作统一委托给控制器实现，运行时按 selector 分派到控制器）。
 enum FFPaneMenuBuilder {
 
     /// 构建右键菜单
     /// - Parameters:
-    ///   - target: 接收 action 的视图（FileListView / FileGridView，需实现全部 selector）
+    ///   - target: 接收 action 的对象（通常为 FFPaneActionsController，需实现全部 selector）
     ///   - isLeft: 当前面板是否为左侧（决定"移动到/复制到另一面板"箭头方向）
     ///   - tagsSubmenu: 标签二级菜单（nil 则不添加标签项）
     static func buildMenu(for target: AnyObject, isLeft: Bool, tagsSubmenu: NSMenu?) -> NSMenu {
