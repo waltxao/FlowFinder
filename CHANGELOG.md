@@ -4,6 +4,26 @@
 
 ---
 
+## [0.7.6] — 2026-08-28
+
+> v0.7.5 发布后修复轮：界面稳定 + 弹窗可用性
+
+### 界面稳定
+- **AppKit 布局冲突清零**（修复前每次启动 28+ 条冲突日志）：
+  - 工具面板 `NSGridView` 列宽改 defaultHigh 约束（`NSGridColumn.width` 的 required 约束在面板宽度变化瞬态必然无解）
+  - 设备浮层折叠态清空设备行（AppKit 隐藏视图约束仍参与求解，折叠高 48 与行高 28 必然冲突）
+  - 面包屑溢出按钮双高度约束（init 14pt 与外层 18pt 冲突）
+  - 状态浮层重试按钮缺 `translatesAutoresizingMaskIntoConstraints`（autoresizing 强制宿主宽 62pt）
+  - 侧边栏标签区定高 required → defaultHigh（异步修正前瞬态无解）
+- **删除确认弹窗按钮可见性**：`FFModalSheet` 在 contentView 尺寸为 0 时量 `fittingSize` 导致窗口过矮（120pt vs 186pt），footer 按钮被裁出窗外；改为两段式测量 + footer 贴底 defaultHigh 兜底
+
+### 弹窗会话
+- **查重删除后「浏览...」失效修复**：`FFModalSheet` 用 `close()` 结束 sheet 会话，在 macOS 27 上使宿主窗口的下一个 `NSOpenPanel` sheet 静默无法弹出；改为 `beginSheetModal` 记录宿主、关闭统一走 `endSheet` 正规结束（惠及全部模态弹窗）
+
+### 测试
+- 新增 3 个 AppKit 回归测试：删除弹窗按钮可见性、sheet 脱离宿主、查重删除后浏览面板复现（完整操作序列端到端）
+- 修复后基线：Rust 200 tests / Swift XCTest 73 tests 全绿，启动布局冲突日志 0
+
 ## [0.7.5] — 2026-08-14
 
 > 安全加固 + 独立内容索引 + 测试与发布基建
