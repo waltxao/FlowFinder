@@ -1,12 +1,12 @@
 # FlowFinder Native 项目交接文档
 
-> **交接日期：** 2026-08-28（v0.7.5 发布后修复轮更新）
-> **当前版本：** 0.7.5（已发布 2026-08-14；发布后修复未发版，见版本历史下方说明）
+> **交接日期：** 2026-08-28（v0.7.6 发布）
+> **当前版本：** 0.7.6（已发布，2026-08-28，tag b434630）
 > **仓库地址：** https://github.com/waltxao/FlowFinder
 > **分支：** main
-> **最新提交：** d0133bb（删除 SwiftUI 入口壳）；工作区另有未提交的 UI 修复（见 6.1）
+> **最新提交：** b434630（release: v0.7.6）
 > **本地路径：** `/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native`
-> **测试基线：** Rust 200 tests / Swift XCTest 73 tests 全绿
+> **测试基线：** Rust 200 tests / Swift XCTest 73 tests 全绿，启动布局冲突日志 0
 
 ---
 
@@ -49,7 +49,8 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 | **0.7.0** | **2026-08-02** | **设置重构 + 更多核心功能（见 CHANGELOG）** |
 | **0.7.2** | **2026-08-07** | **设置页大修 + 液态玻璃重设计 + 撤销/重做闭环** |
 | **0.7.4** | **2026-08-09** | **全量稳定性修复 + 真实 FSEventStream 文件监听** |
-| **0.7.5** | **2026-08-14** | **安全加固 + FTS5 内容索引 + 测试/发布基建（当前版）** |
+| **0.7.5** | **2026-08-14** | **安全加固 + FTS5 内容索引 + 测试/发布基建** |
+| **0.7.6** | **2026-08-28** | **发布后修复轮：布局冲突清零 + 弹窗几何 + sheet 会话正规化（当前版）** |
 
 > 注：0.7.1 / 0.7.3 为内部版本号跳号，未发布 Release。
 >
@@ -167,17 +168,14 @@ v0.6.7 经历了从"全透明玻璃"到"亚克力侧边栏 + 实体内容区"的
 
 ## 6. 待办事项（下一阶段）
 
-### 6.1 发布遗留（v0.7.5 发布后状态，2026-08-28）
+### 6.1 发布遗留（v0.7.6 发版后状态，2026-08-28）
 
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
-| 高 | **工作区未提交改动** | 10 个文件：6 个 UI 修复 + 回归测试 + Rust 二进制重编译产物。布局冲突清零/弹窗几何/sheet 会话三类修复，测试 73/73 全绿。待用户确认后提交 |
-| 高 | **GitHub Release v0.7.5 资产过时** | DMG/ZIP 为发布时构建，不含上述修复。建议打 v0.7.6 重新打包发布（package.sh 已就绪） |
-| 中 | **Developer ID 公证** | 当前产物为 ad-hoc 签名（首次打开需右键→打开）。配置 Secrets `APPLE_DEVELOPER_ID` + `NOTARY_API_KEY`/`NOTARY_KEY_ID`/`NOTARY_ISSUER` 后推送 tag 自动公证 |
-| 低 | **Intel 通用二进制** | 当前 `ARCHS=arm64`，README 下载表亦标注 Apple Silicon |
-| ~~已完成~~ | ~~clippy 127 warnings~~ | 已澄清为陈旧缓存诊断；49d6e74 清零并重编译，实际零警告 |
-| ~~已完成~~ | ~~遗留 import SwiftUI~~ | FlowFinderApp.swift 已删除（d0133bb，入口为 main.swift/AppDelegate.swift） |
-| ~~已完成~~ | ~~/Applications 旧版本 0.7.2~~ | 已替换为含修复的 0.7.5 构建（2026-08-28） |
+| 中 | **Developer ID 公证** | 0.7.6 产物仍为 ad-hoc 签名（首次打开需右键→打开）。配置 Secrets `APPLE_DEVELOPER_ID` + `NOTARY_API_KEY`/`NOTARY_KEY_ID`/`NOTARY_ISSUER` 后推送 tag 自动公证 |
+| 已完成 | ~~v0.7.5 Release 资产过时~~ | 已发 v0.7.6（含发布后修复，DMG/ZIP/sha256 资产齐） |
+| 已完成 | ~~工作区未提交改动~~ | 已随 v0.7.6 提交（ce8cd35 修复 + b434630 发版） |
+| 已完成 | ~~clippy / import SwiftUI / /Applications 旧版本~~ | 49d6e74 / d0133bb / 本轮安装 0.7.6 |
 
 ### 6.2 功能扩展待办
 
@@ -236,10 +234,11 @@ gh release create v0.7.5 \
 
 ### 7.5 当前 Release
 
-- **URL：** https://github.com/waltxao/FlowFinder/releases/tag/v0.7.5
-- **资产：** DMG (3.5 MB) + ZIP (3.5 MB) + sha256（发布时构建，不含发布后修复）
+- **URL：** https://github.com/waltxao/FlowFinder/releases/tag/v0.7.6
+- **资产：** FlowFinder-0.7.6 DMG + ZIP + sha256（含发布后修复，shasum -c 校验通过）
 - **签名：** ad-hoc（Hardened Runtime），公证待凭据
-- **本地安装：** /Applications/FlowFinderNative.app 为含修复的 0.7.5 构建（2026-08-28，晚于 Release 资产）
+- **本地安装：** /Applications/FlowFinderNative.app = v0.7.6（与 Release 一致）
+- **历史：** v0.7.5 资产保留于旧 Release（不含发布后修复，勿用于排障）
 - **CI：** `.github/workflows/ci.yml`（PR：Rust fmt/build/test + Swift XCTest）；`.github/workflows/release.yml`（tag：打包+公证+发布）
 
 ---
