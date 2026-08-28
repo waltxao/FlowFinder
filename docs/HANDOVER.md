@@ -1,12 +1,12 @@
 # FlowFinder Native 项目交接文档
 
-> **交接日期：** 2026-08-14
-> **当前版本：** 0.7.5（已发布，2026-08-14）
+> **交接日期：** 2026-08-28（v0.7.5 发布后修复轮更新）
+> **当前版本：** 0.7.5（已发布 2026-08-14；发布后修复未发版，见版本历史下方说明）
 > **仓库地址：** https://github.com/waltxao/FlowFinder
 > **分支：** main
-> **最新提交：** e21e2db（docs: 发布 v0.7.5 后同步）
+> **最新提交：** d0133bb（删除 SwiftUI 入口壳）；工作区另有未提交的 UI 修复（见 6.1）
 > **本地路径：** `/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native`
-> **测试基线：** Rust 202 tests / Swift XCTest 70 tests 全绿
+> **测试基线：** Rust 200 tests / Swift XCTest 73 tests 全绿
 
 ---
 
@@ -52,6 +52,8 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 | **0.7.5** | **2026-08-14** | **安全加固 + FTS5 内容索引 + 测试/发布基建（当前版）** |
 
 > 注：0.7.1 / 0.7.3 为内部版本号跳号，未发布 Release。
+>
+> **0.7.5 发布后修复轮（2026-08-28，未发版）**：AppKit 布局冲突清零（工具面板列宽/设备栏折叠/面包屑双高度/状态浮层按钮/标签区定高）；FFModalSheet 弹窗高度测量修复（按钮曾被裁出窗外）与 sheet 会话正规化（endSheet，修复查重删除后「浏览...」静默失效）；新增 3 个 AppKit 几何/会话回归测试（70→73）。改动在工作区未提交。
 
 ---
 
@@ -154,21 +156,28 @@ v0.6.7 经历了从"全透明玻璃"到"亚克力侧边栏 + 实体内容区"的
 | **Swift 测试** | 可执行 XCTest target（FlowFinderNativeTests shared scheme） | v0.7.5 新增，make swift-test 走 xcodebuild |
 | **FFI ABI** | C ABI 锁定：布局断言 + 回调借用契约 + 符号三方对比 | v0.7.5 新增 |
 | **发布签名** | fail-closed：codesign --verify 失败即中止打包 | v0.7.5 变更 |
+| **FFModalSheet sheet 会话** | beginSheetModal 记录宿主，关闭统一走 parent.endSheet | 2026-08-28 变更：close() 会毒化后续 NSOpenPanel sheet（macOS 27） |
+| **FFModalSheet 高度测量** | 两段式：先撑到已知尺寸布局再量 fittingSize；footer 贴底 defaultHigh 兜底 | 2026-08-28 变更：0 尺寸测量导致按钮裁出窗外 |
+| **AppKit 瞬态可变约束** | 可变列宽/定高一律 defaultHigh，required 会瞬态无解刷冲突日志 | 2026-08-28 沉淀（工具面板/标签区） |
+| **AppKit 隐藏视图** | 隐藏视图的约束仍参与求解；动态行列表用清空/重建而非隐藏 | 2026-08-28 沉淀（设备栏） |
+| **编译缓存陷阱** | cargo/xcodebuild 会重放陈旧缓存诊断与旧测试数；采信前先 clean 强制重编译 | 2026-08-28 沉淀（202→200 tests、幽灵警告） |
 | **打包架构** | ARCHS=arm64 + ONLY_ACTIVE_ARCH=YES | v0.7.5 固定（dylib 仅 arm64） |
 
 ---
 
 ## 6. 待办事项（下一阶段）
 
-### 6.1 发布遗留（v0.7.5 已知缺口）
+### 6.1 发布遗留（v0.7.5 发布后状态，2026-08-28）
 
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
-| 高 | **Developer ID 公证** | 当前产物为 ad-hoc 签名（首次打开需右键→打开）。在仓库 Secrets 配置 `APPLE_DEVELOPER_ID` + `NOTARY_API_KEY`/`NOTARY_KEY_ID`/`NOTARY_ISSUER` 后，推送 tag 由 release.yml 自动公证补发 |
-| 中 | **clippy 127 warnings** | 预存在风格级警告，无 error；建议后续批量清理 |
+| 高 | **工作区未提交改动** | 10 个文件：6 个 UI 修复 + 回归测试 + Rust 二进制重编译产物。布局冲突清零/弹窗几何/sheet 会话三类修复，测试 73/73 全绿。待用户确认后提交 |
+| 高 | **GitHub Release v0.7.5 资产过时** | DMG/ZIP 为发布时构建，不含上述修复。建议打 v0.7.6 重新打包发布（package.sh 已就绪） |
+| 中 | **Developer ID 公证** | 当前产物为 ad-hoc 签名（首次打开需右键→打开）。配置 Secrets `APPLE_DEVELOPER_ID` + `NOTARY_API_KEY`/`NOTARY_KEY_ID`/`NOTARY_ISSUER` 后推送 tag 自动公证 |
 | 低 | **Intel 通用二进制** | 当前 `ARCHS=arm64`，README 下载表亦标注 Apple Silicon |
-| 低 | **遗留 import SwiftUI** | FlowFinderApp.swift 首行，无实际使用，可删 |
-| 低 | **AI 标签生成引擎** | Rust core 为规则版 generate_tags，README 已标注「规划中」 |
+| ~~已完成~~ | ~~clippy 127 warnings~~ | 已澄清为陈旧缓存诊断；49d6e74 清零并重编译，实际零警告 |
+| ~~已完成~~ | ~~遗留 import SwiftUI~~ | FlowFinderApp.swift 已删除（d0133bb，入口为 main.swift/AppDelegate.swift） |
+| ~~已完成~~ | ~~/Applications 旧版本 0.7.2~~ | 已替换为含修复的 0.7.5 构建（2026-08-28） |
 
 ### 6.2 功能扩展待办
 
@@ -197,8 +206,8 @@ cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native
 make build        # Rust dylib + Debug app 构建
 make run          # 构建并启动
 make test         # rust-test + swift-test + integration-test
-make rust-test    # cargo test --all-features（202 tests）
-make swift-test   # xcodebuild test（70 tests）
+make rust-test    # cargo test --all-features（200 tests）
+make swift-test   # xcodebuild test（73 tests，含 3 个 AppKit 回归测试）
 make clean / setup / release / xcode / help
 ```
 
@@ -228,8 +237,9 @@ gh release create v0.7.5 \
 ### 7.5 当前 Release
 
 - **URL：** https://github.com/waltxao/FlowFinder/releases/tag/v0.7.5
-- **资产：** DMG (3.5 MB) + ZIP (3.5 MB) + sha256
+- **资产：** DMG (3.5 MB) + ZIP (3.5 MB) + sha256（发布时构建，不含发布后修复）
 - **签名：** ad-hoc（Hardened Runtime），公证待凭据
+- **本地安装：** /Applications/FlowFinderNative.app 为含修复的 0.7.5 构建（2026-08-28，晚于 Release 资产）
 - **CI：** `.github/workflows/ci.yml`（PR：Rust fmt/build/test + Swift XCTest）；`.github/workflows/release.yml`（tag：打包+公证+发布）
 
 ---
@@ -260,6 +270,7 @@ gh release create v0.7.5 \
 | `UI/PaneToolbar.swift` | ~355 | 工具栏（搜索、排序、分组、视图切换） |
 | `UI/BreadcrumbBar.swift` | ~420 | 路径栏（v0.6.7 完全重写） |
 | `UI/SettingsWindowController.swift` | ~580 | 设置窗口（分区布局） |
+| `UI/FFModalSheet.swift` | ~383 | 模态弹窗基类（sheet 会话/高度测量两处平台陷阱，见关键决策） |
 | `UI/FFCommon.swift` | - | FFPaneStateOverlayView：主流程状态视图（加载/空/错误/删除进度，v0.7.5 新增） |
 
 **Rust Core：**
@@ -271,7 +282,7 @@ gh release create v0.7.5 \
 | `ffi/mod.rs` | ~3121 | FFI 入口（tests 已拆出） |
 | `ffi/tests.rs` | - | FFI 集成测试（69 个 #[test]，v0.7.5 拆分） |
 
-**Swift 测试：** `FlowFinderNative/Tests/FlowFinderNativeTests/`（FlowFinderNativeTests.swift / ContentIndexBridgeTests.swift / PaneStateDeleteFilterTests.swift，70 tests）
+**Swift 测试：** `FlowFinderNative/Tests/FlowFinderNativeTests/`（73 tests；PaneStateDeleteFilterTests.swift 含 3 个 AppKit 回归：删除弹窗按钮可见性 / sheet 脱离宿主 / 查重删除后浏览面板复现）
 
 ### 9.2 设计文档
 
@@ -331,7 +342,7 @@ gh release create v0.7.5 \
 1. 先读本文件（HANDOVER.md），了解项目全貌和关键架构决策
 2. 再读 CHANGELOG.md（v0.7.2 起）与 docs/MIGRATION_LOG.md，了解版本历史
 3. 设置 Xcode-beta：export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-4. 验证基线：make rust-test（202 passed）+ make swift-test（70 passed）
+4. 验证基线：make rust-test（200 passed）+ make swift-test（73 passed）
 5. 打包发布：bash scripts/package.sh（产出 build/FlowFinder-*.dmg/zip/sha256）
 6. 等待用户反馈（注意：你看不到图片，需文字描述）
 7. 如有新问题，先问一个澄清问题，一次只问一个
