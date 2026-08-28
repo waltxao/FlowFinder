@@ -217,6 +217,8 @@ public class ToolPanelView: NSView {
 
     /// 网格容器（3×N 布局；提升为存储属性以便 layout() 中设置列宽）
     private var gridContainer: NSGridView!
+    /// 每列首行卡片的宽度约束（defaultHigh，layout() 中更新常量）
+    private var columnWidthConstraints: [NSLayoutConstraint] = []
 
     // 问题 4 诊断：面板是否被正常布局（bounds 非 0 是卡片可点的前提）
     private var hasLoggedLayout = false
@@ -266,6 +268,7 @@ public class ToolPanelView: NSView {
 
         // 构建工具卡片，每行 3 列，不足 3 个补灰色占位方块
         var rowViews: [NSView] = []
+        var firstRowViews: [NSView] = []
         for tool in tools {
             let card = ToolPanelCardView(tool: tool) { [weak self] in
                 tool.action?()
@@ -276,6 +279,7 @@ public class ToolPanelView: NSView {
                 }
             }
             rowViews.append(card)
+            if firstRowViews.count < 3 { firstRowViews.append(card) }
             if rowViews.count >= 3 {
                 gridContainer.addRow(with: rowViews)
                 rowViews = []
@@ -284,7 +288,9 @@ public class ToolPanelView: NSView {
         // 末行不足 3 个时补占位（灰色方块，无交互）
         if !rowViews.isEmpty {
             while rowViews.count < 3 {
-                rowViews.append(makePlaceholderCard())
+                let placeholder = makePlaceholderCard()
+                rowViews.append(placeholder)
+                if firstRowViews.count < 3 { firstRowViews.append(placeholder) }
             }
             gridContainer.addRow(with: rowViews)
         }
@@ -303,6 +309,15 @@ public class ToolPanelView: NSView {
         }
         // NSGridCell.Placement 只有 .center, .leading, .trailing, .fill, .none（旧SDK）
         // 使用 .center 即可，列宽由内容自适应
+
+        // 每列宽度约束：挂在首行卡片上，defaultHigh 优先级（稳态由 layout() 精确
+        // 三等分；面板宽度变化的瞬态由该约束优雅让步，不产生 AppKit 冲突日志）
+        columnWidthConstraints = firstRowViews.map { view in
+            let constraint = view.widthAnchor.constraint(equalToConstant: 40)
+            constraint.priority = .defaultHigh
+            return constraint
+        }
+        NSLayoutConstraint.activate(columnWidthConstraints)
 
         NSLayoutConstraint.activate([
             // 关闭按钮：右上角 8pt 内边距
@@ -338,13 +353,16 @@ public class ToolPanelView: NSView {
     }
 
     /// 3 列等分网格宽度：NSGridView 默认列宽由内容自适应，卡片无 intrinsic size 会塌缩到 0，
-    /// 导致点击区域不可命中（问题 6/7 根因）。每次布局时显式设置列宽。
+    /// 导致点击区域不可命中（问题 6/7 根因）。
+    /// 修复布局冲突：不再用 NSGridColumn.width（其生成 required 约束，面板宽度变化的
+    /// 瞬态必然无解并触发 AppKit 冲突日志），改为给每列首行卡片挂 defaultHigh 宽度约束，
+    /// 瞬态冲突由该约束优雅让步，稳态宽度仍精确三等分。
     public override func layout() {
         super.layout()
         let availableWidth = bounds.width - 24  // 左右内边距各 12
         let colWidth = max((availableWidth - 2 * 12) / 3, 40)  // 列间距 12
-        for i in 0..<gridContainer.numberOfColumns {
-            gridContainer.column(at: i).width = colWidth
+        for constraint in columnWidthConstraints {
+            constraint.constant = colWidth
         }
         // 问题 4 诊断：每实例仅记录一次面板布局后的真实尺寸（卡片可点的前提是 bounds 非 0）
         if !hasLoggedLayout && !bounds.isEmpty {
@@ -416,6 +434,10 @@ private class ToolPanelCardView: NSView {
             // 钉死卡片底部到名称下方 8pt，配合下方 cell placement=.fill 使卡片撑满 cell。
             bottomAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8),
         ])
+        // 列宽由 layout() 的 defaultHigh 约束主导：标签低水平抗压缩，
+        // 长名称截断（.byTruncatingTail）而不是把列撑出面板宽度
+        descLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        descLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         // 点击手势（仅可用工具响应）
         // 点击视觉反馈：按下时卡片背景变深，松开恢复（解决"点了没反馈"）

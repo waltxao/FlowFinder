@@ -648,7 +648,6 @@ private class BreadcrumbOverflowButton: NSButton {
         self.toolTip = "点击查看完整路径"
 
         self.widthAnchor.constraint(equalToConstant: 20).isActive = true
-        self.heightAnchor.constraint(equalToConstant: 14).isActive = true
     }
 
     required init?(coder: NSCoder) {

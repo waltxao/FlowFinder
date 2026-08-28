@@ -304,8 +304,10 @@ class SidebarView: NSView {
         favoritesHeightConstraint.priority = .required
 
         // 任务 F10-5: 标签区高度根据标签行数动态调整（垂直布局）
+        // defaultHigh：常量由 updateTagsHeight 异步修正，瞬态内容超高时优雅让步，
+        // required 会在标签数超过估算高度时产生无解冲突
         tagsHeightConstraint = tagFlowView.heightAnchor.constraint(equalToConstant: 80)
-        tagsHeightConstraint.priority = .required
+        tagsHeightConstraint.priority = .defaultHigh
 
         // 任务 F10-3: deviceHeightConstraint 已随设备区域迁移至 MainWindowController 浮层（v0.6.6）
 

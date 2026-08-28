@@ -363,6 +363,162 @@ final class DeleteConfirmFlowTests: XCTestCase {
         DeleteConfirmDialog.confirmDelete(fileCount: 0, window: nil) { executed = true }
         XCTAssertTrue(executed)
     }
+
+    /// 用户反馈回归：查重删除确认弹窗内看不到「永久删除」确认按钮。
+    /// 以查重的真实参数弹出 sheet，断言确认按钮存在、未隐藏、有可用尺寸，
+    /// 且落在弹窗可见区域内（不被裁剪到窗口外）。
+    func testDeleteConfirmDialogShowsConfirmButtonInVisibleArea() throws {
+        let dialog = DeleteConfirmDialog(
+            fileCount: 3,
+            message: "确定要永久删除 3 个重复文件吗？此操作无法撤销。",
+            confirmButtonTitle: "永久删除",
+            deleteAction: {}
+        )
+        let host = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        dialog.beginSheetModal(for: host)
+        dialog.contentView?.layoutSubtreeIfNeeded()
+
+        var found: NSButton?
+        func walk(_ view: NSView) {
+            if let button = view as? NSButton, button.attributedTitle.string == "永久删除" {
+                found = button
+            }
+            for sub in view.subviews { walk(sub) }
+        }
+        walk(dialog.contentView!)
+
+        let button = try XCTUnwrap(found, "弹窗中应存在「永久删除」确认按钮")
+        XCTAssertFalse(button.isHidden, "确认按钮不应被隐藏")
+        XCTAssertGreaterThanOrEqual(button.frame.width, 60, "确认按钮应有可点击宽度")
+        XCTAssertGreaterThanOrEqual(button.frame.height, 20, "确认按钮应有可点击高度")
+
+        let inWindow = button.convert(button.bounds, to: nil)
+        let visibleBounds = NSRect(origin: .zero, size: dialog.frame.size)
+        XCTAssertTrue(visibleBounds.contains(inWindow),
+                      "确认按钮应位于弹窗可见区域内: button=\(inWindow) window=\(visibleBounds)")
+
+        dialog.close()
+        host.close()
+    }
+
+    /// 用户反馈回归：查重删除确认后，再次点「浏览...」时 NSOpenPanel 无法弹出。
+    /// AppKit 中宿主窗口残留 attachedSheet 会让后续 beginSheetModal 静默失效，
+    /// 断言确认弹窗 close() 后 sheet 会从宿主窗口真正脱离。
+    func testDialogCloseDetachesSheetFromHostWindow() {
+        let dialog = DeleteConfirmDialog(
+            fileCount: 1,
+            message: "确定要永久删除 1 个重复文件吗？此操作无法撤销。",
+            confirmButtonTitle: "永久删除",
+            deleteAction: {}
+        )
+        let host = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        dialog.beginSheetModal(for: host)
+
+        let attached = expectation(for: NSPredicate { _, _ in host.attachedSheet === dialog },
+                                   evaluatedWith: nil)
+        wait(for: [attached], timeout: 5)
+
+        dialog.close()
+        let detached = expectation(for: NSPredicate { _, _ in host.attachedSheet == nil },
+                                   evaluatedWith: nil)
+        wait(for: [detached], timeout: 5)
+        host.close()
+    }
+}
+
+// MARK: - 用户反馈回归：查重删除完成后，再点「浏览...」无法弹出目录面板
+
+final class DuplicateScanBrowseRegressionTests: XCTestCase {
+
+    private func waitUntil(_ label: String, timeout: TimeInterval = 30, _ condition: @escaping () -> Bool) {
+        let start = Date()
+        let exp = expectation(for: NSPredicate { _, _ in
+            if condition() { return true }
+            let elapsed = Date().timeIntervalSince(start)
+            if elapsed > timeout - 2 {
+                NSLog("[REPRO] wait(%@) 未满足 %.0fs", label, elapsed)
+            }
+            return false
+        }, evaluatedWith: nil)
+        wait(for: [exp], timeout: timeout)
+        NSLog("[REPRO] wait(%@) 完成，耗时 %.1fs", label, Date().timeIntervalSince(start))
+    }
+
+    private func findButton(titled title: String, in view: NSView) -> NSButton? {
+        if let button = view as? NSButton, button.attributedTitle.string == title {
+            return button
+        }
+        for sub in view.subviews {
+            if let hit = findButton(titled: title, in: sub) { return hit }
+        }
+        return nil
+    }
+
+    /// 隔离变量矩阵：A 连续浏览 / B 扫描后浏览 / C 删除+重扫后浏览。
+    /// 每步记录 attachedSheet 与 childWindows，定位哪一步破坏后续面板弹出。
+    func testBrowseSheetReappearsAfterDeleteAndRescan() throws {
+        UserDefaults.standard.removeObject(forKey: FFUserDefaultsKeys.deleteConfirmDisabled)
+
+        // 准备含一组重复文件的临时目录：a1.bin == a2.bin，b1.txt 独立
+        let dir = URL(fileURLWithPath: "/tmp/ff_dedup_browse_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dupData = Data(repeating: 0x41, count: 2048)
+        try dupData.write(to: dir.appendingPathComponent("a1.bin"))
+        try dupData.write(to: dir.appendingPathComponent("a2.bin"))
+        try Data(repeating: 0x42, count: 512).write(to: dir.appendingPathComponent("b1.txt"))
+
+        let wc = DuplicateScanWindowController.shared
+        wc.showWindow()
+        let window = try XCTUnwrap(wc.window, "查重窗口未创建")
+        window.makeKeyAndOrderFront(nil)
+
+        func browseOnce(_ label: String, expectPresented: Bool) {
+            NSLog("[REPRO] === %@：childWindows=%d attachedSheet=%@",
+                  label, window.childWindows?.count ?? -1,
+                  window.attachedSheet.map { "\($0)" } ?? "nil")
+            wc.perform(NSSelectorFromString("browseClicked"))
+            waitUntil(label) { window.attachedSheet != nil }
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+                waitUntil(label + "·脱离") { window.attachedSheet == nil }
+                NSLog("[REPRO] %@ 关闭后 childWindows=%d", label, window.childWindows?.count ?? -1)
+            }
+            XCTAssertNotEqual(expectPresented, false)
+        }
+
+        // A: 连续两次浏览（无扫描、无删除）
+        browseOnce("A1 首次浏览", expectPresented: true)
+        browseOnce("A2 二次浏览", expectPresented: true)
+
+        // B: 扫描后浏览
+        wc.selectedURL = dir
+        wc.perform(NSSelectorFromString("startScan"))
+        waitUntil("B 扫描完成") { !wc.isScanning }
+        browseOnce("B 扫描后浏览", expectPresented: true)
+
+        // C: 删除+自动重扫后浏览
+        wc.perform(NSSelectorFromString("deleteSelected"))
+        waitUntil("C 删除确认弹窗出现") { window.attachedSheet != nil }
+        let confirmDialog = try XCTUnwrap(window.attachedSheet, "删除确认弹窗应出现")
+        let confirmButton = try XCTUnwrap(
+            findButton(titled: "永久删除", in: confirmDialog.contentView ?? NSView()),
+            "确认弹窗内应有「永久删除」按钮"
+        )
+        confirmButton.performClick(nil)
+        waitUntil("C 自动重扫完成") { !wc.isScanning }
+        waitUntil("C 无残留 sheet") { window.attachedSheet == nil }
+        browseOnce("C 删除轮后浏览", expectPresented: true)
+        window.orderOut(nil)
+    }
 }
 
 // MARK: - 任务 T12: 搜索结果详情 + 内容索引状态映射

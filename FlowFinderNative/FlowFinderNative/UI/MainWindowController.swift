@@ -834,7 +834,7 @@ public class MainWindowController: NSWindowController {
             devicePanelHeader.heightAnchor.constraint(equalToConstant: 32),
 
             // 设备 stack 位于头部下方，填满剩余空间
-            // 折叠时 panel 高度=48，stack 高度自动为 0（被 masksToBounds 裁剪）
+            // 折叠时 stack 已隐藏（detachesHiddenViews），panel 高度 48 仅容头部
             devicePanelStack.topAnchor.constraint(equalTo: devicePanelHeader.bottomAnchor, constant: 0),
             devicePanelStack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
             devicePanelStack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -8),
@@ -850,6 +850,10 @@ public class MainWindowController: NSWindowController {
     private func rebuildDevicePanelRows() {
         // 清空旧设备行
         devicePanelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        // 折叠态不保留任何行：行高 28 为 required，与折叠高度 48（8+32+8）无解；
+        // AppKit 中隐藏视图的约束仍参与求解，必须整体移除
+        guard !isDevicePanelCollapsed else { return }
 
         // 遍历设备数据源，为每个设备创建一行
         for dev in deviceDataSource.devices {
@@ -888,6 +892,8 @@ public class MainWindowController: NSWindowController {
     /// 迁移自 SidebarView.toggleDeviceExpanded
     @objc private func toggleDevicePanelExpanded() {
         isDevicePanelCollapsed.toggle()
+        // 折叠/展开先重建行（折叠态不保留任何行），再动画到目标高度
+        rebuildDevicePanelRows()
         let targetHeight: CGFloat
         if isDevicePanelCollapsed {
             targetHeight = devicePanelCollapsedHeight

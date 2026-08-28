@@ -68,6 +68,8 @@ class FFModalSheet: NSWindow {
     private let bodyVerticalPadding: CGFloat = 12
     /// body 左右边距
     private let horizontalPadding: CGFloat = 20
+    /// 以 sheet 形式展示时的宿主窗口（close 时据此走 endSheet 正规结束 sheet 会话）
+    private weak var sheetParentWindow: NSWindow?
 
     // MARK: - 初始化
 
@@ -219,6 +221,12 @@ class FFModalSheet: NSWindow {
             primaryButton.heightAnchor.constraint(equalToConstant: 24),
         ]
 
+        // 兜底：footer 永远贴住窗口底边。正常测量下与内容链一致；测量偏差时
+        // 优先保证按钮可见（defaultHigh 让位 instead of 把按钮裁出窗口外）
+        let footerBottomPin = footerView.bottomAnchor.constraint(equalTo: contentView!.bottomAnchor)
+        footerBottomPin.priority = .defaultHigh
+        constraints.append(footerBottomPin)
+
         if let secondaryTitle = secondaryButtonTitle {
             let secondary = makeButton(title: secondaryTitle,
                                        style: .plain,
@@ -287,16 +295,21 @@ class FFModalSheet: NSWindow {
 
     // MARK: - 布局计算
 
-    /// 根据 body 内容计算并设置窗口最终大小
+    /// 根据 body 内容计算并设置窗口最终大小。
+    /// 两段式测量：先把窗口撑到足够大的已知尺寸并强制布局一次，让
+    /// headerView/contentView 拿到真实 frame——若直接量 fittingSize，外部锚点
+    /// frame 全为 0，body 高度被量小，窗口过矮会把 footer 按钮裁出可视区。
     private func layoutAndResize() {
+        let established = NSSize(width: defaultWidth, height: 2000)
+        self.setContentSize(established)
         contentView?.layoutSubtreeIfNeeded()
 
         // 计算 body 内容所需高度（fittingSize 包含所有约束的最小尺寸）
         let bodyHeight = bodyContainer.fittingSize.height
         let totalHeight = headerHeight + bodyHeight + footerHeight
 
-        let frame = NSRect(x: 0, y: 0, width: defaultWidth, height: totalHeight)
-        self.setFrame(frame, display: true)
+        self.setContentSize(NSSize(width: defaultWidth, height: totalHeight))
+        contentView?.layoutSubtreeIfNeeded()
     }
 
     // MARK: - 按钮事件
@@ -312,19 +325,19 @@ class FFModalSheet: NSWindow {
 
     @objc private func primaryButtonClicked() {
         primaryAction()
-        close()
+        dismiss()
     }
 
     @objc private func secondaryButtonClicked() {
         // 先执行子类注入的次按钮语义（如真正取消后台任务），再关闭窗口。
         // secondaryAction 为 nil 时退化为原行为（仅关闭窗口），保持向后兼容。
         secondaryAction?()
-        cancel()
+        dismiss()
     }
 
     /// 取消关闭
     private func cancel() {
-        close()
+        dismiss()
     }
 
     // MARK: - 键盘交互（F1）
@@ -334,7 +347,7 @@ class FFModalSheet: NSWindow {
         if secondaryAction != nil || secondaryButton != nil {
             secondaryButtonClicked()
         } else {
-            close()
+            dismiss()
         }
     }
 
@@ -343,6 +356,7 @@ class FFModalSheet: NSWindow {
     /// 以 sheet 形式附加到目标窗口。
     /// - Parameter initialFirstResponder: 弹出后获得焦点的视图（如输入框），nil 则用窗口默认。
     func beginSheetModal(for parentWindow: NSWindow, initialFirstResponder: NSView? = nil) {
+        sheetParentWindow = parentWindow
         parentWindow.beginSheet(self, completionHandler: nil)
         if let firstResponder = initialFirstResponder {
             parentWindow.makeFirstResponder(firstResponder)
@@ -352,5 +366,18 @@ class FFModalSheet: NSWindow {
     /// 作为独立模态窗口显示（阻塞当前线程）
     func runModal() -> NSApplication.ModalResponse {
         return NSApp.runModal(for: self)
+    }
+
+    // MARK: - 关闭
+
+    /// 结束弹窗：sheet 会话必须经宿主 endSheet 正规结束。
+    /// 直接 close() 会在 macOS 27 上留下无效的 sheet 会话，使宿主窗口的
+    /// 下一个 NSOpenPanel sheet 静默无法弹出（查重「浏览...」失效的根因）。
+    private func dismiss() {
+        if let parent = sheetParentWindow, parent.attachedSheet === self {
+            parent.endSheet(self)
+        } else {
+            close()
+        }
     }
 }

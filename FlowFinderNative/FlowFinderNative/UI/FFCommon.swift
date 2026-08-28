@@ -437,6 +437,7 @@ final class FFPaneStateOverlayView: NSView {
         retryButton.bezelStyle = .rounded
         retryButton.controlSize = .small
         retryButton.font = NSFont.systemFont(ofSize: 11)
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.target = self
         retryButton.action = #selector(retryTapped)
 
@@ -476,6 +477,7 @@ final class FFPaneStateOverlayView: NSView {
         bannerRetryButton.bezelStyle = .rounded
         bannerRetryButton.controlSize = .small
         bannerRetryButton.font = NSFont.systemFont(ofSize: 10)
+        bannerRetryButton.translatesAutoresizingMaskIntoConstraints = false
         bannerRetryButton.target = self
         bannerRetryButton.action = #selector(retryTapped)
 

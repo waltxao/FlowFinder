@@ -19,7 +19,8 @@ public class DuplicateScanWindowController: NSWindowController {
 
     private var pathField: NSTextField!
     /// 当前选中的扫描路径 URL（与 pathField 显示同步）
-    private var selectedURL: URL?
+    /// internal 供查重删除→浏览回归测试驱动（与 T10 任务 internal 先例一致）
+    var selectedURL: URL?
     private var browseButton: NSButton!
     private var startButton: NSButton!
     private var stopButton: NSButton!
@@ -51,7 +52,8 @@ public class DuplicateScanWindowController: NSWindowController {
     private var allDeleteFilePaths: Set<String> = []
     /// 所有可释放空间
     private var totalReleasableSpace: UInt64 = 0
-    private var isScanning = false
+    /// internal 供回归测试轮询扫描状态
+    var isScanning = false
 
     private override init(window: NSWindow?) {
         super.init(window: window)
@@ -475,6 +477,8 @@ public class DuplicateScanWindowController: NSWindowController {
     // MARK: - Actions
 
     @objc private func browseClicked() {
+        // 诊断：宿主窗口若残留未脱离的 sheet，新的 beginSheetModal 会静默失效
+        FFDebug.log("browseClicked attachedSheet=\(String(describing: window?.attachedSheet)) isScanning=\(isScanning) selectedURL=\(String(describing: selectedURL))")
         let openPanel = NSOpenPanel()
         openPanel.canChooseDirectories = true
         openPanel.canChooseFiles = false
