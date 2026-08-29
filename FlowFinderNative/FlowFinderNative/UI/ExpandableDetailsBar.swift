@@ -159,6 +159,23 @@ class ExpandableDetailsBar: NSView {
     private var topEdgeStrip: FFDetailsDragStrip!
     /// 同步应用远端布局时为 true（抑制再次广播造成回环）
     private var isApplyingRemoteLayout = false
+    /// 图标区宽度（记忆值；图标边长由此与内容区高度推导）
+    private var iconWidth: CGFloat
+    /// 列1 宽度（记忆值；列2 兜底剩余宽度）
+    private var column1Width: CGFloat
+    // 约束引用（Task 3 setupUI 中赋值）
+    private var iconWidthC: NSLayoutConstraint!
+    private var column1WidthC: NSLayoutConstraint!
+    private var bigIconWidthC: NSLayoutConstraint!
+    private var bigIconHeightC: NSLayoutConstraint!
+    private var multiIconWidthC: NSLayoutConstraint!
+    private var multiIconHeightC: NSLayoutConstraint!
+    /// 两条内部分界线
+    private var dividerIconToCol1: FFDetailsDragStrip!
+    private var dividerCol1ToCol2: FFDetailsDragStrip!
+    /// 内容模块容器（替代原 contentRow / columnsContainer 两个 NSStackView）
+    private var contentModules: NSView!
+    private var columnsArea: NSView!
 
     /// 展开/收起状态。设置时自动带动画过渡。
     var isExpanded: Bool = false {
@@ -211,8 +228,10 @@ class ExpandableDetailsBar: NSView {
     // v0.7.4 项 7：所有信息行的引用（多选/未选时隐藏空白条目，单选时显示）
     private var infoRows: [NSView] = []
 
-    // v0.7.4 修订 4：单选内容行（图标 + 两列）与多选内容行（图标 + 两列汇总）
-    private var singleContentRow: NSStackView!
+    // v0.7.4 修订 4：单选内容行与多选内容行
+    // Task 3 中间态：singleContentRow 指向内容模块区（plain NSView），仅用于 isHidden 切换；
+    // Task 4 将以 icon-slot 可见性切换取代这两个变量
+    private var singleContentRow: NSView!
     private var multiContentRow: NSStackView!
     /// 多选大图标（缩略图堆叠）
     private var multiIconView: FFMiniThumbnailStackView!
@@ -265,12 +284,16 @@ class ExpandableDetailsBar: NSView {
 
     override init(frame frameRect: NSRect) {
         userExpandedHeight = (UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight") as? CGFloat) ?? 210
+        iconWidth = (UserDefaults.standard.object(forKey: "FFDetailsBarIconWidth") as? CGFloat) ?? 112
+        column1Width = (UserDefaults.standard.object(forKey: "FFDetailsBarColumn1Width") as? CGFloat) ?? 220
         super.init(frame: frameRect)
         setupUI()
     }
 
     required init?(coder: NSCoder) {
         userExpandedHeight = (UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight") as? CGFloat) ?? 210
+        iconWidth = (UserDefaults.standard.object(forKey: "FFDetailsBarIconWidth") as? CGFloat) ?? 112
+        column1Width = (UserDefaults.standard.object(forKey: "FFDetailsBarColumn1Width") as? CGFloat) ?? 220
         super.init(coder: coder)
         setupUI()
     }
@@ -366,25 +389,28 @@ class ExpandableDetailsBar: NSView {
         multiTagsContainer.alignment = .centerY
         multiTagsContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        // 内容行：图标 + 两列信息（单选）
-        let contentRow = NSStackView()
-        contentRow.orientation = .horizontal
-        contentRow.spacing = 12
-        contentRow.alignment = .top
-        contentRow.translatesAutoresizingMaskIntoConstraints = false
-        singleContentRow = contentRow
+        // 内容模块区（v0.7.6 重设计）：图标区 | 分界线1 | 两列区（列1 | 分界线2 | 列2）
+        // 用手动约束替代 NSStackView，为三条可拖边界与图标动态缩放提供锚点
+        let modules = NSView()
+        modules.translatesAutoresizingMaskIntoConstraints = false
+        contentModules = modules
+        // 中间态：singleContentRow 类型放宽为 NSView（Task 4 改为 icon-slot 可见性切换后清理）
+        singleContentRow = modules
 
         bigIconView.imageScaling = .scaleProportionallyUpOrDown
         bigIconView.translatesAutoresizingMaskIntoConstraints = false
-        contentRow.addArrangedSubview(bigIconView)
 
-        // 两列信息容器
-        let columnsContainer = NSStackView()
-        columnsContainer.orientation = .horizontal
-        columnsContainer.spacing = 16
-        columnsContainer.alignment = .top
-        columnsContainer.translatesAutoresizingMaskIntoConstraints = false
-        columnsContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // 图标区容器：大图标与多选堆叠图标同槽居中，二选一显示
+        let iconSlot = NSView()
+        iconSlot.translatesAutoresizingMaskIntoConstraints = false
+        iconSlot.addSubview(bigIconView)
+        // 图标区宽度 = 记忆值（分界线1 拖拽 / 远端同步时更新 constant）
+        iconWidthC = iconSlot.widthAnchor.constraint(equalToConstant: iconWidth)
+
+        // 两列区容器（plain NSView；列内垂直流式布局由 Task 4 rearrangeFlow 用 setColumn 管理）
+        let area = NSView()
+        area.translatesAutoresizingMaskIntoConstraints = false
+        columnsArea = area
 
         // 第一列：名称 / 种类 / 大小 / 位置 / 创建日期 / 修改日期 + 文件类型专属信息
         let column1 = NSStackView()
@@ -509,9 +535,25 @@ class ExpandableDetailsBar: NSView {
         // v0.7.4 项 7：收集所有信息行引用（多选/未选时隐藏）
         infoRows = [nameRow, typeRow, sizeRow, locationRow, createdRow, modifiedRow, tagsRow, descRow, sourceRow]
 
-        columnsContainer.addArrangedSubview(column1)
-        columnsContainer.addArrangedSubview(column2)
-        contentRow.addArrangedSubview(columnsContainer)
+        // 列1 宽度约束 = 记忆值（列2 兜底剩余宽度，见大约束数组）
+        column1WidthC = column1.widthAnchor.constraint(equalToConstant: column1Width)
+        column1WidthC.priority = .required
+
+        // 两条内部分界线：图标区|两列区（div1）、列1|列2（div2），带 1pt 可见线
+        let div1 = FFDetailsDragStrip(axis: .horizontal, cursor: .resizeLeftRight, showsLine: true)
+        let div2 = FFDetailsDragStrip(axis: .horizontal, cursor: .resizeLeftRight, showsLine: true)
+        div1.translatesAutoresizingMaskIntoConstraints = false
+        div2.translatesAutoresizingMaskIntoConstraints = false
+        dividerIconToCol1 = div1
+        dividerCol1ToCol2 = div2
+
+        // 手动组装：图标区与两列区挂到模块区，列1/列2 挂到两列区（不再是 stack arranged）
+        modules.addSubview(iconSlot)
+        modules.addSubview(div1)
+        modules.addSubview(area)
+        area.addSubview(column1)
+        area.addSubview(div2)
+        area.addSubview(column2)
 
         // v0.7.4 修订 4：多选内容行（图标 + 两列汇总信息，与单选布局一致）
         let multiRow = NSStackView()
@@ -523,13 +565,24 @@ class ExpandableDetailsBar: NSView {
         multiContentRow = multiRow
 
         // 多选大图标：缩略图堆叠容器（仿访达，最多堆叠 4 个选中项的缩略图）
+        // Task 3：移入 iconSlot 与大图标同槽居中（互斥可见性由 Task 4 管理）
         let multiIcon = FFMiniThumbnailStackView()
         multiIcon.translatesAutoresizingMaskIntoConstraints = false
         multiIconView = multiIcon
-        multiRow.addArrangedSubview(multiIcon)
+        iconSlot.addSubview(multiIcon)
+
+        // 图标边长约束统一动态（96 仅为初始值，updateIconEdge() 按图标区宽/内容区高推导）
+        bigIconWidthC = bigIconView.widthAnchor.constraint(equalToConstant: 96)
+        bigIconHeightC = bigIconView.heightAnchor.constraint(equalToConstant: 96)
+        multiIconWidthC = multiIcon.widthAnchor.constraint(equalToConstant: 96)
+        multiIconHeightC = multiIcon.heightAnchor.constraint(equalToConstant: 96)
+        // 注：本 SDK 的 NSLayoutConstraint.activate 仅有数组重载（无可变参数版），故用数组形式逐个传入
         NSLayoutConstraint.activate([
-            multiIcon.widthAnchor.constraint(equalToConstant: 96),
-            multiIcon.heightAnchor.constraint(equalToConstant: 96),
+            bigIconWidthC, bigIconHeightC, multiIconWidthC, multiIconHeightC,
+            bigIconView.centerXAnchor.constraint(equalTo: iconSlot.centerXAnchor),
+            bigIconView.centerYAnchor.constraint(equalTo: iconSlot.centerYAnchor),
+            multiIconView.centerXAnchor.constraint(equalTo: iconSlot.centerXAnchor),
+            multiIconView.centerYAnchor.constraint(equalTo: iconSlot.centerYAnchor),
         ])
 
         // 多选两列
@@ -570,7 +623,7 @@ class ExpandableDetailsBar: NSView {
         fileTypeInfoContainer.alignment = .leading
         fileTypeInfoContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        expandedStack.addArrangedSubview(contentRow)
+        expandedStack.addArrangedSubview(modules)
         expandedStack.addArrangedSubview(fileTypeInfoContainer)
 
         // 顶部细分隔线
@@ -664,16 +717,45 @@ class ExpandableDetailsBar: NSView {
             expandedStack.topAnchor.constraint(equalTo: expandedView.topAnchor),
             expandedStack.bottomAnchor.constraint(lessThanOrEqualTo: expandedView.bottomAnchor),
 
-            // 大图标 96×96
-            bigIconView.widthAnchor.constraint(equalToConstant: 96),
-            bigIconView.heightAnchor.constraint(equalToConstant: 96),
+            // 内容模块区填满 expandedView 顶部
+            modules.leadingAnchor.constraint(equalTo: expandedView.leadingAnchor),
+            modules.trailingAnchor.constraint(equalTo: expandedView.trailingAnchor),
+            modules.topAnchor.constraint(equalTo: expandedView.topAnchor),
+            modules.bottomAnchor.constraint(lessThanOrEqualTo: expandedView.bottomAnchor),
 
-            // 两列容器最小宽度，确保信息完整显示
-            column1.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
-            column2.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
-            // 问题 9：限制第一列最大宽度（容器 60%），防止路径字段撑宽第一列
-            // 把第二列（标签/文件说明/来源）挤出到右缘截断
-            column1.widthAnchor.constraint(lessThanOrEqualTo: columnsContainer.widthAnchor, multiplier: 0.60),
+            // 图标区：宽度 = 记忆值，高度撑满（图标在其中居中）
+            iconSlot.leadingAnchor.constraint(equalTo: modules.leadingAnchor),
+            iconSlot.topAnchor.constraint(equalTo: modules.topAnchor),
+            iconSlot.bottomAnchor.constraint(equalTo: modules.bottomAnchor),
+            iconWidthC,   // iconSlot.widthAnchor.constraint(equalToConstant: iconWidth)
+
+            // 分界线1：图标区 | 两列区
+            div1.leadingAnchor.constraint(equalTo: iconSlot.trailingAnchor),
+            div1.topAnchor.constraint(equalTo: modules.topAnchor),
+            div1.bottomAnchor.constraint(equalTo: modules.bottomAnchor),
+            div1.widthAnchor.constraint(equalToConstant: 8),
+
+            // 两列区：分界线1 右侧到模块区右缘
+            area.leadingAnchor.constraint(equalTo: div1.trailingAnchor),
+            area.trailingAnchor.constraint(equalTo: modules.trailingAnchor),
+            area.topAnchor.constraint(equalTo: modules.topAnchor),
+            area.bottomAnchor.constraint(equalTo: modules.bottomAnchor),
+
+            // 列1：宽度 = 记忆值
+            column1.leadingAnchor.constraint(equalTo: area.leadingAnchor),
+            column1.topAnchor.constraint(equalTo: area.topAnchor),
+            column1WidthC,
+
+            // 分界线2：列1 | 列2
+            div2.leadingAnchor.constraint(equalTo: column1.trailingAnchor),
+            div2.topAnchor.constraint(equalTo: area.topAnchor),
+            div2.bottomAnchor.constraint(equalTo: area.bottomAnchor),
+            div2.widthAnchor.constraint(equalToConstant: 8),
+
+            // 列2：兜底剩余宽度
+            column2.leadingAnchor.constraint(equalTo: div2.trailingAnchor),
+            column2.trailingAnchor.constraint(equalTo: area.trailingAnchor),
+            column2.topAnchor.constraint(equalTo: area.topAnchor),
 
             heightConstraint,
         ])
@@ -688,13 +770,26 @@ class ExpandableDetailsBar: NSView {
             rearrangeFlow()
         }
 
+        // 内部分界线拖拽回调（图标区宽度 / 列1 宽度）
+        div1.onDrag = { [weak self] dx in self?.applyIconWidthDrag(deltaX: dx) }
+        div1.onDragEnd = { [weak self] in self?.rearrangeFlow() }
+        div2.onDrag = { [weak self] dx in self?.applyColumn1WidthDrag(deltaX: dx) }
+        div2.onDragEnd = { [weak self] in self?.rearrangeFlow() }
+
         applyExpandedState(animated: false)
         observeLayoutChanged()
         refresh()
     }
 
-    /// Task 3 接入：按内容区高度与图标区宽度重算图标边长
-    func updateIconEdge() {}
+    /// 按内容区高度与图标区宽度重算图标边长：min(图标区宽 − 16, 内容区高 − 16)，下限 32
+    func updateIconEdge() {
+        let contentHeight = expandedView.bounds.height
+        let edge = max(min(iconWidth - 16, contentHeight - 16), 32)
+        bigIconWidthC.constant = edge
+        bigIconHeightC.constant = edge
+        multiIconWidthC.constant = edge
+        multiIconHeightC.constant = edge
+    }
     /// Task 4 接入：流动填充重排
     func rearrangeFlow() {}
 
@@ -830,6 +925,39 @@ class ExpandableDetailsBar: NSView {
         }
     }
 
+    /// 分界线1 拖拽：图标区宽度 = 图标大小（clamp [32, 内容行总宽 − 240]）
+    private func applyIconWidthDrag(deltaX: CGFloat) {
+        guard isExpanded else { return }
+        let modulesWidth = contentModules?.bounds.width ?? 0
+        let maxIcon = max(32, modulesWidth - 240)
+        let newWidth = min(max(iconWidth + deltaX, 32), maxIcon)
+        guard newWidth != iconWidth else { return }
+        iconWidth = newWidth
+        iconWidthC.constant = newWidth
+        UserDefaults.standard.set(newWidth, forKey: Self.iconWidthKey)
+        updateIconEdge()
+        rearrangeFlow()
+        if !isApplyingRemoteLayout {
+            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
+        }
+    }
+
+    /// 分界线2 拖拽：列1 宽度（clamp [120, 总宽 − 图标区 − 240]）
+    private func applyColumn1WidthDrag(deltaX: CGFloat) {
+        guard isExpanded else { return }
+        let modulesWidth = contentModules?.bounds.width ?? 0
+        let maxCol1 = max(120, modulesWidth - iconWidth - 240)
+        let newWidth = min(max(column1Width + deltaX, 120), maxCol1)
+        guard newWidth != column1Width else { return }
+        column1Width = newWidth
+        column1WidthC.constant = newWidth
+        UserDefaults.standard.set(newWidth, forKey: Self.column1WidthKey)
+        rearrangeFlow()
+        if !isApplyingRemoteLayout {
+            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
+        }
+    }
+
     /// 监听另一侧详情栏的布局变更（拖左栏右栏同步）
     private func observeLayoutChanged() {
         NotificationCenter.default.addObserver(
@@ -846,6 +974,11 @@ class ExpandableDetailsBar: NSView {
         userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? userExpandedHeight
         if isExpanded {
             heightConstraint.constant = userExpandedHeight
+            // Task 3：宽度记忆值同步（另一栏拖分界线后本栏应用同样宽度）
+            iconWidth = (UserDefaults.standard.object(forKey: Self.iconWidthKey) as? CGFloat) ?? iconWidth
+            column1Width = (UserDefaults.standard.object(forKey: Self.column1WidthKey) as? CGFloat) ?? column1Width
+            iconWidthC.constant = iconWidth
+            column1WidthC.constant = column1Width
             updateIconEdge()
             rearrangeFlow()
         }
@@ -855,6 +988,9 @@ class ExpandableDetailsBar: NSView {
         let newHeight = isExpanded ? userExpandedHeight : collapsedHeight
         heightConstraint.constant = newHeight
         topEdgeStrip?.isHidden = !isExpanded
+        // 内部分界线仅展开态可见（收起态无内容模块区）
+        dividerIconToCol1?.isHidden = !isExpanded
+        dividerCol1ToCol2?.isHidden = !isExpanded
         compactView.isHidden = isExpanded
         expandedView.isHidden = !isExpanded
 
