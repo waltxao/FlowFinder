@@ -536,7 +536,9 @@ final class FFDetailsBarLayoutTests: XCTestCase {
         bar.isExpanded = true
         bar.layoutSubtreeIfNeeded()
 
-        XCTAssertEqual(bar.dividerIconToCol1.bounds.height, 186, accuracy: 1.0)
-        XCTAssertEqual(bar.dividerCol1ToCol2.bounds.height, 186, accuracy: 1.0)
+        // 期望值由栏自身尺寸推导，不依赖默认展开高度记忆值
+        let expected = bar.frame.height - 6 - 18
+        XCTAssertEqual(bar.dividerIconToCol1.bounds.height, expected, accuracy: 1.0)
+        XCTAssertEqual(bar.dividerCol1ToCol2.bounds.height, expected, accuracy: 1.0)
     }
 }

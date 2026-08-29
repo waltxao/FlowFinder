@@ -175,7 +175,7 @@ class ExpandableDetailsBar: NSView {
     /// internal 以便布局回归测试访问（FFDetailsDragStrip 经 @testable 访问；类型可见性以文件内定义为准）
     var dividerIconToCol1: FFDetailsDragStrip!
     var dividerCol1ToCol2: FFDetailsDragStrip!
-    /// 内容模块容器（替代原 contentRow / columnsContainer 两个 NSStackView）
+    /// 内容模块区（contentModules）：图标区 | 分界线1 | 两列区，手动约束布局
     private var contentModules: NSView!
     private var columnsArea: NSView!
 
@@ -230,11 +230,12 @@ class ExpandableDetailsBar: NSView {
     // v0.7.4 项 7：所有信息行的引用（多选/未选时隐藏空白条目，单选时显示）
     private var infoRows: [NSView] = []
 
-    // v0.7.4 修订 4：单选内容行与多选内容行
-    // Task 3 中间态：singleContentRow 指向内容模块区（plain NSView），仅用于 isHidden 切换；
-    // Task 4 将以 icon-slot 可见性切换取代这两个变量
-    private var singleContentRow: NSView!
-    private var multiContentRow: NSStackView!
+    /// 多选汇总行（流动顺序：数量 → 总大小 → 包含类型 → 包含标签）
+    private var multiRows: [NSView] = []
+
+    /// 上次流动填充时的 bar 尺寸（layout 中防重复重排）
+    private var lastArrangedSize: NSSize = .zero
+
     /// 多选大图标（缩略图堆叠）
     private var multiIconView: FFMiniThumbnailStackView!
 
@@ -272,7 +273,7 @@ class ExpandableDetailsBar: NSView {
     /// 问题7: 状态栏标签（项目数 + 磁盘可用空间），由 updateStatus(itemCount:diskFree:) 更新
     private var statusLabel: NSTextField?
 
-    // v0.7.4 项 4: 多选汇总字段（放入与单选同布局的 multiContentRow 两列中）
+    // v0.7.4 项 4: 多选汇总字段（行由 rearrangeFlow 流动摆放到主信息两列，与单选行同列）
     /// 多选汇总：数量行
     private let multiCountField = NSTextField(labelWithString: "")
     /// 多选汇总：总大小行
@@ -369,7 +370,7 @@ class ExpandableDetailsBar: NSView {
         expandedStack.translatesAutoresizingMaskIntoConstraints = false
         expandedView.addSubview(expandedStack)
 
-        // v0.7.4 修订 4: 多选字段（数量/总大小/类型/标签）——放入与单选同布局的 multiContentRow
+        // v0.7.4 修订 4: 多选字段（数量/总大小/类型/标签）——由 rearrangeFlow 流动摆放到两列
         // （多选数量行）
         multiCountField.font = NSFont.systemFont(ofSize: 10)
         multiCountField.textColor = NSColor.labelColor
@@ -396,8 +397,6 @@ class ExpandableDetailsBar: NSView {
         let modules = NSView()
         modules.translatesAutoresizingMaskIntoConstraints = false
         contentModules = modules
-        // 中间态：singleContentRow 类型放宽为 NSView（Task 4 改为 icon-slot 可见性切换后清理）
-        singleContentRow = modules
 
         bigIconView.imageScaling = .scaleProportionallyUpOrDown
         bigIconView.translatesAutoresizingMaskIntoConstraints = false
@@ -562,14 +561,14 @@ class ExpandableDetailsBar: NSView {
         area.addSubview(div2)
         area.addSubview(column2)
 
-        // v0.7.4 修订 4：多选内容行（图标 + 两列汇总信息，与单选布局一致）
+        // 多选内容行容器：Task 4 后汇总行由 rearrangeFlow 摆放到主信息两列，
+        // 此容器仅保留隐藏占位（避免改动 expandedStack 结构）
         let multiRow = NSStackView()
         multiRow.orientation = .horizontal
         multiRow.spacing = 12
         multiRow.alignment = .top
         multiRow.translatesAutoresizingMaskIntoConstraints = false
         multiRow.isHidden = true
-        multiContentRow = multiRow
 
         // 多选大图标：缩略图堆叠容器（仿访达，最多堆叠 4 个选中项的缩略图）
         // Task 3：移入 iconSlot 与大图标同槽居中（互斥可见性由 Task 4 管理）
@@ -600,23 +599,25 @@ class ExpandableDetailsBar: NSView {
         multiColumns.translatesAutoresizingMaskIntoConstraints = false
         multiColumns.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        // 左列：数量 / 总大小 / 包含类型
+        // 多选汇总行：仅持有引用，不放入 multiCol1/multiCol2——
+        // 行由 rearrangeFlow 统一流动摆放到 mainColumn1/mainColumn2（与单选行同列）
+        let multiCountRow = makeInfoRow(label: makeLabel("数量"), value: multiCountField)
+        let multiSizeRow = makeInfoRow(label: makeLabel("总大小"), value: multiSizeField)
+        let multiTypesRow = makeInfoRow(label: makeLabel("包含类型"), value: multiTypesField)
+        let multiTagsRow = makeInfoRow(label: makeLabel("包含标签"), value: multiTagsContainer)
+
+        // 列容器保留为空栈（multiColumns 结构不变，行摆放全权交给 rearrangeFlow）
         let multiCol1 = NSStackView()
         multiCol1.orientation = .vertical
         multiCol1.spacing = 4
         multiCol1.alignment = .leading
         multiCol1.translatesAutoresizingMaskIntoConstraints = false
-        multiCol1.addArrangedSubview(makeInfoRow(label: makeLabel("数量"), value: multiCountField))
-        multiCol1.addArrangedSubview(makeInfoRow(label: makeLabel("总大小"), value: multiSizeField))
-        multiCol1.addArrangedSubview(makeInfoRow(label: makeLabel("包含类型"), value: multiTypesField))
 
-        // 右列：包含标签
         let multiCol2 = NSStackView()
         multiCol2.orientation = .vertical
         multiCol2.spacing = 4
         multiCol2.alignment = .leading
         multiCol2.translatesAutoresizingMaskIntoConstraints = false
-        multiCol2.addArrangedSubview(makeInfoRow(label: makeLabel("包含标签"), value: multiTagsContainer))
 
         multiColumns.addArrangedSubview(multiCol1)
         multiColumns.addArrangedSubview(multiCol2)
@@ -785,6 +786,9 @@ class ExpandableDetailsBar: NSView {
         div2.onDrag = { [weak self] dx in self?.applyColumn1WidthDrag(deltaX: dx) }
         div2.onDragEnd = { [weak self] in self?.rearrangeFlow() }
 
+        // 多选汇总行注册表（顺序即流动顺序；行由 rearrangeFlow 统一摆放）
+        multiRows = [multiCountRow, multiSizeRow, multiTypesRow, multiTagsRow]
+
         applyExpandedState(animated: false)
         observeLayoutChanged()
         refresh()
@@ -799,8 +803,74 @@ class ExpandableDetailsBar: NSView {
         multiIconWidthC.constant = edge
         multiIconHeightC.constant = edge
     }
-    /// Task 4 接入：流动填充重排
-    func rearrangeFlow() {}
+    // MARK: - 流动填充
+
+    /// 流动顺序的全部行：单选 = 前 6 常规行 + 类型专属行 + 后 3 行；多选 = 4 汇总行
+    private var flowOrderedRows: [NSView] {
+        if selectedCount > 1 { return multiRows }
+        guard entry != nil else { return [] }
+        let base = infoRows
+        guard base.count >= 9 else { return base }
+        return Array(base[0..<6]) + appendedTypeInfoRows + Array(base[6..<base.count])
+    }
+
+    /// 按列宽测量行高（locationField 等可换行行随宽度变化），下限 16。
+    /// AppKit 没有 UIKit 的 systemLayoutSizeFitting(_:withHorizontalFittingPriority:
+    /// verticalFittingPriority:)——改为把行临时全量放入列1、flush 列布局后读取真实
+    /// frame 高度（行尚未摆回列2，统一按列1宽度测量，与纯计算核心的输入语义一致）。
+    private func measuredRowHeights(of rows: [NSView]) -> [CGFloat] {
+        setColumn(mainColumn2, rows: [])
+        setColumn(mainColumn1, rows: rows)
+        mainColumn1.layoutSubtreeIfNeeded()
+        return rows.map { max($0.frame.height, 16) }
+    }
+
+    /// 重新摆放一列的行（全量替换 arranged 行；被移除的行从父视图摘除，由注册表数组持有生命周期）
+    private func setColumn(_ column: NSStackView, rows: [NSView]) {
+        for view in column.arrangedSubviews {
+            column.removeArrangedSubview(view)
+            view.removeFromSuperview()
+            // 摘除的专属信息行同步注销（本 SDK 对不在 arrangedSubviews 的视图调
+            // removeArrangedSubview 会抛 NSInternalInconsistencyException，见 appendFolderSizeRow 防护）
+            appendedTypeInfoRows.removeAll { $0 === view }
+        }
+        for row in rows {
+            column.addArrangedSubview(row)
+        }
+    }
+
+    /// 流动填充重排：按固定顺序把行分配到列1/列2，装不下的隐藏。
+    /// 触发点：高度/分界线拖拽、展开切换、refresh 末尾、面板尺寸变化。
+    func rearrangeFlow() {
+        guard isExpanded, window != nil else { return }
+        updateIconEdge()
+        layoutSubtreeIfNeeded()
+        let ordered = flowOrderedRows
+        guard !ordered.isEmpty else {
+            setColumn(mainColumn1, rows: [])
+            setColumn(mainColumn2, rows: [])
+            return
+        }
+        let heights = measuredRowHeights(of: ordered)
+        let available = max(expandedView.bounds.height - 4, 32)
+        let split = FFDetailsFlowLayout.flowSplit(itemHeights: heights, availableHeight: available)
+        let visible = FFDetailsFlowLayout.visibleItemCount(itemHeights: heights, availableHeight: available)
+        let firstCount = min(split, ordered.count)
+        let first = Array(ordered[0..<firstCount])
+        let second = Array(ordered[firstCount..<min(visible, ordered.count)])
+        setColumn(mainColumn1, rows: first)
+        setColumn(mainColumn2, rows: second)
+        for row in ordered where !first.contains(row) && !second.contains(row) {
+            row.removeFromSuperview()
+        }
+        lastArrangedSize = bounds.size
+    }
+
+    override func layout() {
+        super.layout()
+        guard isExpanded, bounds.size != lastArrangedSize else { return }
+        rearrangeFlow()
+    }
 
     // MARK: - Builders
 
@@ -1011,6 +1081,8 @@ class ExpandableDetailsBar: NSView {
 
         let performLayout = { [weak self] in
             self?.window?.layoutIfNeeded()
+            self?.rearrangeFlow()
+            self?.lastArrangedSize = self?.bounds.size ?? .zero
         }
         if animated {
             NSAnimationContext.runAnimationGroup { context in
@@ -1086,8 +1158,12 @@ class ExpandableDetailsBar: NSView {
         guard let entry = entry else {
             // v0.7.4 修订 项 4：未选中任何项目 → 隐藏所有信息与多选汇总，自动收起且不可展开
             for row in infoRows { row.isHidden = true }
-            singleContentRow.isHidden = true
-            multiContentRow.isHidden = true
+            // 无选中：大图标显示（文件夹占位），清空两列并摘除多选汇总行
+            bigIconView.isHidden = false
+            multiIconView.isHidden = true
+            setColumn(mainColumn1, rows: [])
+            setColumn(mainColumn2, rows: [])
+            multiRows.forEach { $0.removeFromSuperview() }
             clearFileTypeSpecificInfo()
             clearTags()
             showNoTagsPlaceholder()
@@ -1104,19 +1180,22 @@ class ExpandableDetailsBar: NSView {
             clearFileTypeSpecificInfo()
             clearTags()
             showNoTagsPlaceholder()
-            singleContentRow.isHidden = true
-            multiContentRow.isHidden = false
+            // 图标槽切换：大图标隐藏、多选堆叠图标显示
+            bigIconView.isHidden = true
+            multiIconView.isHidden = false
             // 多选图标：缩略图堆叠（取前 4 个选中项的缩略图）
             multiIconView.update(with: Array(selectedFiles.prefix(4)))
             populateMultiSelectSummary()
+            rearrangeFlow()
             chevronButton.isEnabled = true
             return
         }
 
-        // 单选：显示所有信息行，隐藏多选汇总
+        // 单选：显示所有信息行，图标槽切回大图标并摘除多选汇总行
         for row in infoRows { row.isHidden = false }
-        singleContentRow.isHidden = false
-        multiContentRow.isHidden = true
+        bigIconView.isHidden = false
+        multiIconView.isHidden = true
+        multiRows.forEach { $0.removeFromSuperview() }
         chevronButton.isEnabled = true
 
         nameField.stringValue = entry.name
@@ -1138,6 +1217,8 @@ class ExpandableDetailsBar: NSView {
 
         // 文件类型专属信息（分辨率 / EXIF / 时长 / 编码 等）
         updateFileTypeSpecificInfo(entry: entry)
+
+        rearrangeFlow()
 
         if isExpanded { loadThumbnail() }
     }
@@ -1920,7 +2001,7 @@ class ExpandableDetailsBar: NSView {
         return result
     }
 
-    /// 异步计算文件夹总大小，完成后更新 fileTypeInfoContainer
+    /// 异步计算文件夹总大小，完成后把"总大小"专属信息行追加到主信息列（mainColumn1）
     private func calculateFolderSizeAsync(path: String) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fm = FileManager.default
