@@ -523,3 +523,20 @@ final class FFDetailsFlowLayoutTests: XCTestCase {
         XCTAssertEqual(FFDetailsFlowLayout.visibleItemCount(itemHeights: [], availableHeight: 100), 0)
     }
 }
+
+// MARK: - FFDetailsBarLayoutTests（详情栏三模块布局回归）
+
+final class FFDetailsBarLayoutTests: XCTestCase {
+
+    @MainActor
+    func testExpandedDividerStripsHaveFullHeight() {
+        // modules 高度确定链回归：展开后两条分界线热区必须有完整高度（曾因
+        // modules.bottom 为 lessThanOrEqual 而无高度来源，布局歧义塌缩为 0）
+        let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
+        bar.isExpanded = true
+        bar.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(bar.dividerIconToCol1.bounds.height, 186, accuracy: 1.0)
+        XCTAssertEqual(bar.dividerCol1ToCol2.bounds.height, 186, accuracy: 1.0)
+    }
+}

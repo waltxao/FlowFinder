@@ -7,7 +7,8 @@ import PDFKit
 /// 详情栏拖拽条：一段透明热区 + 悬停光标 + 拖拽回调。
 /// 上边缘调高（垂直）与内部两条分界线（水平，带 1pt 可见线）共用。
 /// 不用 NSSplitView：分隔样式与圆角卡片浮层难融合，且项目有布局约束风险史（设计文档方案 A）。
-private class FFDetailsDragStrip: NSView {
+/// internal：布局回归测试经 @testable 访问 divider 属性需要类型可见（internal 属性不能暴露 fileprivate 类型）
+class FFDetailsDragStrip: NSView {
     enum Axis { case horizontal, vertical }
 
     private let axis: Axis
@@ -171,8 +172,9 @@ class ExpandableDetailsBar: NSView {
     private var multiIconWidthC: NSLayoutConstraint!
     private var multiIconHeightC: NSLayoutConstraint!
     /// 两条内部分界线
-    private var dividerIconToCol1: FFDetailsDragStrip!
-    private var dividerCol1ToCol2: FFDetailsDragStrip!
+    /// internal 以便布局回归测试访问（FFDetailsDragStrip 经 @testable 访问；类型可见性以文件内定义为准）
+    var dividerIconToCol1: FFDetailsDragStrip!
+    var dividerCol1ToCol2: FFDetailsDragStrip!
     /// 内容模块容器（替代原 contentRow / columnsContainer 两个 NSStackView）
     private var contentModules: NSView!
     private var columnsArea: NSView!
@@ -406,6 +408,9 @@ class ExpandableDetailsBar: NSView {
         iconSlot.addSubview(bigIconView)
         // 图标区宽度 = 记忆值（分界线1 拖拽 / 远端同步时更新 constant）
         iconWidthC = iconSlot.widthAnchor.constraint(equalToConstant: iconWidth)
+        // 999 优先级：窗口/面板过窄时优雅压缩（列2 由 required 边缘约束兜底），
+        // 避免 required 宽度在窄窗口下无法同时满足而刷布局冲突日志（审查发现 2）
+        iconWidthC.priority = NSLayoutConstraint.Priority(999)
 
         // 两列区容器（plain NSView；列内垂直流式布局由 Task 4 rearrangeFlow 用 setColumn 管理）
         let area = NSView()
@@ -537,7 +542,9 @@ class ExpandableDetailsBar: NSView {
 
         // 列1 宽度约束 = 记忆值（列2 兜底剩余宽度，见大约束数组）
         column1WidthC = column1.widthAnchor.constraint(equalToConstant: column1Width)
-        column1WidthC.priority = .required
+        // 999 优先级：窗口/面板过窄时优雅压缩（列2 由 required 边缘约束兜底），
+        // 避免 required 宽度在窄窗口下无法同时满足而刷布局冲突日志（审查发现 2）
+        column1WidthC.priority = NSLayoutConstraint.Priority(999)
 
         // 两条内部分界线：图标区|两列区（div1）、列1|列2（div2），带 1pt 可见线
         let div1 = FFDetailsDragStrip(axis: .horizontal, cursor: .resizeLeftRight, showsLine: true)
@@ -624,7 +631,8 @@ class ExpandableDetailsBar: NSView {
         fileTypeInfoContainer.translatesAutoresizingMaskIntoConstraints = false
 
         expandedStack.addArrangedSubview(modules)
-        expandedStack.addArrangedSubview(fileTypeInfoContainer)
+        // fileTypeInfoContainer 常年空置——专属信息行在 mainColumn1；从堆栈摘除避免与 modules 等高约束打架。
+        // 属性与 clearFileTypeSpecificInfo 保持不动
 
         // 顶部细分隔线
         let separator = NSBox()
@@ -717,11 +725,12 @@ class ExpandableDetailsBar: NSView {
             expandedStack.topAnchor.constraint(equalTo: expandedView.topAnchor),
             expandedStack.bottomAnchor.constraint(lessThanOrEqualTo: expandedView.bottomAnchor),
 
-            // 内容模块区填满 expandedView 顶部
+            // 内容模块区填满 expandedView
             modules.leadingAnchor.constraint(equalTo: expandedView.leadingAnchor),
             modules.trailingAnchor.constraint(equalTo: expandedView.trailingAnchor),
             modules.topAnchor.constraint(equalTo: expandedView.topAnchor),
-            modules.bottomAnchor.constraint(lessThanOrEqualTo: expandedView.bottomAnchor),
+            // 内容模块区填满 expandedView（高度确定链：分界线/图标区随栏高撑满，状态栏以上）
+            modules.bottomAnchor.constraint(equalTo: expandedView.bottomAnchor),
 
             // 图标区：宽度 = 记忆值，高度撑满（图标在其中居中）
             iconSlot.leadingAnchor.constraint(equalTo: modules.leadingAnchor),
