@@ -643,3 +643,37 @@ enum FFMotion {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : proposed
     }
 }
+
+/// 分隔线手柄光效纯计算（v0.7.6 发布后修复轮）。
+/// 设计文档：docs/superpowers/specs/2026-08-28-divider-handle-glow-follow-design.md
+/// FFSplitView 负责视觉接线，本枚举只做可单元测试的数学核心。
+enum FFDividerGlowMath {
+    /// 渐隐半径（pt）：亮点上下各 60pt 渐隐至透明（总高约 120pt）
+    static let fadeRadius: CGFloat = 60
+    /// 拖拽热区半径（pt）：分隔线 X ±6pt 内按下/悬停生效
+    static let hotZoneRadius: CGFloat = 6
+    /// 每侧面板最小宽度（pt）：与 MainWindowController 的 NSSplitViewDelegate 约束一致
+    static let minPaneWidth: CGFloat = 450
+
+    /// 鼠标 Y（视图坐标系）→ 渐变轴中心比例（0~1）。
+    /// AppKit 对 layer-backed 视图保持 layer 与 view 翻转一致，
+    /// 因此 f = mouseY / height 恒成立，无需感知 isFlipped/isGeometryFlipped。
+    static func glowCenter(mouseY: CGFloat, boundsHeight: CGFloat) -> CGFloat {
+        guard boundsHeight > 0 else { return 0.5 }
+        return min(max(mouseY / boundsHeight, 0), 1)
+    }
+
+    /// 渐变 locations：最亮点在 center，向上下渐隐 r 比例。
+    /// 输出恒有序且 clamp 在 [0,1]（亮点贴窗口顶/底时自然截断）。
+    static func gradientLocations(center: CGFloat, radiusFraction: CGFloat) -> [CGFloat] {
+        let c = min(max(center, 0), 1)
+        let r = min(max(radiusFraction, 0), 1)
+        return [max(0, c - r), c, min(1, c + r)]
+    }
+
+    /// 鼠标 X → 分隔线目标位置（绝对跟随模型）：clamp 到每侧最小 450pt 约束内
+    static func clampedDividerPosition(mouseX: CGFloat, boundsWidth: CGFloat) -> CGFloat {
+        let maxPosition = max(minPaneWidth, boundsWidth - minPaneWidth)
+        return min(max(mouseX, minPaneWidth), maxPosition)
+    }
+}

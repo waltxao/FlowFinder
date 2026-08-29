@@ -396,3 +396,92 @@ final class FlowFinderNativeTests: XCTestCase {
         XCTAssertEqual(result.size, 0)
     }
 }
+
+// MARK: - FFDividerGlowMath（分隔线手柄光效纯计算）
+
+final class FFDividerGlowMathTests: XCTestCase {
+
+    /// 逐元素带精度断言（XCTest 无数组 accuracy 重载，直接传数组会编译失败）
+    private func assertLocations(_ actual: [CGFloat], _ expected: [CGFloat],
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        guard actual.count == expected.count else {
+            XCTFail("locations 数量不符: \(actual) vs \(expected)", file: file, line: line)
+            return
+        }
+        for (a, e) in zip(actual, expected) {
+            XCTAssertEqual(a, e, accuracy: 0.0001, file: file, line: line)
+        }
+    }
+
+    // MARK: glowCenter — 鼠标 Y → 渐变轴中心比例
+
+    func testGlowCenterTopMiddleBottom() {
+        // AppKit 对 layer-backed 视图保持 layer 与 view 翻转一致，
+        // f = mouseY/height 恒成立：视图高 800 时顶部 800→1.0、中部 400→0.5、底部 0→0.0
+        XCTAssertEqual(FFDividerGlowMath.glowCenter(mouseY: 800, boundsHeight: 800), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(FFDividerGlowMath.glowCenter(mouseY: 400, boundsHeight: 800), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(FFDividerGlowMath.glowCenter(mouseY: 0, boundsHeight: 800), 0.0, accuracy: 0.0001)
+    }
+
+    func testGlowCenterClampsOutOfRangeMouseY() {
+        // 事件坐标可能越界（拖拽划出窗口），clamp 到 [0,1]
+        XCTAssertEqual(FFDividerGlowMath.glowCenter(mouseY: 1000, boundsHeight: 800), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(FFDividerGlowMath.glowCenter(mouseY: -50, boundsHeight: 800), 0.0, accuracy: 0.0001)
+    }
+
+    func testGlowCenterZeroHeightSafeDefault() {
+        // 高度 0（窗口最小化等）时返回 0.5 正中，避免除零
+        XCTAssertEqual(FFDividerGlowMath.glowCenter(mouseY: 0, boundsHeight: 0), 0.5, accuracy: 0.0001)
+    }
+
+    // MARK: gradientLocations — 中心比例 + 渐隐半径比例 → locations
+
+    func testGradientLocationsCentered() {
+        assertLocations(FFDividerGlowMath.gradientLocations(center: 0.5, radiusFraction: 0.15),
+                        [0.35, 0.5, 0.65])
+    }
+
+    func testGradientLocationsClampsAtBottomEdge() {
+        // 亮点贴边：下端截断为 0，locations 仍保持递增（贴边截断需求）
+        assertLocations(FFDividerGlowMath.gradientLocations(center: 0.02, radiusFraction: 0.1),
+                        [0.0, 0.02, 0.12])
+    }
+
+    func testGradientLocationsClampsAtTopEdge() {
+        assertLocations(FFDividerGlowMath.gradientLocations(center: 0.98, radiusFraction: 0.1),
+                        [0.88, 0.98, 1.0])
+    }
+
+    func testGradientLocationsOversizedRadiusClamps() {
+        assertLocations(FFDividerGlowMath.gradientLocations(center: 0.5, radiusFraction: 1.5),
+                        [0.0, 0.5, 1.0])
+    }
+
+    func testGradientLocationsOutOfRangeCenterStillOrdered() {
+        // 防御：中心超出 [0,1] 时先收敛再算端点，保证 locations 恒有序
+        assertLocations(FFDividerGlowMath.gradientLocations(center: 1.2, radiusFraction: 0.1),
+                        [0.9, 1.0, 1.0])
+    }
+
+    // MARK: clampedDividerPosition — 鼠标 X → 分隔线目标位置
+
+    func testClampedDividerPositionWithinRange() {
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 500, boundsWidth: 1400), 500)
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 460, boundsWidth: 1400), 460)
+    }
+
+    func testClampedDividerPositionEnforcesMinPaneWidth() {
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 1400), 450)
+    }
+
+    func testClampedDividerPositionEnforcesMaxPaneWidth() {
+        // 左侧最大 = 总宽 - 450（右面板最小宽度）
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 1300, boundsWidth: 1400), 950)
+    }
+
+    func testClampedDividerPositionNarrowWindow() {
+        // 窗口过窄（<900pt）时上下限收敛到 450
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 700, boundsWidth: 800), 450)
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 800), 450)
+    }
+}
