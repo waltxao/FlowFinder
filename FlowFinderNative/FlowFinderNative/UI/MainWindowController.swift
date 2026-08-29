@@ -74,11 +74,15 @@ private class FFSplitView: NSSplitView {
         // 亮点颜色向白色提亮 50%（2026-08-29 用户验收反馈：原纯强调色偏暗）。
         // 提亮结果在 layer 创建时定格；强调色变更后的刷新策略与原有行为一致。
         let peakColor = FFAccent.current.blended(withFraction: 0.5, of: .white) ?? FFAccent.current
+        // 渐变端点用峰值色的 0 透明度版本，而非常用的 clear 色：
+        // clear 本质是"透明黑"（RGB 分量为黑），与亮色插值会在中段掺黑形成暗色带
+        // （2026-08-29 用户验收反馈）；端点与峰值同色异透明度时，插值只变透明度不变色相。
+        let fadedEnd = peakColor.cgColor.copy(alpha: 0) ?? NSColor.clear.cgColor
         let gradientLayer = CAGradientLayer()
         gradientLayer.colors = [
-            NSColor.clear.cgColor,
+            fadedEnd,
             peakColor.cgColor,
-            NSColor.clear.cgColor
+            fadedEnd
         ]
         gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
         gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
