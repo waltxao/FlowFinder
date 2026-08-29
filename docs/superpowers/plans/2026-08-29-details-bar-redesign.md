@@ -261,27 +261,12 @@ private class FFDetailsDragStrip: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard let start = dragStart else { return }
         let loc = convert(event.locationInWindow, from: nil)
-        let delta = (axis == .horizontal) ? loc.x - start.x : loc.y - start.y
-        // 每次事件报「相对按下点」的绝对位移，由使用方以上次快照求增量；
-        // 为简化使用方，这里改为报「相对上次事件的增量」：
-        dragStart = loc
-        onDrag?(delta + (axis == .horizontal ? 0 : 0))
-    }
-```
-
-**更正（实现时以此为准）：** 上面的 `mouseDragged` 语义混乱，统一为「相对上次事件的增量」：
-
-```swift
-    override func mouseDragged(with event: NSEvent) {
-        guard let start = dragStart else { return }
-        let loc = convert(event.locationInWindow, from: nil)
+        // 报「相对上次事件的增量」，dragStart 随事件前移；使用方以增量累积更新
         let delta = (axis == .horizontal) ? loc.x - start.x : loc.y - start.y
         dragStart = loc
         onDrag?(delta)
     }
-```
 
-```swift
     override func mouseUp(with event: NSEvent) {
         dragStart = nil
         onDragEnd?()
