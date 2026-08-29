@@ -15,6 +15,8 @@ class FFDetailsDragStrip: NSView {
     private let cursor: NSCursor
     private var tracking: NSTrackingArea?
     private var dragStart: CGPoint?
+    /// 拖拽中标记：mouseUp 前划出热区不重置光标/亮线（终审 Minor 7）
+    private var isDragging = false
 
     /// 拖拽回调：参数为本次鼠标拖动事件的位移（视图坐标系，dx 或 dy）
     var onDrag: ((CGFloat) -> Void)?
@@ -67,6 +69,8 @@ class FFDetailsDragStrip: NSView {
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
+        // 拖拽中途划出热区保持光标与亮线（终审 Minor 7），松开鼠标后恢复正常重置
+        guard !isDragging else { return }
         NSCursor.arrow.set()
         if lineView.superview != nil {
             lineView.layer?.backgroundColor = NSColor.separatorColor.cgColor
@@ -88,6 +92,7 @@ class FFDetailsDragStrip: NSView {
 
     override func mouseDown(with event: NSEvent) {
         dragStart = convert(event.locationInWindow, from: nil)
+        isDragging = true
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -102,6 +107,7 @@ class FFDetailsDragStrip: NSView {
     override func mouseUp(with event: NSEvent) {
         dragStart = nil
         onDragEnd?()
+        isDragging = false
     }
 }
 
@@ -114,12 +120,12 @@ class FFDetailsDragStrip: NSView {
 ///   - 中间：文件名 + 大小（单行，13pt medium）
 ///   - 右侧：展开按钮（chevron.up SF Symbol）
 ///
-/// 展开状态（高度 210pt）：
-///   - 左侧：大尺寸预览图标（96x96，异步加载 QuickLook 缩略图，垂直居中）
-///   - 右侧两列信息：
-///     - 第一列：种类 / 大小 / 位置 / 创建日期 / 修改日期
+/// 展开状态（高度用户可拖拽调定并记忆，默认 210pt）：
+///   - 左侧：大尺寸预览图标（边长随图标区宽度与内容区高度动态缩放，异步加载 QuickLook 缩略图，垂直居中）
+///   - 右侧两列信息（流动填充布局，装不下的行隐藏、空间恢复后归位）：
+///     - 第一列：名称 / 种类 / 大小 / 位置 / 创建日期 / 修改日期（+ 文件类型专属信息）
 ///     - 第二列：标签（药丸，可点击筛选 / 右键移除）/ 文件说明（双击编辑）/ 文件来源
-///   - 底部：文件类型专属信息（分辨率 / 色彩空间 / EXIF / 时长 / 编码 等）
+///   - 底部：文件类型专属信息（分辨率 / 色彩空间 / EXIF / 时长 / 编码 等，合并入第一列）
 ///
 /// 接口：
 ///   - `update(with entry: FileEntry?)` 更新显示的文件信息
@@ -130,8 +136,6 @@ class ExpandableDetailsBar: NSView {
 
     /// 收起态高度 36pt + 状态栏 18pt = 54pt
     private let collapsedHeight: CGFloat = 54
-    /// 展开态高度 192pt + 状态栏 18pt = 210pt
-    private let expandedHeight: CGFloat = 210
     /// 状态栏高度
     private let statusBarHeight: CGFloat = 18
     /// 展开态高度下限（图标 + 至少两行信息 + 状态栏）
@@ -290,7 +294,7 @@ class ExpandableDetailsBar: NSView {
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
-        userExpandedHeight = (UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight") as? CGFloat) ?? 210
+        userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? 210
         iconWidth = (UserDefaults.standard.object(forKey: "FFDetailsBarIconWidth") as? CGFloat) ?? 112
         column1Width = (UserDefaults.standard.object(forKey: "FFDetailsBarColumn1Width") as? CGFloat) ?? 220
         super.init(frame: frameRect)
@@ -298,7 +302,7 @@ class ExpandableDetailsBar: NSView {
     }
 
     required init?(coder: NSCoder) {
-        userExpandedHeight = (UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight") as? CGFloat) ?? 210
+        userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? 210
         iconWidth = (UserDefaults.standard.object(forKey: "FFDetailsBarIconWidth") as? CGFloat) ?? 112
         column1Width = (UserDefaults.standard.object(forKey: "FFDetailsBarColumn1Width") as? CGFloat) ?? 220
         super.init(coder: coder)
@@ -779,6 +783,8 @@ class ExpandableDetailsBar: NSView {
         }
         topStrip.onDragEnd = { [weak self] in
             guard let self else { return }
+            // 尺寸记忆在拖拽结束时一次性落盘（终审 Minor：避免 ~60Hz 的 plist 写入）
+            UserDefaults.standard.set(self.userExpandedHeight, forKey: Self.heightKey)
             // 拖高后内容区高度变化 → 图标边长与流动填充重排
             updateIconEdge()
             rearrangeFlow()
@@ -786,9 +792,19 @@ class ExpandableDetailsBar: NSView {
 
         // 内部分界线拖拽回调（图标区宽度 / 列1 宽度）
         div1.onDrag = { [weak self] dx in self?.applyIconWidthDrag(deltaX: dx) }
-        div1.onDragEnd = { [weak self] in self?.rearrangeFlow() }
+        div1.onDragEnd = { [weak self] in
+            guard let self else { return }
+            // 尺寸记忆在拖拽结束时一次性落盘（终审 Minor：避免 ~60Hz 的 plist 写入）
+            UserDefaults.standard.set(self.iconWidth, forKey: Self.iconWidthKey)
+            rearrangeFlow()
+        }
         div2.onDrag = { [weak self] dx in self?.applyColumn1WidthDrag(deltaX: dx) }
-        div2.onDragEnd = { [weak self] in self?.rearrangeFlow() }
+        div2.onDragEnd = { [weak self] in
+            guard let self else { return }
+            // 尺寸记忆在拖拽结束时一次性落盘（终审 Minor：避免 ~60Hz 的 plist 写入）
+            UserDefaults.standard.set(self.column1Width, forKey: Self.column1WidthKey)
+            rearrangeFlow()
+        }
 
         // 多选汇总行注册表（顺序即流动顺序；行由 rearrangeFlow 统一摆放）
         multiRows = [multiCountRow, multiSizeRow, multiTypesRow, multiTagsRow]
@@ -849,12 +865,15 @@ class ExpandableDetailsBar: NSView {
     /// 触发点：高度/分界线拖拽、展开切换、refresh 末尾、面板尺寸变化。
     func rearrangeFlow() {
         guard isExpanded, window != nil else { return }
-        updateIconEdge()
         layoutSubtreeIfNeeded()
+        // 图标边长在布局 flush 后更新：图标尺寸不参与内容行高度推导，flush 后按真实内容区高度算得更精确（终审 Minor 2）
+        updateIconEdge()
         let ordered = flowOrderedRows
         guard !ordered.isEmpty else {
             setColumn(mainColumn1, rows: [])
             setColumn(mainColumn2, rows: [])
+            // 空分支同样记录尺寸，避免 layout() 因 lastArrangedSize 滞后而反复触发重排（终审 Minor 8）
+            lastArrangedSize = bounds.size
             return
         }
         let heights = measuredRowHeights(of: ordered)
@@ -875,6 +894,11 @@ class ExpandableDetailsBar: NSView {
     override func layout() {
         super.layout()
         guard isExpanded, bounds.size != lastArrangedSize else { return }
+        // 窗口/面板缩小后重新 clamp 已应用高度（终审 Important 1）
+        let applied = appliedExpandedHeight()
+        if heightConstraint.constant != applied {
+            heightConstraint.constant = applied
+        }
         rearrangeFlow()
     }
 
@@ -994,7 +1018,7 @@ class ExpandableDetailsBar: NSView {
         isExpanded.toggle()
     }
 
-    /// 上边缘拖拽：更新记忆高度并实时应用（clamp [100, 面板高度−120]）
+    /// 上边缘拖拽：更新记忆高度并实时应用（clamp [100, 面板高度−120]；落盘延迟到拖拽结束）
     private func applyHeightDrag(deltaY: CGFloat) {
         guard isExpanded else { return }
         let paneHeight = superview?.bounds.height ?? 0
@@ -1003,14 +1027,13 @@ class ExpandableDetailsBar: NSView {
         guard newHeight != userExpandedHeight else { return }
         userExpandedHeight = newHeight
         heightConstraint.constant = newHeight
-        UserDefaults.standard.set(newHeight, forKey: Self.heightKey)
         rearrangeFlow()
         if !isApplyingRemoteLayout {
             NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
         }
     }
 
-    /// 分界线1 拖拽：图标区宽度 = 图标大小（clamp [32, 内容行总宽 − 240]）
+    /// 分界线1 拖拽：图标区宽度 = 图标大小（clamp [32, 内容行总宽 − 240]；落盘延迟到拖拽结束）
     private func applyIconWidthDrag(deltaX: CGFloat) {
         guard isExpanded else { return }
         let modulesWidth = contentModules?.bounds.width ?? 0
@@ -1019,7 +1042,6 @@ class ExpandableDetailsBar: NSView {
         guard newWidth != iconWidth else { return }
         iconWidth = newWidth
         iconWidthC.constant = newWidth
-        UserDefaults.standard.set(newWidth, forKey: Self.iconWidthKey)
         updateIconEdge()
         rearrangeFlow()
         if !isApplyingRemoteLayout {
@@ -1027,7 +1049,7 @@ class ExpandableDetailsBar: NSView {
         }
     }
 
-    /// 分界线2 拖拽：列1 宽度（clamp [120, 总宽 − 图标区 − 240]）
+    /// 分界线2 拖拽：列1 宽度（clamp [120, 总宽 − 图标区 − 240]；落盘延迟到拖拽结束）
     private func applyColumn1WidthDrag(deltaX: CGFloat) {
         guard isExpanded else { return }
         let modulesWidth = contentModules?.bounds.width ?? 0
@@ -1036,7 +1058,6 @@ class ExpandableDetailsBar: NSView {
         guard newWidth != column1Width else { return }
         column1Width = newWidth
         column1WidthC.constant = newWidth
-        UserDefaults.standard.set(newWidth, forKey: Self.column1WidthKey)
         rearrangeFlow()
         if !isApplyingRemoteLayout {
             NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
@@ -1058,7 +1079,8 @@ class ExpandableDetailsBar: NSView {
         defer { isApplyingRemoteLayout = false }
         userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? userExpandedHeight
         if isExpanded {
-            heightConstraint.constant = userExpandedHeight
+            // 恢复/同步路径同样 clamp（终审 Important 1：大屏记忆值在小面板上重新收敛）
+            heightConstraint.constant = appliedExpandedHeight()
             // Task 3：宽度记忆值同步（另一栏拖分界线后本栏应用同样宽度）
             iconWidth = (UserDefaults.standard.object(forKey: Self.iconWidthKey) as? CGFloat) ?? iconWidth
             column1Width = (UserDefaults.standard.object(forKey: Self.column1WidthKey) as? CGFloat) ?? column1Width
@@ -1069,8 +1091,17 @@ class ExpandableDetailsBar: NSView {
         }
     }
 
+    /// 应用展开高度（统一 clamp 出口）：记忆值仅在拖拽路径产生时已 clamp，
+    /// 恢复/同步/窗口缩小路径必须再次 clamp，防止大屏记忆值在小面板上盖满文件列表
+    /// （终审 Important 1：栏过高时上边缘手柄与箭头会被推出窗口，无法从窗口内救回）。
+    private func appliedExpandedHeight() -> CGFloat {
+        let paneHeight = superview?.bounds.height ?? 0
+        let maxHeight = paneHeight > 0 ? max(minExpandedHeight, paneHeight - maxHeightReserve) : userExpandedHeight
+        return min(max(userExpandedHeight, minExpandedHeight), maxHeight)
+    }
+
     private func applyExpandedState(animated: Bool) {
-        let newHeight = isExpanded ? userExpandedHeight : collapsedHeight
+        let newHeight = isExpanded ? appliedExpandedHeight() : collapsedHeight
         heightConstraint.constant = newHeight
         topEdgeStrip?.isHidden = !isExpanded
         // 内部分界线仅展开态可见（收起态无内容模块区）

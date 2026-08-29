@@ -533,6 +533,8 @@ final class FFDetailsBarLayoutTests: XCTestCase {
     func testExpandedDividerStripsHaveFullHeight() {
         // modules 高度确定链回归：展开后两条分界线热区必须有完整高度（曾因
         // modules.bottom 为 lessThanOrEqual 而无高度来源，布局歧义塌缩为 0）
+        // 测试不依赖用户机器上的记忆值，保持布局日志干净
+        UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
         bar.isExpanded = true
         bar.layoutSubtreeIfNeeded()
@@ -570,6 +572,9 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
 
         let entry = FileEntry(path: url.path, name: url.lastPathComponent, isDirectory: false)
 
+        // 测试不依赖用户机器上的记忆值，保持布局日志干净
+        UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
         let host = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
@@ -596,6 +601,85 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         XCTAssertTrue(
             attached.contains { !bar.infoRows.contains($0) && !bar.multiRows.contains($0) },
             "至少一个类型专属行应被列持有")
+        host.close()
+    }
+
+    /// 终审建议 3 回归（验收 4 接线）：栏变矮时溢出行被摘除（可见行数由
+    /// FFDetailsFlowLayout 按 availableHeight 分配），栏变高后重新挂回，行不丢失。
+    ///
+    /// 驱动方式说明：host 窗口直接缩放 contentView 会与栏的 required 高度约束打架
+    /// （contentView frame 由窗口接管，heightConstraint 无法跟随），故走真实的远端同步
+    /// 接线驱动高度：写记忆 key + 广播 FFDetailsBarLayoutChanged → layoutChangedRemotely
+    /// 应用 clamp 后高度并重排（与「另一栏拖拽同步」同一条路径）。
+    @MainActor
+    func testOverflowRowsDetachAndReturnWithHeight() throws {
+        // 写一个真实 PNG 到临时目录（与类型专属行测试同构，保证有 ≥1 条专属信息行）
+        let ctx = CGContext(
+            data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let cgImage = try XCTUnwrap(ctx?.makeImage(), "应能生成 8×8 位图")
+        let pngData = try XCTUnwrap(
+            NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]),
+            "应能编码为 PNG")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flowfinder-overflow-\(UUID().uuidString).png")
+        try pngData.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let entry = FileEntry(path: url.path, name: url.lastPathComponent, isDirectory: false)
+
+        // 测试不依赖用户机器上的记忆值，保持布局日志干净
+        UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+        defer { UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight") }
+
+        let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
+        let host = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        // 托管与应用内浮层一致：底边贴容器、高度由栏自身高度约束驱动；
+        // 面板高 480（> 记忆值 210 + 让位 120），初始不触发 clamp
+        let container = NSView()
+        host.contentView = container
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            bar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        bar.isExpanded = true
+        bar.update(with: [entry])
+        container.layoutSubtreeIfNeeded()
+
+        func attachedCount() -> Int {
+            bar.mainColumn1.arrangedSubviews.count + bar.mainColumn2.arrangedSubviews.count
+        }
+
+        // 初始：栏高 210，行按可用高度分配（放不下的已摘除隐藏）
+        let count1 = attachedCount()
+        let flowCount = bar.flowOrderedRows.count
+        XCTAssertGreaterThan(count1, 0, "展开态应有可见行")
+
+        // 栏变矮（记忆 100，面板 480 不截断 clamp）：溢出行被摘除
+        UserDefaults.standard.set(CGFloat(100), forKey: "FFDetailsBarExpandedHeight")
+        NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: nil)
+        container.layoutSubtreeIfNeeded()
+        let count2 = attachedCount()
+        XCTAssertLessThan(count2, count1, "栏变矮后可见行数应减少（溢出行被摘除）")
+
+        // 栏变高回 210：行重新挂回
+        UserDefaults.standard.set(CGFloat(210), forKey: "FFDetailsBarExpandedHeight")
+        NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: nil)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(attachedCount(), count1, "栏变高后可见行应恢复原数量（行回归）")
+        // 全程行不得丢失：流动顺序注册表数量恒定
+        XCTAssertEqual(bar.flowOrderedRows.count, flowCount, "行不得丢失（流动顺序注册表数量恒定）")
+        // 程序化创建的窗口默认 isReleasedWhenClosed = true，close() 会立即释放窗口，
+        // 测试结束时的局部强引用再释放即成 over-release（XCTest 内存检查段错误）——关掉该行为
+        host.isReleasedWhenClosed = false
         host.close()
     }
 }
