@@ -648,8 +648,9 @@ enum FFMotion {
 /// 设计文档：docs/superpowers/specs/2026-08-28-divider-handle-glow-follow-design.md
 /// FFSplitView 负责视觉接线，本枚举只做可单元测试的数学核心。
 enum FFDividerGlowMath {
-    /// 渐隐半径（pt）：亮点上下各 60pt 渐隐至透明（总高约 120pt）
-    static let fadeRadius: CGFloat = 60
+    /// 渐隐半径（pt）：亮点上下各 120pt 渐隐至透明（总高约 240pt）。
+    /// 2026-08-29 用户验收反馈由 60 调大：原范围偏小。
+    static let fadeRadius: CGFloat = 120
     /// 拖拽热区半径（pt）：分隔线 X ±6pt 内按下/悬停生效
     static let hotZoneRadius: CGFloat = 6
     /// 每侧面板最小宽度（pt）：与 MainWindowController 的 NSSplitViewDelegate 约束一致

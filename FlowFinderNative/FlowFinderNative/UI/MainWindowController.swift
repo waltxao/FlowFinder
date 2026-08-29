@@ -71,10 +71,13 @@ private class FFSplitView: NSSplitView {
     /// 创建渐变亮线 layer（复用，避免重复创建）
     private func createGradientLine() {
         guard gradientLineLayer == nil else { return }
+        // 亮点颜色向白色提亮 50%（2026-08-29 用户验收反馈：原纯强调色偏暗）。
+        // 提亮结果在 layer 创建时定格；强调色变更后的刷新策略与原有行为一致。
+        let peakColor = FFAccent.current.blended(withFraction: 0.5, of: .white) ?? FFAccent.current
         let gradientLayer = CAGradientLayer()
         gradientLayer.colors = [
             NSColor.clear.cgColor,
-            FFAccent.current.cgColor,
+            peakColor.cgColor,
             NSColor.clear.cgColor
         ]
         gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
