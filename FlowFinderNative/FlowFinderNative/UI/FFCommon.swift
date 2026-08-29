@@ -130,6 +130,8 @@ enum FFAccent {
 extension Notification.Name {
     /// 强调色变更通知（由 FFAccent.set 广播，监听者收到后刷新 UI）
     static let accentColorChanged = Notification.Name("FFAccentColorChanged")
+    /// 详情栏布局尺寸（高度/图标区宽/列宽）变更广播：左右两个面板的详情栏互相同步
+    static let FFDetailsBarLayoutChanged = Notification.Name("FFDetailsBarLayoutChanged")
 }
 
 // MARK: - FFPaneMenuBuilder（列表/网格视图共享右键菜单）

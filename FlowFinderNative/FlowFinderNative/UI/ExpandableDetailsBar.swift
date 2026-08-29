@@ -4,6 +4,106 @@ import UniformTypeIdentifiers
 import AVFoundation
 import PDFKit
 
+/// 详情栏拖拽条：一段透明热区 + 悬停光标 + 拖拽回调。
+/// 上边缘调高（垂直）与内部两条分界线（水平，带 1pt 可见线）共用。
+/// 不用 NSSplitView：分隔样式与圆角卡片浮层难融合，且项目有布局约束风险史（设计文档方案 A）。
+private class FFDetailsDragStrip: NSView {
+    enum Axis { case horizontal, vertical }
+
+    private let axis: Axis
+    private let cursor: NSCursor
+    private var tracking: NSTrackingArea?
+    private var dragStart: CGPoint?
+
+    /// 拖拽回调：参数为本次鼠标拖动事件的位移（视图坐标系，dx 或 dy）
+    var onDrag: ((CGFloat) -> Void)?
+    /// 拖拽结束回调（松开鼠标）
+    var onDragEnd: (() -> Void)?
+
+    /// 1pt 可见线（showsLine = true 时创建，水平分界线用）
+    private let lineView = NSView()
+
+    init(axis: Axis, cursor: NSCursor, showsLine: Bool) {
+        self.axis = axis
+        self.cursor = cursor
+        super.init(frame: .zero)
+        wantsLayer = true
+        if showsLine {
+            lineView.wantsLayer = true
+            lineView.layer?.backgroundColor = NSColor.separatorColor.cgColor
+            lineView.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(lineView)
+            if axis == .horizontal {
+                NSLayoutConstraint.activate([
+                    lineView.centerXAnchor.constraint(equalTo: centerXAnchor),
+                    lineView.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+                    lineView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+                    lineView.widthAnchor.constraint(equalToConstant: 1),
+                ])
+            } else {
+                NSLayoutConstraint.activate([
+                    lineView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                    lineView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+                    lineView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+                    lineView.heightAnchor.constraint(equalToConstant: 1),
+                ])
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("FFDetailsDragStrip 不支持 IB 初始化")
+    }
+
+    /// 悬停提亮可见线（分界线手柄反馈，与双栏分隔线一致）
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        cursor.set()
+        if lineView.superview != nil {
+            lineView.layer?.backgroundColor = FFAccent.current.withAlphaComponent(0.6).cgColor
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        NSCursor.arrow.set()
+        if lineView.superview != nil {
+            lineView.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStart = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = dragStart else { return }
+        let loc = convert(event.locationInWindow, from: nil)
+        // 报「相对上次事件的增量」，dragStart 随事件前移；使用方以增量累积更新
+        let delta = (axis == .horizontal) ? loc.x - start.x : loc.y - start.y
+        dragStart = loc
+        onDrag?(delta)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragStart = nil
+        onDragEnd?()
+    }
+}
+
 // MARK: - ExpandableDetailsBar
 
 /// 可展开的文件详情面板
@@ -33,6 +133,19 @@ class ExpandableDetailsBar: NSView {
     private let expandedHeight: CGFloat = 210
     /// 状态栏高度
     private let statusBarHeight: CGFloat = 18
+    /// 展开态高度下限（图标 + 至少两行信息 + 状态栏）
+    private let minExpandedHeight: CGFloat = 100
+    /// 展开态高度相对面板高度的最大让位（保证文件列表露出一截）
+    private let maxHeightReserve: CGFloat = 120
+    /// 上边缘拖拽热区高度
+    private let topEdgeHeight: CGFloat = 6
+    /// 箭头按钮占位（上边缘热区尾部让出，避免盖住按钮）
+    private let chevronReserve: CGFloat = 32
+
+    /// 记忆 key（左右面板共用）
+    private static let heightKey = "FFDetailsBarExpandedHeight"
+    static let iconWidthKey = "FFDetailsBarIconWidth"
+    static let column1WidthKey = "FFDetailsBarColumn1Width"
 
     // MARK: - State
 
@@ -40,6 +153,12 @@ class ExpandableDetailsBar: NSView {
     private var selectedCount: Int = 0
     /// v0.7.4 修订: 完整选中数组（多选时用于汇总显示）
     private var selectedFiles: [FileEntry] = []
+    /// 用户拖出的展开高度（权威值，computedExpandedHeight 已退役）
+    private var userExpandedHeight: CGFloat
+    /// 上边缘调高手柄
+    private var topEdgeStrip: FFDetailsDragStrip!
+    /// 同步应用远端布局时为 true（抑制再次广播造成回环）
+    private var isApplyingRemoteLayout = false
 
     /// 展开/收起状态。设置时自动带动画过渡。
     var isExpanded: Bool = false {
@@ -145,13 +264,19 @@ class ExpandableDetailsBar: NSView {
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
+        userExpandedHeight = (UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight") as? CGFloat) ?? 210
         super.init(frame: frameRect)
         setupUI()
     }
 
     required init?(coder: NSCoder) {
+        userExpandedHeight = (UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight") as? CGFloat) ?? 210
         super.init(coder: coder)
         setupUI()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Setup
@@ -466,6 +591,12 @@ class ExpandableDetailsBar: NSView {
         chevronButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(chevronButton)
 
+        // 上边缘调高手柄：按住上下拖动调整展开高度（v0.7.6 详情栏重设计）
+        let topStrip = FFDetailsDragStrip(axis: .vertical, cursor: .resizeUpDown, showsLine: false)
+        topStrip.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(topStrip)   // 在 mouseInterceptor 之后添加 → 位于其上层，事件不被拦截
+        topEdgeStrip = topStrip
+
         // 高度约束（由展开状态驱动）
         heightConstraint = heightAnchor.constraint(equalToConstant: collapsedHeight)
         heightConstraint.priority = .required
@@ -493,6 +624,12 @@ class ExpandableDetailsBar: NSView {
             chevronButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             chevronButton.widthAnchor.constraint(equalToConstant: 20),
             chevronButton.heightAnchor.constraint(equalToConstant: 20),
+
+            // 上边缘热区：尾部让出箭头按钮区域
+            topStrip.topAnchor.constraint(equalTo: topAnchor),
+            topStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
+            topStrip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -chevronReserve),
+            topStrip.heightAnchor.constraint(equalToConstant: topEdgeHeight),
 
             // compact 填充 bar 顶部区域，底部留出 statusBarHeight 给状态栏
             compactView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
@@ -541,9 +678,25 @@ class ExpandableDetailsBar: NSView {
             heightConstraint,
         ])
 
+        topStrip.onDrag = { [weak self] dy in
+            self?.applyHeightDrag(deltaY: dy)
+        }
+        topStrip.onDragEnd = { [weak self] in
+            guard let self else { return }
+            // 拖高后内容区高度变化 → 图标边长与流动填充重排
+            updateIconEdge()
+            rearrangeFlow()
+        }
+
         applyExpandedState(animated: false)
+        observeLayoutChanged()
         refresh()
     }
+
+    /// Task 3 接入：按内容区高度与图标区宽度重算图标边长
+    func updateIconEdge() {}
+    /// Task 4 接入：流动填充重排
+    func rearrangeFlow() {}
 
     // MARK: - Builders
 
@@ -661,9 +814,47 @@ class ExpandableDetailsBar: NSView {
         isExpanded.toggle()
     }
 
-    private func applyExpandedState(animated: Bool) {
-        let newHeight = isExpanded ? computedExpandedHeight() : collapsedHeight
+    /// 上边缘拖拽：更新记忆高度并实时应用（clamp [100, 面板高度−120]）
+    private func applyHeightDrag(deltaY: CGFloat) {
+        guard isExpanded else { return }
+        let paneHeight = superview?.bounds.height ?? 0
+        let maxHeight = max(minExpandedHeight, paneHeight - maxHeightReserve)
+        let newHeight = min(max(userExpandedHeight + deltaY, minExpandedHeight), maxHeight)
+        guard newHeight != userExpandedHeight else { return }
+        userExpandedHeight = newHeight
         heightConstraint.constant = newHeight
+        UserDefaults.standard.set(newHeight, forKey: Self.heightKey)
+        rearrangeFlow()
+        if !isApplyingRemoteLayout {
+            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
+        }
+    }
+
+    /// 监听另一侧详情栏的布局变更（拖左栏右栏同步）
+    private func observeLayoutChanged() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(layoutChangedRemotely),
+            name: .FFDetailsBarLayoutChanged, object: nil
+        )
+    }
+
+    @objc private func layoutChangedRemotely(_ note: Notification) {
+        // object 为 Any? 不能直接 !==（需类约束），先转换为详情栏类型再比较
+        guard (note.object as? ExpandableDetailsBar) !== self else { return }
+        isApplyingRemoteLayout = true
+        defer { isApplyingRemoteLayout = false }
+        userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? userExpandedHeight
+        if isExpanded {
+            heightConstraint.constant = userExpandedHeight
+            updateIconEdge()
+            rearrangeFlow()
+        }
+    }
+
+    private func applyExpandedState(animated: Bool) {
+        let newHeight = isExpanded ? userExpandedHeight : collapsedHeight
+        heightConstraint.constant = newHeight
+        topEdgeStrip?.isHidden = !isExpanded
         compactView.isHidden = isExpanded
         expandedView.isHidden = !isExpanded
 
@@ -686,27 +877,6 @@ class ExpandableDetailsBar: NSView {
         } else {
             performLayout()
         }
-    }
-
-    /// 展开态高度：基础 192pt（图标 96 + 两列信息约 6 行）+ 文件类型专属信息高度
-    /// 图片/视频信息行多时按行数扩展，确保完整显示（问题 9 根因：固定 210 截断图片信息）
-    private func computedExpandedHeight() -> CGFloat {
-        // 问题 7：专属信息合并到主信息列后按单列计算——主信息 5 行 + 专属信息行数
-        var extra: CGFloat = 0
-        if selectedCount > 1 {
-            // v0.7.4 修订 4：多选与单选同布局（图标 + 两列），行数约 4 行（数量/总大小/类型/标签），
-            // 基准高度与单选一致，略加高容纳标签药丸行
-            return 192 + 16
-        }
-        if let entry = entry {
-            let infoRows = gatherFileInfo(entry: entry).count
-            let totalRows = 5 + infoRows  // 种类/大小/位置/创建/修改 + 专属信息
-            if totalRows > 7 {
-                // 基准 192pt 容纳约 7 行（两列布局时），单列合并后每行 +16pt
-                extra = CGFloat(totalRows - 7) * 16
-            }
-        }
-        return 192 + extra
     }
 
     // MARK: - 路径交互（问题 9：点击跳转 / 右键复制）
@@ -795,9 +965,6 @@ class ExpandableDetailsBar: NSView {
             multiIconView.update(with: Array(selectedFiles.prefix(4)))
             populateMultiSelectSummary()
             chevronButton.isEnabled = true
-            if isExpanded {
-                heightConstraint.constant = computedExpandedHeight()
-            }
             return
         }
 
@@ -826,10 +993,6 @@ class ExpandableDetailsBar: NSView {
 
         // 文件类型专属信息（分辨率 / EXIF / 时长 / 编码 等）
         updateFileTypeSpecificInfo(entry: entry)
-        // 动态高度：信息行数变化时更新展开高度（行数多时更高，避免截断）
-        if isExpanded {
-            heightConstraint.constant = computedExpandedHeight()
-        }
 
         if isExpanded { loadThumbnail() }
     }
