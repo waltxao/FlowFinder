@@ -485,3 +485,41 @@ final class FFDividerGlowMathTests: XCTestCase {
         XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 800), 450)
     }
 }
+
+// MARK: - FFDetailsFlowLayout（详情栏流动填充分配）
+
+final class FFDetailsFlowLayoutTests: XCTestCase {
+
+    func testFlowSplitBasic() {
+        // 4 行每行 16pt、间距 4：累计 16/36/56/76
+        XCTAssertEqual(FFDetailsFlowLayout.flowSplit(itemHeights: [16, 16, 16, 16], availableHeight: 68), 3)
+        XCTAssertEqual(FFDetailsFlowLayout.flowSplit(itemHeights: [16, 16, 16, 16], availableHeight: 76), 4)
+    }
+
+    func testFlowSplitUneven() {
+        // 首行较高（如名称行）：30/50/70 → 恰好 3 行
+        XCTAssertEqual(FFDetailsFlowLayout.flowSplit(itemHeights: [30, 16, 16, 16, 16], availableHeight: 70), 3)
+    }
+
+    func testFlowSplitAtLeastOne() {
+        // 可用高度不足首行时仍返回 1（名称行始终可见）；高度 0 同理
+        XCTAssertEqual(FFDetailsFlowLayout.flowSplit(itemHeights: [30, 16, 16], availableHeight: 10), 1)
+        XCTAssertEqual(FFDetailsFlowLayout.flowSplit(itemHeights: [16, 16], availableHeight: 0), 1)
+    }
+
+    func testFlowSplitEmpty() {
+        XCTAssertEqual(FFDetailsFlowLayout.flowSplit(itemHeights: [], availableHeight: 100), 0)
+    }
+
+    func testVisibleItemCountBothColumns() {
+        let heights = [CGFloat](repeating: 16, count: 10)
+        // 列1 装 3，剩余 7 中列2 再装 3 → 可见 6
+        XCTAssertEqual(FFDetailsFlowLayout.visibleItemCount(itemHeights: heights, availableHeight: 68), 6)
+        // 列1 装 6（累计 116）、剩余 4 全进列2 → 全可见
+        XCTAssertEqual(FFDetailsFlowLayout.visibleItemCount(itemHeights: heights, availableHeight: 120), 10)
+    }
+
+    func testVisibleItemCountEmpty() {
+        XCTAssertEqual(FFDetailsFlowLayout.visibleItemCount(itemHeights: [], availableHeight: 100), 0)
+    }
+}

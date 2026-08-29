@@ -678,3 +678,34 @@ enum FFDividerGlowMath {
         return min(max(mouseX, minPaneWidth), maxPosition)
     }
 }
+
+/// 详情栏流动填充分配纯计算（v0.7.6 发布后详情栏重设计）。
+/// 设计文档：docs/superpowers/specs/2026-08-29-details-bar-redesign-design.md
+/// ExpandableDetailsBar 负责视觉接线，本枚举只做可单元测试的数学核心。
+enum FFDetailsFlowLayout {
+    /// 信息行之间的垂直间距（与列 NSStackView spacing 一致）
+    static let rowSpacing: CGFloat = 4
+
+    /// 列1 应装项数：按顺序累计高度（首项不计间距，其后每项 +rowSpacing），
+    /// 超出 availableHeight 前的项数；项非空时至少返回 1（名称行始终可见）。
+    static func flowSplit(itemHeights: [CGFloat], availableHeight: CGFloat) -> Int {
+        var cumulative: CGFloat = 0
+        for (index, height) in itemHeights.enumerated() {
+            cumulative += (index == 0 ? 0 : rowSpacing) + height
+            if cumulative > availableHeight {
+                return max(index, 1)
+            }
+        }
+        return itemHeights.count
+    }
+
+    /// 两列合计可见项数：列1 取 flowSplit，剩余项再按同一可用高度分配给列2，
+    /// 列2 也装不下的项隐藏（返回值不含）。
+    static func visibleItemCount(itemHeights: [CGFloat], availableHeight: CGFloat) -> Int {
+        guard !itemHeights.isEmpty else { return 0 }
+        let first = flowSplit(itemHeights: itemHeights, availableHeight: availableHeight)
+        let rest = Array(itemHeights[first...])
+        let second = flowSplit(itemHeights: rest, availableHeight: availableHeight)
+        return first + second
+    }
+}
