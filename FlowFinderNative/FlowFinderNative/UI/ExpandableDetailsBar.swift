@@ -223,15 +223,19 @@ class ExpandableDetailsBar: NSView {
     /// 第一列信息容器（种类/大小/位置/日期 + 文件类型专属信息合并追加）
     /// 问题 7：提升为存储属性，使 updateFileTypeSpecificInfo 能把专属信息行追加到主信息列，
     /// 不再单独开两列（视觉上与其他列对齐、连贯）
-    private var mainColumn1: NSStackView!
+    /// internal：回归测试访问
+    var mainColumn1: NSStackView!
     /// 第二列信息容器（标签/文件说明/文件来源）
-    private var mainColumn2: NSStackView!
+    /// internal：回归测试访问
+    var mainColumn2: NSStackView!
 
     // v0.7.4 项 7：所有信息行的引用（多选/未选时隐藏空白条目，单选时显示）
-    private var infoRows: [NSView] = []
+    /// internal：回归测试访问
+    var infoRows: [NSView] = []
 
     /// 多选汇总行（流动顺序：数量 → 总大小 → 包含类型 → 包含标签）
-    private var multiRows: [NSView] = []
+    /// internal：回归测试访问
+    var multiRows: [NSView] = []
 
     /// 上次流动填充时的 bar 尺寸（layout 中防重复重排）
     private var lastArrangedSize: NSSize = .zero
@@ -806,7 +810,8 @@ class ExpandableDetailsBar: NSView {
     // MARK: - 流动填充
 
     /// 流动顺序的全部行：单选 = 前 6 常规行 + 类型专属行 + 后 3 行；多选 = 4 汇总行
-    private var flowOrderedRows: [NSView] {
+    /// internal：流动顺序回归测试访问
+    var flowOrderedRows: [NSView] {
         if selectedCount > 1 { return multiRows }
         guard entry != nil else { return [] }
         let base = infoRows
@@ -830,9 +835,10 @@ class ExpandableDetailsBar: NSView {
         for view in column.arrangedSubviews {
             column.removeArrangedSubview(view)
             view.removeFromSuperview()
-            // 摘除的专属信息行同步注销（本 SDK 对不在 arrangedSubviews 的视图调
-            // removeArrangedSubview 会抛 NSInternalInconsistencyException，见 appendFolderSizeRow 防护）
-            appendedTypeInfoRows.removeAll { $0 === view }
+            // 不在此注销 appendedTypeInfoRows：注册表生命周期归 updateFileTypeSpecificInfo
+            // （每次选中重建），流动重排只摘挂载、不改注册表——否则测量步骤的全量摘除会
+            // 清空注册表，后续重排时专属行整段消失（审查 Critical 修复）。
+            // 溢出被摘除的行仍留在注册表中（持有生命周期，空间恢复时重新归位）
         }
         for row in rows {
             column.addArrangedSubview(row)
@@ -1765,9 +1771,13 @@ class ExpandableDetailsBar: NSView {
     /// 问题 7 修复：专属信息行**合并到主信息列**（mainColumn1，与种类/大小/位置/日期同一列），
     /// 不再单独开两列——与主信息对齐、视觉连贯（用户反馈"单开两列很不协调"）。
     private func updateFileTypeSpecificInfo(entry: FileEntry) {
-        // 先移除上一次追加的专属信息行
+        // 移除上一次的专属信息行。防护：行可能已被流动填充摆到列2或暂时摘除
+        // （removeArrangedSubview 对未附着行会抛 NSInternalInconsistencyException，
+        // 与 appendFolderSizeRow 的 contains 防护同一模式——审查修复：注册表不再被流动逻辑改动）
         for row in appendedTypeInfoRows {
-            mainColumn1?.removeArrangedSubview(row)
+            if row.superview === mainColumn1 {
+                mainColumn1?.removeArrangedSubview(row)
+            }
             row.removeFromSuperview()
         }
         appendedTypeInfoRows.removeAll()
@@ -2050,6 +2060,8 @@ class ExpandableDetailsBar: NSView {
         mainColumn1?.addArrangedSubview(row)
         appendedTypeInfoRows.append(row)
         folderSizeRow = row
+        // 异步回填不打断流动顺序（审查 Minor：回填后重排归位）
+        rearrangeFlow()
     }
 
     // MARK: - 工具方法

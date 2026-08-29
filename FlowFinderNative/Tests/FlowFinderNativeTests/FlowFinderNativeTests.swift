@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import FlowFinderNative
 
@@ -540,5 +541,61 @@ final class FFDetailsBarLayoutTests: XCTestCase {
         let expected = bar.frame.height - 6 - 18
         XCTAssertEqual(bar.dividerIconToCol1.bounds.height, expected, accuracy: 1.0)
         XCTAssertEqual(bar.dividerCol1ToCol2.bounds.height, expected, accuracy: 1.0)
+    }
+}
+
+// MARK: - 类型专属行注册表 × 流动填充 回归（审查 Critical 修复）
+
+final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
+
+    /// 审查修复回归：rearrangeFlow 多次执行后，类型专属行仍持有于注册表并被列摆放。
+    /// 此前 setColumn 的注销副作用会在测量步骤清空 appendedTypeInfoRows，导致
+    /// 分界线拖拽/窗口尺寸变化后的下一次重排把专属信息（分辨率/EXIF 等）整段摘除。
+    @MainActor
+    func testTypeSpecificRowsSurviveRepeatedRearrange() throws {
+        // 写一个真实 PNG 到临时目录（CGImageSource 可读出像素宽高），使
+        // gatherImageInfo 产出 ≥1 条专属信息行（分辨率/尺寸/文件大小…）
+        let ctx = CGContext(
+            data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let cgImage = try XCTUnwrap(ctx?.makeImage(), "应能生成 8×8 位图")
+        let pngData = try XCTUnwrap(
+            NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]),
+            "应能编码为 PNG")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flowfinder-type-rows-\(UUID().uuidString).png")
+        try pngData.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let entry = FileEntry(path: url.path, name: url.lastPathComponent, isDirectory: false)
+
+        let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        let host = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        host.contentView = bar // rearrangeFlow 需 window != nil 才生效
+        bar.isExpanded = true
+
+        bar.update(with: [entry])
+        bar.layoutSubtreeIfNeeded()
+
+        // 多次重排，等价于分界线拖拽/高度拖拽/窗口尺寸变化的触发路径
+        bar.rearrangeFlow()
+        bar.rearrangeFlow()
+
+        // 6 常规行 + ≥1 专属行 + 3 常规行：专属行必须仍在流动顺序中
+        let flow = bar.flowOrderedRows
+        XCTAssertTrue(flow.count > 9,
+                      "专属信息行应保留在流动顺序中（6 常规 + ≥1 专属 + 3 常规），实际 \(flow.count)")
+
+        // 且至少一个类型专属行仍被某一列持有（不在 infoRows/multiRows 中的行）
+        let attached = bar.mainColumn1.arrangedSubviews + bar.mainColumn2.arrangedSubviews
+        XCTAssertTrue(
+            attached.contains { !bar.infoRows.contains($0) && !bar.multiRows.contains($0) },
+            "至少一个类型专属行应被列持有")
+        host.close()
     }
 }
