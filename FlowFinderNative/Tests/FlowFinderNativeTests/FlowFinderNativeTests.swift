@@ -540,6 +540,14 @@ final class FFDetailsBarLayoutTests: XCTestCase {
         // 测试不依赖用户机器上的记忆值，保持布局日志干净
         barDefaultsSnapshot = UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight")
         UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+        defer {
+            // 快照恢复（复核 Minor 2 补全：不在测试域留下删除痕迹）
+            if let snapshot = barDefaultsSnapshot {
+                UserDefaults.standard.set(snapshot, forKey: "FFDetailsBarExpandedHeight")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+            }
+        }
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
         bar.isExpanded = true
         bar.layoutSubtreeIfNeeded()
@@ -584,6 +592,14 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         // 测试不依赖用户机器上的记忆值，保持布局日志干净
         barDefaultsSnapshot = UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight")
         UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+        defer {
+            // 快照恢复（复核 Minor 2 补全：不在测试域留下删除痕迹）
+            if let snapshot = barDefaultsSnapshot {
+                UserDefaults.standard.set(snapshot, forKey: "FFDetailsBarExpandedHeight")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+            }
+        }
 
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
         // 用普通容器承载（不用 NSWindow：窗口簿记延迟块与测试裸释放竞态，曾致运行器 SIGSEGV）
@@ -644,6 +660,14 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
                 UserDefaults.standard.set(snapshot, forKey: "FFDetailsBarExpandedHeight")
             } else {
                 UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+        defer {
+            // 快照恢复（复核 Minor 2 补全：不在测试域留下删除痕迹）
+            if let snapshot = barDefaultsSnapshot {
+                UserDefaults.standard.set(snapshot, forKey: "FFDetailsBarExpandedHeight")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+            }
+        }
             }
         }
 
