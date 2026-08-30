@@ -764,7 +764,8 @@ public class FileListView: NSView {
         qlTableView.onSpaceKey = { [weak self] _ in
             guard let self = self else { return }
             FFDebug.log("FileListView onSpaceKey side=\(self.getSide()) -> posting notification")
-            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: nil, userInfo: ["side": self.getSide()])
+            // object=self（本面板实例）：接收方 isOwnPaneNotification 据此过滤跨窗口请求，防双窗口 QL 双开（审查 Minor 3）
+            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: self, userInfo: ["side": self.getSide()])
         }
         // Enter 键 → 内联重命名（与 Finder 一致，委托给 actionsController）
         qlTableView.onEnterKey = { [weak self] in

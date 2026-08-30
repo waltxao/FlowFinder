@@ -1578,6 +1578,15 @@ public class MainWindowController: NSWindowController {
         }
     }
 
+    /// 网格默认用户首启焦点须落在当前可见视图（审查 Important 1）。
+    /// setupUI 阶段 initialFirstResponder 固定挂在左列表；若「默认视图」设置为 grid，
+    /// loadInitialDirectories 切到网格后 initialFirstResponder 仍指向隐藏的列表 tableView，
+    /// 键盘焦点会落在不可见视图。keyViewChain 尾节点即当前视图模式对应的焦点落点，
+    /// 视图模式初始应用/切换后调用本方法重挂初始焦点。
+    private func refreshInitialFirstResponder() {
+        window?.initialFirstResponder = keyViewChain(for: .left).last
+    }
+
     /// 单面板的 keyView 链：工具栏控件（搜索/排序/分组/视图切换）+ 当前视图模式的文件视图焦点落点
     private func keyViewChain(for side: PaneSide) -> [NSView] {
         let toolbar = side == .left ? leftPaneToolbar : rightPaneToolbar
@@ -1676,6 +1685,8 @@ public class MainWindowController: NSWindowController {
         }
         // Wave2 P0-1：视图模式切换后重建 keyViewLoop（链尾落点在列表/网格间切换）
         buildKeyViewLoops()
+        // 网格默认用户首启焦点须落在当前可见视图（审查 Important 1）
+        refreshInitialFirstResponder()
     }
 
     private func loadInitialDirectories() {
@@ -1712,6 +1723,9 @@ public class MainWindowController: NSWindowController {
         rightPaneViewModel.setViewMode(initialMode)
         updateViewMode(side: .left, mode: initialMode)
         updateViewMode(side: .right, mode: initialMode)
+        // 网格默认用户首启焦点须落在当前可见视图（审查 Important 1）：
+        // 首启按「默认视图」设置切到网格时，初始焦点改挂当前可见视图的落点
+        refreshInitialFirstResponder()
 
         leftPaneViewModel.refresh()
         rightPaneViewModel.refresh()
@@ -1833,9 +1847,10 @@ public class MainWindowController: NSWindowController {
         guard let tag = (notification.userInfo?["tag"] as? Tag) ?? (notification.object as? Tag) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.setTagFilter(tag)
-        // 发布通知让侧边栏更新标签高亮
+        // 发布通知让侧边栏更新标签高亮（object=self 携带 host controller 身份，
+        // 与同文件 :1636/:1780 的非 nil object 发布一致，防跨窗口串扰——审查 Minor 2）
         NotificationCenter.default.post(
-            name: .paneTagFilterChanged, object: nil,
+            name: .paneTagFilterChanged, object: self,
             userInfo: ["tagFilter": vm.state.tagFilter as Any]
         )
     }

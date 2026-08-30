@@ -27,8 +27,10 @@ extension MainWindowController {
             let origin = referenceWindow.frame.origin
             controller.window?.setFrameOrigin(NSPoint(x: origin.x + 28, y: origin.y - 28))
         }
-        controller.showWindow(nil)
+        // 先注册到 extras 强引用数组再 showWindow（审查 Minor 6）：
+        // NSWindow 不持有其 windowController，显示前必须先被 AppDelegate 持有防提前释放
         (NSApp.delegate as? AppDelegate)?.registerWindowController(controller)
+        controller.showWindow(nil)
     }
 
     @objc func menuOpen(_ sender: Any?) {
@@ -92,6 +94,9 @@ extension MainWindowController {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects(paths.map { NSURL(fileURLWithPath: $0) })
+        // 同时提供文本形式路径（审查 Minor 5）：每行一个路径，
+        // 提升 Finder 之外目标（终端/编辑器等）的粘贴互通
+        pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
     /// 读取系统剪贴板中的文件 URL（Finder 或本应用写入的 fileURL；纯文本等其他内容忽略）
@@ -113,8 +118,11 @@ extension MainWindowController {
             NSApp.sendAction(action, to: textView, from: self)
             return true
         }
-        // 少数场景 firstResponder 是可编辑 NSTextField 本身（未挂 field editor 时）
-        if let textField = firstResponder as? NSTextField, textField.isEditable {
+        // 少数场景 firstResponder 是可编辑 NSTextField 本身（未挂 field editor 时）。
+        // 审查 Minor 4：对不可响应目标 action 的对象不转发（如未挂 field editor 的
+        // NSTextField 对 paste:/cut: 无有效实现），回退文件操作语义，避免动作被静默吞掉
+        if let textField = firstResponder as? NSTextField, textField.isEditable,
+           textField.responds(to: action) {
             NSApp.sendAction(action, to: textField, from: self)
             return true
         }
@@ -763,11 +771,14 @@ extension MainWindowController {
              #selector(menuMoveToTrash(_:)),
              #selector(NSText.copy(_:)),
              #selector(NSText.cut(_:)),
-             #selector(menuRename(_:)),
              #selector(menuCopyPaths(_:)),
              #selector(menuCopyToOther(_:)),
              #selector(menuMoveToOther(_:)):
             return hasSelection
+        // 内联重命名仅支持单选，多选时菜单项应禁用（审查 Minor 1），
+        // 与 menuRename action 内 count == 1 的前置校验保持一致
+        case #selector(menuRename(_:)):
+            return activePaneViewModel.selectedFiles.count == 1
         case #selector(menuOpenInOther(_:)):
             // 仅当选中项为目录时可用
             return activePaneViewModel.selectedFiles.first?.isDirectory ?? false

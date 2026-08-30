@@ -718,7 +718,8 @@ public class FileGridView: NSView {
         // side 动态取 self.getSide()（identifier 由 MainWindowController 在 init 之后设置）。
         (collectionView as? DraggingCollectionView)?.onSpaceKey = { [weak self] in
             guard let self = self else { return }
-            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: nil, userInfo: ["side": self.getSide()])
+            // object=self（本面板实例）：接收方 isOwnPaneNotification 据此过滤跨窗口请求，防双窗口 QL 双开（审查 Minor 3）
+            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: self, userInfo: ["side": self.getSide()])
         }
         // Enter 键 → 内联重命名（与 Finder 一致，委托给 actionsController）
         (collectionView as? DraggingCollectionView)?.onEnterKey = { [weak self] in
