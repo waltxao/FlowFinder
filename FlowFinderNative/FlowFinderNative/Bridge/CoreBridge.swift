@@ -197,6 +197,17 @@ public final class CoreBridge {
     /// FSEvents 回调上下文（持有 changeHandler 闭包，防止被释放）
     private var fseventsContext: FSEventsContext?
 
+    /// FSEvents watcher 生命周期专用串行队列（Wave1 P0-1）：
+    /// 「stop 旧 watcher + start 新 watcher + 等握手」整体在此后台执行，
+    /// 主线程不再同步等待握手（ff_fsevents_start 内部握手最长可等 10s）。
+    /// 串行保证先后两次 start 按序完成，避免旧 context 被并发覆盖导致 use-after-free。
+    private let fseventsLifecycleQueue = DispatchQueue(label: "com.flowfinder.fsevents.lifecycle", qos: .userInitiated)
+
+    /// FSEvents watcher 状态缓存（Wave1 P0-1）：由启动/停止流程在握手完成后于
+    /// 后台线程写入，任意线程（含主线程）读取零阻塞。取代旧实现
+    /// fseventsWatcherStatus() 的 ffiQueue.sync 轮询（主线程查询需等待 FFI）。
+    private let fseventsStatusCache = ThreadSafeFFIResult<FSEventsStatus>()
+
     // MARK: - Initialization
 
     private init() {}
@@ -734,79 +745,123 @@ public final class CoreBridge {
 
     // MARK: - FSEvents Watcher (Sub-project 5)
 
-    /// Start watching a path for filesystem changes
+    /// Start watching a path for filesystem changes（Wave1 P0-1：启动握手异步化）
+    ///
+    /// 旧实现在调用线程（主线程）上用 semaphore 同步等待「stop 旧 watcher +
+    /// ff_fsevents_start + 状态确认」全流程，而 ff_fsevents_start 内部握手
+    /// （rust-core fsevents.rs SETUP_TIMEOUT）最长可等 10s，高负载/网络目录下
+    /// 会冻结主线程。现把整个生命周期流程放入专用后台串行队列
+    /// fseventsLifecycleQueue：主线程立即返回，completion 固定回主线程上报
+    /// active（成功）或 failed（失败）；失败路径与旧实现的 throw → 上层错误
+    /// 日志链路一致，保持可观察。
+    ///
     /// - Parameters:
     ///   - path: Directory path to watch
-    ///   - changeHandler: Called when a change is detected
-    /// - Throws: CoreBridgeError if operation fails
-    func startFSEventsWatcher(path: String, changeHandler: @escaping (String) -> Void) throws {
+    ///   - changeHandler: Called when a change is detected（Rust worker 线程触发，
+    ///     调用方需自行切回主线程处理 UI）
+    ///   - completion: 主线程回调，上报启动结果（成功 = watcher 已进入 active）
+    func startFSEventsWatcher(path: String,
+                              changeHandler: @escaping (String) -> Void,
+                              completion: @escaping (Result<Void, Error>) -> Void) {
         guard !path.isEmpty else {
-            throw CoreBridgeError.invalidPath("Path is empty")
-        }
-
-        // 防止重复启动：若已有 watcher 运行（context 或 handle 非空），先停止。
-        // 否则旧 context 会被下面 `self.fseventsContext = context` 覆盖并释放，
-        // 而 Rust 侧仍持有旧 context 的 userData 指针，导致 use-after-free。
-        if fseventsContext != nil || fseventsWatcherHandle != 0 {
-            try? stopFSEventsWatcher()
-        }
-
-        // 创建上下文并保留引用，防止被释放
-        let context = FSEventsContext(changeHandler: changeHandler)
-        self.fseventsContext = context
-        // passUnretained：不增加 retain count，依赖 self.fseventsContext 的强引用保持存活。
-        // stopFSEventsWatcher 会先调用 ff_fsevents_stop（Rust 清理状态、停止回调），
-        // 再置空 self.fseventsContext，确保回调期间 context 不会被释放。
-        let contextPtr = Unmanaged.passUnretained(context).toOpaque()
-
-        var ffiResult: Int32 = -1
-        let semaphore = DispatchSemaphore(value: 0)
-
-        ffiQueue.async {
-            defer { semaphore.signal() }
-
-            let result = path.withCString { cPath in
-                ff_fsevents_start(cPath, fseventsCallback, contextPtr)
+            DispatchQueue.main.async {
+                completion(.failure(CoreBridgeError.invalidPath("Path is empty")))
             }
-            ffiResult = result
+            return
         }
 
-        semaphore.wait()
+        fseventsLifecycleQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        // 成功契约：ff_error_t 中负值表示错误（FF_ERR_INVALID_PATH = -2 等），
-        // 非负值（>= 0）表示成功。当前 Rust 实现返回 0，但若未来 Rust 改为
-        // 返回正数 handle，此处 >= 0 仍能正确接受并把返回值作为 handle 存储。
-        guard ffiResult >= 0 else {
-            self.fseventsContext = nil
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
+            // 防止重复启动：若已有 watcher 运行（context 或 handle 非空），先停止。
+            // 否则旧 context 会被下面 `self.fseventsContext = context` 覆盖并释放，
+            // 而 Rust 侧仍持有旧 context 的 userData 指针，导致 use-after-free。
+            // 整段流程在串行生命周期队列上执行：stop 完成后才继续 start。
+            if self.fseventsContext != nil || self.fseventsWatcherHandle != 0 {
+                self.stopFSEventsWatcher()
+            }
 
-        // 存储 ff_fsevents_start 返回的真实 handle（当前实现为 0，未来可能为正数），
-        // stopFSEventsWatcher 会使用此 handle 调用 ff_fsevents_stop。
-        self.fseventsWatcherHandle = ffiResult
+            // 创建上下文并保留引用，防止被释放
+            let context = FSEventsContext(changeHandler: changeHandler)
+            self.fseventsContext = context
+            // passUnretained：不增加 retain count，依赖 self.fseventsContext 的强引用保持存活。
+            // stopFSEventsWatcher 会先调用 ff_fsevents_stop（Rust 清理状态、停止回调），
+            // 再置空 self.fseventsContext，确保回调期间 context 不会被释放。
+            let contextPtr = Unmanaged.passUnretained(context).toOpaque()
 
-        // 状态消费：确认 watcher 已进入 active（而非 failed/starting），
-        // 使 Swift 侧能区分 failed 与 active。
-        if fseventsWatcherStatus() != .active {
-            self.fseventsContext = nil
-            self.fseventsWatcherHandle = 0
-            throw CoreBridgeError.ffiError("FSEvents watcher did not reach active state")
+            var ffiResult: Int32 = -1
+            var statusRaw: Int32 = FSEventsStatus.failed.rawValue
+            let semaphore = DispatchSemaphore(value: 0)
+
+            ffiQueue.async {
+                defer { semaphore.signal() }
+
+                let result = path.withCString { cPath in
+                    ff_fsevents_start(cPath, fseventsCallback, contextPtr)
+                }
+                ffiResult = result
+                // 握手返回时 Rust 侧状态已定格（active/failed/stopped），
+                // 在同一队列任务内读取，免去二次排队（写入状态缓存用）。
+                statusRaw = ff_fsevents_status()
+            }
+
+            // 仅后台线程等待握手（Wave1 P0-1：主线程不再等待）
+            semaphore.wait()
+
+            // 成功契约：ff_error_t 中负值表示错误（FF_ERR_INVALID_PATH = -2 等），
+            // 非负值（>= 0）表示成功。当前 Rust 实现返回 0，但若未来 Rust 改为
+            // 返回正数 handle，此处 >= 0 仍能正确接受并把返回值作为 handle 存储。
+            let status = FSEventsStatus(rawValue: statusRaw) ?? .failed
+            guard ffiResult >= 0, status == .active else {
+                self.fseventsContext = nil
+                self.fseventsWatcherHandle = 0
+                // 状态缓存如实记录观测值（failed/stopped），失败保持可观察
+                self.fseventsStatusCache.set(status)
+                // 旧实现此处 throw（"did not reach active state" / FFI 错误），
+                // 异步化后经主线程 completion 上报，上层错误日志链路不变
+                let errorMessage = ffiResult >= 0
+                    ? "FSEvents watcher did not reach active state"
+                    : getLastError()
+                DispatchQueue.main.async {
+                    completion(.failure(CoreBridgeError.ffiError(errorMessage)))
+                }
+                return
+            }
+
+            // 存储 ff_fsevents_start 返回的真实 handle（当前实现为 0，未来可能为正数），
+            // stopFSEventsWatcher 会使用此 handle 调用 ff_fsevents_stop。
+            self.fseventsWatcherHandle = ffiResult
+            self.fseventsStatusCache.set(.active)
+
+            DispatchQueue.main.async {
+                completion(.success(()))
+            }
         }
     }
 
     /// Stop the FSEvents watcher
-    /// - Throws: CoreBridgeError if operation fails
-    func stopFSEventsWatcher() throws {
+    ///
+    /// Wave1 P0-1：改为 private——全工程唯一调用方是 startFSEventsWatcher 的
+    /// 后台生命周期流程。必须在 fseventsLifecycleQueue 上调用（context/handle/
+    /// 状态缓存的访问由该队列串行化）；本方法阻塞当前线程直至 ff_fsevents_stop
+    /// 返回（Rust 侧已 join worker，返回后不再有任何回调）。
+    private func stopFSEventsWatcher() {
         let handle = self.fseventsWatcherHandle
-        var ffiResult: Int32 = -1
+        var statusRaw: Int32 = FSEventsStatus.stopped.rawValue
         let semaphore = DispatchSemaphore(value: 0)
 
         ffiQueue.async {
             defer { semaphore.signal() }
             // 使用 startFSEventsWatcher 存储的真实 handle（而非硬编码 0），
             // 确保 Rust 侧能正确识别要停止的 watcher。
-            ffiResult = ff_fsevents_stop(handle)
+            // 显式标注 Int32：ff_fsevents_stop 同时存在 C 头文件与 @_silgen_name
+            // 两份声明，无类型上下文的裸调用会因二义性编译失败。
+            let stopResult: Int32 = ff_fsevents_stop(handle)
+            // 0 = 有 watcher 已停止；-1 = 本就无 watcher（幂等 stop 的合法情形），
+            // 两种结果均已保证 Rust 侧不再产生回调，无需按错误处理
+            _ = stopResult
+            // stop 返回后状态已定格，同队列任务内读取以更新状态缓存
+            statusRaw = ff_fsevents_status()
         }
 
         semaphore.wait()
@@ -815,18 +870,14 @@ public final class CoreBridge {
         // 否则并发回调可能访问已释放的 context。
         self.fseventsContext = nil
         self.fseventsWatcherHandle = 0
-
-        guard ffiResult == 0 else {
-            let errorMessage = getLastError()
-            throw CoreBridgeError.ffiError(errorMessage)
-        }
+        self.fseventsStatusCache.set(FSEventsStatus(rawValue: statusRaw) ?? .stopped)
     }
 
     /// 查询 FSEvents watcher 生命周期状态（区分 failed 与 active）。
+    /// Wave1 P0-1：改为读取后台维护的状态缓存（启动/停止流程在握手完成后写入），
+    /// 不再 ffiQueue.sync——主线程调用零阻塞，也杜绝了对共享 ffiQueue 的干扰。
     func fseventsWatcherStatus() -> FSEventsStatus {
-        ffiQueue.sync {
-            FSEventsStatus(rawValue: ff_fsevents_status()) ?? .stopped
-        }
+        fseventsStatusCache.get() ?? .stopped
     }
 
     // MARK: - Batch Rename & Organize (Sub-project 6)

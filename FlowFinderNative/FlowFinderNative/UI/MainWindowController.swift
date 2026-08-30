@@ -1331,42 +1331,60 @@ public class MainWindowController: NSWindowController {
     /// 启动 FSEvents 文件系统变更监控
     /// 监控用户主目录，当文件被外部程序（如访达）创建/删除/修改时，
     /// 自动失效对应目录缓存并刷新受影响的面板
+    /// Wave1 P0-1：启动握手整体移入 CoreBridge 后台生命周期队列，
+    /// 主线程不再同步等待（旧实现最长可等 10s），结果经主线程 completion 上报
     private func startFileSystemWatcher() {
         let homeDir = NSHomeDirectory()
-        do {
-            try CoreBridge.shared.startFSEventsWatcher(path: homeDir) { [weak self] changedPath in
-                DispatchQueue.main.async { [weak self] in
-                    self?.handleFileSystemChange(changedPath: changedPath)
-                }
+        CoreBridge.shared.startFSEventsWatcher(path: homeDir) { [weak self] changedPath in
+            DispatchQueue.main.async { [weak self] in
+                self?.handleFileSystemChange(changedPath: changedPath)
             }
-            FFDebug.log("FSEvents 文件系统监控已启动，监控路径: \(homeDir)")
-        } catch {
-            FFLog.error("FSEvents 监控启动失败: \(error.localizedDescription)", log: FFLog.bridge)
+        } completion: { result in
+            switch result {
+            case .success:
+                FFDebug.log("FSEvents 文件系统监控已启动，监控路径: \(homeDir)")
+            case .failure(let error):
+                // 失败保持可观察：与旧实现的错误日志链路一致（状态机 failed）
+                FFLog.error("FSEvents 监控启动失败: \(error.localizedDescription)", log: FFLog.bridge)
+            }
         }
     }
 
     /// 处理文件系统变更通知：失效缓存 + 刷新受影响的面板
+    /// Wave1 P0-1/P1-5：旧实现每个事件在主线程做 2 次 invalidateCache 的
+    /// semaphore 往返；现将缓存失效批量移到后台队列，失效完成后回主线程刷新
+    /// 受影响面板（保持「先失效、后刷新」的顺序，刷新读到的是已失效缓存）。
+    /// watcher 仅在 active 状态回调，启动握手期间不会有事件，事件不丢失。
     private func handleFileSystemChange(changedPath: String) {
         // 失效变更路径及其父目录的缓存
         let parentDir = (changedPath as NSString).deletingLastPathComponent
-        try? CoreBridge.shared.invalidateCache(path: changedPath)
-        if !parentDir.isEmpty && parentDir != changedPath {
-            try? CoreBridge.shared.invalidateCache(path: parentDir)
-        }
 
-        // 转发变更路径到内容索引（O(1) 内存 dirty 集合，复用单一全局 FSEvents watcher）
+        // 转发变更路径到内容索引（O(1) 内存 dirty 集合 + 异步 ffiQueue，主线程零等待）
         ContentIndexBridge.shared.markDirty(path: changedPath)
 
-        // 检查变更路径是否影响当前面板显示的目录
+        // 检查变更路径是否影响当前面板显示的目录（主线程快照，后台不读 UI 状态）
         let leftPath = leftPaneViewModel.currentPath
         let rightPath = rightPaneViewModel.currentPath
+        let affectsLeft = changedPath == leftPath || parentDir == leftPath
+        let affectsRight = changedPath == rightPath || parentDir == rightPath
 
-        // 如果变更发生在当前显示的目录内，或变更的就是当前目录本身
-        if changedPath == leftPath || parentDir == leftPath {
-            leftPaneViewModel.refresh()
-        }
-        if changedPath == rightPath || parentDir == rightPath {
-            rightPaneViewModel.refresh()
+        // 缓存失效批量移后台队列执行（Wave1 P0-1：删除主线程 semaphore 往返）
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            try? CoreBridge.shared.invalidateCache(path: changedPath)
+            if !parentDir.isEmpty && parentDir != changedPath {
+                try? CoreBridge.shared.invalidateCache(path: parentDir)
+            }
+            // 缓存失效完成后回主线程刷新受影响的面板
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                // 如果变更发生在当前显示的目录内，或变更的就是当前目录本身
+                if affectsLeft {
+                    self.leftPaneViewModel.refresh()
+                }
+                if affectsRight {
+                    self.rightPaneViewModel.refresh()
+                }
+            }
         }
     }
 
