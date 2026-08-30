@@ -1882,10 +1882,27 @@ public class MainWindowController: NSWindowController {
         window.makeFirstResponder(target)
     }
 
+    /// 判断侧边栏通知发送者是否属于本窗口（活体缺陷：发送者实际是 SidebarView
+    /// 内部的数据源对象 FavoritesSidebarDataSource/DeviceSidebarDataSource/TagPillView，
+    /// 守卫若只认 sidebarView 实例会误杀本窗口导航——改为验证发送者位于本侧边栏视图树内）
+    private func isOwnSidebarNotification(_ notification: Notification) -> Bool {
+        guard let source = notification.object as? NSView else {
+            return notification.object == nil // 旧 poster 兼容
+        }
+        if source === sidebarView { return true }
+        var current: NSView? = source
+        while let view = current {
+            if view === sidebarView { return true }
+            current = view.superview
+        }
+        return false
+    }
+
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {
-        // Wave2 P0-4（多窗口）：仅响应本窗口侧边栏发出的选择（object=SidebarView 实例；
-        // object 为 nil 时兼容旧 poster）。避免 A 窗口点击侧边栏导航到 B 窗口。
-        if let source = notification.object as? AnyObject, !(source is FileEntry), source !== sidebarView { return }
+        // Wave2 P0-4（多窗口）：仅响应本窗口侧边栏发出的选择。发送者可能是
+        // SidebarView 自身或其内部数据源（收藏/设备 outlineView 的 dataSource），
+        // 用视图树归属判定（isOwnSidebarNotification），避免误杀本窗口导航
+        guard isOwnSidebarNotification(notification) else { return }
         guard let entry = (notification.userInfo?["entry"] as? FileEntry) ?? (notification.object as? FileEntry) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: entry.path)
@@ -1898,7 +1915,7 @@ public class MainWindowController: NSWindowController {
     @objc private func handleSidebarTagSelected(_ notification: Notification) {
         // Wave2 P0-4（多窗口）：仅响应本窗口侧边栏发出的标签点击（object=SidebarView 实例；
         // object 为 nil 时兼容旧 poster）。避免 A 窗口点击标签筛选 B 窗口面板。
-        if let source = notification.object as? AnyObject, !(source is Tag), source !== sidebarView { return }
+        guard isOwnSidebarNotification(notification) || (notification.object is Tag) else { return }
         guard let tag = (notification.userInfo?["tag"] as? Tag) ?? (notification.object as? Tag) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.setTagFilter(tag)
