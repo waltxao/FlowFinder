@@ -118,6 +118,23 @@ enum FFDesign {
         isDark ? OperationArea.elevatedDark : OperationArea.elevatedLight
     }
 
+    // MARK: - 字体令牌（Wave4 Task 5）
+
+    //
+    // 审计 §3：全应用 9–20pt 字号分散硬编码、无字体令牌，同一信息档跨文件不一致。
+    // 本期仅统一已确认的不一致点（分组标题 / 详情栏标签值与名称 / 同档引用），
+    // 全量令牌化列入后续（避免大范围回归）。
+    enum Typography {
+        /// 辅助信息（预留：小型徽标/计数等 10pt 档）
+        static let caption = NSFont.systemFont(ofSize: 10)
+        /// 正文基准（列表/网格文件名、详情栏标签与值）
+        static let body = NSFont.systemFont(ofSize: 11)
+        /// 强调正文（分组标题，semibold）
+        static let emphasis = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        /// 标题（详情栏文件名，semibold）
+        static let title = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    }
+
     // MARK: - 主题相关便捷访问
 
     /// 当前是否深色（供玻璃层判断令牌）

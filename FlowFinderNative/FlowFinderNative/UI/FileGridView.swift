@@ -454,7 +454,8 @@ private final class FFGridSectionHeaderView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        titleLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        // Wave4 Task 5：分组标题统一 emphasis(11 semibold) 令牌（与列表分组标题同档）
+        titleLabel.font = FFDesign.Typography.emphasis
         titleLabel.textColor = NSColor.secondaryLabelColor
         titleLabel.backgroundColor = .clear
         titleLabel.isBezeled = false

@@ -348,8 +348,9 @@ class ExpandableDetailsBar: NSView {
         smallIconView.translatesAutoresizingMaskIntoConstraints = false
         compactView.addSubview(smallIconView)
 
-        // 1.6 收起态名称：13pt medium（与 refresh() 单选分支一致，避免选中数量切换时字号跳变）
-        compactNameField.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        // 1.6 收起态名称：13pt semibold（Wave4 Task 5 改用 Typography.title 令牌，
+        // 与展开态名称同档，避免选中数量切换时字号/字重跳变）
+        compactNameField.font = FFDesign.Typography.title
         compactNameField.textColor = NSColor.labelColor
         compactNameField.lineBreakMode = .byTruncatingTail
         compactNameField.maximumNumberOfLines = 1
@@ -382,18 +383,18 @@ class ExpandableDetailsBar: NSView {
         expandedView.addSubview(expandedStack)
 
         // v0.7.4 修订 4: 多选字段（数量/总大小/类型/标签）——由 rearrangeFlow 流动摆放到两列
-        // （多选数量行）
-        multiCountField.font = NSFont.systemFont(ofSize: 10)
+        // （多选数量行；Wave4 Task 5：字段统一 body(11pt) 档，与标签/值一致）
+        multiCountField.font = FFDesign.Typography.body
         multiCountField.textColor = NSColor.labelColor
         multiCountField.translatesAutoresizingMaskIntoConstraints = false
 
         // 多选总大小行
-        multiSizeField.font = NSFont.systemFont(ofSize: 10)
+        multiSizeField.font = FFDesign.Typography.body
         multiSizeField.textColor = NSColor.labelColor
         multiSizeField.translatesAutoresizingMaskIntoConstraints = false
 
         // 多选类型行（文本：图片 3 · 文档 2）
-        multiTypesField.font = NSFont.systemFont(ofSize: 10)
+        multiTypesField.font = FFDesign.Typography.body
         multiTypesField.textColor = NSColor.labelColor
         multiTypesField.translatesAutoresizingMaskIntoConstraints = false
 
@@ -435,9 +436,10 @@ class ExpandableDetailsBar: NSView {
         column1.translatesAutoresizingMaskIntoConstraints = false
         mainColumn1 = column1
 
-        // v0.7.4 项 3：名称行（可单击改名）。文件名以 11pt semibold 显示，与其它字段区分
+        // v0.7.4 项 3：名称行（可单击改名）。Wave4 Task 5：改用 Typography.title(13 semibold)
+        // 令牌，与收起态名称同档（此前 11pt semibold，低于标题档一档且与收起态 13pt 不一致）
         configureValue(nameField)
-        nameField.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        nameField.font = FFDesign.Typography.title
         nameField.textColor = NSColor.labelColor
         nameField.lineBreakMode = .byTruncatingTail
         nameField.maximumNumberOfLines = 1
@@ -459,7 +461,8 @@ class ExpandableDetailsBar: NSView {
         locationField.cell?.wraps = true
         locationField.cell?.truncatesLastVisibleLine = false
         locationField.textColor = NSColor.systemBlue
-        locationField.font = NSFont.systemFont(ofSize: 10)
+        // Wave4 Task 5：位置值统一 body(11pt)，与其它详情值同档
+        locationField.font = FFDesign.Typography.body
         // 点击跳转所在文件夹
         let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(locationClicked))
         locationField.addGestureRecognizer(clickGesture)
@@ -520,7 +523,8 @@ class ExpandableDetailsBar: NSView {
         tagsValueView.translatesAutoresizingMaskIntoConstraints = false
 
         // 文件说明：可编辑文本字段（双击进入编辑，回车保存至 UserDefaults）
-        descriptionField.font = NSFont.systemFont(ofSize: 10)
+        // Wave4 Task 5：说明值统一 body(11pt)，与其它详情值同档
+        descriptionField.font = FFDesign.Typography.body
         descriptionField.textColor = NSColor.labelColor
         descriptionField.isEditable = false
         descriptionField.isSelectable = true
@@ -928,18 +932,21 @@ class ExpandableDetailsBar: NSView {
 
     private func makeLabel(_ text: String) -> NSTextField {
         let f = NSTextField(labelWithString: text)
-        f.font = NSFont.systemFont(ofSize: 10)
+        // Wave4 Task 5：标签 10pt→body(11pt)，与全局正文基准同档（审计 §3）
+        f.font = FFDesign.Typography.body
         f.textColor = NSColor.secondaryLabelColor
         f.translatesAutoresizingMaskIntoConstraints = false
         f.setContentHuggingPriority(.required, for: .horizontal)
         f.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // 44pt 宽度容纳 4 字标签（创建日期 / 文件说明 / 文件来源）
-        f.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        // Wave4 Task 5：44pt 固定宽改弹性 ≥44（历史痕迹：固定宽与字号耦合，换字号即错位；
+        // 11pt 下 4 字标签仍容纳，出现 5 字标签时按内容撑开不截断）
+        f.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         return f
     }
 
     private func configureValue(_ f: NSTextField) {
-        f.font = NSFont.systemFont(ofSize: 10)
+        // Wave4 Task 5：值 10pt→body(11pt)，与标签同档提升可读性
+        f.font = FFDesign.Typography.body
         f.textColor = NSColor.labelColor
         f.lineBreakMode = .byTruncatingTail
         f.maximumNumberOfLines = 1
