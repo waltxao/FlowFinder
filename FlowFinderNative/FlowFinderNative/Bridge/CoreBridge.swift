@@ -195,15 +195,14 @@ public final class CoreBridge {
     /// Serial queue for FFI operations to ensure thread safety
     private let ffiQueue = DispatchQueue(label: "com.flowfinder.ffi", qos: .userInitiated)
 
-    /// 目录列举专用串行队列（活体死锁热修）：ff_list_dir 无共享状态（路径进、
-    /// 条目出），独立串行队列防止慢目录（iCloud/网络盘）卡死共享 ffiQueue
-    /// 波及全部 FFI（实测 iCloud Desktop 卡顿曾冻结全局）。
-    /// Rust 侧 L1/L2 缓存自带内部锁（dir_cache Mutex / sqlite 连接池 Mutex），
-    /// 与其他队列上的 ff_cache_invalidate 并发安全。
-    // 并发队列：ff_list_dir 为无共享状态的纯函数（路径进/条目出），并发安全。
-// 一个慢目录（iCloud/网络盘卡住）只占用一个工作线程，不连累其他目录的列举
-// （串行队列下实测会依次排队各等 10s 超时——活体死锁热修的后续改进）
-private static let directoryListQueue = DispatchQueue(label: "com.flowfinder.dirlist", qos: .userInitiated, attributes: .concurrent)
+    /// 目录列举专用并发队列（活体死锁热修）：ff_list_dir 为无共享状态的纯函数
+    /// （路径进、条目出，Rust 侧经审计确认无锁），独立队列防止慢目录
+    /// （iCloud/网络盘卡住的阻塞 syscall）冻结共享 ffiQueue 波及全部 FFI
+    /// （实测 iCloud Desktop 卡顿曾致全局死锁）。并发属性使一个慢目录只占用
+    /// 一个工作线程，不连累其他目录的列举。Rust 侧 L1/L2 缓存自带内部锁
+    /// （dir_cache Mutex / sqlite 连接池 Mutex），与其他队列上的
+    /// ff_cache_invalidate 并发安全（终审复核确认）。
+    private static let directoryListQueue = DispatchQueue(label: "com.flowfinder.dirlist", qos: .userInitiated, attributes: .concurrent)
 
     /// FSEvents watcher 句柄（由 ff_fsevents_start 返回）
     private var fseventsWatcherHandle: Int32 = 0
@@ -253,7 +252,7 @@ private static let directoryListQueue = DispatchQueue(label: "com.flowfinder.dir
 
         var entries: [FileEntry] = []
 
-        // 目录列举走专用串行队列（directoryListQueue），不再进共享 ffiQueue：
+        // 目录列举走专用并发队列（directoryListQueue），不再进共享 ffiQueue：
         // 慢目录（iCloud/网络盘）的阻塞 syscall 不得拖累其余 FFI 操作。
         var ffiResult: Int32 = -1
         var ffiEntries: [FileEntry] = []
