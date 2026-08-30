@@ -36,8 +36,9 @@ class PaneToolbar: NSView {
     private var row1: NSStackView!
 
     // Row 2: Search + Sort + Group + View
-    /// 1.4 自定义搜索框（替代 NSSearchField）：图标 + 文本框，放入 FFGlassView 容器
-    private var searchContainer: FFGlassView!
+    /// 1.4 自定义搜索框（替代 NSSearchField）：图标 + 文本框，放入实体容器
+    /// （Wave4 Task 1：容器由 FFGlassView 玻璃改实体，见 setupRow2 注释）
+    private var searchContainer: NSView!
     private var searchTextField: NSTextField!
     private var sortPopup: NSPopUpButton!
     private var groupPopup: NSPopUpButton!
@@ -62,22 +63,38 @@ class PaneToolbar: NSView {
         setupUI()
     }
 
+    deinit {
+        // 移除主题刷新观察者，防止悬空回调
+        NotificationCenter.default.removeObserver(self, name: .appearanceChanged, object: nil)
+    }
+
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         // 不设置 masksToBounds：避免裁剪工具栏内容（按钮、搜索框等）
 
-        // 1.9 工具栏玻璃背景：FFGlassView(.panel, .headerView, cornerRadius: 0)
-        // 与窗口玻璃形成层次感（工具栏玻璃比窗口背景略亮）
-        let glassBackground = FFGlassView(level: .panel, cornerRadius: 0, material: .headerView)
-        glassBackground.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(glassBackground)
+        // Wave4 Task 1（审计 §1.1 材质去冲突）：工具栏背景由玻璃改实体。
+        // 此前 FFGlassView(.panel, .headerView) 玻璃叠在实体操作区卡片上：玻璃模糊不到
+        // 同窗内容，只透出 tint+描边（像半透明灰块），且与列表交界处有模糊/清晰突变。
+        // 改为操作区「浅一档」实体灰度（FFDesign.operationAreaElevated：日间 #FAFAFA /
+        // 夜间 #333333），与操作区基色形成同材质两级灰度；详情栏保留玻璃浮层作层级对比锚点。
+        solidBackground = NSView()
+        solidBackground.wantsLayer = true
+        solidBackground.translatesAutoresizingMaskIntoConstraints = false
+        solidBackground.layer?.backgroundColor = FFDesign.operationAreaElevated.cgColor
+        addSubview(solidBackground)
         NSLayoutConstraint.activate([
-            glassBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
-            glassBackground.topAnchor.constraint(equalTo: topAnchor),
-            glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+            solidBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            solidBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            solidBackground.topAnchor.constraint(equalTo: topAnchor),
+            solidBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
+        // 主题切换时重读令牌刷新实体底色与搜索框描边（cgColor 是快照，不自动跟随）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshThemeColors),
+            name: .appearanceChanged, object: nil
+        )
 
         // 固定双行高度 72pt（每行 32 + 间距 4 + 边距 4）
         heightAnchor.constraint(equalToConstant: 72).isActive = true
@@ -86,6 +103,18 @@ class PaneToolbar: NSView {
         setupRow2()
         // v0.7.4 修订 1：注册新建文件夹按钮悬停跟踪（鼠标移入立即弹提示气泡）
         setupNewFolderHoverHint()
+    }
+
+    // MARK: - Wave4 Task 1: 实体表面主题刷新
+
+    /// 工具栏实体背景视图（替代原 FFGlassView 玻璃背景）
+    private var solidBackground: NSView!
+
+    /// 主题切换时刷新实体表面颜色（令牌按 isDark 即时解析，cgColor 需重设）
+    @objc private func refreshThemeColors() {
+        solidBackground?.layer?.backgroundColor = FFDesign.operationAreaElevated.cgColor
+        searchContainer?.layer?.backgroundColor = FFDesign.operationAreaElevated.cgColor
+        searchContainer?.layer?.borderColor = NSColor.separatorColor.cgColor
     }
 
     // MARK: - Row 1: Navigation
@@ -130,8 +159,16 @@ class PaneToolbar: NSView {
     // MARK: - Row 2: Search + Sort + Group + View
 
     private func setupRow2() {
-        // 1.4 自定义搜索框：FFGlassView(.component) 容器 + 搜索图标 + 无边框文本框
-        searchContainer = FFGlassView(level: .component, cornerRadius: 8)
+        // 1.4 自定义搜索框：实体容器 + 搜索图标 + 无边框文本框
+        // Wave4 Task 1（审计 §1.1）：容器由 FFGlassView(.component) 玻璃改实体——玻璃叠在
+        // 实体背景上只剩 tint+描边噪感。改用操作区浅一档实体灰度 + 1px 分隔线描边，
+        // 与工具栏底同色，靠描边勾勒输入域边界（系统设置风格）。
+        searchContainer = NSView()
+        searchContainer.wantsLayer = true
+        searchContainer.layer?.backgroundColor = FFDesign.operationAreaElevated.cgColor
+        searchContainer.layer?.cornerRadius = 8
+        searchContainer.layer?.borderWidth = 1
+        searchContainer.layer?.borderColor = NSColor.separatorColor.cgColor
         searchContainer.translatesAutoresizingMaskIntoConstraints = false
 
         let searchIcon = NSImageView()

@@ -90,6 +90,34 @@ enum FFDesign {
         }
     }
 
+    // MARK: - 操作区颜色令牌（实体区域，Wave4 颜色统一）
+
+    //
+    // v0.6.7 决策：操作区为实体圆角卡片浮在窗口玻璃上，基色日间 #F5F5F5 / 夜间 #2D2D2D
+    // （用户偏好红线：操作区基色基调不变，Wave4 只做令牌化统一）。
+    // elevated 为「浅一档」灰度：供工具栏等实体区上的次级表面使用，
+    // 替代此前「实体底上叠玻璃」的材质冲突（审计 §1.1）。
+    // 双值纪律：与 Glass 令牌一致——读取时按 isDark 即时解析；缓存 cgColor 的调用方
+    // 必须在 .appearanceChanged / 主题刷新链中重读重设。
+    enum OperationArea {
+        /// 基色：日间 #F5F5F5 / 夜间 #2D2D2D（v0.6.7 基调不变）
+        static let backgroundLight = NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
+        static let backgroundDark = NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)   // #2D2D2D
+        /// 浅一档：日间 #FAFAFA / 夜间 #333333（工具栏等实体区次级表面）
+        static let elevatedLight = NSColor(srgbRed: 0.980, green: 0.980, blue: 0.980, alpha: 1.0)    // #FAFAFA
+        static let elevatedDark = NSColor(srgbRed: 0.200, green: 0.200, blue: 0.200, alpha: 1.0)     // #333333
+    }
+
+    /// 当前操作区基色（日间 #F5F5F5 / 夜间 #2D2D2D）
+    static var operationAreaBackground: NSColor {
+        isDark ? OperationArea.backgroundDark : OperationArea.backgroundLight
+    }
+
+    /// 当前操作区浅一档灰度（日间 #FAFAFA / 夜间 #333333）
+    static var operationAreaElevated: NSColor {
+        isDark ? OperationArea.elevatedDark : OperationArea.elevatedLight
+    }
+
     // MARK: - 主题相关便捷访问
 
     /// 当前是否深色（供玻璃层判断令牌）
