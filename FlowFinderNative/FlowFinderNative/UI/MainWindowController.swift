@@ -578,6 +578,12 @@ public class MainWindowController: NSWindowController {
         leftPaneViewModel.undoManager = undoManager
         rightPaneViewModel.undoManager = undoManager
 
+        // Wave1 P0-2：注入底部任务进度条与展开/收起钩子（「用所选项目新建文件夹」
+        // 等批量移动操作接直连进度，参考粘贴路径）
+        leftPaneViewModel.taskProgressBar = taskProgressBar
+        rightPaneViewModel.taskProgressBar = taskProgressBar
+        wireBatchMoveProgressHooks()
+
         // I1: 注入对侧 ViewModel
         leftFileListView.counterpartViewModel = rightPaneViewModel
         rightFileListView.counterpartViewModel = leftPaneViewModel

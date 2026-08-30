@@ -762,6 +762,16 @@ extension MainWindowController {
 
     // MARK: - 底部进度栏（任务 F11-9）
 
+    /// Wave1 P0-2：把进度栏展开/收起钩子注入各 PaneViewModel（setupBindings 调用）。
+    /// showProgressBar/hideProgressBar 为本扩展私有实现，PaneViewModel 无法直接
+    /// 访问容器高度约束，故经闭包中转；钩子内部已切主线程。
+    func wireBatchMoveProgressHooks() {
+        leftPaneViewModel.progressBarsExpanded = { [weak self] in self?.showProgressBar() }
+        leftPaneViewModel.progressBarsCollapsed = { [weak self] in self?.hideProgressBar() }
+        rightPaneViewModel.progressBarsExpanded = { [weak self] in self?.showProgressBar() }
+        rightPaneViewModel.progressBarsCollapsed = { [weak self] in self?.hideProgressBar() }
+    }
+
     /// 展开底部进度栏（高度从 0 动画到 28pt 并显示）
     /// - Parameter animated: 是否使用动画展开
     private func showProgressBar(animated: Bool = true) {

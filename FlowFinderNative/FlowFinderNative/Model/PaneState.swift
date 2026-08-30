@@ -77,6 +77,19 @@ public class PaneViewModel: ObservableObject {
     /// 由 MainWindowController 注入，用于注册撤销/重做（per-window UndoManager）
     weak var undoManager: UndoManager?
 
+    /// Wave1 P0-2：底部任务进度条（弱引用，由 MainWindowController 注入，
+    /// 与 undoManager 注入模式一致）。「用所选项目新建文件夹」等批量移动操作
+    /// 经直连进度模式（startDirectProgress/updateDirectProgress/completeDirectProgress）
+    /// 反馈进度；仅在主线程调用其 API。
+    weak var taskProgressBar: TaskProgressBar?
+
+    /// Wave1 P0-2：底部进度栏容器展开/收起钩子（由 MainWindowController 注入）。
+    /// TaskProgressBar 直连 API 只控制视图自身 isHidden，容器高度约束归窗口层
+    /// 管理（showProgressBar/hideProgressBar 为窗口层私有实现）；未注入时操作
+    /// 照常执行，仅无进度栏展开/收起表现。
+    var progressBarsExpanded: (() -> Void)?
+    var progressBarsCollapsed: (() -> Void)?
+
     /// 线程安全策略：所有 `state` 的读写原则上在主线程进行（@Published 触发 UI 刷新
     /// 也要求主线程）。后台异步任务（如 `loadDirectory`）必须在派发到后台队列前
     /// 捕获所需字段的不可变快照，避免与主线程并发写入造成数据竞争。
@@ -722,8 +735,13 @@ public class PaneViewModel: ObservableObject {
 
     /// 用当前选中的项目新建文件夹：创建"新建文件夹"（重名自动加序号），
     /// 把选中的项目移动进去。冲突（目标已有同名项目）时弹窗询问。
+    /// Wave1 P0-2：createDirectory + parallelMove + 逐项 moveFile 整体移入
+    /// DispatchQueue.global 后台执行（旧实现同步阻塞主线程，大文件/跨卷移动
+    /// 分钟级冻结且无进度）；parallelMove 接 progress 回调，经直连进度模式驱动
+    /// 底部 TaskProgressBar（参考粘贴路径 MenuActions.swift 模式）；完成后主线程
+    /// 清空选中 + 刷新 + 注册撤销；失败经 state.error 既有错误呈现链路展示。
     /// - Parameter window: 宿主窗口（用于冲突弹窗）
-    /// - Returns: 是否执行了操作（无选中项返回 false）
+    /// - Returns: 是否启动了操作（无选中项返回 false；I/O 已后台化，完成经主线程回调）
     @discardableResult
     func createFolderFromSelection(window: NSWindow?) -> Bool {
         let items = state.selectedFiles
@@ -731,6 +749,7 @@ public class PaneViewModel: ObservableObject {
 
         let dir = state.path
         // 生成不重复的文件夹名："新建文件夹"、"新建文件夹 2"、"新建文件夹 3"...
+        // （主线程轻量 stat：此刻新文件夹尚未创建，保证后台 I/O 使用唯一路径）
         var folderName = "新建文件夹"
         var counter = 2
         while FileManager.default.fileExists(atPath: (dir as NSString).appendingPathComponent(folderName)) {
@@ -739,52 +758,99 @@ public class PaneViewModel: ObservableObject {
         }
         let folderPath = (dir as NSString).appendingPathComponent(folderName)
 
-        do {
-            try CoreBridge.shared.createDirectory(path: folderPath)
-        } catch {
-            state.error = "创建文件夹失败：\(error.localizedDescription)"
-            return false
-        }
-
-        // 移动选中的项目进新文件夹（冲突弹窗询问）
+        // 冲突解决必须在主线程（runModal 同步模态弹窗）。新文件夹此刻尚未创建，
+        // 目标目录内不会存在同名项——正常情况下全部进入 normalSrcs，与旧实现
+        // 「先建目录、再查冲突」在结果上等价；并发竞态下出现的同名冲突仍按
+        // 替换/保留两者/跳过处理，行为不回退。
         let srcPaths = items.map { $0.path }
         let conflictPlan = ConflictResolver.resolveConflicts(srcPaths: srcPaths, destDir: folderPath, window: window)
 
-        // 记录实际移动的 (源路径, 目标路径) 对，用于撤销
-        var movedPairs: [(src: String, dst: String)] = []
-        var failedCount = 0
-        // 普通源：批量移动
-        if !conflictPlan.normalSrcs.isEmpty {
-            do {
-                _ = try CoreBridge.shared.parallelMove(srcs: conflictPlan.normalSrcs, dstDir: folderPath)
-                movedPairs.append(contentsOf: conflictPlan.normalSrcs.map {
-                    (src: $0, dst: (folderPath as NSString).appendingPathComponent(($0 as NSString).lastPathComponent))
-                })
-            } catch {
-                failedCount += conflictPlan.normalSrcs.count
-            }
-        }
-        // keepBoth 源：逐项移动（目标名已是唯一名）
-        for pair in conflictPlan.keepBoth {
-            let dst = (folderPath as NSString).appendingPathComponent(pair.dstName)
-            do {
-                try CoreBridge.shared.moveFile(src: pair.src, dst: dst)
-                movedPairs.append((src: pair.src, dst: dst))
-            } catch {
-                failedCount += 1
-            }
+        // 进度条（直连模式，参考粘贴路径）：plan 为空（仅并发竞态冲突全跳过的
+        // 极端情形）时不展示进度，后台仍会创建空文件夹，与旧行为一致
+        let progressBar = taskProgressBar
+        if !conflictPlan.isEmpty {
+            progressBar?.startDirectProgress(operation: "移动", totalCount: conflictPlan.count)
+            progressBarsExpanded?()
         }
 
-        if failedCount > 0 {
-            state.error = "\(failedCount) 个项目移动失败"
-        }
-        // 失效缓存并刷新
-        try? CoreBridge.shared.invalidateCache(path: dir)
-        state.selectedFiles.removeAll()
-        loadDirectory()
-        // v0.7.4 修订 2：注册撤销（把项目移回原位 + 删除文件夹）
-        if !movedPairs.isEmpty {
-            registerUndoCreateFolderFromSelection(folderPath: folderPath, movedPairs: movedPairs)
+        // 后台仅捕获不可变快照（线程安全策略：后台线程不读写 state）
+        let normalSrcs = conflictPlan.normalSrcs
+        let keepBoth = conflictPlan.keepBoth
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // 1. 创建目标文件夹
+            do {
+                try CoreBridge.shared.createDirectory(path: folderPath)
+            } catch {
+                // 失败回主线程呈现（复用 state.error 既有链路）并收起进度栏
+                DispatchQueue.main.async { [weak self] in
+                    self?.state.error = "创建文件夹失败：\(error.localizedDescription)"
+                    if !conflictPlan.isEmpty {
+                        progressBar?.hide()
+                        self?.progressBarsCollapsed?()
+                    }
+                }
+                return
+            }
+
+            // 记录实际移动的 (源路径, 目标路径) 对，用于撤销
+            var movedPairs: [(src: String, dst: String)] = []
+            var failedCount = 0
+            // 2. 普通源：批量移动（progress 回调从 ffi 线程切主线程更新进度条）
+            if !normalSrcs.isEmpty {
+                do {
+                    _ = try CoreBridge.shared.parallelMove(srcs: normalSrcs, dstDir: folderPath) { completed, total in
+                        DispatchQueue.main.async {
+                            progressBar?.updateDirectProgress(
+                                operation: "移动",
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
+                    movedPairs.append(contentsOf: normalSrcs.map {
+                        (src: $0, dst: (folderPath as NSString).appendingPathComponent(($0 as NSString).lastPathComponent))
+                    })
+                } catch {
+                    failedCount += normalSrcs.count
+                }
+            }
+            // 3. keepBoth 源：逐项移动（目标名已是唯一名）
+            for pair in keepBoth {
+                let dst = (folderPath as NSString).appendingPathComponent(pair.dstName)
+                do {
+                    try CoreBridge.shared.moveFile(src: pair.src, dst: dst)
+                    movedPairs.append((src: pair.src, dst: dst))
+                } catch {
+                    failedCount += 1
+                }
+            }
+
+            // 4. 失效缓存（后台完成后再回主线程刷新，与粘贴路径的收尾顺序一致）
+            try? CoreBridge.shared.invalidateCache(path: dir)
+
+            // 5. 主线程收尾：选择恢复、刷新、撤销注册（必须主线程，语义不变）
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                if failedCount > 0 {
+                    self.state.error = "\(failedCount) 个项目移动失败"
+                }
+                self.state.selectedFiles.removeAll()
+                self.loadDirectory()
+                // v0.7.4 修订 2：注册撤销（把项目移回原位 + 删除文件夹），
+                // 仍在主线程 UI 层注册，I/O 后台化不改变 undoManager 时序语义
+                if !movedPairs.isEmpty {
+                    self.registerUndoCreateFolderFromSelection(folderPath: folderPath, movedPairs: movedPairs)
+                }
+                // 进度收尾：标记完成 + 2.2 秒后收起容器（与粘贴路径一致）
+                if !conflictPlan.isEmpty {
+                    progressBar?.completeDirectProgress(operation: "移动", count: movedPairs.count)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+                        self?.progressBarsCollapsed?()
+                    }
+                }
+            }
         }
         return true
     }
