@@ -274,9 +274,10 @@ class SidebarView: NSView {
             self?.updateTagsHeight()
         }
         // 任务 F11-8: 标签点击 -> 发送通知，由 MainWindowController 设置当前活动面板的 tagFilter（问题3）
+        // Wave2 P0-4（多窗口）：object 携带本侧边栏实例身份，接收方据此过滤本窗口通知
         tagFlowView.onTagSelected = { [weak self] tag in
-            guard self != nil else { return }
-            NotificationCenter.default.post(name: .sidebarDidSelectTag, object: tag)
+            guard let self = self else { return }
+            NotificationCenter.default.post(name: .sidebarDidSelectTag, object: self, userInfo: ["tag": tag])
         }
         addSubview(tagFlowView)
 
@@ -473,9 +474,10 @@ class SidebarView: NSView {
         toolBtn.contentTintColor = isToolPanelExpanded ? FFAccent.current : .secondaryLabelColor
 
         // 通知 MainWindowController 显示/隐藏 ToolOverlayView + 设备浮层联动
+        // Wave2 P0-4（多窗口）：object 携带本侧边栏实例身份，接收方据此过滤本窗口通知
         NotificationCenter.default.post(
             name: NSNotification.Name("SidebarToolPanelDidToggle"),
-            object: nil,
+            object: self,
             userInfo: ["isExpanded": isToolPanelExpanded]
         )
     }
@@ -483,6 +485,8 @@ class SidebarView: NSView {
     /// v0.6.9: 同步工具面板状态（覆盖页通过关闭按钮/Esc 关闭时，MainWindowController 回传 isExpanded=false）
     /// 避免 isToolPanelExpanded 与实际显示状态不同步，导致下次点击需 toggle 两次才能重新打开
     @objc private func handleToolPanelStateSync(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口发出（object=本侧边栏或所属窗口）的通知
+        if let source = notification.object as? AnyObject, !(source === self), !(source === window) { return }
         guard let isExpanded = notification.userInfo?["isExpanded"] as? Bool else { return }
         // 仅同步状态不同步的情况（覆盖页关闭时回传 false）
         if isToolPanelExpanded != isExpanded {
@@ -518,6 +522,9 @@ class SidebarView: NSView {
     /// 任务 F11-8: 处理面板标签筛选变化通知，更新标签行高亮。
     /// userInfo["tagFilter"] 为当前活动面板的 tagFilter（Tag 或 nil），用于高亮对应标签行。
     @objc private func handlePaneTagFilterChanged(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的筛选变化（object=所属窗口），
+        // object 为 nil 时兼容旧 poster。避免 A 窗口的面板激活高亮到 B 窗口侧边栏。
+        if let owner = notification.object as? NSWindow, !(owner === window) { return }
         let tagFilter = notification.userInfo?["tagFilter"] as? Tag
         tagFlowView.setHighlightedTagId(tagFilter?.id)
     }
@@ -820,11 +827,15 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
         switch sidebarItem {
         case .favorite(let fav):
             let entry = FileEntry(path: fav.path, name: fav.name, isDirectory: true)
-            NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: entry)
+            // Wave2 P0-4（多窗口）：object 携带本侧边栏实例身份，entry 移入 userInfo，
+            // 接收方据此过滤本窗口通知（避免 A 窗口点击收藏导航到 B 窗口）
+            NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: self,
+                                            userInfo: ["entry": entry])
         case .device(let dev):
             let entry = FileEntry(path: dev.path, name: dev.name, isDirectory: true)
-            // B10: 同时附带 userInfo，便于新监听者按需读取
-            NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: entry, userInfo: ["path": dev.path])
+            // B10: 同时附带 userInfo，便于新监听者按需读取；object 携带本侧边栏实例身份
+            NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: self,
+                                            userInfo: ["entry": entry, "path": dev.path])
         case .tag:
             // 标签点击可选不做导航（未来可筛选同名标签文件）
             break

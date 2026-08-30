@@ -244,14 +244,16 @@ public class MainWindowController: NSWindowController {
     /// 全局键盘拦截（空格/Enter/Del 统一处理，见 setup 中注释）
     private var keyEventMonitor: Any?
 
-    private var leftPaneToolbar: PaneToolbar!
-    private var rightPaneToolbar: PaneToolbar!
+    // Wave2：以下面板控件引用改为 internal——MainWindowController+MenuActions 跨文件扩展
+    // 需要（menuSearch 聚焦工具栏、menuRename 调用面板 actionsController 等）
+    var leftPaneToolbar: PaneToolbar!
+    var rightPaneToolbar: PaneToolbar!
     private var leftBreadcrumbBar: BreadcrumbBar!
     private var rightBreadcrumbBar: BreadcrumbBar!
-    private var leftFileListView: FileListView!
-    private var rightFileListView: FileListView!
-    private var leftFileGridView: FileGridView!
-    private var rightFileGridView: FileGridView!
+    var leftFileListView: FileListView!
+    var rightFileListView: FileListView!
+    var leftFileGridView: FileGridView!
+    var rightFileGridView: FileGridView!
 
     // Clipboard support (must be in main class, not extension)
     var clipboardItems: [String] = []
@@ -304,9 +306,9 @@ public class MainWindowController: NSWindowController {
         setupNotifications()
         loadInitialDirectories()
 
-        // 启动 FSEvents 文件系统监控：当外部程序（如访达）修改/删除/创建文件时，
-        // 自动失效缓存并刷新对应面板，确保操作区显示最新文件系统状态
-        startFileSystemWatcher()
+        // Wave2 P0-4（多窗口）：FSEvents 文件系统监控已上移至 AppDelegate 进程级单实例
+        // （CoreBridge 的 watcher 重复 start 会顶掉旧 watcher），本窗口经
+        // .fileSystemDidChange 通知接收变更并刷新受影响面板（setupNotifications 注册）。
 
         // setupUI 完成后再显示窗口（此时透明设置已就绪）
         window.makeKeyAndOrderFront(nil)
@@ -343,6 +345,12 @@ public class MainWindowController: NSWindowController {
 
     public func windowDidResignMain(_ notification: Notification) {
         FFDebug.log("windowDidResignMain: window lost main status")
+    }
+
+    /// Wave2 P0-4（多窗口）：窗口关闭时通知 AppDelegate 移除强引用（仅新窗口在 extras 数组，
+    /// 首窗口不在数组内移除为空操作），避免已关闭窗口的控制器残留
+    public func windowWillClose(_ notification: Notification) {
+        (NSApp.delegate as? AppDelegate)?.unregisterWindowController(self)
     }
 
     // MARK: - UI Setup
@@ -1099,6 +1107,12 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleRefreshFileExtensionsDisplay),
             name: .refreshFileExtensions, object: nil
         )
+        // Wave2 P0-4（多窗口）：FSEvents 变更由 AppDelegate 进程级 watcher 广播到各窗口，
+        // 本窗口仅刷新自身受影响的面板
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileSystemDidChangeNotification(_:)),
+            name: .fileSystemDidChange, object: nil
+        )
     }
 
     /// 任务 F10-10: 处理 OpenSettings 通知，弹出设置窗口（修复问题3）
@@ -1109,6 +1123,8 @@ public class MainWindowController: NSWindowController {
     /// v0.7.0: 工具面板展开时隐藏设备浮层并显示工具面板，收起时反向切换
     /// 工具面板与设备浮层同处侧边栏左下角区域，互斥显示（isHidden 切换）
     @objc private func handleToolPanelToggle(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口发出（object=本窗口侧边栏或本窗口）的通知
+        if let source = notification.object as? AnyObject, !(source === sidebarView), !(source === window) { return }
         guard let isExpanded = notification.userInfo?["isExpanded"] as? Bool else { return }
         if isExpanded {
             // 展开：隐藏设备栏，显示工具面板
@@ -1189,9 +1205,10 @@ public class MainWindowController: NSWindowController {
         panel.onClose = { [weak self] in
             // 通过通知触发 handleToolPanelToggle 隐藏工具面板并恢复设备栏
             // 同时同步复位侧边栏工具按钮状态
+            // Wave2 P0-4（多窗口）：object 携带本窗口身份，接收方据此过滤
             NotificationCenter.default.post(
                 name: NSNotification.Name("SidebarToolPanelDidToggle"),
-                object: nil,
+                object: self?.window,
                 userInfo: ["isExpanded": false]
             )
         }
@@ -1288,6 +1305,8 @@ public class MainWindowController: NSWindowController {
     /// F9-C: 处理「显示简介」请求，弹出独立 FileInfoWindow（仿访达 Get Info）。
     /// 若通知携带有效路径则显示该文件信息；否则回退到当前活动面板选中项的第一项。
     @objc private func handleFileListShowInfo(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的请求，简介弹窗只落在发起窗口
+        guard isOwnPaneNotification(notification) else { return }
         var path = (notification.userInfo?["path"] as? String) ?? ""
         if path.isEmpty {
             path = activePaneViewModel.selectedFiles.first?.path ?? ""
@@ -1309,7 +1328,19 @@ public class MainWindowController: NSWindowController {
         return nil
     }
 
+    /// Wave2 P0-4（多窗口）：面板级通知只接受本窗口两个面板视图发出的
+    /// （FFPaneActionsController 以 host 视图为 object post）。object 为 nil 时兼容旧 poster。
+    /// 防止 A 窗口右键复制/QuickLook/收藏等触发 B 窗口同名处理
+    /// （剪贴板双写、QuickLook 双开、收藏/标签重复添加、错误面板激活等）。
+    func isOwnPaneNotification(_ notification: Notification) -> Bool {
+        guard let source = notification.object as? AnyObject else { return true }
+        return source === leftFileListView || source === rightFileListView
+            || source === leftFileGridView || source === rightFileGridView
+    }
+
     @objc private func handleQuickLookRequest(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的请求
+        guard isOwnPaneNotification(notification) else { return }
         // 切换到请求的面板
         if let side = notification.userInfo?["side"] as? String {
             FFDebug.log("handleQuickLookRequest side=\(side)")
@@ -1337,26 +1368,13 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - FSEvents 文件系统监控
 
-    /// 启动 FSEvents 文件系统变更监控
-    /// 监控用户主目录，当文件被外部程序（如访达）创建/删除/修改时，
-    /// 自动失效对应目录缓存并刷新受影响的面板
-    /// Wave1 P0-1：启动握手整体移入 CoreBridge 后台生命周期队列，
-    /// 主线程不再同步等待（旧实现最长可等 10s），结果经主线程 completion 上报
-    private func startFileSystemWatcher() {
-        let homeDir = NSHomeDirectory()
-        CoreBridge.shared.startFSEventsWatcher(path: homeDir) { [weak self] changedPath in
-            DispatchQueue.main.async { [weak self] in
-                self?.handleFileSystemChange(changedPath: changedPath)
-            }
-        } completion: { result in
-            switch result {
-            case .success:
-                FFDebug.log("FSEvents 文件系统监控已启动，监控路径: \(homeDir)")
-            case .failure(let error):
-                // 失败保持可观察：与旧实现的错误日志链路一致（状态机 failed）
-                FFLog.error("FSEvents 监控启动失败: \(error.localizedDescription)", log: FFLog.bridge)
-            }
-        }
+    /// Wave2 P0-4（多窗口）：处理 AppDelegate 进程级 FSEvents 监控广播的文件系统变更通知：
+    /// 失效缓存 + 刷新受影响的面板（原 startFileSystemWatcher/handleFileSystemChange 链路，
+    /// watcher 上移 AppDelegate 后经通知分发到各窗口）
+    @objc private func handleFileSystemDidChangeNotification(_ notification: Notification) {
+        let changedPath = (notification.userInfo?["path"] as? String) ?? ""
+        guard !changedPath.isEmpty else { return }
+        handleFileSystemChange(changedPath: changedPath)
     }
 
     /// 处理文件系统变更通知：失效缓存 + 刷新受影响的面板
@@ -1402,9 +1420,10 @@ public class MainWindowController: NSWindowController {
     public override func keyDown(with event: NSEvent) {
         // v0.7.0: Escape 关闭工具浮动面板
         if event.keyCode == 53, let panel = toolPanelView, !panel.isHidden {
+            // Wave2 P0-4（多窗口）：object 携带本窗口身份，接收方据此过滤
             NotificationCenter.default.post(
                 name: NSNotification.Name("SidebarToolPanelDidToggle"),
-                object: nil,
+                object: window,
                 userInfo: ["isExpanded": false]
             )
             return
@@ -1489,7 +1508,8 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - Duplicate
 
-    private func duplicateSelected() {
+    /// Wave2 P1：改 internal——⌘D 菜单入口 menuDuplicateSelected（MenuActions 扩展）调用
+    func duplicateSelected() {
         let selected = activePaneViewModel.selectedFiles
         guard !selected.isEmpty else { return }
 
@@ -1567,8 +1587,9 @@ public class MainWindowController: NSWindowController {
 
         // 任务 F11-8: 状态变化时同步侧边栏标签高亮（导航清除 tagFilter / 切换活动面板时高亮需跟随）
         if side == activePane {
+            // Wave2 P0-4（多窗口）：通知携带本窗口身份（object），其他窗口的侧边栏据此忽略
             NotificationCenter.default.post(
-                name: .paneTagFilterChanged, object: nil,
+                name: .paneTagFilterChanged, object: window,
                 userInfo: ["tagFilter": state.tagFilter as Any]
             )
         }
@@ -1701,17 +1722,21 @@ public class MainWindowController: NSWindowController {
     func activatePane(_ side: PaneSide) {
         activePane = side
         updateActivePaneVisual()
-        NotificationCenter.default.post(name: .paneDidActivate, object: nil, userInfo: ["side": side == .left ? "left" : "right"])
+        // Wave2 P0-4（多窗口）：通知携带本窗口身份（object），其他窗口的侧边栏据此忽略
+        NotificationCenter.default.post(name: .paneDidActivate, object: window, userInfo: ["side": side == .left ? "left" : "right"])
         // 任务 F11-8: 切换活动面板时同步侧边栏标签高亮（显示新活动面板的 tagFilter）
         let vm = side == .left ? leftPaneViewModel : rightPaneViewModel
         NotificationCenter.default.post(
-            name: .paneTagFilterChanged, object: nil,
+            name: .paneTagFilterChanged, object: window,
             userInfo: ["tagFilter": vm.state.tagFilter as Any]
         )
     }
 
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {
-        guard let entry = notification.object as? FileEntry else { return }
+        // Wave2 P0-4（多窗口）：仅响应本窗口侧边栏发出的选择（object=SidebarView 实例；
+        // object 为 nil 时兼容旧 poster）。避免 A 窗口点击侧边栏导航到 B 窗口。
+        if let source = notification.object as? AnyObject, !(source is FileEntry), source !== sidebarView { return }
+        guard let entry = (notification.userInfo?["entry"] as? FileEntry) ?? (notification.object as? FileEntry) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: entry.path)
     }
@@ -1721,7 +1746,10 @@ public class MainWindowController: NSWindowController {
     /// - 再次点击同一标签 -> 取消筛选（setTagFilter 内部判断）
     /// 筛选状态变化后发布 paneTagFilterChanged 通知，侧边栏据此高亮对应标签
     @objc private func handleSidebarTagSelected(_ notification: Notification) {
-        guard let tag = notification.object as? Tag else { return }
+        // Wave2 P0-4（多窗口）：仅响应本窗口侧边栏发出的标签点击（object=SidebarView 实例；
+        // object 为 nil 时兼容旧 poster）。避免 A 窗口点击标签筛选 B 窗口面板。
+        if let source = notification.object as? AnyObject, !(source is Tag), source !== sidebarView { return }
+        guard let tag = (notification.userInfo?["tag"] as? Tag) ?? (notification.object as? Tag) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.setTagFilter(tag)
         // 发布通知让侧边栏更新标签高亮

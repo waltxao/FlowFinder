@@ -30,7 +30,8 @@ class MainMenu {
         let fileMenu = NSMenu(title: "文件")
         fileMenuItem.submenu = fileMenu
         fileMenu.addItem(withTitle: "新建文件夹", action: #selector(MainWindowController.menuNewFolder(_:)), keyEquivalent: "n")
-        let newWindow = fileMenu.addItem(withTitle: "新窗口", action: nil, keyEquivalent: "n")
+        // Wave2 P0-4：⌘⇧N 新窗口接通真多窗口实现（原 action: nil 永久禁用）
+        let newWindow = fileMenu.addItem(withTitle: "新窗口", action: #selector(MainWindowController.menuNewWindow(_:)), keyEquivalent: "n")
         newWindow.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "打开", action: #selector(MainWindowController.menuOpen(_:)), keyEquivalent: "o")
@@ -61,8 +62,16 @@ class MainMenu {
         editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "全选", action: #selector(MainWindowController.menuSelectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "重命名", action: #selector(MainWindowController.menuRename(_:)), keyEquivalent: "")
+        // Wave2 P1：重命名改内联行为（与 Enter 一致），热键 F2（keyCode 120，无修饰键）。
+        // 不绑 "\r"（Enter）：菜单键位无修饰键会全局拦截 Return，破坏文本框回车提交。
+        let renameItem = editMenu.addItem(withTitle: "重命名", action: #selector(MainWindowController.menuRename(_:)), keyEquivalent: String(UnicodeScalar(0xF705)!))
+        renameItem.keyEquivalentModifierMask = []
         editMenu.addItem(withTitle: "批量重命名...", action: #selector(MainWindowController.menuBatchRename(_:)), keyEquivalent: "")
+        // Wave2 P1：⌘D 复制选中项菜单入口（键位展示跟随 shortcut_duplicate 设置）
+        editMenu.addItem(withTitle: "复制选中项", action: #selector(MainWindowController.menuDuplicateSelected(_:)), keyEquivalent: "d")
+        // Wave2 P1：⌥⌘C 拷贝路径（多选时每行一个路径）
+        let copyPaths = editMenu.addItem(withTitle: "拷贝路径", action: #selector(MainWindowController.menuCopyPaths(_:)), keyEquivalent: "c")
+        copyPaths.keyEquivalentModifierMask = [.command, .option]
         editMenu.addItem(.separator())
         let copyToOther = editMenu.addItem(withTitle: "复制到另一面板", action: #selector(MainWindowController.menuCopyToOther(_:)), keyEquivalent: "c")
         copyToOther.keyEquivalentModifierMask = [.command, .shift]
@@ -89,7 +98,9 @@ class MainMenu {
         goMenuItem.submenu = goMenu
         goMenu.addItem(withTitle: "后退", action: #selector(MainWindowController.menuGoBack(_:)), keyEquivalent: "[")
         goMenu.addItem(withTitle: "前进", action: #selector(MainWindowController.menuGoForward(_:)), keyEquivalent: "]")
-        goMenu.addItem(withTitle: "上一级", action: #selector(MainWindowController.menuGoUp(_:)), keyEquivalent: "")
+        // Wave2 P2：上一级补展示热键 ⌘↑（↑ = 0xF700，与 ⌘↑ 导航键位一致）
+        let goUpItem = goMenu.addItem(withTitle: "上一级", action: #selector(MainWindowController.menuGoUp(_:)), keyEquivalent: String(UnicodeScalar(0xF700)!))
+        goUpItem.keyEquivalentModifierMask = [.command]
         goMenu.addItem(.separator())
         goMenu.addItem(withTitle: "桌面", action: #selector(MainWindowController.menuGoDesktop(_:)), keyEquivalent: "")
         goMenu.addItem(withTitle: "文档", action: #selector(MainWindowController.menuGoDocuments(_:)), keyEquivalent: "")
@@ -103,7 +114,10 @@ class MainMenu {
         mainMenu.addItem(toolsMenuItem)
         let toolsMenu = NSMenu(title: "工具")
         toolsMenuItem.submenu = toolsMenu
+        // Wave2 P1：⌘F 分流——聚焦活动面板内搜索框；全局搜索面板改绑 ⌘⇧F
         toolsMenu.addItem(withTitle: "搜索...", action: #selector(MainWindowController.menuSearch(_:)), keyEquivalent: "f")
+        let globalSearchItem = toolsMenu.addItem(withTitle: "全局搜索...", action: #selector(MainWindowController.menuGlobalSearch(_:)), keyEquivalent: "f")
+        globalSearchItem.keyEquivalentModifierMask = [.command, .shift]
         let dupScanItem = toolsMenu.addItem(withTitle: "重复文件扫描...", action: #selector(MainWindowController.menuDuplicateScan(_:)), keyEquivalent: "d")
         dupScanItem.keyEquivalentModifierMask = [.command, .shift]
         toolsMenu.addItem(.separator())
@@ -124,8 +138,9 @@ class MainMenu {
         mainMenu.addItem(helpMenuItem)
         let helpMenu = NSMenu(title: "帮助")
         helpMenuItem.submenu = helpMenu
-        helpMenu.addItem(withTitle: "FlowFinder 帮助", action: nil, keyEquivalent: "?")
-        helpMenu.addItem(withTitle: "键盘快捷键", action: nil, keyEquivalent: "")
+        // Wave2 P0-4：帮助菜单接通真实 action（原 action: nil 永久禁用）
+        helpMenu.addItem(withTitle: "FlowFinder 帮助", action: #selector(MainWindowController.menuHelp(_:)), keyEquivalent: "?")
+        helpMenu.addItem(withTitle: "键盘快捷键", action: #selector(MainWindowController.menuKeyboardShortcutsHelp(_:)), keyEquivalent: "")
 
         // Wave2 P0-3：记录映射菜单项的默认键位基线（供 applyShortcutSettings 回退/恢复默认）
         for entry in shortcutMenuMap {
@@ -181,6 +196,8 @@ class MainMenu {
         (FFUserDefaultsKeys.shortcutTaskPanel, #selector(MainWindowController.menuTaskPanel(_:))),
         (FFUserDefaultsKeys.shortcutConnectServer, #selector(MainWindowController.menuConnectServer(_:))),
         (FFUserDefaultsKeys.shortcutPreferences, #selector(MainWindowController.menuSettings(_:))),
+        // Wave2 P0-3/P1：⌘D 复制选中项有菜单入口了，键位展示跟随 shortcut_duplicate 设置
+        (FFUserDefaultsKeys.shortcutDuplicate, #selector(MainWindowController.menuDuplicateSelected(_:))),
     ]
 
     /// 读取 UserDefaults 中已保存的快捷键并应用到对应菜单项。

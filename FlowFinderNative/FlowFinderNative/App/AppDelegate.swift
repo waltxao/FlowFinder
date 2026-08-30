@@ -3,6 +3,21 @@ import Cocoa
 class AppDelegate: NSObject, NSApplicationDelegate {
     var mainWindowController: MainWindowController?
 
+    /// Wave2 P0-4（多窗口）：⌘⇧N 新开的窗口控制器强引用数组。
+    /// NSWindow 不持有其 windowController，新窗口若无外部强引用会在创建后立即释放；
+    /// 窗口关闭时（windowWillClose）由 MainWindowController 通知移除，避免数组无界增长。
+    private var extraWindowControllers: [MainWindowController] = []
+
+    /// Wave2 P0-4（多窗口）：注册新窗口控制器（强引用，防释放）
+    func registerWindowController(_ controller: MainWindowController) {
+        extraWindowControllers.append(controller)
+    }
+
+    /// Wave2 P0-4（多窗口）：窗口关闭后移除对应控制器引用
+    func unregisterWindowController(_ controller: MainWindowController) {
+        extraWindowControllers.removeAll { $0 === controller }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         FFDebug.clear()
         FFDebug.log("AppDelegate: applicationDidFinishLaunching")
@@ -66,6 +81,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             controller.showWindow(nil)
             self.mainWindowController = controller
 
+            // Wave2 P0-4（多窗口）：FSEvents watcher 是 CoreBridge 进程级单例（重复 start
+            // 会先 stop 旧 watcher 再启动新的），不能挂在单个 MainWindowController 上——
+            // 第二窗口启动会顶掉首窗口的 watcher，窗口关闭后无人重启导致自动刷新失效。
+            // 改挂 AppDelegate 生命周期，变更经 .fileSystemDidChange 广播给所有窗口。
+            startGlobalFileSystemWatcher()
+
             // 确保窗口可见并置前
             if let window = controller.window {
                 window.makeKeyAndOrderFront(nil)
@@ -75,6 +96,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     NSApp.activate(ignoringOtherApps: true)
                 }
+            }
+        }
+    }
+
+    /// Wave2 P0-4（多窗口）：进程级 FSEvents 监控（监控用户主目录）。
+    /// 变更经 .fileSystemDidChange 主线程广播，各 MainWindowController 自行判断
+    /// 变更是否影响本窗口面板并刷新（原逻辑在 MainWindowController 内，随多窗口上移）。
+    private func startGlobalFileSystemWatcher() {
+        let homeDir = NSHomeDirectory()
+        CoreBridge.shared.startFSEventsWatcher(path: homeDir) { changedPath in
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .fileSystemDidChange, object: nil,
+                    userInfo: ["path": changedPath]
+                )
+            }
+        } completion: { result in
+            switch result {
+            case .success:
+                FFDebug.log("FSEvents 文件系统监控已启动，监控路径: \(homeDir)")
+            case .failure(let error):
+                // 失败保持可观察：与旧实现的错误日志链路一致（状态机 failed）
+                FFLog.error("FSEvents 监控启动失败: \(error.localizedDescription)", log: FFLog.bridge)
             }
         }
     }

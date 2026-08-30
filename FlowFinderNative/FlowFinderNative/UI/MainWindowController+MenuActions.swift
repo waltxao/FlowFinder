@@ -16,6 +16,21 @@ extension MainWindowController {
         activePaneViewModel.createDirectory()
     }
 
+    /// Wave2 P0-4：⌘⇧N 新窗口——创建独立的 MainWindowController 实例。
+    /// 各实例状态（左右 ViewModel、剪贴板、undoManager）均窗口私有；唯一共享的
+    /// static undoRedoQueue 是串行撤销队列，多窗口共用可保证撤销/重做文件操作全局串行，
+    /// 属可接受设计。窗口控制器由 AppDelegate.extras 数组强引用（关闭时移除）。
+    @objc func menuNewWindow(_ sender: Any?) {
+        let controller = MainWindowController()
+        // 级联偏移：新窗口相对当前主窗口右下错开，避免完全重叠
+        if let referenceWindow = NSApp.mainWindow ?? (NSApp.delegate as? AppDelegate)?.mainWindowController?.window {
+            let origin = referenceWindow.frame.origin
+            controller.window?.setFrameOrigin(NSPoint(x: origin.x + 28, y: origin.y - 28))
+        }
+        controller.showWindow(nil)
+        (NSApp.delegate as? AppDelegate)?.registerWindowController(controller)
+    }
+
     @objc func menuOpen(_ sender: Any?) {
         guard let entry = activePaneViewModel.selectedFiles.first else { return }
         if entry.isDirectory {
@@ -399,6 +414,8 @@ extension MainWindowController {
     // MARK: - FileListView 右键菜单通知处理
 
     @objc func handleFileListCopy(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的通知
+        guard isOwnPaneNotification(notification) else { return }
         guard let side = notification.userInfo?["side"] as? String else { return }
         let vm = side == "left" ? leftPaneViewModel : rightPaneViewModel
         clipboardItems = vm.selectedFiles.map { $0.path }
@@ -409,6 +426,8 @@ extension MainWindowController {
     }
 
     @objc func handleFileListCut(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的通知
+        guard isOwnPaneNotification(notification) else { return }
         guard let side = notification.userInfo?["side"] as? String else { return }
         let vm = side == "left" ? leftPaneViewModel : rightPaneViewModel
         clipboardItems = vm.selectedFiles.map { $0.path }
@@ -419,12 +438,16 @@ extension MainWindowController {
     }
 
     @objc func handleFileListPaste(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的通知
+        guard isOwnPaneNotification(notification) else { return }
         guard let side = notification.userInfo?["side"] as? String else { return }
         activatePane(side == "left" ? .left : .right)
         menuPaste(self)
     }
 
     @objc func handleFileListAddFavorite(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的通知，避免收藏重复添加
+        guard isOwnPaneNotification(notification) else { return }
         guard let name = notification.userInfo?["name"] as? String,
               let path = notification.userInfo?["path"] as? String else { return }
         sidebarView.addFavorite(name: name, path: path)
@@ -433,6 +456,8 @@ extension MainWindowController {
     // MARK: - Cross-Pane Operations
 
     @objc func handleFileListCopyToOther(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的通知
+        guard isOwnPaneNotification(notification) else { return }
         guard let side = notification.userInfo?["side"] as? String else { return }
         // 问题12修复：取出右键点击文件路径，传入操作方法做空选兜底
         let clickedPath = notification.userInfo?["clickedPath"] as? String
@@ -440,6 +465,8 @@ extension MainWindowController {
     }
 
     @objc func handleFileListMoveToOther(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的通知
+        guard isOwnPaneNotification(notification) else { return }
         guard let side = notification.userInfo?["side"] as? String else { return }
         // 问题12修复：取出右键点击文件路径，传入操作方法做空选兜底
         let clickedPath = notification.userInfo?["clickedPath"] as? String
@@ -447,6 +474,8 @@ extension MainWindowController {
     }
 
     @objc func handleFileListOpenInOther(_ notification: Notification) {
+        // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的通知
+        guard isOwnPaneNotification(notification) else { return }
         guard let side = notification.userInfo?["side"] as? String,
               let path = notification.userInfo?["path"] as? String else { return }
         let destVM: PaneViewModel = side == "left" ? rightPaneViewModel : leftPaneViewModel
@@ -694,22 +723,16 @@ extension MainWindowController {
     }
 
     @objc func menuRename(_ sender: Any?) {
-        guard let entry = activePaneViewModel.selectedFiles.first else { return }
-        let alert = NSAlert()
-        alert.messageText = "重命名 \"\(entry.name)\""
-        alert.informativeText = "输入新名称："
-        alert.addButton(withTitle: "重命名")
-        alert.addButton(withTitle: "取消")
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        textField.stringValue = entry.name
-        alert.accessoryView = textField
-        if let window = window {
-            alert.beginSheetModal(for: window) { [weak self] response in
-                guard response == .alertFirstButtonReturn else { return }
-                let newName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !newName.isEmpty, newName != entry.name else { return }
-                self?.activePaneViewModel.renameFile(entry.path, to: newName)
-            }
+        // Wave2 P1：改调内联重命名（与 Enter 行为一致，消除弹窗式/内联两套行为——审计 P1-5）。
+        // 内联重命名由活动面板视图的 FFPaneActionsController 统一实现（需单选 + cell 已实例化）。
+        guard activePaneViewModel.selectedFiles.count == 1 else { return }
+        let isGrid = activePaneViewModel.state.viewMode == .grid
+        let listView = activePane == .left ? leftFileListView : rightFileListView
+        let gridView = activePane == .left ? leftFileGridView : rightFileGridView
+        if isGrid {
+            gridView?.actionsController.beginInlineRename()
+        } else {
+            listView?.actionsController.beginInlineRename()
         }
     }
 
@@ -729,6 +752,10 @@ extension MainWindowController {
         switch action {
         case #selector(menuBatchRename(_:)):
             return activePaneViewModel.selectedFiles.count >= 2
+        // Wave2 P0-4：「显示隐藏文件」菜单项展示当前开关状态（对勾）
+        case #selector(menuToggleHiddenFiles(_:)):
+            item.state = UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.showHiddenFiles) ? .on : .off
+            return true
         // Bug 8 修复：对需要选中文本才能生效的菜单项做防御性校验，避免无选中时误触导致后续 nil 访问
         // Wave2 P0-2：剪切/复制已改标准 selector（copy:/cut:），校验同步跟随；
         // 文本编辑中校验不会走到这里（field editor 在响应链前端优先响应并校验）
@@ -737,6 +764,7 @@ extension MainWindowController {
              #selector(NSText.copy(_:)),
              #selector(NSText.cut(_:)),
              #selector(menuRename(_:)),
+             #selector(menuCopyPaths(_:)),
              #selector(menuCopyToOther(_:)),
              #selector(menuMoveToOther(_:)):
             return hasSelection
@@ -759,7 +787,11 @@ extension MainWindowController {
     }
 
     @objc func menuToggleHiddenFiles(_ sender: Any?) {
-        // Phase 4 实现
+        // Wave2 P0-4：接通真实状态翻转（与 PaneToolbar.toggleShowHidden 同一路径）：
+        // 状态存 UserDefaults + 广播 refreshHiddenFiles（两面板重新过滤刷新）
+        let current = UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.showHiddenFiles)
+        UserDefaults.standard.set(!current, forKey: FFUserDefaultsKeys.showHiddenFiles)
+        NotificationCenter.default.post(name: .refreshHiddenFiles, object: nil)
     }
 
     @objc func menuRefresh(_ sender: Any?) {
@@ -820,12 +852,34 @@ extension MainWindowController {
         dialog.beginSheetModal(for: window)
     }
 
+    /// Wave2 P1：⌘F 分流——聚焦活动面板内搜索框（面板内筛选的全键盘可达入口）。
+    /// 原行为是打开全局搜索面板，已拆分到 menuGlobalSearch（⌘⇧F）。
     @objc func menuSearch(_ sender: Any?) {
+        let toolbar = activePane == .left ? leftPaneToolbar : rightPaneToolbar
+        toolbar?.focusSearchField()
+    }
+
+    /// Wave2 P1：全局搜索面板（⌘⇧F，原 ⌘F 行为）
+    @objc func menuGlobalSearch(_ sender: Any?) {
         let path = activePaneViewModel.currentPath
         SearchPanelController.shared.onNavigateToPath = { [weak self] resultPath in
             self?.activePaneViewModel.navigate(to: (resultPath as NSString).deletingLastPathComponent)
         }
         SearchPanelController.shared.showPanel(initialQuery: "", searchPath: path)
+    }
+
+    /// Wave2 P1：⌥⌘C 拷贝路径——多选时每行一个路径，写入系统剪贴板
+    @objc func menuCopyPaths(_ sender: Any?) {
+        let paths = activePaneViewModel.selectedFiles.map { $0.path }
+        guard !paths.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
+    }
+
+    /// Wave2 P1：⌘D 菜单入口——复制选中项（与 ⌘D 键位一致，键位展示读取 shortcut_duplicate 设置）
+    @objc func menuDuplicateSelected(_ sender: Any?) {
+        duplicateSelected()
     }
 
     @objc func menuDuplicateScan(_ sender: Any?) {
@@ -838,6 +892,17 @@ extension MainWindowController {
 
     @objc func menuSettings(_ sender: Any?) {
         SettingsWindowController.shared.showWindow()
+    }
+
+    /// Wave2 P1：帮助菜单「FlowFinder 帮助」——打开项目主页
+    @objc func menuHelp(_ sender: Any?) {
+        guard let url = URL(string: "https://github.com/waltxao/FlowFinder") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Wave2 P1：帮助菜单「键盘快捷键」——打开设置窗口并选中快捷键分区
+    @objc func menuKeyboardShortcutsHelp(_ sender: Any?) {
+        SettingsWindowController.shared.showShortcutsSection()
     }
 
     // MARK: - Helpers

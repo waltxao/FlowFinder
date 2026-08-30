@@ -900,6 +900,12 @@ public class SettingsWindowController: NSWindowController {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
+
+    /// Wave2 P1：帮助菜单「键盘快捷键」入口——打开设置窗口并选中快捷键分区
+    public func showShortcutsSection() {
+        showWindow()
+        selectSection(.shortcuts)
+    }
 }
 
 // MARK: - NSTableViewDataSource / Delegate

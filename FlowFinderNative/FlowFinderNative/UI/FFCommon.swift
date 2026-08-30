@@ -42,6 +42,11 @@ extension Notification.Name {
 
     // 快捷键设置变更（设置页录制保存后广播；MainMenu 监听后刷新菜单快捷键）
     static let shortcutsChanged = Notification.Name("FFShortcutsChanged")
+
+    // Wave2 P0-4（多窗口）：FSEvents 文件系统变更广播。FSEvents watcher 是 CoreBridge
+    // 进程级单例（重复 start 会先 stop 旧 watcher），故挂在 AppDelegate 生命周期上，
+    // 变更经此通知广播，各 MainWindowController 自行判断影响并刷新本窗口面板。
+    static let fileSystemDidChange = Notification.Name("FFFileSystemDidChange")
 }
 
 // MARK: - FFUserDefaultsKeys
@@ -310,6 +315,9 @@ enum FFPaneMenuBuilder {
         // 5. 粘贴
         let pasteItem = menu.addItem(withTitle: "粘贴", action: Selector("pasteSelected:"), keyEquivalent: "v")
         pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "粘贴")
+        // Wave2 P1：拷贝路径（多选时每行一个路径，写入系统剪贴板）
+        let copyPathItem = menu.addItem(withTitle: "拷贝路径", action: Selector("copyPathsSelected:"), keyEquivalent: "")
+        copyPathItem.image = NSImage(systemSymbolName: "link", accessibilityDescription: "拷贝路径")
         // 6. 分隔线
         menu.addItem(.separator())
         // 7. 移动到另一面板（箭头方向随面板）

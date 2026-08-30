@@ -178,6 +178,12 @@ public class QuickLookPreviewPanel: NSResponder, QLPreviewPanelDataSource, QLPre
     public func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
         // 处理方向键切换
         if event.type == .keyDown {
+            // Wave2 P1：QuickLook 面板内按 QuickLook 键（默认空格，跟随 shortcut_quicklook 设置）
+            // 关闭预览，与访达行为一致
+            if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
+                close()
+                return true
+            }
             switch event.keyCode {
             case 123:  // 左箭头
                 if currentIndex > 0 {

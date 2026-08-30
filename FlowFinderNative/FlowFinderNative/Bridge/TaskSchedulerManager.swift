@@ -18,11 +18,17 @@ public final class TaskSchedulerManager: ObservableObject {
 
     // MARK: - Polling
 
-    /// 启动任务轮询
+    /// Wave2 P0-4（多窗口）：轮询引用计数。每个 MainWindowController 在 setupUI 启动、
+    /// deinit 停止——多窗口并存时关闭其中一个窗口不应终止全局轮询（非引用计数的
+    /// 直接 stop 会把其他窗口仍在依赖的轮询一并停掉）。
+    private var pollingRefCount = 0
+
+    /// 启动任务轮询（引用计数 +1；首次调用时真正创建定时器）
     /// - Parameter interval: 轮询间隔（默认 0.5 秒）
     public func startPolling(interval: TimeInterval = 0.5) {
         pollingInterval = interval
-        stopPolling()
+        pollingRefCount += 1
+        guard pollingRefCount == 1, pollingTimer == nil else { return }
 
         let timer = DispatchSource.makeTimerSource(queue: pollingQueue)
         timer.schedule(deadline: .now(), repeating: pollingInterval)
@@ -33,8 +39,10 @@ public final class TaskSchedulerManager: ObservableObject {
         pollingTimer = timer
     }
 
-    /// 停止任务轮询
+    /// 停止任务轮询（引用计数 -1；计数归零时才真正取消定时器）
     public func stopPolling() {
+        pollingRefCount = max(0, pollingRefCount - 1)
+        guard pollingRefCount == 0 else { return }
         pollingTimer?.cancel()
         pollingTimer = nil
     }

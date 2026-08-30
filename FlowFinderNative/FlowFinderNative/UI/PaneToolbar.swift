@@ -290,6 +290,11 @@ class PaneToolbar: NSView {
     func setCanGoForward(_ canGoForward: Bool) { forwardButton.isEnabled = canGoForward }
     func setViewMode(_ mode: ViewMode) { updateViewModeHighlight(mode) }
 
+    /// Wave2 P1：聚焦本面板搜索框（⌘F 分流入口；面板内筛选框获得全键盘可达性）
+    func focusSearchField() {
+        window?.makeFirstResponder(searchTextField)
+    }
+
     private func updateViewModeHighlight(_ mode: ViewMode) {
         listViewButton.highlight(mode == .list)
         gridViewButton.highlight(mode == .grid)

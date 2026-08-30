@@ -121,15 +121,28 @@ final class FFPaneActionsController: NSObject {
     }
 
     @objc func copySelected(_ sender: Any?) {
-        NotificationCenter.default.post(name: .fileListDidCopy, object: nil, userInfo: ["side": sideString()])
+        // Wave2 P0-4（多窗口）：object 携带 host 视图身份，接收方据此过滤本窗口通知
+        NotificationCenter.default.post(name: .fileListDidCopy, object: host, userInfo: ["side": sideString()])
     }
 
     @objc func cutSelected(_ sender: Any?) {
-        NotificationCenter.default.post(name: .fileListDidCut, object: nil, userInfo: ["side": sideString()])
+        NotificationCenter.default.post(name: .fileListDidCut, object: host, userInfo: ["side": sideString()])
     }
 
     @objc func pasteSelected(_ sender: Any?) {
-        NotificationCenter.default.post(name: .fileListDidPaste, object: nil, userInfo: ["side": sideString()])
+        NotificationCenter.default.post(name: .fileListDidPaste, object: host, userInfo: ["side": sideString()])
+    }
+
+    /// Wave2 P1：右键菜单「拷贝路径」——多选时每行一个路径；无选中时回退右键点击项
+    @objc func copyPathsSelected(_ sender: Any?) {
+        var paths = host?.selectedEntries.map { $0.path } ?? []
+        if paths.isEmpty, let clickedPath = host?.clickedEntry?.path {
+            paths = [clickedPath]
+        }
+        guard !paths.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
     @objc func renameSelected(_ sender: Any?) {
@@ -185,7 +198,8 @@ final class FFPaneActionsController: NSObject {
 
     @objc func addToFavorites(_ sender: Any?) {
         guard let entry = host?.clickedEntry else { return }
-        NotificationCenter.default.post(name: .fileListDidAddFavorite, object: nil,
+        // Wave2 P0-4（多窗口）：object 携带 host 视图身份，接收方据此过滤本窗口通知
+        NotificationCenter.default.post(name: .fileListDidAddFavorite, object: host,
                                         userInfo: ["name": entry.name, "path": entry.path])
     }
 
@@ -202,7 +216,8 @@ final class FFPaneActionsController: NSObject {
             alert.beginSheetModal(for: window) { _ in }
             return
         }
-        NotificationCenter.default.post(name: .fileListShowInfo, object: nil, userInfo: ["path": targetPath ?? ""])
+        // Wave2 P0-4（多窗口）：object 携带 host 视图身份，接收方据此过滤本窗口通知
+        NotificationCenter.default.post(name: .fileListShowInfo, object: host, userInfo: ["path": targetPath ?? ""])
     }
 
     @objc func duplicateScan(_ sender: Any?) {
@@ -217,19 +232,20 @@ final class FFPaneActionsController: NSObject {
 
     @objc func copyToOtherPane(_ sender: Any?) {
         FFLog.debug("[F10-10] copyToOtherPane clicked, side=\(sideString()), clickedEntry=\(host?.clickedEntry?.path ?? "nil"), selectedCount=\(host?.selectedEntries.count ?? 0)", log: FFLog.ui)
-        NotificationCenter.default.post(name: .fileListDidCopyToOther, object: nil,
+        // Wave2 P0-4（多窗口）：object 携带 host 视图身份，接收方据此过滤本窗口通知
+        NotificationCenter.default.post(name: .fileListDidCopyToOther, object: host,
                                         userInfo: ["side": sideString(), "clickedPath": host?.clickedEntry?.path])
     }
 
     @objc func moveToOtherPane(_ sender: Any?) {
         FFLog.debug("[F10-10] moveToOtherPane clicked, side=\(sideString()), clickedEntry=\(host?.clickedEntry?.path ?? "nil"), selectedCount=\(host?.selectedEntries.count ?? 0)", log: FFLog.ui)
-        NotificationCenter.default.post(name: .fileListDidMoveToOther, object: nil,
+        NotificationCenter.default.post(name: .fileListDidMoveToOther, object: host,
                                         userInfo: ["side": sideString(), "clickedPath": host?.clickedEntry?.path])
     }
 
     @objc func openInOtherPane(_ sender: Any?) {
         guard let entry = host?.clickedEntry else { return }
-        NotificationCenter.default.post(name: .fileListDidOpenInOther, object: nil,
+        NotificationCenter.default.post(name: .fileListDidOpenInOther, object: host,
                                         userInfo: ["side": sideString(), "path": entry.path])
     }
 
