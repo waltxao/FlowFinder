@@ -200,7 +200,10 @@ public final class CoreBridge {
     /// 波及全部 FFI（实测 iCloud Desktop 卡顿曾冻结全局）。
     /// Rust 侧 L1/L2 缓存自带内部锁（dir_cache Mutex / sqlite 连接池 Mutex），
     /// 与其他队列上的 ff_cache_invalidate 并发安全。
-    private static let directoryListQueue = DispatchQueue(label: "com.flowfinder.dirlist", qos: .userInitiated)
+    // 并发队列：ff_list_dir 为无共享状态的纯函数（路径进/条目出），并发安全。
+// 一个慢目录（iCloud/网络盘卡住）只占用一个工作线程，不连累其他目录的列举
+// （串行队列下实测会依次排队各等 10s 超时——活体死锁热修的后续改进）
+private static let directoryListQueue = DispatchQueue(label: "com.flowfinder.dirlist", qos: .userInitiated, attributes: .concurrent)
 
     /// FSEvents watcher 句柄（由 ff_fsevents_start 返回）
     private var fseventsWatcherHandle: Int32 = 0
