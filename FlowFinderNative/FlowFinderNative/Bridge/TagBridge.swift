@@ -62,6 +62,27 @@ public final class TagBridge {
         cache.removeObject(forKey: NSString(string: path))
     }
 
+    /// Wave3 Task 7: 批量后台预热标签缓存（async P1-4）
+    ///
+    /// 首次进入大目录后，渲染/滚动路径（列表 rebuildDisplayRows/viewFor、网格 item didSet）
+    /// 会逐条调 getTags——缓存未命中即主线程 getxattr（本地 5k 文件 ≈ 20-100ms，SMB 秒级）。
+    /// loadDirectory 完成后取前 500 条路径调用本方法：后台 utility 队列循环 getTags 填充缓存，
+    /// 后续主线程渲染直接读缓存，滚动不再有逐条 xattr 卡顿。
+    ///
+    /// 线程安全：NSCache 线程安全；getTags 读 xattr 为纯函数，读幂等。
+    /// 与既有 tagFilter 异步读标签路径（applyFilter 后台读标签）不打架——同一缓存，
+    /// 预热只会让该路径更快命中，不改变其行为。
+    /// 取舍：预热完成后不补发刷新通知——若渲染早于预热命中，该批条目在渲染时已同步
+    /// 读到标签并填充缓存，视觉结果一致，无需二次 reload。
+    public func warmCache(paths: [String]) {
+        guard !paths.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            for path in paths {
+                _ = self.getTags(path: path)
+            }
+        }
+    }
+
     /// 失效全部缓存（导航到新目录或批量操作后调用）
     public func invalidateAllCache() {
         cache.removeAllObjects()
