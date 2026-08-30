@@ -67,21 +67,96 @@ extension MainWindowController {
         }
     }
 
+    // MARK: - Wave2 P0-2：系统剪贴板互通 + 文本编辑分流
+
+    /// 把选中项以 fileURL 写入系统剪贴板（NSPasteboard.general），实现 Finder 互通：
+    /// 本应用 ⌘C/X 后可在 Finder/其他 App ⌘V 粘贴。同时保留内部 clipboardItems 双写
+    /// （剪切/移动语义系统剪贴板无对应概念，仅由内部 clipboardOperation 跟踪）。
+    private func writeFileURLsToGeneralPasteboard(paths: [String]) {
+        guard !paths.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects(paths.map { NSURL(fileURLWithPath: $0) })
+    }
+
+    /// 读取系统剪贴板中的文件 URL（Finder 或本应用写入的 fileURL；纯文本等其他内容忽略）
+    private func readFileURLsFromGeneralPasteboard() -> [String] {
+        guard let urls = NSPasteboard.general.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] else { return [] }
+        return urls.map { $0.path }
+    }
+
+    /// Wave2 P0-2：文本编辑分流——firstResponder 处于文本编辑状态时把标准编辑 action
+    /// 转发给文本系统（field editor / 可编辑文本框），返回 true 表示已处理。
+    /// 覆盖所有可编辑控件：面板搜索框、内联重命名、新建文件夹弹窗、批量重命名、文件说明等。
+    private func dispatchToTextEditing(action: Selector) -> Bool {
+        guard let firstResponder = window?.firstResponder else { return false }
+        // NSTextField 编辑中 firstResponder 是其内部 field editor（NSTextView）
+        if let textView = firstResponder as? NSTextView {
+            NSApp.sendAction(action, to: textView, from: self)
+            return true
+        }
+        // 少数场景 firstResponder 是可编辑 NSTextField 本身（未挂 field editor 时）
+        if let textField = firstResponder as? NSTextField, textField.isEditable {
+            NSApp.sendAction(action, to: textField, from: self)
+            return true
+        }
+        return false
+    }
+
+    /// 标准编辑 selector（编辑菜单 copy:）入口：文本编辑中转发给文本系统，否则文件复制
+    @objc func copy(_ sender: Any?) {
+        if dispatchToTextEditing(action: #selector(NSText.copy(_:))) { return }
+        menuCopy(sender)
+    }
+
+    /// 标准编辑 selector（编辑菜单 cut:）入口：文本编辑中转发给文本系统，否则文件剪切
+    @objc func cut(_ sender: Any?) {
+        if dispatchToTextEditing(action: #selector(NSText.cut(_:))) { return }
+        menuCut(sender)
+    }
+
+    /// 标准编辑 selector（编辑菜单 paste:）入口：文本编辑中转发给文本系统，否则文件粘贴
+    @objc func paste(_ sender: Any?) {
+        if dispatchToTextEditing(action: #selector(NSText.paste(_:))) { return }
+        menuPaste(sender)
+    }
+
     @objc func menuCopy(_ sender: Any?) {
         clipboardItems = activePaneViewModel.selectedFiles.map { $0.path }
         clipboardOperation = .copy
+        // Wave2 P0-2：同步写入系统剪贴板（fileURL），Finder 可直接粘贴
+        writeFileURLsToGeneralPasteboard(paths: clipboardItems)
     }
 
     @objc func menuCut(_ sender: Any?) {
         clipboardItems = activePaneViewModel.selectedFiles.map { $0.path }
         clipboardOperation = .cut
+        // Wave2 P0-2：同步写入系统剪贴板（fileURL）；剪切→移动语义由 clipboardOperation 内部跟踪
+        writeFileURLsToGeneralPasteboard(paths: clipboardItems)
     }
 
     @objc func menuPaste(_ sender: Any?) {
+        // Wave2 P0-2：优先消费系统剪贴板的 fileURL（Finder 或其他 App 复制的文件）。
+        // 系统剪贴板内容与内部记录一致（即本应用刚 ⌘C/X 写入）时走内部路径，
+        // 保证剪切（移动）语义不丢；不一致或内部为空时按外部文件复制进当前目录。
+        let generalPaths = readFileURLsFromGeneralPasteboard()
+        if !generalPaths.isEmpty && generalPaths != clipboardItems {
+            performPasteOperation(srcs: generalPaths, operation: .copy)
+            return
+        }
         guard !clipboardItems.isEmpty,
               let operation = clipboardOperation else { return }
+        performPasteOperation(srcs: clipboardItems, operation: operation)
+    }
+
+    /// 粘贴落盘共用实现（既有跨面板粘贴的冲突预检 + 进度栏 + 撤销注册路径）：
+    /// - srcs: 源路径列表（内部剪贴板项或系统剪贴板 fileURL）
+    /// - operation: .copy 复制 / .cut 移动（外部文件一律 .copy）
+    private func performPasteOperation(srcs: [String], operation: ClipboardOperation) {
         let destPath = activePaneViewModel.currentPath
-        let srcs = clipboardItems
 
         // 任务 10：冲突预检与解决（替换/保留两者/跳过）
         let conflictPlan = ConflictResolver.resolveConflicts(
@@ -328,6 +403,8 @@ extension MainWindowController {
         let vm = side == "left" ? leftPaneViewModel : rightPaneViewModel
         clipboardItems = vm.selectedFiles.map { $0.path }
         clipboardOperation = .copy
+        // Wave2 P0-2：右键菜单复制路径同样写入系统剪贴板（Finder 互通）
+        writeFileURLsToGeneralPasteboard(paths: clipboardItems)
         activatePane(side == "left" ? .left : .right)
     }
 
@@ -336,6 +413,8 @@ extension MainWindowController {
         let vm = side == "left" ? leftPaneViewModel : rightPaneViewModel
         clipboardItems = vm.selectedFiles.map { $0.path }
         clipboardOperation = .cut
+        // Wave2 P0-2：右键菜单剪切路径同样写入系统剪贴板（Finder 互通）
+        writeFileURLsToGeneralPasteboard(paths: clipboardItems)
         activatePane(side == "left" ? .left : .right)
     }
 
@@ -606,6 +685,11 @@ extension MainWindowController {
     }
 
     @objc func menuSelectAll(_ sender: Any?) {
+        // Wave2 P0-2：文本编辑中 ⌘A 必须是文本全选（搜索框/重命名弹窗等），不能劫持为文件全选。
+        // 注：全选菜单项保留 menuSelectAll: selector——NSTableView/NSCollectionView 原生实现
+        // selectAll:（会拦截并按显示行选中，与分组展示/视图模型选中态不同步），
+        // 故文本分流在该方法内部完成，文件列表行为与历史完全一致。
+        if dispatchToTextEditing(action: #selector(NSText.selectAll(_:))) { return }
         activePaneViewModel.selectAll()
     }
 
@@ -646,10 +730,12 @@ extension MainWindowController {
         case #selector(menuBatchRename(_:)):
             return activePaneViewModel.selectedFiles.count >= 2
         // Bug 8 修复：对需要选中文本才能生效的菜单项做防御性校验，避免无选中时误触导致后续 nil 访问
+        // Wave2 P0-2：剪切/复制已改标准 selector（copy:/cut:），校验同步跟随；
+        // 文本编辑中校验不会走到这里（field editor 在响应链前端优先响应并校验）
         case #selector(menuOpen(_:)),
              #selector(menuMoveToTrash(_:)),
-             #selector(menuCopy(_:)),
-             #selector(menuCut(_:)),
+             #selector(NSText.copy(_:)),
+             #selector(NSText.cut(_:)),
              #selector(menuRename(_:)),
              #selector(menuCopyToOther(_:)),
              #selector(menuMoveToOther(_:)):

@@ -51,9 +51,14 @@ class MainMenu {
         let redo = editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "剪切", action: #selector(MainWindowController.menuCut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "复制", action: #selector(MainWindowController.menuCopy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "粘贴", action: #selector(MainWindowController.menuPaste(_:)), keyEquivalent: "v")
+        // Wave2 P0-2：剪切/复制/粘贴改用标准编辑 selector（copy:/cut:/paste:）——
+        // 文本编辑中（field editor 在响应链前端）原生拦截为文本编辑；焦点在文件列表时
+        // 沿响应链落到 MainWindowController 的 copy(_:) 等分流实现执行文件操作。
+        // 全选保留 menuSelectAll:（NSTableView/NSCollectionView 原生实现 selectAll: 会拦截，
+        // 文本编辑分流在该 action 内部完成——见 MainWindowController.menuSelectAll）。
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "全选", action: #selector(MainWindowController.menuSelectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "重命名", action: #selector(MainWindowController.menuRename(_:)), keyEquivalent: "")
@@ -147,9 +152,11 @@ class MainMenu {
         (FFUserDefaultsKeys.shortcutNewFolder, #selector(MainWindowController.menuNewFolder(_:))),
         (FFUserDefaultsKeys.shortcutOpenFile, #selector(MainWindowController.menuOpen(_:))),
         (FFUserDefaultsKeys.shortcutCloseWindow, #selector(NSWindow.performClose(_:))),
-        (FFUserDefaultsKeys.shortcutCopy, #selector(MainWindowController.menuCopy(_:))),
-        (FFUserDefaultsKeys.shortcutCut, #selector(MainWindowController.menuCut(_:))),
-        (FFUserDefaultsKeys.shortcutPaste, #selector(MainWindowController.menuPaste(_:))),
+        // Wave2 P0-2：剪切/复制/粘贴已改标准编辑 selector（与编辑菜单项一致），
+        // 快捷键设置应用时按同一 selector 查找菜单项
+        (FFUserDefaultsKeys.shortcutCopy, #selector(NSText.copy(_:))),
+        (FFUserDefaultsKeys.shortcutCut, #selector(NSText.cut(_:))),
+        (FFUserDefaultsKeys.shortcutPaste, #selector(NSText.paste(_:))),
         (FFUserDefaultsKeys.shortcutSelectAll, #selector(MainWindowController.menuSelectAll(_:))),
         (FFUserDefaultsKeys.shortcutTrash, #selector(MainWindowController.menuMoveToTrash(_:))),
         (FFUserDefaultsKeys.shortcutUndo, Selector("undo:")),
