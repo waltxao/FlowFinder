@@ -1039,7 +1039,10 @@ class DeviceSidebarDataSource: SidebarDataSourceBase {
 
     override init() {
         super.init()
-        loadDevices()
+        // Wave1 P0-3：不再在 init 内同步 loadDevices（旧实现会在主线程同步
+        // spawn mount/df 子进程，可阻塞数秒）。设备数据改为后台加载，由
+        // 使用方（MainWindowController 设备浮层）在 setup 时调用
+        // refreshDevicePanel() → loadDevices(completion:) 触发首次加载。
     }
 
     // MARK: - B11: 真实磁盘容量读取（statfs 系统调用）
@@ -1088,92 +1091,116 @@ class DeviceSidebarDataSource: SidebarDataSourceBase {
 
     // MARK: - Data Loading
 
-    func loadDevices() {
-        let volumes = CoreBridge.shared.listVolumes()
-        devices = []
-        deviceExtendedInfo = [:]
+    /// 加载设备列表（Wave1 P0-3：数据采集整体后台化）
+    ///
+    /// 旧实现在调用线程（主线程）同步执行 listVolumes（Rust 侧 spawn mount/df
+    /// 子进程，挂载失联 SMB/NFS 时 df 可挂起数秒）+ 逐卷 statfs，主线程冻结；
+    /// 且设备浮层的挂载/卸载通知路径每次事件都会同步重刷。现将采集移入后台
+    /// 队列，主线程仅做数据源赋值与回调刷新：
+    /// - 采集期间保留上次结果（浮层不闪烁）；首次加载显示既有空态；
+    /// - 数据就绪后在主线程一次性替换 devices / deviceExtendedInfo，
+    ///   随后触发 completion 重建 UI（outlineView 数据源仅在主线程读写）。
+    /// - Parameter completion: 主线程回调（数据已就绪，可安全重建 UI）；可为 nil
+    func loadDevices(completion: (() -> Void)? = nil) {
+        // NSHost 文档未保证后台线程安全：主线程先取本机名快照，后台仅做字符串比较
+        let currentLocalizedName = Host.current().localizedName
 
-        // 1. 始终添加主硬盘（根目录 /）
-        let rootURL = URL(fileURLWithPath: "/")
-        var rootName = "Macintosh HD"
-        if let name = try? rootURL.resourceValues(forKeys: [.volumeLocalizedNameKey]).volumeLocalizedName,
-           !name.isEmpty, name != Host.current().localizedName {
-            rootName = name
-        }
-        let rootSpace = getDiskSpace(at: "/")
-        let rootFsType = getFileSystemType(at: "/") ?? "apfs"
-        devices.append(DeviceItem(
-            name: rootName,
-            path: "/",
-            isRemovable: false,
-            isNetwork: false,
-            totalSize: rootSpace?.total ?? 0,
-            freeSize: rootSpace?.free ?? 0
-        ))
-        deviceExtendedInfo["/"] = DeviceExtendedInfo(
-            fileSystemType: rootFsType,
-            mountPoint: "/",
-            totalSize: rootSpace?.total ?? 0,
-            freeSize: rootSpace?.free ?? 0
-        )
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let volumes = CoreBridge.shared.listVolumes()
+            var newDevices: [DeviceItem] = []
+            var newInfo: [String: DeviceExtendedInfo] = [:]
 
-        // 2. 添加用户主目录（作为快捷设备入口）
-        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-        let homeName = homePath.components(separatedBy: "/").last ?? "Home"
-        let homeSpace = getDiskSpace(at: homePath)
-        let homeFsType = getFileSystemType(at: homePath) ?? "apfs"
-        devices.append(DeviceItem(
-            name: homeName,
-            path: homePath,
-            isRemovable: false,
-            isNetwork: false,
-            totalSize: homeSpace?.total ?? 0,
-            freeSize: homeSpace?.free ?? 0
-        ))
-        deviceExtendedInfo[homePath] = DeviceExtendedInfo(
-            fileSystemType: homeFsType,
-            mountPoint: homePath,
-            totalSize: homeSpace?.total ?? 0,
-            freeSize: homeSpace?.free ?? 0
-        )
-
-        // 3. 过滤并添加外部/网络卷（B11: 增强过滤系统隐藏卷）
-        for vol in volumes {
-            // 只保留 /Volumes/ 下的挂载卷（U盘、外接硬盘、网络驱动器等）
-            guard vol.path.hasPrefix("/Volumes/") else { continue }
-
-            let volName = vol.name
-
-            // B11: 过滤系统隐藏卷
-            if isSystemHiddenVolume(name: volName, path: vol.path) { continue }
-
-            // B11: 使用 statfs 读取真实磁盘容量（覆盖 Rust 端的值）
-            let realSpace = getDiskSpace(at: vol.path)
-            let totalSize = realSpace?.total ?? vol.totalSize
-            let freeSize = realSpace?.free ?? vol.freeSize
-            let fsType = getFileSystemType(at: vol.path) ?? vol.fsType
-
-            let isNetwork = vol.fsType.lowercased().contains("smb")
-                || vol.fsType.lowercased().contains("nfs")
-                || vol.fsType.lowercased().contains("afp")
-                || fsType.lowercased().contains("smb")
-                || fsType.lowercased().contains("nfs")
-                || fsType.lowercased().contains("afp")
-
-            devices.append(DeviceItem(
-                name: volName,
-                path: vol.path,
-                isRemovable: vol.isRemovable,
-                isNetwork: isNetwork,
-                totalSize: totalSize,
-                freeSize: freeSize
+            // 1. 始终添加主硬盘（根目录 /）
+            let rootURL = URL(fileURLWithPath: "/")
+            var rootName = "Macintosh HD"
+            if let name = try? rootURL.resourceValues(forKeys: [.volumeLocalizedNameKey]).volumeLocalizedName,
+               !name.isEmpty, name != currentLocalizedName {
+                rootName = name
+            }
+            let rootSpace = self.getDiskSpace(at: "/")
+            let rootFsType = self.getFileSystemType(at: "/") ?? "apfs"
+            newDevices.append(DeviceItem(
+                name: rootName,
+                path: "/",
+                isRemovable: false,
+                isNetwork: false,
+                totalSize: rootSpace?.total ?? 0,
+                freeSize: rootSpace?.free ?? 0
             ))
-            deviceExtendedInfo[vol.path] = DeviceExtendedInfo(
-                fileSystemType: fsType,
-                mountPoint: vol.path,
-                totalSize: totalSize,
-                freeSize: freeSize
+            newInfo["/"] = DeviceExtendedInfo(
+                fileSystemType: rootFsType,
+                mountPoint: "/",
+                totalSize: rootSpace?.total ?? 0,
+                freeSize: rootSpace?.free ?? 0
             )
+
+            // 2. 添加用户主目录（作为快捷设备入口）
+            let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+            let homeName = homePath.components(separatedBy: "/").last ?? "Home"
+            let homeSpace = self.getDiskSpace(at: homePath)
+            let homeFsType = self.getFileSystemType(at: homePath) ?? "apfs"
+            newDevices.append(DeviceItem(
+                name: homeName,
+                path: homePath,
+                isRemovable: false,
+                isNetwork: false,
+                totalSize: homeSpace?.total ?? 0,
+                freeSize: homeSpace?.free ?? 0
+            ))
+            newInfo[homePath] = DeviceExtendedInfo(
+                fileSystemType: homeFsType,
+                mountPoint: homePath,
+                totalSize: homeSpace?.total ?? 0,
+                freeSize: homeSpace?.free ?? 0
+            )
+
+            // 3. 过滤并添加外部/网络卷（B11: 增强过滤系统隐藏卷）
+            for vol in volumes {
+                // 只保留 /Volumes/ 下的挂载卷（U盘、外接硬盘、网络驱动器等）
+                guard vol.path.hasPrefix("/Volumes/") else { continue }
+
+                let volName = vol.name
+
+                // B11: 过滤系统隐藏卷
+                if self.isSystemHiddenVolume(name: volName, path: vol.path) { continue }
+
+                // B11: 使用 statfs 读取真实磁盘容量（覆盖 Rust 端的值）
+                let realSpace = self.getDiskSpace(at: vol.path)
+                let totalSize = realSpace?.total ?? vol.totalSize
+                let freeSize = realSpace?.free ?? vol.freeSize
+                let fsType = self.getFileSystemType(at: vol.path) ?? vol.fsType
+
+                let isNetwork = vol.fsType.lowercased().contains("smb")
+                    || vol.fsType.lowercased().contains("nfs")
+                    || vol.fsType.lowercased().contains("afp")
+                    || fsType.lowercased().contains("smb")
+                    || fsType.lowercased().contains("nfs")
+                    || fsType.lowercased().contains("afp")
+
+                newDevices.append(DeviceItem(
+                    name: volName,
+                    path: vol.path,
+                    isRemovable: vol.isRemovable,
+                    isNetwork: isNetwork,
+                    totalSize: totalSize,
+                    freeSize: freeSize
+                ))
+                newInfo[vol.path] = DeviceExtendedInfo(
+                    fileSystemType: fsType,
+                    mountPoint: vol.path,
+                    totalSize: totalSize,
+                    freeSize: freeSize
+                )
+            }
+
+            // 数据就绪：主线程一次性替换数据源（ outlineView 读取均在主线程）
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.devices = newDevices
+                self.deviceExtendedInfo = newInfo
+                completion?()
+            }
         }
     }
 

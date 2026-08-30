@@ -598,9 +598,10 @@ public class MainWindowController: NSWindowController {
             if totalWidth > 0 {
                 self.paneSplitView.setPosition(totalWidth / 2, ofDividerAt: 0)
             }
-            // 任务 F10-3: 初始化设备浮层内容（构建设备行 + 更新汇总头部）
-            self.rebuildDevicePanelRows()
-            self.updateDevicePanelSummary()
+            // 任务 F10-3 / Wave1 P0-3: 初始化设备浮层——设备数据已改为后台加载
+            // （DeviceSidebarDataSource.init 不再同步 loadDevices），经
+            // refreshDevicePanel 触发首次加载，数据就绪后主线程回调重建行 + 更新汇总
+            self.refreshDevicePanel()
         }
 
         TaskSchedulerManager.shared.startPolling()
@@ -952,14 +953,18 @@ public class MainWindowController: NSWindowController {
 
     /// 任务 F10-3: 刷新设备浮层（重新加载设备数据 + 重建行 + 更新汇总 + 调整高度）
     /// 迁移自 SidebarView.refreshDevices
+    /// Wave1 P0-3：loadDevices 已后台化（listVolumes/statfs 不再阻塞主线程），
+    /// 数据就绪后经主线程回调重建浮层 UI；采集期间保留上次数据（不闪烁）
     private func refreshDevicePanel() {
-        deviceDataSource.loadDevices()
-        rebuildDevicePanelRows()
-        updateDevicePanelSummary()
-        // 若当前展开态，根据新设备数量调整高度（高度自适应，不需滚动条）
-        if !isDevicePanelCollapsed {
-            let targetHeight = devicePanelCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * devicePanelRowHeight
-            devicePanelHeightConstraint.constant = targetHeight
+        deviceDataSource.loadDevices { [weak self] in
+            guard let self = self else { return }
+            self.rebuildDevicePanelRows()
+            self.updateDevicePanelSummary()
+            // 若当前展开态，根据新设备数量调整高度（高度自适应，不需滚动条）
+            if !self.isDevicePanelCollapsed {
+                let targetHeight = self.devicePanelCollapsedHeight + CGFloat(self.deviceDataSource.deviceCount) * self.devicePanelRowHeight
+                self.devicePanelHeightConstraint.constant = targetHeight
+            }
         }
     }
 
