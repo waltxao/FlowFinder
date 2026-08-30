@@ -87,6 +87,14 @@ mod macos {
     use super::*;
     use std::ffi::CStr;
 
+    // ── QoS 自提升（libc crate 未覆盖此 API，按本文件 extern 直连模式声明）──
+    #[link(name = "pthread")]
+    extern "C" {
+        pub fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
+    }
+    /// QOS_CLASS_USER_INITIATED（mach/thread_policy.h）
+    pub const QOS_CLASS_USER_INITIATED: u32 = 0x21;
+
     // ── CoreFoundation / FSEvents opaque types ──────────────────────
     pub type CFTypeRef = *const c_void;
     pub type CFAllocatorRef = *const c_void;
@@ -281,6 +289,14 @@ mod macos {
         let w_stop = stop_flag.clone();
 
         let handle = thread::spawn(move || {
+            // 提升本线程 QoS 至 User-Initiated：调用方（通常为主线程）会同步等待
+            // 本线程的启动握手，而 std::thread 创建的线程不参与 Darwin 的 QoS 自动
+            // 提升——停留在 Default QoS 时高负载下会被饿死，主线程随之被挂住
+            // （Thread Performance Checker 实证的优先级反转：测试运行器超时重启、
+            // 正式版导航卡顿的共同根因）。
+            unsafe {
+                pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+            }
             // Setup phase. Publishes the run loop + signals `ready` exactly
             // once, whether setup succeeds (before entering the run loop) or
             // fails (before returning), then reports the outcome through the
