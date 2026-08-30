@@ -640,6 +640,24 @@ public class SettingsWindowController: NSWindowController {
     private func buildShortcutsSection() -> NSView {
         let container = makeScrollContainer()
 
+        // Wave2 P0-3：「恢复默认」入口——清空全部 shortcut_* 设置键并广播，
+        // 录制器显示与运行时键位（ShortcutCenter / 菜单展示）均回退默认值
+        let resetButton = NSButton(title: "恢复默认快捷键", target: self, action: #selector(resetShortcutsToDefaults(_:)))
+        resetButton.bezelStyle = .rounded
+        resetButton.controlSize = .small
+        resetButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let resetHint = NSTextField(labelWithString: "清除全部自定义快捷键，恢复系统默认键位")
+        resetHint.font = NSFont.systemFont(ofSize: 11)
+        resetHint.textColor = .secondaryLabelColor
+        resetHint.translatesAutoresizingMaskIntoConstraints = false
+
+        let resetRow = NSStackView(views: [resetButton, resetHint])
+        resetRow.orientation = .horizontal
+        resetRow.spacing = 10
+        resetRow.alignment = .centerY
+        resetRow.translatesAutoresizingMaskIntoConstraints = false
+
         let shortcuts: [(String, String, String)] = [
             ("新建文件夹", "⌘N", FFUserDefaultsKeys.shortcutNewFolder),
             ("打开文件", "⌘O", FFUserDefaultsKeys.shortcutOpenFile),
@@ -711,7 +729,7 @@ public class SettingsWindowController: NSWindowController {
         }
         registerForSearch(otherShortcutSection, rows: otherRows)
 
-        let stack = NSStackView(views: [fileShortcutSection, viewShortcutSection, otherShortcutSection])
+        let stack = NSStackView(views: [resetRow, fileShortcutSection, viewShortcutSection, otherShortcutSection])
         stack.orientation = .vertical
         stack.spacing = 12
         stack.detachesHiddenViews = false
@@ -720,6 +738,19 @@ public class SettingsWindowController: NSWindowController {
 
         constrainStackInScroll(stack, in: container)
         return container
+    }
+
+    /// Wave2 P0-3：恢复全部快捷键默认值：清空 shortcut_* 设置键 → 广播 .shortcutsChanged
+    /// （MainMenu 重绑菜单键位到默认）→ 重建当前分区（录制器按钮显示回默认值）
+    @objc private func resetShortcutsToDefaults(_ sender: Any?) {
+        for key in FFUserDefaultsKeys.allShortcutKeys {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        NotificationCenter.default.post(name: .shortcutsChanged, object: nil)
+        // 按钮位于当前分区视图内，重建分区会移除按钮自身——异步执行避免在自身 action 栈内重建
+        DispatchQueue.main.async { [weak self] in
+            self?.selectSection(.shortcuts)
+        }
     }
 
     // MARK: - 内容构建：关于

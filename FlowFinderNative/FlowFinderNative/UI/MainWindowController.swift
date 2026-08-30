@@ -535,32 +535,30 @@ public class MainWindowController: NSWindowController {
         // 键盘事件先经 firstResponder 的 keyDown/interpretKeyEvents 分发，NSTableView/
         // NSCollectionView 会消耗空格/Enter/Del 导致 FileListView/FileGridView 的 keyDown
         // 收不到（多次修复无效的根因）。用 local monitor 在事件分发前统一拦截：
-        // 仅当焦点在文件面板（tableView/collectionView 或其子视图）且非文本编辑中时拦截。
+        // 仅当按键命中面板级快捷键（QuickLook/重命名/删除，经 ShortcutCenter 读设置）
+        // 且焦点在文件面板且非文本编辑中时拦截。
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self, let window = self.window, window.isKeyWindow else { return event }
-            let modifiers = event.modifierFlags
-            // 修复：不能用 modifiers.isEmpty——macOS 的 Enter 键自带 .numericPad 标志，
-            // 空格也可能带其他非修饰标志。改为"不含 Cmd/Opt/Ctrl/Shift 即可拦截"。
-            let hasRealModifier = !modifiers.intersection([.command, .option, .control, .shift]).isEmpty
-            guard !hasRealModifier else { return event }
-            let isSpace = event.keyCode == 49
-            let isEnter = event.keyCode == 36 || event.keyCode == 76
-            let isDelete = event.keyCode == 51
-            guard isSpace || isEnter || isDelete else { return event }
             // 文本编辑中不拦截（搜索框输入空格/重命名框 Del 删字符/Enter 提交等）：
             // 关键：NSTextField 编辑时 firstResponder 是其内部 field editor（NSTextView），
             // 只判断 NSTextField 会漏掉编辑中的情况 → Del 被误拦成删除文件（用户反馈的 bug）。
             let fr = window.firstResponder
             if fr is NSTextView { return event }  // field editor / 任何文本视图编辑中
             if let tf = fr as? NSTextField, tf.isEditable { return event }
+            // Wave2 P0-3：拦截键经 ShortcutCenter 读取设置（默认 空格/Return/Del，行为不变；
+            // 用户改键后新键立即生效、旧键不再拦截）
+            let isPaneKey = ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event)
+                || ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutRename, event: event)
+                || ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutDelete, event: event)
+            guard isPaneKey else { return event }
             // 焦点必须位于文件面板——按 firstResponder 归属的 FileListView/FileGridView
             // 分派（不依赖 activePane：点击网格时 activePane 可能未更新，导致分派到错误面板）
             guard let frView = window.firstResponder as? NSView,
                   let paneView = self.filePaneView(for: frView) else { return event }
             if let listView = paneView as? FileListView {
-                if listView.handlePaneKey(event.keyCode) { return nil }
+                if listView.handlePaneKey(event) { return nil }
             } else if let gridView = paneView as? FileGridView {
-                if gridView.handlePaneKey(event.keyCode) { return nil }
+                if gridView.handlePaneKey(event) { return nil }
             }
             return event
         }
@@ -1402,8 +1400,6 @@ public class MainWindowController: NSWindowController {
     // MARK: - Keyboard Events
 
     public override func keyDown(with event: NSEvent) {
-        let modifiers = event.modifierFlags
-
         // v0.7.0: Escape 关闭工具浮动面板
         if event.keyCode == 53, let panel = toolPanelView, !panel.isHidden {
             NotificationCenter.default.post(
@@ -1414,51 +1410,44 @@ public class MainWindowController: NSWindowController {
             return
         }
 
-        // 仅 Cmd 修饰（不含 Shift/Option/Control）
-        let isPureCommand = modifiers.contains(.command)
-            && !modifiers.contains(.shift)
-            && !modifiers.contains(.option)
-            && !modifiers.contains(.control)
+        // Wave2 P0-3：以下键位统一经 ShortcutCenter 读取设置（默认值 = 原硬编码行为）。
+        // 修饰键判定为「精确匹配」——替换原 contains(.command) 的过松判定（⌘⇧1 不再误触 ⌘1）。
 
-        // Space: QuickLook 预览
-        if event.keyCode == 49 && modifiers.isEmpty {
+        // QuickLook 预览（默认空格）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
             handleQuickLook()
             return
         }
 
-        // Bug 5 修复：移除 Enter 打开文件的行为。
-        // macOS Finder 风格：Enter=重命名（由 FileListView 内联处理），Cmd+O/Cmd+Down=打开。
-        // 此处不再处理 Enter，避免响应链回退时把 Enter 当作打开。
-
-        // Bug 5 修复：Cmd+Down (keyCode 125) / Cmd+O (keyCode 31) 打开选中项
+        // Bug 5 修复：⌘O / ⌘↓（shortcut_open_file，默认 ⌘O）打开选中项
         // 兜底处理（FileListView 已自行处理，此处主要服务网格视图等无 keyDown 实现的场景）
-        if isPureCommand && (event.keyCode == 125 || event.keyCode == 31) {
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutOpenFile, event: event) {
             handleOpenKey()
             return
         }
 
-        // Bug 5 修复：Cmd+Up (keyCode 126) 上级目录（Finder 风格）
-        if isPureCommand && event.keyCode == 126 {
+        // Bug 5 修复：⌘↑（shortcut_go_up）上级目录（Finder 风格）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutGoUp, event: event) {
             activePaneViewModel.goUp()
             return
         }
 
-        // ⌘1: 列表视图
-        if event.keyCode == 18 && modifiers.contains(.command) {
+        // ⌘1（shortcut_list_view）: 列表视图
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutListView, event: event) {
             activePaneViewModel.setViewMode(.list)
             updateViewMode(side: activePane, mode: .list)
             return
         }
 
-        // ⌘2: 网格视图
-        if event.keyCode == 19 && modifiers.contains(.command) {
+        // ⌘2（shortcut_grid_view）: 网格视图
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutGridView, event: event) {
             activePaneViewModel.setViewMode(.grid)
             updateViewMode(side: activePane, mode: .grid)
             return
         }
 
-        // ⌘D: 复制选中项
-        if event.keyCode == 2 && modifiers.contains(.command) {
+        // ⌘D（shortcut_duplicate）: 复制选中项
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutDuplicate, event: event) {
             duplicateSelected()
             return
         }

@@ -18,13 +18,13 @@ final class FFQuickLookTableView: NSTableView {
     /// 当前所属面板标识（left/right）
     var side: String = "left"
 
-    /// 拦截空格键触发 QuickLook。
+    /// 拦截 QuickLook 键触发预览。
     /// 用 performKeyEquivalent 而非 keyDown：NSTableView 的字符键（含空格）先经
     /// interpretKeyEvents 处理，keyDown 可能收不到（问题 5 根因）。performKeyEquivalent
-    /// 由 NSWindow 在 interpretKeyEvents 之前分发，能可靠捕获空格。
+    /// 由 NSWindow 在 interpretKeyEvents 之前分发，能可靠捕获。
+    /// Wave2 P0-3：判定键经 ShortcutCenter 读取 shortcut_quicklook 设置（默认空格）。
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags
-        if event.keyCode == 49 && !modifiers.contains(.command) && !modifiers.contains(.option) && !modifiers.contains(.control) {
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
             // 修复问题 2（右操作区 QuickLook 不可用根因）：
             // performKeyEquivalent 由 NSWindow 对「所有可见 responder」分发，左 tableView 即便不是
             // firstResponder 也会拦截空格 → 永远走 side=left 通知。改为只在「self 或其子视图是
@@ -36,7 +36,7 @@ final class FFQuickLookTableView: NSTableView {
             }
             // 问题 2 诊断：记录 firstResponder 与 onSpaceKey 状态
             FFDebug.log("FFQuickLookTableView.performKeyEquivalent side=\(side) firstResponderIsSelf=\(fr === self) onSpaceKeySet=\(onSpaceKey != nil)")
-            FFDebug.log("FFQuickLookTableView.performKeyEquivalent: space intercepted")
+            FFDebug.log("FFQuickLookTableView.performKeyEquivalent: quicklook key intercepted")
             onSpaceKey?(side)
             return true
         }
@@ -44,26 +44,23 @@ final class FFQuickLookTableView: NSTableView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let modifiers = event.modifierFlags
-        // 修复：不能用 isEmpty——Enter 自带 .numericPad 标志，改为不含 Cmd/Opt/Ctrl/Shift
-        let hasRealModifier = !modifiers.intersection([.command, .option, .control, .shift]).isEmpty
-        if !hasRealModifier {
-            if event.keyCode == 49 {
-                FFDebug.log("FFQuickLookTableView.keyDown: space intercepted (fallback)")
-                onSpaceKey?(side)
-                return
-            }
-            // 修复 Enter 重命名：tableView 为 firstResponder 时 Enter 被本方法拦截转发，
-            // 否则被 interpretKeyEvents 消化，FileListView.keyDown 收不到 → 无法内联重命名。
-            if event.keyCode == 36 || event.keyCode == 76 {
-                onEnterKey?()
-                return
-            }
-            // Del 删除（访达语义：keyCode 51 = backspace/Del）
-            if event.keyCode == 51 {
-                onDeleteKey?()
-                return
-            }
+        // Wave2 P0-3：键位判定经 ShortcutCenter 读设置（默认 空格/Return/Del = 原硬编码行为）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
+            FFDebug.log("FFQuickLookTableView.keyDown: quicklook key intercepted (fallback)")
+            onSpaceKey?(side)
+            return
+        }
+        // 修复 Enter 重命名：tableView 为 firstResponder 时 Enter 被本方法拦截转发，
+        // 否则被 interpretKeyEvents 消化，FileListView.keyDown 收不到 → 无法内联重命名。
+        // （shortcut_rename 配置为 Return(36) 时，ShortcutCenter.eventMatches 已兼容小键盘 Enter 76）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutRename, event: event) {
+            onEnterKey?()
+            return
+        }
+        // Del 删除（访达语义：keyCode 51 = backspace/Del）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutDelete, event: event) {
+            onDeleteKey?()
+            return
         }
         super.keyDown(with: event)
     }
@@ -939,9 +936,9 @@ public class FileListView: NSView {
     // MARK: - Keyboard / External Entry（委托给 actionsController）
 
     /// 统一键盘入口（MainWindowController 全局 keyDown monitor 调用）：
-    /// 委托给 actionsController 统一处理（空格/Enter/Del）。
-    func handlePaneKey(_ keyCode: UInt16) -> Bool {
-        return actionsController.handlePaneKey(keyCode)
+    /// 委托给 actionsController 统一处理（QuickLook/重命名/删除，键位经 ShortcutCenter 读设置）。
+    func handlePaneKey(_ event: NSEvent) -> Bool {
+        return actionsController.handlePaneKey(event)
     }
 
     // 所有右键菜单 @objc action 方法（renameSelected / deleteSelected / createDirectory /
@@ -1922,30 +1919,19 @@ extension FileListView {
     /// Cmd+Down/Cmd+O 打开选中项，Cmd+Up 上级目录（macOS Finder 风格）。
     /// 空格/Enter/Del 由 actionsController 统一处理，其他快捷键保留视图内兜底。
     public override func keyDown(with event: NSEvent) {
-        let modifiers = event.modifierFlags
-
-        // Space / Enter / Del：委托给 actionsController 统一处理
-        // 修复：不能用 isEmpty--Enter 自带 .numericPad 标志，改为不含 Cmd/Opt/Ctrl/Shift
-        let hasRealModifier = !modifiers.intersection([.command, .option, .control, .shift]).isEmpty
-        if !hasRealModifier && (event.keyCode == 49 || event.keyCode == 36 || event.keyCode == 76 || event.keyCode == 51) {
-            if actionsController.handlePaneKey(event.keyCode) {
-                return
-            }
+        // Wave2 P0-3：QuickLook/重命名/删除委托给 actionsController（键位经 ShortcutCenter 读设置）
+        if actionsController.handlePaneKey(event) {
+            return
         }
 
-        // Bug 5 修复：Cmd+Down (keyCode 125) / Cmd+O (keyCode 31) 打开选中项（Finder 风格）
-        // 仅 Cmd 修饰，不含 Shift/Option/Control
-        let isPureCommand = modifiers.contains(.command)
-            && !modifiers.contains(.shift)
-            && !modifiers.contains(.option)
-            && !modifiers.contains(.control)
-        if isPureCommand && (event.keyCode == 125 || event.keyCode == 31) {
+        // Bug 5 修复：⌘O / ⌘↓（shortcut_open_file）打开选中项（Finder 风格）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutOpenFile, event: event) {
             actionsController.openSelectedEntry()
             return
         }
 
-        // Bug 5 修复：Cmd+Up (keyCode 126) 上级目录（Finder 风格）
-        if isPureCommand && event.keyCode == 126 {
+        // Bug 5 修复：⌘↑（shortcut_go_up）上级目录（Finder 风格）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutGoUp, event: event) {
             viewModel?.goUp()
             return
         }

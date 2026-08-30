@@ -92,8 +92,142 @@ enum FFUserDefaultsKeys {
     // 标签（侧边栏/设置页/标签弹窗共享存储）
     static let sidebarTags = "SidebarTags"
 
+    // Wave2 P0-3：运行时键位设置键（暂无录制器 UI，由 ShortcutCenter 读取，缺省回退内置默认值）
+    static let shortcutRename = "shortcut_rename"
+    static let shortcutDelete = "shortcut_delete"
+    static let shortcutGoUp = "shortcut_go_up"
+
+    /// 全部快捷键设置键（设置页「恢复默认」统一清空）
+    static let allShortcutKeys: [String] = [
+        shortcutNewFolder, shortcutOpenFile, shortcutCloseWindow, shortcutCopy,
+        shortcutCut, shortcutPaste, shortcutSelectAll, shortcutTrash,
+        shortcutUndo, shortcutRedo, shortcutListView, shortcutGridView,
+        shortcutRefresh, shortcutSearch, shortcutDuplicateScan, shortcutTaskPanel,
+        shortcutQuicklook, shortcutDuplicate, shortcutConnectServer, shortcutPreferences,
+        shortcutRename, shortcutDelete, shortcutGoUp,
+    ]
+
     // 任务 T12: 删除确认"不再询问"开关（全入口统一读取；勾选后跳过确认弹窗直接执行）
     static let deleteConfirmDisabled = "delete_confirm_disabled"
+}
+
+// MARK: - ShortcutCenter（Wave2 P0-3：运行时快捷键统一读取）
+
+/// 运行时快捷键统一消费入口。
+///
+/// 背景：设置页 ShortcutRecorderView 将格式化字符串（如 "⌘N"、"空格键"、"⌘⇧Z"）写入
+/// UserDefaults 的 shortcut_* 键，但此前仅菜单项键位展示（MainMenu.applyShortcutSettings）
+/// 消费了其中一部分，keyDown / 全局 monitor 中的键位判定全部硬编码（审计 menu P0-3）。
+///
+/// 本枚举职责：
+/// - 统一解析 shortcut_* 存储的字符串为 (keyCode, modifiers)，供运行时按键比对；
+/// - 未保存过设置的键回退内置默认值（与 Wave2 之前的硬编码行为一致，未自定义的用户零感知）；
+/// - 每次按键实时读取 UserDefaults，设置页改键后立即生效（无需重启、无需监听通知）。
+enum ShortcutCenter {
+
+    /// 键位绑定：键码 + 修饰键（仅 .command/.option/.control/.shift 的 rawValue 组合）
+    typealias Binding = (keyCode: UInt, modifiers: UInt)
+
+    /// 内置默认值（= Wave2 之前的硬编码键位）
+    private static let defaultBindings: [String: Binding] = [
+        FFUserDefaultsKeys.shortcutQuicklook: (49, 0),                        // 空格 → QuickLook
+        FFUserDefaultsKeys.shortcutRename: (36, 0),                           // Return → 内联重命名
+        FFUserDefaultsKeys.shortcutDelete: (51, 0),                           // Del → 移到废纸篓
+        FFUserDefaultsKeys.shortcutOpenFile: (31, commandRaw),                // ⌘O → 打开
+        FFUserDefaultsKeys.shortcutGoUp: (126, commandRaw),                   // ⌘↑ → 上一级
+        FFUserDefaultsKeys.shortcutListView: (18, commandRaw),                // ⌘1 → 列表视图
+        FFUserDefaultsKeys.shortcutGridView: (19, commandRaw),                // ⌘2 → 网格视图
+        FFUserDefaultsKeys.shortcutDuplicate: (2, commandRaw),                // ⌘D → 复制选中项
+    ]
+
+    /// ⌘ 修饰键 rawValue（defaultBindings 字面量使用）
+    private static let commandRaw = UInt(NSEvent.ModifierFlags.command.rawValue)
+
+    /// 读取指定功能的当前键位（keyCode + 修饰键）。无已保存设置时返回内置默认值。
+    static func current(_ key: String) -> Binding? {
+        if let stored = UserDefaults.standard.string(forKey: key), let parsed = parse(stored) {
+            return parsed
+        }
+        return defaultBindings[key]
+    }
+
+    /// 判定按键事件是否命中指定功能的键位设置。
+    /// 修饰键仅比对四个真实修饰键（.command/.option/.control/.shift）——Enter 自带
+    /// .numericPad、部分按键带 .function 标志，参与比对会误判不命中。
+    /// 特例：shortcut_rename 配置为 Return(36) 时同时接受数字小键盘 Enter(76)，与历史行为一致。
+    static func eventMatches(_ key: String, event: NSEvent) -> Bool {
+        guard let binding = current(key) else { return false }
+        var keyCodeMatch = event.keyCode == UInt16(binding.keyCode)
+        if !keyCodeMatch, binding.keyCode == 36, event.keyCode == 76 {
+            keyCodeMatch = true  // 数字小键盘 Enter 别名
+        }
+        guard keyCodeMatch else { return false }
+        let realModifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        return realModifiers.rawValue == binding.modifiers
+    }
+
+    /// 解析设置页保存的快捷键字符串（ShortcutRecorderView.formatShortcut 的输出格式，
+    /// 修饰键符号顺序不限）为键位绑定。无法解析时返回 nil（由调用方回退默认值）。
+    private static func parse(_ shortcut: String) -> Binding? {
+        var modifiers: UInt = 0
+        var rest = Substring(shortcut)
+        while let first = rest.first {
+            switch first {
+            case "⌘":
+                modifiers |= commandRaw
+                rest = rest.dropFirst()
+            case "⇧":
+                modifiers |= UInt(NSEvent.ModifierFlags.shift.rawValue)
+                rest = rest.dropFirst()
+            case "⌥":
+                modifiers |= UInt(NSEvent.ModifierFlags.option.rawValue)
+                rest = rest.dropFirst()
+            case "⌃":
+                modifiers |= UInt(NSEvent.ModifierFlags.control.rawValue)
+                rest = rest.dropFirst()
+            default:
+                guard let keyCode = keyCode(for: String(rest)) else { return nil }
+                return (keyCode, modifiers)
+            }
+        }
+        return nil
+    }
+
+    /// 可读按键符号 → 键码。功能键/特殊键显式映射；字母/数字/符号反查 ANSI 键码表
+    /// （与 ShortcutRecorderView.translateKeyCode 的正向映射一一对应）。
+    private static func keyCode(for symbol: String) -> UInt? {
+        switch symbol {
+        case "空格键": return 49
+        case "↩": return 36
+        case "⌫": return 51
+        case "⎋": return 53
+        case "⇥": return 48
+        case "←": return 123
+        case "→": return 124
+        case "↑": return 126
+        case "↓": return 125
+        default:
+            break
+        }
+        if symbol.hasPrefix("F"), symbol.count > 1, let fn = Int(symbol.dropFirst()), fn >= 1, fn <= 19 {
+            // 与 ShortcutRecorderView.formatShortcut 的 F 键编号规则一致（F1=122）
+            return UInt(122 + fn - 1)
+        }
+        return reverseKeyMap[symbol]
+            ?? reverseKeyMap[symbol.uppercased()]
+            ?? reverseKeyMap[symbol.lowercased()]
+    }
+
+    /// ANSI 美式键盘布局的字符 → 键码反查表（正向来源：ShortcutRecorderView.translateKeyCode）
+    private static let reverseKeyMap: [String: UInt] = [
+        "A": 0, "S": 1, "D": 2, "F": 3, "H": 4, "G": 5, "Z": 6, "X": 7,
+        "C": 8, "V": 9, "B": 11, "Q": 12, "W": 13, "E": 14, "R": 15,
+        "Y": 16, "T": 17, "1": 18, "2": 19, "3": 20, "4": 21, "5": 22,
+        "6": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29,
+        "]": 30, "O": 31, "U": 32, "[": 33, "I": 34, "P": 35,
+        "L": 37, "J": 38, "'": 39, "K": 40, ";": 41,
+        "\\": 42, ",": 43, "/": 44, "N": 45, "M": 46, ".": 47, "`": 50,
+    ]
 }
 
 // MARK: - FFAccent（应用级强调色源）

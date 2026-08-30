@@ -127,6 +127,13 @@ class MainMenu {
         helpMenu.addItem(withTitle: "FlowFinder 帮助", action: nil, keyEquivalent: "?")
         helpMenu.addItem(withTitle: "键盘快捷键", action: nil, keyEquivalent: "")
 
+        // Wave2 P0-3：记录映射菜单项的默认键位基线（供 applyShortcutSettings 回退/恢复默认）
+        for entry in shortcutMenuMap {
+            if let item = findMenuItem(action: entry.action, in: mainMenu) {
+                defaultKeyEquivalents[entry.action] = (item.keyEquivalent, item.keyEquivalentModifierMask)
+            }
+        }
+
         // C3: 应用已保存的快捷键设置（shortcut_* → 菜单项 keyEquivalent）
         applyShortcutSettings(to: mainMenu)
         // C3: 注册快捷键变更监听：设置页录制保存后广播 .shortcutsChanged，刷新菜单
@@ -145,6 +152,11 @@ class MainMenu {
 
     /// 快捷键变更监听 token（block 版 observer 需强引用，否则会被自动移除）
     private static var shortcutsObserverToken: NSObjectProtocol?
+
+    /// Wave2 P0-3：菜单项默认键位基线（setupMainMenu 构建时记录）。
+    /// applyShortcutSettings 先回退基线再应用已保存设置——否则「恢复默认」清空设置键后，
+    /// 菜单项会残留上一次的自定义键位（旧键仍触发，违反改键红线）。
+    private static var defaultKeyEquivalents: [Selector: (key: String, mask: NSEvent.ModifierFlags)] = [:]
 
     /// shortcut_* UserDefaults key → 菜单项 action selector 映射。
     /// 无法映射的键（shortcut_quicklook / shortcut_duplicate）在设置页对应，但主菜单无对应菜单项，不在此映射。
@@ -172,13 +184,20 @@ class MainMenu {
     ]
 
     /// 读取 UserDefaults 中已保存的快捷键并应用到对应菜单项。
-    /// 未保存过（用户未改动）的键保持菜单构建时的默认值。
+    /// Wave2 P0-3：先回退到菜单构建时的默认键位（基线），再叠加已保存的自定义值——
+    /// 改键后旧键位从菜单消失（旧键不再触发）；清空设置（恢复默认）后回退基线。
     private static func applyShortcutSettings(to menu: NSMenu?) {
         guard let menu = menu else { return }
         for entry in shortcutMenuMap {
+            guard let item = findMenuItem(action: entry.action, in: menu) else { continue }
+            // 回退默认键位基线（菜单重建时已记录；基线缺失则保持当前值）
+            if let baseline = defaultKeyEquivalents[entry.action] {
+                item.keyEquivalent = baseline.key
+                item.keyEquivalentModifierMask = baseline.mask
+            }
+            // 叠加已保存的自定义键位
             guard let saved = UserDefaults.standard.string(forKey: entry.key),
-                  let parsed = parseShortcut(saved),
-                  let item = findMenuItem(action: entry.action, in: menu) else { continue }
+                  let parsed = parseShortcut(saved) else { continue }
             var mask = parsed.mask
             // 原 map 约定：所有默认快捷键均含 ⌘（菜单项 keyEquivalentModifierMask 也均含 .command），
             // 故对普通字符键强制补上 command，避免无修饰键/仅 shift 的快捷键误触发。

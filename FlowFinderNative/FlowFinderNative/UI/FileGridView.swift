@@ -456,18 +456,18 @@ class DraggingCollectionView: NSCollectionView {
         return [.copy, .move, .delete]
     }
 
-    /// 拦截空格键触发 QuickLook。
+    /// 拦截 QuickLook 键触发预览。
     /// 用 performKeyEquivalent 而非 keyDown：NSCollectionView 的字符键先经 interpretKeyEvents
     /// 处理，keyDown 可能收不到（问题 5 根因）。
     /// G2: performKeyEquivalent 由 NSWindow 对所有可见 responder 分发，必须校验本视图
     /// （或其子视图）是 firstResponder 才拦截，否则双网格面板时空格 QuickLook 打到错误面板。
+    /// Wave2 P0-3：判定键经 ShortcutCenter 读取 shortcut_quicklook 设置（默认空格）。
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags
-        if event.keyCode == 49 && !modifiers.contains(.command) && !modifiers.contains(.option) && !modifiers.contains(.control) {
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
             let fr = window?.firstResponder as? NSObject
             let isMyResponder = (fr === self) || (fr is NSView && (fr as! NSView).isDescendant(of: self))
             if isMyResponder {
-                FFDebug.log("DraggingCollectionView.performKeyEquivalent: space intercepted")
+                FFDebug.log("DraggingCollectionView.performKeyEquivalent: quicklook key intercepted")
                 onSpaceKey?()
                 return true
             }
@@ -476,24 +476,21 @@ class DraggingCollectionView: NSCollectionView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let modifiers = event.modifierFlags
-        // 修复：不能用 isEmpty——Enter 自带 .numericPad 标志，改为不含 Cmd/Opt/Ctrl/Shift
-        let hasRealModifier = !modifiers.intersection([.command, .option, .control, .shift]).isEmpty
-        if !hasRealModifier {
-            if event.keyCode == 49 {
-                onSpaceKey?()
-                return
-            }
-            // 修复网格 Enter 重命名：拦截 Enter 转发给 FileGridView.beginInlineRename
-            if event.keyCode == 36 || event.keyCode == 76 {
-                onEnterKey?()
-                return
-            }
-            // Del 删除（访达语义：keyCode 51 = backspace/Del）
-            if event.keyCode == 51 {
-                onDeleteKey?()
-                return
-            }
+        // Wave2 P0-3：键位判定经 ShortcutCenter 读设置（默认 空格/Return/Del = 原硬编码行为；
+        // shortcut_rename 配置为 Return(36) 时已兼容小键盘 Enter 76）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
+            onSpaceKey?()
+            return
+        }
+        // 修复网格 Enter 重命名：拦截 Enter 转发给 FileGridView.beginInlineRename
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutRename, event: event) {
+            onEnterKey?()
+            return
+        }
+        // Del 删除（访达语义：keyCode 51 = backspace/Del）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutDelete, event: event) {
+            onDeleteKey?()
+            return
         }
         super.keyDown(with: event)
     }
@@ -905,30 +902,22 @@ public class FileGridView: NSView {
     // MARK: - Keyboard（委托给 actionsController）
 
     /// 重写 keyDown：Enter/Return 触发内联重命名，空格触发 QuickLook 预览，
-    /// Cmd+Down/Cmd+O 打开选中项，Cmd+Up 上级目录（macOS Finder 风格）。
+    /// ⌘O/⌘↓ 打开选中项，⌘↑ 上级目录（macOS Finder 风格）。
     /// 空格/Enter/Del 由 actionsController 统一处理，其他快捷键保留视图内兜底。
     public override func keyDown(with event: NSEvent) {
-        let modifiers = event.modifierFlags
-
-        // Space / Enter / Del：委托给 actionsController 统一处理
-        if modifiers.isEmpty && (event.keyCode == 49 || event.keyCode == 36 || event.keyCode == 76 || event.keyCode == 51) {
-            if actionsController.handlePaneKey(event.keyCode) {
-                return
-            }
+        // Wave2 P0-3：QuickLook/重命名/删除委托给 actionsController（键位经 ShortcutCenter 读设置）
+        if actionsController.handlePaneKey(event) {
+            return
         }
 
-        // Cmd+Down (keyCode 125) / Cmd+O (keyCode 31) 打开选中项（Finder 风格）
-        let isPureCommand = modifiers.contains(.command)
-            && !modifiers.contains(.shift)
-            && !modifiers.contains(.option)
-            && !modifiers.contains(.control)
-        if isPureCommand && (event.keyCode == 125 || event.keyCode == 31) {
+        // ⌘O / ⌘↓（shortcut_open_file）打开选中项（Finder 风格）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutOpenFile, event: event) {
             actionsController.openSelectedEntry()
             return
         }
 
-        // Cmd+Up (keyCode 126) 上级目录（Finder 风格）
-        if isPureCommand && event.keyCode == 126 {
+        // ⌘↑（shortcut_go_up）上级目录（Finder 风格）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutGoUp, event: event) {
             viewModel?.goUp()
             return
         }
@@ -940,8 +929,8 @@ public class FileGridView: NSView {
     /// 统一键盘入口（MainWindowController 全局 keyDown monitor 调用）：
     /// 空格 → QuickLook，Enter → 内联重命名，Del → 移到废纸篓。
     /// 委托给 actionsController 统一处理。
-    func handlePaneKey(_ keyCode: UInt16) -> Bool {
-        return actionsController.handlePaneKey(keyCode)
+    func handlePaneKey(_ event: NSEvent) -> Bool {
+        return actionsController.handlePaneKey(event)
     }
 
     // MARK: - Context Menu Actions（已迁移至 FFPaneActionsController）

@@ -235,20 +235,22 @@ final class FFPaneActionsController: NSObject {
 
     // MARK: - 键盘操作
 
-    /// 统一键盘入口（MainWindowController 全局 keyDown monitor 调用）：
-    /// 空格 -> QuickLook，Enter -> 内联重命名，Del -> 移到废纸篓。
+    /// 统一键盘入口（MainWindowController 全局 keyDown monitor / 面板视图 keyDown 调用）：
+    /// 快捷键 → QuickLook，Return → 内联重命名，Del → 移到废纸篓。
+    /// Wave2 P0-3：键位经 ShortcutCenter 读取设置（默认 空格/Return/Del = 原硬编码行为，
+    /// 设置页改键立即生效，旧键自动失效）。
     @discardableResult
-    func handlePaneKey(_ keyCode: UInt16) -> Bool {
-        if keyCode == 49 {  // 空格
-            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: nil, userInfo: ["side": sideString()])
+    func handlePaneKey(_ event: NSEvent) -> Bool {
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
+            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: host, userInfo: ["side": sideString()])
             return true
         }
-        if keyCode == 36 || keyCode == 76 {  // Enter
-            FFDebug.log("[RENAME-DIAG] handlePaneKey: 收到 Enter(keyCode=\(keyCode)), isRenaming=\(isRenaming), 将调用 beginInlineRename")
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutRename, event: event) {
+            FFDebug.log("[RENAME-DIAG] handlePaneKey: 命中重命名键(keyCode=\(event.keyCode)), isRenaming=\(isRenaming), 将调用 beginInlineRename")
             beginInlineRename()
             return true
         }
-        if keyCode == 51 {  // Del
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutDelete, event: event) {
             deleteSelected(nil)
             return true
         }
