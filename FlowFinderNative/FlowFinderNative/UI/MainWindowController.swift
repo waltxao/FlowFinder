@@ -789,13 +789,11 @@ public class MainWindowController: NSWindowController {
     // MARK: - 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
 
     /// 任务 F11-1: 操作区实体背景色（v0.6.7）
-    /// 日间 #F5F5F5（访达浅灰白），夜间 #2D2D2D（访达深灰黑）
-    /// 供 createPaneContainer 初始设置与主题切换刷新共用
+    /// Wave4 Task 3：改读 FFDesign.operationAreaBackground 统一令牌
+    /// （日间 #F5F5F5，夜间 #2D2D2D，v0.6.7 基调不变），供 createPaneContainer
+    /// 初始设置与主题切换刷新共用
     private func operationAreaBackgroundColor() -> NSColor {
-        let isDark = ThemeManager.shared.resolvedIsDark
-        return isDark
-            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
-            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
+        FFDesign.operationAreaBackground
     }
 
     /// v0.6.9: 操作区边框颜色（日间浅灰/夜间深灰）

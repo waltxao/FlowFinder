@@ -874,10 +874,8 @@ public class FileListView: NSView {
         // 任务 F11-1: tableView 实体背景（v0.6.7）
         // 配合操作区容器实体背景，不再透明。实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
         // 保留 selectionHighlightStyle = .regular（标准选中绘制，默认值，不显式赋值）
-        let isDark = ThemeManager.shared.resolvedIsDark
-        tableView.backgroundColor = isDark
-            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
-            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
+        // Wave4 Task 3：改读 FFDesign.operationAreaBackground 统一令牌（日间 #F5F5F5 / 夜间 #2D2D2D）
+        tableView.backgroundColor = FFDesign.operationAreaBackground
         tableView.enclosingScrollView?.drawsBackground = false
         scrollView.drawsBackground = false
         scrollView.backgroundColor = NSColor.clear
@@ -1472,10 +1470,8 @@ public class FileListView: NSView {
     public func refreshAppearance() {
         tableView.appearance = NSApp.appearance
         // 任务 F11-1: 主题切换时同步刷新 tableView 实体背景色
-        let isDark = ThemeManager.shared.resolvedIsDark
-        tableView.backgroundColor = isDark
-            ? NSColor(srgbRed: 0.176, green: 0.176, blue: 0.176, alpha: 1.0)  // #2D2D2D
-            : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1.0)  // #F5F5F5
+        // Wave4 Task 3：改读 FFDesign.operationAreaBackground 统一令牌（按 isDark 即时解析）
+        tableView.backgroundColor = FFDesign.operationAreaBackground
         // 任务 F11-5: 主题切换时刷新粘性标题重绘（语义色自动解析，需触发 needsDisplay）
         stickyHeader?.needsDisplay = true
         updateStickyHeader()

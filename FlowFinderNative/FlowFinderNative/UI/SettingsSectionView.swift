@@ -181,8 +181,9 @@ class SettingsRowView: NSView {
 
 // MARK: - SettingsSectionView
 
-/// 设置分区视图：独立液态玻璃卡片，sectionTitle(15pt semibold + 前导图标) + 多个 SettingsRowView
-/// 卡片背景为 FFGlassView(.component, cornerRadius: 12)，16pt 内边距，行间用 spacing 替代分隔线
+/// 设置分区视图：独立实心底卡片，sectionTitle(15pt semibold + 前导图标) + 多个 SettingsRowView
+/// 卡片背景为 solidBackground 实心底（Wave4 Task 3：颜色统一走 FFDesign.operationAreaBackground
+/// 令牌，日间 #F5F5F5 / 夜间 #2D2D2D，与主窗操作区并排时灰度一致），16pt 内边距，行间用 spacing 替代分隔线
 class SettingsSectionView: NSView {
 
     private let iconView = NSImageView()
@@ -227,15 +228,19 @@ class SettingsSectionView: NSView {
 
     /// 主题切换时刷新卡片实心底色 + 边框（cgColor 是快照，不自动跟随）
     @objc private func refreshThemeColors() {
-        // 修复：macOS 26 上 NSColor.controlBackgroundColor 在 DarkAqua 下解析仍为纯白(1 1 1)，
-        // 导致深色模式下卡片"仍是白色"。改用手动按 isDark 选择的自定义深浅色，确保跟随主题。
-        let isDark = ThemeManager.shared.resolvedIsDark
-        let cardBG: NSColor = isDark ? NSColor(calibratedWhite: 0.16, alpha: 1.0) : NSColor(calibratedWhite: 1.0, alpha: 1.0)
-        let cardBorder: NSColor = isDark ? NSColor(calibratedWhite: 0.30, alpha: 1.0) : NSColor(calibratedWhite: 0.80, alpha: 1.0)
-        FFDebug.log("SettingsSection.refreshThemeColors: effective=\(effectiveAppearance.name) isDark=\(isDark) cardBG=\(cardBG)")
+        // Wave4 Task 3：卡片底色改读 FFDesign.operationAreaBackground 统一令牌
+        // （此前手动 calibratedWhite 1.0/0.16，与主窗操作区 #F5F5F5/#2D2D2D 并排时灰度有可感知差异）
+        let cardBG: NSColor = FFDesign.operationAreaBackground
+        let cardBorder: NSColor = isDarkCardTheme ? NSColor(calibratedWhite: 0.30, alpha: 1.0) : NSColor(calibratedWhite: 0.80, alpha: 1.0)
+        FFDebug.log("SettingsSection.refreshThemeColors: effective=\(effectiveAppearance.name) isDark=\(isDarkCardTheme) cardBG=\(cardBG)")
         solidBackground.layer?.backgroundColor = cardBG.cgColor
         solidBackground.layer?.borderColor = cardBorder.cgColor
         solidBackground.needsDisplay = true
+    }
+
+    /// 当前是否深色主题（供边框色选择；底色已由 FFDesign 令牌双值承担）
+    private var isDarkCardTheme: Bool {
+        ThemeManager.shared.resolvedIsDark
     }
 
     private func setupUI() {
@@ -246,15 +251,14 @@ class SettingsSectionView: NSView {
             name: .appearanceChanged, object: nil
         )
 
-        // 实心卡片背景：按 isDark 手动选深浅色（macOS 26 上 controlBackgroundColor 深色下解析为纯白，
-        // 故不依赖它）+ 明显边框 + 圆角。深浅色由 refreshThemeColors 在主题变更时刷新。
+        // 实心卡片背景：底色读 FFDesign.operationAreaBackground 统一令牌（主窗与设置卡片色调一致）
+        // + 明显边框 + 圆角。深浅色由 refreshThemeColors 在主题变更时刷新。
         solidBackground.translatesAutoresizingMaskIntoConstraints = false
         solidBackground.wantsLayer = true
-        let isDarkInit = ThemeManager.shared.resolvedIsDark
-        solidBackground.layer?.backgroundColor = (isDarkInit ? NSColor(calibratedWhite: 0.16, alpha: 1.0) : NSColor(calibratedWhite: 1.0, alpha: 1.0)).cgColor
+        solidBackground.layer?.backgroundColor = FFDesign.operationAreaBackground.cgColor
         solidBackground.layer?.cornerRadius = 12
         solidBackground.layer?.borderWidth = 1
-        solidBackground.layer?.borderColor = (isDarkInit ? NSColor(calibratedWhite: 0.30, alpha: 1.0) : NSColor(calibratedWhite: 0.80, alpha: 1.0)).cgColor
+        solidBackground.layer?.borderColor = (ThemeManager.shared.resolvedIsDark ? NSColor(calibratedWhite: 0.30, alpha: 1.0) : NSColor(calibratedWhite: 0.80, alpha: 1.0)).cgColor
         addSubview(solidBackground, positioned: .below, relativeTo: nil)
 
         // 内容容器（提供 16pt 内边距）
