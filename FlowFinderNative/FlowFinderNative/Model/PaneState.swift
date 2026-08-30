@@ -985,6 +985,9 @@ public class PaneViewModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             do {
+                // 活体死锁热修：等待 FFI 结果的信号量在 CoreBridge.listDirectory 内，
+                // 已加 10 秒超时兜底；超时由此处 catch 捕获并回主线程走错误浮层
+                // （清 isLoading + 显示"目录响应超时"），迟到结果被结构性丢弃。
                 let entries = try CoreBridge.shared.listDirectory(path: path)
                 // 在后台线程完成排序，避免阻塞 UI；使用捕获的快照而非读取 self.state
                 let sortedEntries = self.sortEntries(entries, field: sortField, ascending: sortAscending)

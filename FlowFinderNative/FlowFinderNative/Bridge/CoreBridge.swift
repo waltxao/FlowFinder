@@ -8,6 +8,8 @@ public enum CoreBridgeError: Error, LocalizedError {
     case invalidPath(String)
     case rustCoreNotLoaded
     case stringConversionFailed
+    /// 目录列举等待 FFI 结果超时（活体死锁热修）：消息原样透出给错误浮层
+    case directoryListTimeout(String)
 
     public var errorDescription: String? {
         switch self {
@@ -19,6 +21,8 @@ public enum CoreBridgeError: Error, LocalizedError {
             return "Rust core library not loaded"
         case .stringConversionFailed:
             return "Failed to convert string to C string"
+        case .directoryListTimeout(let message):
+            return message
         }
     }
 }
@@ -191,6 +195,13 @@ public final class CoreBridge {
     /// Serial queue for FFI operations to ensure thread safety
     private let ffiQueue = DispatchQueue(label: "com.flowfinder.ffi", qos: .userInitiated)
 
+    /// 目录列举专用串行队列（活体死锁热修）：ff_list_dir 无共享状态（路径进、
+    /// 条目出），独立串行队列防止慢目录（iCloud/网络盘）卡死共享 ffiQueue
+    /// 波及全部 FFI（实测 iCloud Desktop 卡顿曾冻结全局）。
+    /// Rust 侧 L1/L2 缓存自带内部锁（dir_cache Mutex / sqlite 连接池 Mutex），
+    /// 与其他队列上的 ff_cache_invalidate 并发安全。
+    private static let directoryListQueue = DispatchQueue(label: "com.flowfinder.dirlist", qos: .userInitiated)
+
     /// FSEvents watcher 句柄（由 ff_fsevents_start 返回）
     private var fseventsWatcherHandle: Int32 = 0
 
@@ -239,14 +250,16 @@ public final class CoreBridge {
 
         var entries: [FileEntry] = []
 
-        // Use a serial queue for thread-safe FFI access
+        // 目录列举走专用串行队列（directoryListQueue），不再进共享 ffiQueue：
+        // 慢目录（iCloud/网络盘）的阻塞 syscall 不得拖累其余 FFI 操作。
         var ffiResult: Int32 = -1
         var ffiEntries: [FileEntry] = []
 
-        // Execute FFI call on the serial queue
+        // 等待 FFI 结果（活体死锁热修：10 秒超时兜底——阻塞 syscall 无法中断，
+        // 超时后卡住的队列线程泄漏属可接受代价，见 wave1 报告）
         let semaphore = DispatchSemaphore(value: 0)
 
-        ffiQueue.async {
+        Self.directoryListQueue.async {
             defer { semaphore.signal() }
 
             // ── L1 + L2 cache lookup ───────────────────────────────────
@@ -291,7 +304,15 @@ public final class CoreBridge {
             }
         }
 
-        semaphore.wait()
+        let waitOutcome = semaphore.wait(timeout: .now() + 10)
+
+        guard waitOutcome == .success else {
+            // 超时兜底（活体死锁热修）：本线程立即抛错返回，调用方（PaneState
+            // loadDirectory 的 catch）会回主线程清除 isLoading 并走既有错误浮层。
+            // 迟到的列举结果因等待线程已解除等待而永远不会被消费（结构性丢弃），
+            // 用户重试导航时 loadGeneration 代次守卫会再兜一层。
+            throw CoreBridgeError.directoryListTimeout("目录响应超时（磁盘或网络无响应），可重试")
+        }
 
         guard ffiResult == 0 else {
             let errorMessage = getLastError()
@@ -789,24 +810,16 @@ public final class CoreBridge {
             // 再置空 self.fseventsContext，确保回调期间 context 不会被释放。
             let contextPtr = Unmanaged.passUnretained(context).toOpaque()
 
-            var ffiResult: Int32 = -1
-            var statusRaw: Int32 = FSEventsStatus.failed.rawValue
-            let semaphore = DispatchSemaphore(value: 0)
-
-            ffiQueue.async {
-                defer { semaphore.signal() }
-
-                let result = path.withCString { cPath in
-                    ff_fsevents_start(cPath, fseventsCallback, contextPtr)
-                }
-                ffiResult = result
-                // 握手返回时 Rust 侧状态已定格（active/failed/stopped），
-                // 在同一队列任务内读取，免去二次排队（写入状态缓存用）。
-                statusRaw = ff_fsevents_status()
+            // 活体死锁热修：fsevents FFI 自带独立线程与内部状态锁（WATCHER_STATUS），
+            // 与 list_dir 无共享，直接在本生命周期队列上调用，避免列举卡死拖死
+            // watcher 生命周期（原实现经共享 ffiQueue + semaphore 中转，慢目录
+            // 列举冻结 ffiQueue 时 start/stop 会被永久卡住）。
+            let ffiResult: Int32 = path.withCString { cPath in
+                ff_fsevents_start(cPath, fseventsCallback, contextPtr)
             }
-
-            // 仅后台线程等待握手（Wave1 P0-1：主线程不再等待）
-            semaphore.wait()
+            // 握手返回时 Rust 侧状态已定格（active/failed/stopped），随即读取
+            // （写入状态缓存用）。
+            let statusRaw: Int32 = ff_fsevents_status()
 
             // 成功契约：ff_error_t 中负值表示错误（FF_ERR_INVALID_PATH = -2 等），
             // 非负值（>= 0）表示成功。当前 Rust 实现返回 0，但若未来 Rust 改为
@@ -847,24 +860,20 @@ public final class CoreBridge {
     /// 返回（Rust 侧已 join worker，返回后不再有任何回调）。
     private func stopFSEventsWatcher() {
         let handle = self.fseventsWatcherHandle
-        var statusRaw: Int32 = FSEventsStatus.stopped.rawValue
-        let semaphore = DispatchSemaphore(value: 0)
 
-        ffiQueue.async {
-            defer { semaphore.signal() }
-            // 使用 startFSEventsWatcher 存储的真实 handle（而非硬编码 0），
-            // 确保 Rust 侧能正确识别要停止的 watcher。
-            // 显式标注 Int32：ff_fsevents_stop 同时存在 C 头文件与 @_silgen_name
-            // 两份声明，无类型上下文的裸调用会因二义性编译失败。
-            let stopResult: Int32 = ff_fsevents_stop(handle)
-            // 0 = 有 watcher 已停止；-1 = 本就无 watcher（幂等 stop 的合法情形），
-            // 两种结果均已保证 Rust 侧不再产生回调，无需按错误处理
-            _ = stopResult
-            // stop 返回后状态已定格，同队列任务内读取以更新状态缓存
-            statusRaw = ff_fsevents_status()
-        }
-
-        semaphore.wait()
+        // 活体死锁热修：直接在本生命周期队列上调用 stop（理由同 startFSEventsWatcher），
+        // 不再经共享 ffiQueue + semaphore 中转。
+        // 使用 startFSEventsWatcher 存储的真实 handle（而非硬编码 0），
+        // 确保 Rust 侧能正确识别要停止的 watcher。
+        // 显式标注 Int32：ff_fsevents_stop 同时存在 C 头文件与 @_silgen_name
+        // 两份声明，无类型上下文的裸调用会因二义性编译失败。
+        let stopResult: Int32 = ff_fsevents_stop(handle)
+        // 0 = 有 watcher 已停止；-1 = 本就无 watcher（幂等 stop 的合法情形），
+        // 两种结果均已保证 Rust 侧不再产生回调，无需按错误处理
+        _ = stopResult
+        // stop 返回后状态已定格，读取以更新状态缓存
+        // （显式标注 Int32：ff_fsevents_status 同样存在两份声明，需类型上下文消歧）
+        let statusRaw: Int32 = ff_fsevents_status()
 
         // 清理上下文和句柄：必须在 ff_fsevents_stop 返回之后（Rust 已停止回调），
         // 否则并发回调可能访问已释放的 context。
