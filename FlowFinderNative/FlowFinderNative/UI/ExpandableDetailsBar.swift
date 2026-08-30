@@ -318,11 +318,14 @@ class ExpandableDetailsBar: NSView {
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
-        // 匹配 glassBackground 的 12pt 圆角，使阴影（由 MainWindowController 设置）也呈圆角
-        layer?.cornerRadius = 12
+        // Wave4 Task 2：圆角收敛两档——浮层级 10（FFDesign.Glass.cornerRadiusPanel）。
+        // 此处与 glassBackground 同用面板级令牌，保证层圆角与玻璃圆角一致。
+        layer?.cornerRadius = FFDesign.Glass.cornerRadiusPanel
 
-        // v0.6.9: 玻璃背景浮层，圆角 12pt（超椭圆由 SquircleView 处理，此处用 FFGlassView 提供材质）
-        let glassBackground = FFGlassView(level: .panel, cornerRadius: 12, material: .sidebar)
+        // v0.6.9: 玻璃背景浮层（超椭圆由 SquircleView 处理，此处用 FFGlassView 提供材质）
+        // Wave4 Task 2：圆角 12→面板级 10；浮层阴影由 FFGlassView 分级提供（唯一来源，
+        // MainWindowController 侧的双投阴影已删除，消除双投与反向 offset）
+        let glassBackground = FFGlassView(level: .panel, cornerRadius: FFDesign.Glass.cornerRadiusPanel, material: .sidebar)
         glassBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glassBackground)
 

@@ -750,13 +750,6 @@ public class MainWindowController: NSWindowController {
             // 高度由 ExpandableDetailsBar 内部 heightConstraint 控制
         ])
 
-        // v0.6.9: 详情栏浮层添加阴影强化浮动层次
-        detailsBar.wantsLayer = true
-        detailsBar.layer?.shadowOpacity = 0.15
-        detailsBar.layer?.shadowRadius = 8
-        detailsBar.layer?.shadowOffset = CGSize(width: 0, height: -2)
-        detailsBar.layer?.shadowColor = NSColor.black.cgColor
-
         // v0.7.4 项 3：详情栏名称行单击改名 → 调用对应侧 viewModel.renameFile
         let paneVM = side == .left ? leftPaneViewModel : rightPaneViewModel
         detailsBar.onRename = { [weak paneVM] oldPath, newName in
@@ -831,7 +824,8 @@ public class MainWindowController: NSWindowController {
     /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
     /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
     private func createDevicePanel() -> FFGlassView {
-        let panel = FFGlassView(level: .panel, cornerRadius: 8)
+        // Wave4 Task 2：圆角 8→面板级默认 10（浮层圆角收敛两档：容器 16 / 浮层 10）
+        let panel = FFGlassView(level: .panel, cornerRadius: FFDesign.Glass.cornerRadiusPanel)
         panel.translatesAutoresizingMaskIntoConstraints = false
         // 任务 4: 液态玻璃：FFGlassView 自带主题刷新（内部监听外观变化），
         // 与侧边栏玻璃质感统一；子视图不被裁剪（不设置 masksToBounds）

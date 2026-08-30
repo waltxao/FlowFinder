@@ -49,9 +49,9 @@ enum FFDesign {
         // 性能预算
         static let maxGlassInstances = 8
 
-        // 圆角（按层级）
+        // 圆角（按层级）——Wave4 Task 2 收敛为两档：容器级 16 / 浮层级 10
         static let cornerRadiusWindow: CGFloat = 12
-        static let cornerRadiusPanel: CGFloat = 14     // 浮层 14（柔和）
+        static let cornerRadiusPanel: CGFloat = 10     // 浮层 10（与详情栏/设备/工具面板统一）
         static let cornerRadiusComponent: CGFloat = 10 // 嵌入式 10
 
         // 液态玻璃描边："磨边"亮线，宽 1.75pt，alpha 较高，边缘反光感
