@@ -1320,7 +1320,9 @@ extension FileGridView {
         let folderPath = target?.isDirectory == true ? target?.path : nil
         updateDropHighlight(folderPath: folderPath)
         updateSpringLoading(folderPath: folderPath)
-        return isMoveOperation(sender, destPath: viewModel?.currentPath) ? .move : .copy
+        // Wave3 Task 4: 悬停文件夹 item 时按该文件夹判定同卷/跨卷与 ⌘ 反转
+        // （与列表 validateDrop 的 .on 语义一致）；空白区/文件项按当前目录判定
+        return isMoveOperation(sender, destPath: folderPath ?? viewModel?.currentPath) ? .move : .copy
     }
 
     /// Wave3 Task 1/4: 拖拽位置命中的条目（nil = 空白区/分组标题）。
@@ -1418,7 +1420,16 @@ extension FileGridView {
             return false
         }
 
-        let destPath = viewModel?.currentPath ?? ""
+        // Wave3 Task 4: 命中文件夹 item 时以该文件夹为目标目录（对齐列表 ".on" 语义：
+        // 拖到文件夹上松手 = 移入该文件夹）；空白区/文件项仍落当前目录。
+        // 落包时刻按 draggingLocation 重新解析目标，避免使用陈旧的悬停状态。
+        let dropTarget = dropTargetEntry(at: sender.draggingLocation)
+        let destPath: String
+        if let folderPath = dropTarget?.path, dropTarget?.isDirectory == true {
+            destPath = folderPath
+        } else {
+            destPath = viewModel?.currentPath ?? ""
+        }
         guard !destPath.isEmpty else { return false }
 
         let isMove = isMoveOperation(sender, destPath: destPath)
@@ -1580,7 +1591,8 @@ extension FileGridView {
     /// 判断是否为移动操作（访达语义）：
     /// 同盘 + 无修饰键 = 移动；同盘 + ⌘ = 复制
     /// 跨盘 + 无修饰键 = 复制；跨盘 + ⌘ = 移动
-    /// - Parameter destPath: 真实拖放目标路径（网格目标即当前目录，默认取 viewModel?.currentPath）
+    /// - Parameter destPath: 真实拖放目标路径（Wave3 Task 4：拖到文件夹 item 上时为该
+    ///   文件夹路径，空白区/文件项为当前目录；默认取 viewModel?.currentPath）
     private func isMoveOperation(_ sender: NSDraggingInfo, destPath: String? = nil) -> Bool {
         // 读取拖拽过程中捕获的修饰键（比 NSApp.currentEvent 在回调中可靠）
         let commandPressed = lastDragModifierFlags.contains(.command)
