@@ -1847,10 +1847,11 @@ public class MainWindowController: NSWindowController {
         guard let tag = (notification.userInfo?["tag"] as? Tag) ?? (notification.object as? Tag) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.setTagFilter(tag)
-        // 发布通知让侧边栏更新标签高亮（object=self 携带 host controller 身份，
-        // 与同文件 :1636/:1780 的非 nil object 发布一致，防跨窗口串扰——审查 Minor 2）
+        // 发布通知让侧边栏更新标签高亮。观察方（SidebarView）按 object as? NSWindow
+        // 过滤他窗口，必须携带本窗口对象（round-2 复核：object: self 对 NSWindow
+        // 转型失败会被观察方跳过过滤，跨窗口高亮串扰依旧）
         NotificationCenter.default.post(
-            name: .paneTagFilterChanged, object: self,
+            name: .paneTagFilterChanged, object: window,
             userInfo: ["tagFilter": vm.state.tagFilter as Any]
         )
     }
