@@ -679,6 +679,14 @@ public class FileListView: NSView {
         guard let viewModel = viewModel, newCount > 0 else { return }
         let startIndex = viewModel.state.files.count - newCount
         guard startIndex >= 0 else { return }
+        // 活体验收缺陷修复（列表重复行）防御层：仅当既有 displayRows 恰好映射
+        // files[0..<startIndex]（displayRows.count == startIndex）时才允许增量插入。
+        // 一旦失同步（视图重建/基准过期导致把旧数据再判为「新增」），回退全量
+        // reloadData 重建映射，绝不把已有行再拼一遍（宁全量刷新，不重复渲染）。
+        guard displayRows.count == startIndex else {
+            reloadData()
+            return
+        }
 
         var newRows: [FFDisplayRow] = []
         newRows.reserveCapacity(newCount)
@@ -1352,6 +1360,13 @@ public class FileListView: NSView {
         clearDragVisualState()
         // 任务 F10-8: 重建分组显示行映射后再 reload tableView
         rebuildDisplayRows()
+        // 活体验收缺陷修复（列表重复行）：reloadData 已按「当前完整 state」全量重建
+        // displayRows，追加检测基准必须随之同步——否则 viewModel didSet / 外部 reloadData
+        // 把 displayRows 重建到 N 行后 lastFilesCount 仍是旧值（如 0），下一个 state 发射
+        // 会被 sink 的 needReload 判为「数量增加」且满足 isAppendOnly（排序/分组未变），
+        // 走 appendDisplayRows 把整表再拼一遍（实测：9 项列表显示 18 行、9 条目恰好重复两遍，
+        // 而状态栏仍按 state.files 显示「9 项」）。
+        syncTrackersWithCurrentState()
         // Bug 9 修复：reloadData 可能引起 selectionDidChange 回调（行被清空/重建），
         // 若不抑制则会触发 viewModel.state.selectedFiles 变更 -> @Published 发射 ->
         // 上游 sink 再次 reloadData，形成循环。设置标志位并在下一 runloop 复位，
@@ -1367,6 +1382,29 @@ public class FileListView: NSView {
             // reload 后行视图坐标可能尚未更新，下一 runloop 再刷新一次粘性标题
             self?.updateStickyHeader()
         }
+    }
+
+    /// 活体验收缺陷修复（列表重复行）：把追加检测基准同步为当前 state。
+    /// reloadData 走全量重建，displayRows 与「当前完整 state.files」严格一一对应，
+    /// 因此 lastFilesCount / 分组 / 排序基准必须取当前值——sink 的下一个发射只需
+    /// 关心「之后的真实变化」。didSet 重绑订阅与外部 reloadData 均经由此方法对齐。
+    private func syncTrackersWithCurrentState() {
+        guard let viewModel = viewModel else {
+            lastFilesCount = -1
+            currentGroupBy = "none"
+            currentSortField = .name
+            currentSortAscending = true
+            return
+        }
+        lastFilesCount = viewModel.state.files.count
+        currentGroupBy = viewModel.state.groupBy
+        currentSortField = viewModel.state.sortField
+        currentSortAscending = viewModel.state.sortAscending
+    }
+
+    /// 当前表格实际显示的行数（internal 只读，供单元测试断言「无重复行」）。
+    var numberOfDisplayedRows: Int {
+        return tableView?.numberOfRows ?? 0
     }
 
     /// 任务 F11-5: 更新粘性分组标题（仿访达）。

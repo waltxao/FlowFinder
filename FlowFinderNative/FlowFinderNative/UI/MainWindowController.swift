@@ -1638,12 +1638,23 @@ public class MainWindowController: NSWindowController {
         toolbar?.setCanGoForward(state.historyIndex < state.history.count - 1)
         toolbar?.setViewMode(state.viewMode)
 
-        fileListView?.viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
+        // 活体验收缺陷修复（列表重复行）触发源：updatePaneUI 由 $state sink 在**每次**
+        // 发射时调用（含 isLoading/selectedFiles 等与文件列表无关的字段变化），重赋同一
+        // viewModel 实例也会触发 FileListView/FileGridView 的 didSet（取消并重建订阅 +
+        // 全量 reloadData）。订阅反复重建会让视图自身 sink 的同步投递被丢弃，
+        // lastFilesCount 追加检测基准过期，最终把整表误判为「纯追加」再拼一遍
+        // （9 项显示 18 行）。改为仅实例变化时重新绑定；刷新由下方显式 reloadData 负责。
+        let paneVM = side == .left ? leftPaneViewModel : rightPaneViewModel
+        if fileListView?.viewModel !== paneVM {
+            fileListView?.viewModel = paneVM
+        }
         fileListView?.reloadData()
 
         // 更新网格视图
         let grid = side == .left ? leftFileGridView : rightFileGridView
-        grid?.viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
+        if grid?.viewModel !== paneVM {
+            grid?.viewModel = paneVM
+        }
         grid?.reloadData()
 
         // 视图模式切换
@@ -1694,18 +1705,43 @@ public class MainWindowController: NSWindowController {
 
         switch mode {
         case .list:
+            // 活体验收缺陷修复（⌘2 焦点漂移）：先显示新视图，再把焦点从旧视图移出，
+            // 最后才隐藏旧视图——顺序不可颠倒。若直接隐藏 firstResponder 所在的旧视图，
+            // AppKit 会沿 keyViewLoop 把焦点漂移到「下一个」可见控件：左面板列表的
+            // nextKeyView 是右面板搜索框（buildKeyViewLoops 链序），⌘2 切网格后焦点
+            // 即落到右面板搜索框（蓝圈），键盘/视图操作从此打到另一面板。
             listView?.isHidden = false
+            Self.moveFocusOff(window: window, from: gridView, to: listView?.keyFocusTarget)
             gridView?.isHidden = true
             listView?.reloadData()
         case .grid:
-            listView?.isHidden = true
             gridView?.isHidden = false
+            Self.moveFocusOff(window: window, from: listView, to: gridView?.keyFocusTarget)
+            listView?.isHidden = true
             gridView?.reloadData()
         }
         // Wave2 P0-1：视图模式切换后重建 keyViewLoop（链尾落点在列表/网格间切换）
         buildKeyViewLoops()
         // 网格默认用户首启焦点须落在当前可见视图（审查 Important 1）
         refreshInitialFirstResponder()
+    }
+
+    /// 活体验收缺陷修复（⌘2 焦点漂移）：视图模式切换时把键盘焦点保持在原面板。
+    /// 若键盘焦点在即将隐藏的旧文件视图（或其子视图）内，先转移到同面板新视图的
+    /// 焦点落点，避免 AppKit 因 firstResponder 被隐藏而沿 keyViewLoop 漂移到另一面板
+    /// 的首控件（右面板搜索框）。文本编辑中（field editor NSTextView）不打断。
+    static func moveFocusOff(window: NSWindow?, from oldView: NSView?, to newTarget: NSView?) {
+        guard let window = window, let oldView = oldView, let newTarget = newTarget else { return }
+        guard shouldTransferFocus(firstResponder: window.firstResponder, from: oldView) else { return }
+        window.makeFirstResponder(newTarget)
+    }
+
+    /// 焦点转移判定（纯函数，internal 供单元测试）：firstResponder 在旧视图（或其子视图）
+    /// 内且非文本编辑中（field editor NSTextView）时需要转移。
+    static func shouldTransferFocus(firstResponder: Any?, from oldView: NSView?) -> Bool {
+        guard let oldView = oldView, let frView = firstResponder as? NSView else { return false }
+        if firstResponder is NSTextView { return false }  // 文本编辑中（field editor）不转移
+        return frView === oldView || frView.isDescendant(of: oldView)
     }
 
     private func loadInitialDirectories() {

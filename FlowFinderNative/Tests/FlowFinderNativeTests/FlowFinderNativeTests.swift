@@ -710,4 +710,92 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         // 全程行不得丢失：流动顺序注册表数量恒定
         XCTAssertEqual(bar.flowOrderedRows.count, flowCount, "行不得丢失（流动顺序注册表数量恒定）")
     }
+
+    // MARK: - 活体验收缺陷修复（列表重复行 + ⌘2 焦点漂移）
+
+    /// 构造 n 个测试文件条目
+    private func makeFileEntries(_ n: Int) -> [FileEntry] {
+        return (0..<n).map { i in
+            FileEntry(path: "/tmp/ff-dup-test/file-\(i).txt", name: "file-\(i).txt", isDirectory: false)
+        }
+    }
+
+    /// 等待 Combine .receive(on: DispatchQueue.main) 的投递与主队列派发块执行完毕
+    /// （主队列 FIFO：本方法的 fulfill 块排在所有已入队投递之后执行）
+    private func drainMainQueue() {
+        let exp = expectation(description: "drain main queue")
+        DispatchQueue.main.async { exp.fulfill() }
+        wait(for: [exp], timeout: 5.0)
+    }
+
+    /// 回归 pin（活体验收缺陷1：列表重复行）。
+    /// 根因：reloadData / viewModel didSet 按「当前完整 state」全量重建 displayRows，
+    /// 但 lastFilesCount 追加检测基准未同步。复刻生产时序：空列表先建立基准(0) →
+    /// state 变为 9 条且重赋 viewModel（didSet 全量重建 9 行）→ sink 投递 count=9。
+    /// 修复前 lastFilesCount 仍为 0，被误判为「纯追加」走 appendDisplayRows 把整表
+    /// 再拼一遍（9 项显示 18 行、9 条目恰好重复两遍，状态栏仍按 state.files 显示「9 项」）。
+    func testListViewReloadedViewMustNotDuplicateRowsOnNextEmission() {
+        let vm = PaneViewModel()
+        vm.state.path = "/tmp/ff-dup-test"
+        let listView = FileListView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        listView.viewModel = vm
+        drainMainQueue()  // 基准随空列表建立（lastFilesCount → 0）
+
+        vm.state.files = makeFileEntries(9)
+        listView.viewModel = vm  // 复刻 updatePaneUI 的重赋：didSet 全量重建 displayRows=9
+        drainMainQueue()  // sink 投递 count=9：不得叠加行
+
+        XCTAssertEqual(listView.numberOfDisplayedRows, 9,
+                       "9 项必须恰好显示 9 行（修复前为 18 行整表重复）")
+    }
+
+    /// 回归 pin（缺陷1修复不得破坏合法分页追加路径）：
+    /// 真实的「数量增加」发射仍走增量插入，且每行恰好插入一次。
+    func testListViewAppendEmissionStillInsertsExactlyOnce() {
+        let vm = PaneViewModel()
+        vm.state.path = "/tmp/ff-dup-test"
+        let listView = FileListView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        listView.viewModel = vm
+        drainMainQueue()
+
+        vm.state.files = makeFileEntries(3)
+        drainMainQueue()
+        XCTAssertEqual(listView.numberOfDisplayedRows, 3, "初始 3 项应显示 3 行")
+
+        vm.state.files = makeFileEntries(6)  // 分页/刷新追加 3 条
+        drainMainQueue()
+        XCTAssertEqual(listView.numberOfDisplayedRows, 6, "追加 3 条后应恰好 6 行（不得重复或丢失）")
+    }
+
+    /// 回归 pin（活体验收缺陷2：⌘2 焦点漂移）。
+    /// 根因：视图模式切换直接隐藏 firstResponder 所在的旧文件视图，AppKit 沿
+    /// keyViewLoop 把焦点漂到「下一个」可见控件（左列表的 nextKeyView = 右面板搜索框，
+    /// 即截图中的右搜索框蓝圈）。修复：先把焦点转移到同面板新视图，再隐藏旧视图。
+    /// 本测试 pin 转移判定：焦点在旧视图（含子视图）内需要转移；焦点在别处
+    /// （另一面板控件/搜索框 field editor）不转移。
+    /// 注：不创建 NSWindow——测试运行器的内存检查器会在用例结束后释放作用域对象，
+    /// 与窗口簿记延迟块竞态曾致运行器 SIGSEGV（见 PaneStateDeleteFilterTests 既有注释）。
+    func testShouldTransferFocusOnlyWhenInsideOldView() {
+        final class FocusableView: NSView {
+            override var acceptsFirstResponder: Bool { true }
+        }
+        let oldView = FocusableView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        let child = FocusableView(frame: NSRect(x: 10, y: 10, width: 50, height: 50))
+        oldView.addSubview(child)
+        let unrelated = FocusableView(frame: NSRect(x: 200, y: 0, width: 100, height: 100))
+        let fieldEditor = NSTextView(frame: NSRect(x: 0, y: 200, width: 50, height: 20))
+
+        // 焦点在旧视图自身 → 需要转移
+        XCTAssertTrue(MainWindowController.shouldTransferFocus(firstResponder: oldView, from: oldView))
+        // 焦点在旧视图的子视图内 → 需要转移
+        XCTAssertTrue(MainWindowController.shouldTransferFocus(firstResponder: child, from: oldView))
+        // 焦点在旧视图外（另一面板的文件视图/搜索框等）→ 不转移
+        XCTAssertFalse(MainWindowController.shouldTransferFocus(firstResponder: unrelated, from: oldView))
+        // 文本编辑中（field editor）→ 不打断
+        XCTAssertFalse(MainWindowController.shouldTransferFocus(firstResponder: fieldEditor, from: oldView))
+        // 非视图 firstResponder（窗口自身）→ 不转移
+        XCTAssertFalse(MainWindowController.shouldTransferFocus(firstResponder: NSObject(), from: oldView))
+        // 旧视图为 nil → 不转移
+        XCTAssertFalse(MainWindowController.shouldTransferFocus(firstResponder: oldView, from: nil))
+    }
 }
