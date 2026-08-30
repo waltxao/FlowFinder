@@ -989,6 +989,8 @@ public class MainWindowController: NSWindowController {
         NotificationCenter.default.removeObserver(self)
         // 任务 F10-3: 移除卷挂载/卸载通知监听（迁移自 SidebarView deinit）
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        // Wave3 Task 6: 取消挂起的 FSEvents 合帧 flush
+        fsChangeFlushWorkItem?.cancel()
         TaskSchedulerManager.shared.stopPolling()
     }
 
@@ -1373,6 +1375,15 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - FSEvents 文件系统监控
 
+    // Wave3 Task 6: FSEvents 风暴合帧状态（主线程专用——.fileSystemDidChange 由
+    // AppDelegate 主线程广播，本状态无需加锁）
+    /// 待 flush 的变更路径集合（去重）
+    private var pendingChangedPaths: Set<String> = []
+    /// 合帧定时器（首个事件起算 0.3s，窗口期间事件只入集合，到点一次性 flush）
+    private var fsChangeFlushWorkItem: DispatchWorkItem?
+    /// 合帧窗口（秒）：单事件延迟 ≤0.3s 可接受（实现计划 Task 6 注明的取舍）
+    private static let fsChangeFlushInterval: Double = 0.3
+
     /// Wave2 P0-4（多窗口）：处理 AppDelegate 进程级 FSEvents 监控广播的文件系统变更通知：
     /// 失效缓存 + 刷新受影响的面板（原 startFileSystemWatcher/handleFileSystemChange 链路，
     /// watcher 上移 AppDelegate 后经通知分发到各窗口）
@@ -1387,34 +1398,62 @@ public class MainWindowController: NSWindowController {
     /// semaphore 往返；现将缓存失效批量移到后台队列，失效完成后回主线程刷新
     /// 受影响面板（保持「先失效、后刷新」的顺序，刷新读到的是已失效缓存）。
     /// watcher 仅在 active 状态回调，启动握手期间不会有事件，事件不丢失。
+    /// Wave3 Task 6（P1-5 风暴合帧）：git checkout/解压/网盘同步等风暴期间每秒数百事件，
+    /// 逐事件失效+刷新会导致主线程反复往返与重复 loadDirectory——现改为 0.3s 合帧：
+    /// 事件路径进去重 Set，到点一次性批量失效 + 每面板至多一次刷新。
     private func handleFileSystemChange(changedPath: String) {
-        // 失效变更路径及其父目录的缓存
-        let parentDir = (changedPath as NSString).deletingLastPathComponent
+        // 事件路径进去重集合（通知主线程串行回调，集合无需加锁）
+        pendingChangedPaths.insert(changedPath)
+        // 首个事件起算 0.3s 定时器；窗口期间后续事件只入集合不重置定时器
+        // （固定节拍：风暴期间每 0.3s flush 一批，单事件延迟有界、目录扫描频率受控）
+        guard fsChangeFlushWorkItem == nil else { return }
+        let item = DispatchWorkItem { [weak self] in
+            self?.flushFileSystemChanges()
+        }
+        fsChangeFlushWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fsChangeFlushInterval, execute: item)
+    }
 
-        // 转发变更路径到内容索引（O(1) 内存 dirty 集合 + 异步 ffiQueue，主线程零等待）
-        ContentIndexBridge.shared.markDirty(path: changedPath)
+    /// Wave3 Task 6: flush 累积的变更事件（主线程）：批量失效 + 每面板至多一次刷新
+    private func flushFileSystemChanges() {
+        fsChangeFlushWorkItem = nil
+        guard !pendingChangedPaths.isEmpty else { return }
+        let paths = pendingChangedPaths
+        pendingChangedPaths = []
 
-        // 检查变更路径是否影响当前面板显示的目录（主线程快照，后台不读 UI 状态）
+        // 转发去重后的变更路径到内容索引（O(1) 内存 dirty 集合 + 异步 ffiQueue，主线程零等待）
+        for path in paths {
+            ContentIndexBridge.shared.markDirty(path: path)
+        }
+
+        // 检查变更路径是否影响当前面板显示的目录（主线程快照，后台不读 UI 状态）：
+        // 变更 = 面板当前目录本身，或其父目录 = 面板当前目录（目录内容变化）
         let leftPath = leftPaneViewModel.currentPath
         let rightPath = rightPaneViewModel.currentPath
-        let affectsLeft = changedPath == leftPath || parentDir == leftPath
-        let affectsRight = changedPath == rightPath || parentDir == rightPath
-
-        // 缓存失效批量移后台队列执行（Wave1 P0-1：删除主线程 semaphore 往返）
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            try? CoreBridge.shared.invalidateCache(path: changedPath)
-            if !parentDir.isEmpty && parentDir != changedPath {
-                try? CoreBridge.shared.invalidateCache(path: parentDir)
+        func affects(_ panelPath: String) -> Bool {
+            paths.contains { path in
+                path == panelPath || (path as NSString).deletingLastPathComponent == panelPath
             }
-            // 缓存失效完成后回主线程刷新受影响的面板
+        }
+        let affectsLeft = affects(leftPath)
+        let affectsRight = affects(rightPath)
+
+        // 一次后台调用批量失效全部去重路径及其父目录（Wave1 P0-1：主线程无 semaphore 往返）
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for path in paths {
+                try? CoreBridge.shared.invalidateCache(path: path)
+                let parentDir = (path as NSString).deletingLastPathComponent
+                if !parentDir.isEmpty && parentDir != path {
+                    try? CoreBridge.shared.invalidateCache(path: parentDir)
+                }
+            }
+            // 缓存失效完成后回主线程刷新受影响的面板（每面板至多一次）
             DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                // 如果变更发生在当前显示的目录内，或变更的就是当前目录本身
                 if affectsLeft {
-                    self.leftPaneViewModel.refresh()
+                    self?.leftPaneViewModel.refresh()
                 }
                 if affectsRight {
-                    self.rightPaneViewModel.refresh()
+                    self?.rightPaneViewModel.refresh()
                 }
             }
         }
