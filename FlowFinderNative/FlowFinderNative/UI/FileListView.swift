@@ -1935,6 +1935,15 @@ extension FileListView: NSTableViewDelegate {
         )
         guard !conflictPlan.isEmpty else { return true }
 
+        // Wave3 Task 3: 直连进度模式（照抄粘贴路径 MainWindowController+MenuActions.performPasteOperation）：
+        // 主线程启动进度栏 → 后台批量操作经 progress 回调切主线程更新 → 完成后延迟收起。
+        // 进度条与展开/收起钩子在主线程捕获快照，后台/回调只使用不可变引用。
+        let operationName = isMove ? "移动" : "复制"
+        let progressBar = viewModel.taskProgressBar
+        let collapsed = viewModel.progressBarsCollapsed
+        progressBar?.startDirectProgress(operation: operationName, totalCount: conflictPlan.count)
+        viewModel.progressBarsExpanded?()
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let srcs = conflictPlan.normalSrcs
             let allSrcs = srcs + conflictPlan.keepBoth.map { $0.src }
@@ -1942,9 +1951,28 @@ extension FileListView: NSTableViewDelegate {
             do {
                 var success: Int
                 if isMove {
-                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath)
+                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath) { completed, total in
+                        // progress 回调来自 ffi 工作线程，切主线程更新 UI（Wave 1 线程纪律）
+                        DispatchQueue.main.async {
+                            progressBar?.updateDirectProgress(
+                                operation: operationName,
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
                 } else {
-                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath)
+                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath) { completed, total in
+                        DispatchQueue.main.async {
+                            progressBar?.updateDirectProgress(
+                                operation: operationName,
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
                 }
 
                 // 保留两者：逐项以改名后的目标名复制/移动（批量接口目标名取 lastPathComponent，无法表达改名）
@@ -1989,6 +2017,13 @@ extension FileListView: NSTableViewDelegate {
 
                 DispatchQueue.main.async {
                     self?.viewModel?.refresh()
+
+                    // Wave3 Task 3: 进度完成，2.2 秒后淡出收起（与粘贴路径一致）
+                    progressBar?.completeDirectProgress(operation: operationName, count: success)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                        progressBar?.hide()
+                        collapsed?()
+                    }
 
                     // Bug 3 修复：跨面板拖拽时，若源文件来自对侧面板的当前目录，需刷新对侧面板
                     // （仅 move 操作会改变源目录；copy 不改变源，但为安全起见也刷新对侧）
@@ -2035,7 +2070,10 @@ extension FileListView: NSTableViewDelegate {
                 }
             } catch {
                 DispatchQueue.main.async {
+                    // Wave3 Task 3: 失败路径不吞错——既有错误弹窗 + 收起进度栏（与粘贴路径一致）
                     self?.showError(error: error)
+                    progressBar?.hide()
+                    collapsed?()
                 }
             }
         }
