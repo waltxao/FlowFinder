@@ -611,6 +611,14 @@ public class FileGridView: NSView {
     private var highlightedItemPath: String? = nil
     private let dropHighlightOverlay = FFDropHighlightBorderView()
 
+    // Wave3 Task 2: Spring Loading 驻留展开状态（主线程专用）。
+    // 悬停文件夹 item 1.0s 后自动进入该文件夹（Finder 驻留展开语义）。
+    private var springLoadingWorkItem: DispatchWorkItem?
+    /// 当前计时中的驻留展开目标文件夹
+    private var springTargetPath: String? = nil
+    /// 本次拖拽会话内已驻留展开过的文件夹（防重入：同文件夹只触发一次）
+    private var springFiredPaths: Set<String> = []
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
@@ -1286,16 +1294,20 @@ extension FileGridView {
         lastDragModifierFlags = []
         super.draggingEnded(sender)
         clearDropFeedback()
+        // Wave3 Task 2: 会话结束额外清防重入集合，允许下次拖拽重新驻留展开
+        springFiredPaths.removeAll()
     }
 
     /// Wave3 Task 1: 落包视觉收尾——清除全部 Drop 高亮状态
     public override func concludeDragOperation(_ sender: NSDraggingInfo?) {
         super.concludeDragOperation(sender)
         clearDropFeedback()
+        // Wave3 Task 2: 会话结束额外清防重入集合
+        springFiredPaths.removeAll()
     }
 
-    /// Wave3 Task 1/4: 共享拖拽悬停处理（draggingEntered/draggingUpdated 复用）：
-    /// 捕获修饰键 + 更新 Drop 高亮，返回操作掩码。
+    /// Wave3 Task 1/2/4: 共享拖拽悬停处理（draggingEntered/draggingUpdated 复用）：
+    /// 捕获修饰键 + 更新 Drop 高亮 + Spring Loading 计时，返回操作掩码。
     /// 命中文件夹 item → 高亮该 item；空白区/文件项 → 高亮容器（表示落入当前目录）。
     private func handleGridDragging(_ sender: NSDraggingInfo) -> NSDragOperation {
         // 持续捕获修饰键，支持拖拽过程中实时切换 ⌘（问题 7 根因修复：回调中
@@ -1304,7 +1316,10 @@ extension FileGridView {
             lastDragModifierFlags = event.modifierFlags
         }
         let target = dropTargetEntry(at: sender.draggingLocation)
-        updateDropHighlight(target: target)
+        // 仅文件夹 item 作为 ".on" 语义目标（高亮/驻留展开/落包移入）
+        let folderPath = target?.isDirectory == true ? target?.path : nil
+        updateDropHighlight(folderPath: folderPath)
+        updateSpringLoading(folderPath: folderPath)
         return isMoveOperation(sender, destPath: viewModel?.currentPath) ? .move : .copy
     }
 
@@ -1320,8 +1335,7 @@ extension FileGridView {
 
     /// Wave3 Task 1: 更新 Drop 高亮——命中文件夹 item 高亮该 item，否则高亮容器。
     /// 单一目标原则：换目标先清旧再设新；仅在目标变化时触碰视图（draggingUpdated 高频触发）。
-    private func updateDropHighlight(target: FileEntry?) {
-        let folderPath = target?.isDirectory == true ? target?.path : nil
+    private func updateDropHighlight(folderPath: String?) {
         if highlightedItemPath != folderPath {
             if let oldPath = highlightedItemPath {
                 gridItem(atPath: oldPath)?.isDropTarget = false
@@ -1338,6 +1352,39 @@ extension FileGridView {
         }
     }
 
+    /// Wave3 Task 2: 更新 Spring Loading 驻留计时。
+    /// 目标文件夹变化时重启 1.0s 计时（DispatchWorkItem 可取消）；目标变化/退出立即取消；
+    /// 同一文件夹在一次拖拽会话内只触发一次（防重入）。
+    private func updateSpringLoading(folderPath: String?) {
+        guard let folderPath = folderPath, !springFiredPaths.contains(folderPath) else {
+            cancelSpringLoading()
+            return
+        }
+        // 同一文件夹已在计时中：不重复启动
+        if springTargetPath == folderPath, springLoadingWorkItem != nil { return }
+        cancelSpringLoading()
+        springTargetPath = folderPath
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            // 到期校验：悬停目标仍是该文件夹（中途换 item/退出会清掉对应状态）才展开
+            guard self.springTargetPath == folderPath,
+                  self.springTargetPath == self.highlightedItemPath else { return }
+            self.springFiredPaths.insert(folderPath)
+            // 清除拖拽会话视觉状态后驻留展开；拖拽继续，后续落包落新目录（与 Finder 一致）
+            self.clearDropFeedback()
+            self.viewModel?.navigate(to: folderPath)
+        }
+        springLoadingWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: item)
+    }
+
+    /// Wave3 Task 2: 取消 Spring Loading 驻留计时
+    private func cancelSpringLoading() {
+        springLoadingWorkItem?.cancel()
+        springLoadingWorkItem = nil
+        springTargetPath = nil
+    }
+
     /// Wave3 Task 1: 按路径在可见 item 中定位网格 item（不可见 item 无需高亮）
     private func gridItem(atPath path: String) -> FileGridCollectionViewItem? {
         for case let item as FileGridCollectionViewItem in collectionView.visibleItems() where item.entry?.path == path {
@@ -1346,13 +1393,15 @@ extension FileGridView {
         return nil
     }
 
-    /// Wave3 Task 1: 清除全部 Drop 高亮（换目标/退出/落包/会话结束四路复位共用）
+    /// Wave3 Task 1: 清除全部 Drop 高亮（换目标/退出/落包/会话结束四路复位共用）。
+    /// Wave3 Task 2: 同时取消驻留展开计时。
     private func clearDropFeedback() {
         if let oldPath = highlightedItemPath {
             gridItem(atPath: oldPath)?.isDropTarget = false
         }
         highlightedItemPath = nil
         dropHighlightOverlay.isHighlighted = false
+        cancelSpringLoading()
     }
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

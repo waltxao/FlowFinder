@@ -22,6 +22,8 @@ final class FFQuickLookTableView: NSTableView {
     /// tableView 是注册的拖拽目标，NSDraggingDestination 的 draggingExited/draggingEnded/
     /// concludeDragOperation 只发给注册视图本身，FileListView 收不到——经此转发给宿主复位。
     var onDropDestinationReset: (() -> Void)?
+    /// Wave3 Task 2: 拖拽会话结束回调（落包/取消时触发，宿主借此清防重入集合）
+    var onDropSessionEnded: (() -> Void)?
 
     /// Wave3 Task 1: 拖拽离开本视图（换行/退出/取消都会触发）——复位全部 Drop 视觉状态
     override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -33,12 +35,14 @@ final class FFQuickLookTableView: NSTableView {
     override func draggingEnded(_ sender: NSDraggingInfo) {
         super.draggingEnded(sender)
         onDropDestinationReset?()
+        onDropSessionEnded?()
     }
 
     /// Wave3 Task 1: 落包视觉收尾——复位全部 Drop 视觉状态
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
         super.concludeDragOperation(sender)
         onDropDestinationReset?()
+        onDropSessionEnded?()
     }
 
     /// 拦截 QuickLook 键触发预览。
@@ -527,6 +531,14 @@ public class FileListView: NSView {
     // 仅保留一个目标行：换行先清旧行再设新行；退出/落包/会话结束全部复位。
     private var dropHighlightRow: Int? = nil
 
+    // Wave3 Task 2: Spring Loading 驻留展开状态（主线程专用）。
+    // 悬停文件夹 1.0s 后自动进入该文件夹（Finder 驻留展开语义）。
+    private var springLoadingWorkItem: DispatchWorkItem?
+    /// 当前计时中的驻留展开目标文件夹
+    private var springTargetPath: String? = nil
+    /// 本次拖拽会话内已驻留展开过的文件夹（防重入：同文件夹只触发一次）
+    private var springFiredPaths: Set<String> = []
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
@@ -826,9 +838,13 @@ public class FileListView: NSView {
             FFDebug.log("FFQuickLookTableView.onDeleteKey 触发")
             self?.actionsController.deleteSelected(nil)
         }
-        // Wave3 Task 1: 拖拽退出/结束/收尾经 tableView 子类转发，复位 Drop 高亮等视觉状态
+        // Wave3 Task 1/2: 拖拽退出/结束/收尾经 tableView 子类转发，复位 Drop 高亮与驻留计时
         qlTableView.onDropDestinationReset = { [weak self] in
-            self?.clearDropHighlight()
+            self?.clearDragVisualState()
+        }
+        // Wave3 Task 2: 拖拽会话结束（落包/取消）额外清防重入集合，允许下次拖拽重新驻留展开
+        qlTableView.onDropSessionEnded = { [weak self] in
+            self?.endDragSession()
         }
         tableView = qlTableView
         // 问题 2 诊断：确认每个面板都创建了 FFQuickLookTableView 且 onSpaceKey 已就位
@@ -1321,8 +1337,8 @@ public class FileListView: NSView {
     }
 
     public func reloadData() {
-        // Wave3 Task 1: reload 后行视图全部重建，高亮行下标已失效，直接复位
-        clearDropHighlight()
+        // Wave3 Task 1/2: reload 后行视图全部重建，Drop 高亮与驻留计时一并复位
+        clearDragVisualState()
         // 任务 F10-8: 重建分组显示行映射后再 reload tableView
         rebuildDisplayRows()
         // Bug 9 修复：reloadData 可能引起 selectionDidChange 回调（行被清空/重建），
@@ -1761,6 +1777,62 @@ extension FileListView: NSTableViewDelegate {
         }
     }
 
+    /// Wave3 Task 2: 更新 Spring Loading 驻留计时。
+    /// 目标文件夹变化时重启 1.0s 计时（DispatchWorkItem 可取消）；目标变化/退出立即取消；
+    /// 同一文件夹在一次拖拽会话内只触发一次（防重入）。
+    private func updateSpringLoading(folderPath: String?) {
+        guard let folderPath = folderPath, !springFiredPaths.contains(folderPath) else {
+            cancelSpringLoading()
+            return
+        }
+        // 同一文件夹已在计时中：不重复启动
+        if springTargetPath == folderPath, springLoadingWorkItem != nil { return }
+        cancelSpringLoading()
+        springTargetPath = folderPath
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            // 到期校验：悬停目标仍是该文件夹（中途换行/退出会清掉对应状态）才展开
+            guard self.springTargetPath == folderPath,
+                  self.springTargetPath == self.springHoveredFolderPath() else { return }
+            self.springFiredPaths.insert(folderPath)
+            // 清除拖拽会话视觉状态后驻留展开；拖拽继续，后续落包落新目录（与 Finder 一致）
+            self.clearDragVisualState()
+            self.viewModel?.navigate(to: folderPath)
+        }
+        springLoadingWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: item)
+    }
+
+    /// Wave3 Task 2: 当前悬停的文件夹路径（到期校验用）——以当前高亮行反查条目路径，
+    /// reload 后行下标指向其他条目时自动失配取消，无需额外 stat。
+    private func springHoveredFolderPath() -> String? {
+        guard let row = dropHighlightRow, row >= 0, row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 else { return nil }
+        let entry = viewModel!.files[displayRow.fileIndex]
+        return entry.isDirectory ? entry.path : nil
+    }
+
+    /// Wave3 Task 2: 取消 Spring Loading 驻留计时
+    private func cancelSpringLoading() {
+        springLoadingWorkItem?.cancel()
+        springLoadingWorkItem = nil
+        springTargetPath = nil
+    }
+
+    /// Wave3 Task 2: 清除拖拽进行中的全部视觉状态（高亮 + 驻留计时）。
+    /// 换目标/退出/落包三路复位共用；会话结束另需 endDragSession 清防重入集合。
+    private func clearDragVisualState() {
+        clearDropHighlight()
+        cancelSpringLoading()
+    }
+
+    /// Wave3 Task 2: 拖拽会话结束（落包或取消）——复位全部视觉状态 + 防重入集合
+    private func endDragSession() {
+        clearDragVisualState()
+        springFiredPaths.removeAll()
+    }
+
     /// 拖拽目标校验：决定是否接受拖拽及操作类型（move/copy）。
     /// 问题1 修复：通过 NSTableViewDataSource 标准方法接管拖放目标，
     /// 替代被 tableView 子视图拦截、永不触发的 NSView 层
@@ -1776,16 +1848,20 @@ extension FileListView: NSTableViewDelegate {
         let hasFileURL = items.contains { $0.types.contains(.fileURL) }
         // Wave3 Task 1: 计算 Drop 目标高亮行——仅当提案为 .on 且命中文件夹行时高亮该行；
         // 行间（.above，系统插入线）/文件行/标题行不高亮。无 fileURL 内容时清除高亮。
+        // Wave3 Task 2: 同时解析驻留展开目标（命中文件夹行时启动 1.0s 驻留计时）。
         var targetRow: Int? = nil
+        var targetFolderPath: String? = nil
         if hasFileURL, dropOperation == .on, row >= 0, row < displayRows.count {
             let displayRow = displayRows[row]
             if !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 {
                 if viewModel!.files[displayRow.fileIndex].isDirectory {
                     targetRow = row
+                    targetFolderPath = viewModel!.files[displayRow.fileIndex].path
                 }
             }
         }
         updateDropHighlight(row: targetRow)
+        updateSpringLoading(folderPath: hasFileURL ? targetFolderPath : nil)
         for item in items {
             guard item.types.contains(.fileURL) else { continue }
             // 计算本次判定使用的目标路径（拖到文件夹行上 → 该文件夹；否则 → 当前目录）
@@ -1826,8 +1902,8 @@ extension FileListView: NSTableViewDelegate {
         if let event = NSApp.currentEvent {
             lastDragModifierFlags = event.modifierFlags
         }
-        // Wave3 Task 1: 落包即清除 Drop 高亮（松手后无残留）
-        clearDropHighlight()
+        // Wave3 Task 1: 落包即清除 Drop 高亮等视觉状态（松手后无残留）
+        clearDragVisualState()
         guard let viewModel = viewModel else { return false }
 
         // 解析拖拽的文件路径
@@ -2065,8 +2141,8 @@ extension FileListView {
 
     public override func draggingEnded(_ sender: NSDraggingInfo) {
         lastDragModifierFlags = []
-        // Wave3 Task 1: 兜底复位（实际注册目标是 tableView，正常路径经其转发回调复位）
-        clearDropHighlight()
+        // Wave3 Task 1/2: 兜底复位（实际注册目标是 tableView，正常路径经其转发回调复位）
+        endDragSession()
     }
 
     /// 判断是否为移动操作（访达语义）：
