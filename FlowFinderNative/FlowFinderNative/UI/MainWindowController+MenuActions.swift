@@ -762,9 +762,10 @@ extension MainWindowController {
 
     // MARK: - 底部进度栏（任务 F11-9）
 
-    /// Wave1 P0-2：把进度栏展开/收起钩子注入各 PaneViewModel（setupBindings 调用）。
-    /// showProgressBar/hideProgressBar 为本扩展私有实现，PaneViewModel 无法直接
-    /// 访问容器高度约束，故经闭包中转；钩子内部已切主线程。
+    /// Wave1 P0-2：把进度栏展开/收起钩子注入各 PaneViewModel（setupUI 中注入
+    /// UndoManager 时一并调用）。showProgressBar/hideProgressBar 为本扩展私有
+    /// 实现，PaneViewModel 无法直接访问容器高度约束，故经闭包中转；
+    /// 钩子内部已切主线程（showProgressBar/hideProgressBar 自带 main.async）。
     func wireBatchMoveProgressHooks() {
         leftPaneViewModel.progressBarsExpanded = { [weak self] in self?.showProgressBar() }
         leftPaneViewModel.progressBarsCollapsed = { [weak self] in self?.hideProgressBar() }
