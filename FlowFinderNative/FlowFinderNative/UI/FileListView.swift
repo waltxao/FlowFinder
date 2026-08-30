@@ -18,6 +18,29 @@ final class FFQuickLookTableView: NSTableView {
     /// 当前所属面板标识（left/right）
     var side: String = "left"
 
+    /// Wave3 Task 1: 拖拽目标反馈复位回调（宿主 FileListView 借此清除 Drop 高亮 / Spring 计时）。
+    /// tableView 是注册的拖拽目标，NSDraggingDestination 的 draggingExited/draggingEnded/
+    /// concludeDragOperation 只发给注册视图本身，FileListView 收不到——经此转发给宿主复位。
+    var onDropDestinationReset: (() -> Void)?
+
+    /// Wave3 Task 1: 拖拽离开本视图（换行/退出/取消都会触发）——复位全部 Drop 视觉状态
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        super.draggingExited(sender)
+        onDropDestinationReset?()
+    }
+
+    /// Wave3 Task 1: 拖拽会话结束（无论是否落包）——复位全部 Drop 视觉状态
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        super.draggingEnded(sender)
+        onDropDestinationReset?()
+    }
+
+    /// Wave3 Task 1: 落包视觉收尾——复位全部 Drop 视觉状态
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        super.concludeDragOperation(sender)
+        onDropDestinationReset?()
+    }
+
     /// 拦截 QuickLook 键触发预览。
     /// 用 performKeyEquivalent 而非 keyDown：NSTableView 的字符键（含空格）先经
     /// interpretKeyEvents 处理，keyDown 可能收不到（问题 5 根因）。performKeyEquivalent
@@ -279,6 +302,28 @@ private class FFTableCellView: NSTableCellView {
 /// 这正是访达的标准行为，无需任何自定义。
 private class FFTableRowView: NSTableRowView {
     // 空实现：仅作为扩展点保留（如将来添加 hover 效果）
+
+    /// Wave3 Task 1: Drop 目标高亮（拖到文件夹行上时由 FileListView 置位）。
+    /// 绘制：accent 8% 底 + 1.5pt accent 圆角描边（与网格 item Drop 高亮同语言）。
+    var isDropTarget: Bool = false {
+        didSet {
+            guard oldValue != isDropTarget else { return }
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 先走标准绘制（选中背景等），再叠加 Drop 高亮（覆盖在选中之上，保证可见）
+        super.draw(dirtyRect)
+        guard isDropTarget else { return }
+        let rect = bounds.insetBy(dx: 2, dy: 1)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
+        FFAccent.current.withAlphaComponent(0.08).setFill()
+        path.fill()
+        FFAccent.current.setStroke()
+        path.lineWidth = 1.5
+        path.stroke()
+    }
 }
 
 /// 任务 F10-8 / F11-5: 分组标题行的 rowView。
@@ -477,6 +522,10 @@ public class FileListView: NSView {
     // validateDrop/acceptDrop 回调中 NSApp.currentEvent 不可靠（可能为 nil 或非拖拽事件），
     // 故在 draggingUpdated 及各拖拽回调中双保险写入。
     private var lastDragModifierFlags: NSEvent.ModifierFlags = []
+
+    // Wave3 Task 1: Drop 目标高亮状态（当前高亮的文件夹行；nil = 无高亮）。
+    // 仅保留一个目标行：换行先清旧行再设新行；退出/落包/会话结束全部复位。
+    private var dropHighlightRow: Int? = nil
 
     public var viewModel: PaneViewModel? {
         didSet {
@@ -776,6 +825,10 @@ public class FileListView: NSView {
         qlTableView.onDeleteKey = { [weak self] in
             FFDebug.log("FFQuickLookTableView.onDeleteKey 触发")
             self?.actionsController.deleteSelected(nil)
+        }
+        // Wave3 Task 1: 拖拽退出/结束/收尾经 tableView 子类转发，复位 Drop 高亮等视觉状态
+        qlTableView.onDropDestinationReset = { [weak self] in
+            self?.clearDropHighlight()
         }
         tableView = qlTableView
         // 问题 2 诊断：确认每个面板都创建了 FFQuickLookTableView 且 onSpaceKey 已就位
@@ -1268,6 +1321,8 @@ public class FileListView: NSView {
     }
 
     public func reloadData() {
+        // Wave3 Task 1: reload 后行视图全部重建，高亮行下标已失效，直接复位
+        clearDropHighlight()
         // 任务 F10-8: 重建分组显示行映射后再 reload tableView
         rebuildDisplayRows()
         // Bug 9 修复：reloadData 可能引起 selectionDidChange 回调（行被清空/重建），
@@ -1682,6 +1737,30 @@ extension FileListView: NSTableViewDelegate {
 
     // MARK: - Drag & Drop Destination
 
+    /// Wave3 Task 1: 更新 Drop 目标行高亮（换行先清旧行，再设新行；nil = 清除）。
+    /// 通过 rowView 状态位 + needsDisplay 重绘（invalidateRow 语义），不做动画堆叠。
+    private func updateDropHighlight(row: Int?) {
+        guard dropHighlightRow != row else { return }
+        if let oldRow = dropHighlightRow,
+           let oldView = tableView.rowView(atRow: oldRow, makeIfNecessary: false) as? FFTableRowView {
+            oldView.isDropTarget = false  // didSet 内自动置 needsDisplay
+        }
+        dropHighlightRow = row
+        if let newRow = row,
+           let newView = tableView.rowView(atRow: newRow, makeIfNecessary: false) as? FFTableRowView {
+            newView.isDropTarget = true
+        }
+    }
+
+    /// Wave3 Task 1: 清除 Drop 目标行高亮（换目标/退出/落包/会话结束四路复位共用）。
+    private func clearDropHighlight() {
+        guard let row = dropHighlightRow else { return }
+        dropHighlightRow = nil
+        if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? FFTableRowView {
+            rowView.isDropTarget = false
+        }
+    }
+
     /// 拖拽目标校验：决定是否接受拖拽及操作类型（move/copy）。
     /// 问题1 修复：通过 NSTableViewDataSource 标准方法接管拖放目标，
     /// 替代被 tableView 子视图拦截、永不触发的 NSView 层
@@ -1694,6 +1773,19 @@ extension FileListView: NSTableViewDelegate {
         }
         // 检查拖拽内容是否包含文件 URL
         guard let items = info.draggingPasteboard.pasteboardItems, !items.isEmpty else { return [] }
+        let hasFileURL = items.contains { $0.types.contains(.fileURL) }
+        // Wave3 Task 1: 计算 Drop 目标高亮行——仅当提案为 .on 且命中文件夹行时高亮该行；
+        // 行间（.above，系统插入线）/文件行/标题行不高亮。无 fileURL 内容时清除高亮。
+        var targetRow: Int? = nil
+        if hasFileURL, dropOperation == .on, row >= 0, row < displayRows.count {
+            let displayRow = displayRows[row]
+            if !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 {
+                if viewModel!.files[displayRow.fileIndex].isDirectory {
+                    targetRow = row
+                }
+            }
+        }
+        updateDropHighlight(row: targetRow)
         for item in items {
             guard item.types.contains(.fileURL) else { continue }
             // 计算本次判定使用的目标路径（拖到文件夹行上 → 该文件夹；否则 → 当前目录）
@@ -1734,6 +1826,8 @@ extension FileListView: NSTableViewDelegate {
         if let event = NSApp.currentEvent {
             lastDragModifierFlags = event.modifierFlags
         }
+        // Wave3 Task 1: 落包即清除 Drop 高亮（松手后无残留）
+        clearDropHighlight()
         guard let viewModel = viewModel else { return false }
 
         // 解析拖拽的文件路径
@@ -1971,6 +2065,8 @@ extension FileListView {
 
     public override func draggingEnded(_ sender: NSDraggingInfo) {
         lastDragModifierFlags = []
+        // Wave3 Task 1: 兜底复位（实际注册目标是 tableView，正常路径经其转发回调复位）
+        clearDropHighlight()
     }
 
     /// 判断是否为移动操作（访达语义）：

@@ -1,6 +1,37 @@
 import Cocoa
 import Combine
 
+// MARK: - FFDropHighlightBorderView
+
+/// Wave3 Task 1: Drop 目标高亮描边视图。
+/// 命中穿透（hitTest 返回 nil），不吞 item 点击/选择/右键事件；
+/// 高亮时绘制 accent 1.5pt 圆角描边——与列表行 Drop 高亮（FFTableRowView）同语言。
+private final class FFDropHighlightBorderView: NSView {
+    /// 是否处于 Drop 高亮态（隐藏/显示 + 重绘）
+    var isHighlighted: Bool = false {
+        didSet {
+            guard oldValue != isHighlighted else { return }
+            isHidden = !isHighlighted
+            needsDisplay = true
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // 命中穿透：高亮描边层不参与事件路由
+        return nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard isHighlighted else { return }
+        // 线宽 1.5pt，内缩半个线宽保证描边完整落在视图内
+        let rect = bounds.insetBy(dx: 0.75, dy: 0.75)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+        FFAccent.current.setStroke()
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+}
+
 // MARK: - FileGridCollectionViewItem
 
 class FileGridCollectionViewItem: NSCollectionViewItem {
@@ -14,6 +45,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     private var pathLabel: NSTextField!
     /// 标签药丸容器（横向排列，位于文件名下方）
     private var tagPillContainer: NSStackView!
+    /// Wave3 Task 1: Drop 目标高亮描边层（拖拽悬停文件夹 item 时显示，命中穿透）
+    private let dropBorderView = FFDropHighlightBorderView()
 
     /// 标签移除回调（tagName, path），由 FileGridView 设置
     var onRemoveTag: ((String, String) -> Void)?
@@ -32,6 +65,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
     var entry: FileEntry? {
         didSet {
+            // Wave3 Task 1: 重新绑定文件时清除上一文件的 Drop 高亮（防复用残留）
+            isDropTarget = false
             guard let entry = entry else { return }
             // v0.6.9: 根据 showFileExtensions 设置决定是否显示文件后缀
             let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
@@ -131,6 +166,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         currentPath = nil
         // 任务 F11-7: 复位缩略图标志
         didReceiveThumbnail = false
+        // Wave3 Task 1: 复用前清除 Drop 目标高亮（防复用残留）
+        isDropTarget = false
         // 重置图标，避免复用瞬间显示上一个文件的缩略图
         setThumbnail(nil)
         // 重置选中背景（防止复用 item 残留选中样式）
@@ -203,6 +240,11 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         view.addSubview(nameLabel)
         view.addSubview(pathLabel)
         view.addSubview(tagPillContainer)
+        // Wave3 Task 1: Drop 高亮描边层（默认隐藏，仅拖拽悬停文件夹时显示；
+        // 独立边框层不受内容背景色复用影响）
+        dropBorderView.translatesAutoresizingMaskIntoConstraints = false
+        dropBorderView.isHidden = true
+        view.addSubview(dropBorderView)
 
         NSLayoutConstraint.activate([
             thumbnailImageView.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
@@ -218,6 +260,12 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             tagPillContainer.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -4),
             tagPillContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             tagPillContainer.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -4),
+
+            // Drop 高亮描边铺满整个 item
+            dropBorderView.topAnchor.constraint(equalTo: view.topAnchor),
+            dropBorderView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            dropBorderView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            dropBorderView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         // 缩略图尺寸约束动态管理（setThumbnail 时按图片比例重建）：
         // 初始 64×64 占位，图片到达后按原始宽高比（最长边 64）重建，Finder 风格。
@@ -229,16 +277,37 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         self.view = view
     }
 
+    /// Wave3 Task 1: Drop 目标高亮（拖到文件夹 item 上时由 FileGridView 置位）。
+    /// 与选中态共用一套视觉应用逻辑（applyVisualState），互不覆盖。
+    var isDropTarget: Bool = false {
+        didSet {
+            applyVisualState()
+        }
+    }
+
     override var isSelected: Bool {
         didSet {
             // 任务 F10-9: 访达风格实心蓝半透明选中（v0.6.6）
             // alpha 0.15->0.25 增强可见性（问题10），圆角 6->8 与访达网格一致
+            applyVisualState()
+        }
+    }
+
+    /// Wave3 Task 1: 统一应用选中态 + Drop 高亮态视觉。
+    /// - 选中：accent 25% 实底 + 圆角 8（既有行为）
+    /// - Drop 高亮：accent 8% 底 + 1.5pt accent 圆角描边 + 圆角 8
+    /// 两者可并存（描边叠加在选中底色之上）。
+    private func applyVisualState() {
+        if isDropTarget {
+            view.layer?.backgroundColor = FFAccent.current.withAlphaComponent(0.08).cgColor
+            (view as? SquircleMaskedView)?.squircleRadius = 8
+        } else {
             view.layer?.backgroundColor = isSelected
                 ? FFAccent.current.withAlphaComponent(0.25).cgColor
                 : NSColor.clear.cgColor
-            // squircle 圆角（选中 8，未选中 0 自动移除 mask）
             (view as? SquircleMaskedView)?.squircleRadius = isSelected ? 8 : 0
         }
+        dropBorderView.isHighlighted = isDropTarget
     }
 
     // MARK: - Tag Pills（标签药丸）
@@ -535,6 +604,13 @@ public class FileGridView: NSView {
     // 在 draggingEntered/draggingUpdated 中持续写入，draggingEnded 复位。
     private var lastDragModifierFlags: NSEvent.ModifierFlags = []
 
+    // Wave3 Task 1: Drop 目标高亮状态（主线程专用）。
+    // - highlightedItemPath: 当前高亮的文件夹 item 路径（用路径而非 IndexPath 定位，
+    //   reloadData 重建 item 后旧下标失效）
+    // - dropHighlightOverlay: 容器级高亮浮层（拖到空白区/文件项 = 落入当前目录）
+    private var highlightedItemPath: String? = nil
+    private let dropHighlightOverlay = FFDropHighlightBorderView()
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
@@ -772,6 +848,18 @@ public class FileGridView: NSView {
             stateOverlayView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
+        // Wave3 Task 1: 容器 Drop 高亮浮层（最顶层、命中穿透；拖到空白区/文件项
+        // = 落入当前目录时绘制整个容器边框）
+        dropHighlightOverlay.translatesAutoresizingMaskIntoConstraints = false
+        dropHighlightOverlay.isHidden = true
+        addSubview(dropHighlightOverlay)
+        NSLayoutConstraint.activate([
+            dropHighlightOverlay.topAnchor.constraint(equalTo: topAnchor),
+            dropHighlightOverlay.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dropHighlightOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
+            dropHighlightOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
         // 注册为拖拽目标（接收拖入的文件 URL）
         registerForDraggedTypes([.fileURL])
 
@@ -974,6 +1062,8 @@ public class FileGridView: NSView {
     }
 
     public func reloadData() {
+        // Wave3 Task 1: reload 后 item 全部重建，Drop 高亮状态失效，直接复位
+        clearDropFeedback()
         // 任务 F10-8: 重建分组缓存后 reload，并恢复选中
         rebuildDisplayEntries()
         isReloading = true
@@ -1178,23 +1268,91 @@ extension FileGridView: FFPaneViewHost {
 
 extension FileGridView {
     public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        // 捕获当前修饰键（问题 7 根因修复：回调中直接读 NSApp.currentEvent 不可靠）
-        if let event = NSApp.currentEvent {
-            lastDragModifierFlags = event.modifierFlags
-        }
-        return isMoveOperation(sender, destPath: viewModel?.currentPath) ? .move : .copy
+        return handleGridDragging(sender)
     }
 
     public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        // 持续捕获修饰键，支持拖拽过程中实时切换 ⌘
+        return handleGridDragging(sender)
+    }
+
+    /// Wave3 Task 1: 拖拽离开本视图——清除全部 Drop 高亮状态
+    public override func draggingExited(_ sender: NSDraggingInfo?) {
+        super.draggingExited(sender)
+        clearDropFeedback()
+    }
+
+    /// Wave3 Task 1: 拖拽会话结束（无论是否落包）——清除全部 Drop 高亮状态
+    public override func draggingEnded(_ sender: NSDraggingInfo) {
+        lastDragModifierFlags = []
+        super.draggingEnded(sender)
+        clearDropFeedback()
+    }
+
+    /// Wave3 Task 1: 落包视觉收尾——清除全部 Drop 高亮状态
+    public override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        super.concludeDragOperation(sender)
+        clearDropFeedback()
+    }
+
+    /// Wave3 Task 1/4: 共享拖拽悬停处理（draggingEntered/draggingUpdated 复用）：
+    /// 捕获修饰键 + 更新 Drop 高亮，返回操作掩码。
+    /// 命中文件夹 item → 高亮该 item；空白区/文件项 → 高亮容器（表示落入当前目录）。
+    private func handleGridDragging(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // 持续捕获修饰键，支持拖拽过程中实时切换 ⌘（问题 7 根因修复：回调中
+        // 直接读 NSApp.currentEvent 判定不可靠，先存后用）
         if let event = NSApp.currentEvent {
             lastDragModifierFlags = event.modifierFlags
         }
+        let target = dropTargetEntry(at: sender.draggingLocation)
+        updateDropHighlight(target: target)
         return isMoveOperation(sender, destPath: viewModel?.currentPath) ? .move : .copy
     }
 
-    public override func draggingEnded(_ sender: NSDraggingInfo) {
-        lastDragModifierFlags = []
+    /// Wave3 Task 1/4: 拖拽位置命中的条目（nil = 空白区/分组标题）。
+    /// draggingLocation 为窗口坐标，转换到 collectionView 坐标系后查 item。
+    private func dropTargetEntry(at draggingLocation: NSPoint) -> FileEntry? {
+        let point = collectionView.convert(draggingLocation, from: nil)
+        guard let indexPath = collectionView.indexPathForItem(at: point) else { return nil }
+        let flatIdx = flatIndex(for: indexPath)
+        guard flatIdx >= 0, flatIdx < displayEntries.count else { return nil }
+        return displayEntries[flatIdx]
+    }
+
+    /// Wave3 Task 1: 更新 Drop 高亮——命中文件夹 item 高亮该 item，否则高亮容器。
+    /// 单一目标原则：换目标先清旧再设新；仅在目标变化时触碰视图（draggingUpdated 高频触发）。
+    private func updateDropHighlight(target: FileEntry?) {
+        let folderPath = target?.isDirectory == true ? target?.path : nil
+        if highlightedItemPath != folderPath {
+            if let oldPath = highlightedItemPath {
+                gridItem(atPath: oldPath)?.isDropTarget = false
+            }
+            highlightedItemPath = folderPath
+            if let newPath = folderPath {
+                gridItem(atPath: newPath)?.isDropTarget = true
+            }
+        }
+        // 容器高亮：无文件夹目标即高亮（拖到空白区/文件项 = 落入当前目录）
+        let containerActive = (folderPath == nil)
+        if dropHighlightOverlay.isHighlighted != containerActive {
+            dropHighlightOverlay.isHighlighted = containerActive
+        }
+    }
+
+    /// Wave3 Task 1: 按路径在可见 item 中定位网格 item（不可见 item 无需高亮）
+    private func gridItem(atPath path: String) -> FileGridCollectionViewItem? {
+        for case let item as FileGridCollectionViewItem in collectionView.visibleItems() where item.entry?.path == path {
+            return item
+        }
+        return nil
+    }
+
+    /// Wave3 Task 1: 清除全部 Drop 高亮（换目标/退出/落包/会话结束四路复位共用）
+    private func clearDropFeedback() {
+        if let oldPath = highlightedItemPath {
+            gridItem(atPath: oldPath)?.isDropTarget = false
+        }
+        highlightedItemPath = nil
+        dropHighlightOverlay.isHighlighted = false
     }
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -1202,6 +1360,8 @@ extension FileGridView {
         if let event = NSApp.currentEvent {
             lastDragModifierFlags = event.modifierFlags
         }
+        // Wave3 Task 1: 落包即清除 Drop 高亮（松手后无残留）
+        clearDropFeedback()
         let pasteboard = sender.draggingPasteboard
 
         guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
