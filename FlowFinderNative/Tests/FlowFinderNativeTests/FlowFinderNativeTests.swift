@@ -529,11 +529,16 @@ final class FFDetailsFlowLayoutTests: XCTestCase {
 
 final class FFDetailsBarLayoutTests: XCTestCase {
 
+    /// 记忆键快照（测试清理用，复核 Minor 2）
+    private var barDefaultsSnapshot: Any?
+
+
     @MainActor
     func testExpandedDividerStripsHaveFullHeight() {
         // modules 高度确定链回归：展开后两条分界线热区必须有完整高度（曾因
         // modules.bottom 为 lessThanOrEqual 而无高度来源，布局歧义塌缩为 0）
         // 测试不依赖用户机器上的记忆值，保持布局日志干净
+        barDefaultsSnapshot = UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight")
         UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
         bar.isExpanded = true
@@ -549,6 +554,10 @@ final class FFDetailsBarLayoutTests: XCTestCase {
 // MARK: - 类型专属行注册表 × 流动填充 回归（审查 Critical 修复）
 
 final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
+
+    /// 记忆键快照（测试清理用，复核 Minor 2）
+    private var barDefaultsSnapshot: Any?
+
 
     /// 审查修复回归：rearrangeFlow 多次执行后，类型专属行仍持有于注册表并被列摆放。
     /// 此前 setColumn 的注销副作用会在测量步骤清空 appendedTypeInfoRows，导致
@@ -573,6 +582,7 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         let entry = FileEntry(path: url.path, name: url.lastPathComponent, isDirectory: false)
 
         // 测试不依赖用户机器上的记忆值，保持布局日志干净
+        barDefaultsSnapshot = UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight")
         UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
 
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
@@ -626,8 +636,16 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         let entry = FileEntry(path: url.path, name: url.lastPathComponent, isDirectory: false)
 
         // 测试不依赖用户机器上的记忆值，保持布局日志干净
+        barDefaultsSnapshot = UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight")
         UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
-        defer { UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight") }
+        defer {
+            // 快照恢复（复核 Minor 2：不在测试域留下删除痕迹）
+            if let snapshot = barDefaultsSnapshot {
+                UserDefaults.standard.set(snapshot, forKey: "FFDetailsBarExpandedHeight")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+            }
+        }
 
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
         // 用普通容器承载（不用 NSWindow：窗口簿记延迟块与测试裸释放竞态，曾致运行器 SIGSEGV）

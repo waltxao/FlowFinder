@@ -92,8 +92,9 @@ mod macos {
     extern "C" {
         pub fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
     }
-    /// QOS_CLASS_USER_INITIATED（mach/thread_policy.h）
-    pub const QOS_CLASS_USER_INITIATED: u32 = 0x21;
+    /// QOS_CLASS_USER_INITIATED = 0x19（sys/qos.h；0x21 是 USER_INTERACTIVE，
+    /// 勿混——复核 Important 2 曾错用 0x21，实为更高一档）
+    pub const QOS_CLASS_USER_INITIATED: u32 = 0x19;
 
     // ── CoreFoundation / FSEvents opaque types ──────────────────────
     pub type CFTypeRef = *const c_void;

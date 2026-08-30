@@ -295,16 +295,16 @@ class ExpandableDetailsBar: NSView {
 
     override init(frame frameRect: NSRect) {
         userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? 210
-        iconWidth = (UserDefaults.standard.object(forKey: "FFDetailsBarIconWidth") as? CGFloat) ?? 112
-        column1Width = (UserDefaults.standard.object(forKey: "FFDetailsBarColumn1Width") as? CGFloat) ?? 220
+        iconWidth = (UserDefaults.standard.object(forKey: Self.iconWidthKey) as? CGFloat) ?? 112
+        column1Width = (UserDefaults.standard.object(forKey: Self.column1WidthKey) as? CGFloat) ?? 220
         super.init(frame: frameRect)
         setupUI()
     }
 
     required init?(coder: NSCoder) {
         userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? 210
-        iconWidth = (UserDefaults.standard.object(forKey: "FFDetailsBarIconWidth") as? CGFloat) ?? 112
-        column1Width = (UserDefaults.standard.object(forKey: "FFDetailsBarColumn1Width") as? CGFloat) ?? 220
+        iconWidth = (UserDefaults.standard.object(forKey: Self.iconWidthKey) as? CGFloat) ?? 112
+        column1Width = (UserDefaults.standard.object(forKey: Self.column1WidthKey) as? CGFloat) ?? 220
         super.init(coder: coder)
         setupUI()
     }
@@ -783,8 +783,10 @@ class ExpandableDetailsBar: NSView {
         }
         topStrip.onDragEnd = { [weak self] in
             guard let self else { return }
-            // 尺寸记忆在拖拽结束时一次性落盘（终审 Minor：避免 ~60Hz 的 plist 写入）
+            // 尺寸记忆在拖拽结束时一次性落盘（终审 Minor：避免 ~60Hz 的 plist 写入），
+            // 落盘后广播——对侧栏按 UserDefaults 重读同步，必须在落盘之后（复核 Important 1）
             UserDefaults.standard.set(self.userExpandedHeight, forKey: Self.heightKey)
+            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
             // 拖高后内容区高度变化 → 图标边长与流动填充重排
             updateIconEdge()
             rearrangeFlow()
@@ -794,15 +796,17 @@ class ExpandableDetailsBar: NSView {
         div1.onDrag = { [weak self] dx in self?.applyIconWidthDrag(deltaX: dx) }
         div1.onDragEnd = { [weak self] in
             guard let self else { return }
-            // 尺寸记忆在拖拽结束时一次性落盘（终审 Minor：避免 ~60Hz 的 plist 写入）
+            // 尺寸记忆在拖拽结束时一次性落盘并广播（同上，复核 Important 1）
             UserDefaults.standard.set(self.iconWidth, forKey: Self.iconWidthKey)
+            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
             rearrangeFlow()
         }
         div2.onDrag = { [weak self] dx in self?.applyColumn1WidthDrag(deltaX: dx) }
         div2.onDragEnd = { [weak self] in
             guard let self else { return }
-            // 尺寸记忆在拖拽结束时一次性落盘（终审 Minor：避免 ~60Hz 的 plist 写入）
+            // 尺寸记忆在拖拽结束时一次性落盘并广播（同上，复核 Important 1）
             UserDefaults.standard.set(self.column1Width, forKey: Self.column1WidthKey)
+            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
             rearrangeFlow()
         }
 
@@ -906,6 +910,8 @@ class ExpandableDetailsBar: NSView {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isFlowDeferred else { return }
             self.isFlowDeferred = false
+            // 收起态下不应用展开高度（调度与执行之间可能已收起——复核 Minor 1）
+            guard self.isExpanded else { return }
             // 窗口/面板缩小后重新 clamp 已应用高度（终审 Important 1）
             let applied = self.appliedExpandedHeight()
             if self.heightConstraint.constant != applied {
