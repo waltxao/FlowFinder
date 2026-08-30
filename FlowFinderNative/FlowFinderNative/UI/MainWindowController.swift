@@ -596,6 +596,11 @@ public class MainWindowController: NSWindowController {
         leftFileGridView.counterpartViewModel = rightPaneViewModel
         rightFileGridView.counterpartViewModel = leftPaneViewModel
 
+        // Wave2 P0-1：构建窗口级 keyViewLoop（左右面板控件 + 文件视图首尾相接成环），
+        // Tab/⇧Tab 沿环流转；初始键盘焦点落在左面板列表（键盘优先工作流起点）
+        buildKeyViewLoops()
+        window.initialFirstResponder = leftFileListView.keyFocusTarget
+
         // 初始 divider 位置
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -1554,6 +1559,45 @@ public class MainWindowController: NSWindowController {
         }
     }
 
+    // MARK: - Wave2 P0-1：keyViewLoop（Tab/⇧Tab 焦点流转）
+
+    /// 构建窗口级 keyViewLoop：
+    /// 左面板（搜索框 → 排序 → 分组 → 视图切换 → 当前视图的列表/网格）
+    /// → 右面板（同序）→ 回绕到左面板首控件，首尾相接成环。
+    /// Tab 沿 nextKeyView 正向流转，⇧Tab 沿 previousKeyView 反向流转；
+    /// 列表/网格切换（updateViewMode）后需重建以切换链尾落点。
+    private func buildKeyViewLoops() {
+        var loop: [NSView] = []
+        loop.append(contentsOf: keyViewChain(for: .left))
+        loop.append(contentsOf: keyViewChain(for: .right))
+        guard loop.count > 1 else { return }
+        for (index, view) in loop.enumerated() {
+            // 成环：每个视图的 nextKeyView 指向下一个，尾节点指回首节点。
+            // previousKeyView 由 AppKit 沿 nextKeyView 环自动推导（只读属性）。
+            view.nextKeyView = loop[(index + 1) % loop.count]
+        }
+    }
+
+    /// 单面板的 keyView 链：工具栏控件（搜索/排序/分组/视图切换）+ 当前视图模式的文件视图焦点落点
+    private func keyViewChain(for side: PaneSide) -> [NSView] {
+        let toolbar = side == .left ? leftPaneToolbar : rightPaneToolbar
+        let list = side == .left ? leftFileListView : rightFileListView
+        let grid = side == .left ? leftFileGridView : rightFileGridView
+        let isGrid = (side == .left ? leftPaneViewModel : rightPaneViewModel).state.viewMode == .grid
+        var chain = toolbar?.keyViewControls() ?? []
+        // 按当前视图模式取列表/网格的焦点落点（分支取值避免可选类型提升后成员解析失败）
+        let focusTarget: NSView?
+        if isGrid {
+            focusTarget = grid?.keyFocusTarget
+        } else {
+            focusTarget = list?.keyFocusTarget
+        }
+        if let focusTarget = focusTarget {
+            chain.append(focusTarget)
+        }
+        return chain
+    }
+
     // MARK: - UI Updates
 
     private func updatePaneUI(side: PaneSide, state: PaneState) {
@@ -1630,6 +1674,8 @@ public class MainWindowController: NSWindowController {
             gridView?.isHidden = false
             gridView?.reloadData()
         }
+        // Wave2 P0-1：视图模式切换后重建 keyViewLoop（链尾落点在列表/网格间切换）
+        buildKeyViewLoops()
     }
 
     private func loadInitialDirectories() {
@@ -1722,6 +1768,10 @@ public class MainWindowController: NSWindowController {
     func activatePane(_ side: PaneSide) {
         activePane = side
         updateActivePaneVisual()
+        // Wave2 P0-2：激活面板时同步键盘焦点到对应面板的列表/网格，消除
+        // 「焦点面板 ≠ activePane」双真值源（menu 审计 §15：菜单操作按 activePane 执行，
+        // 键盘按 firstResponder 分派，二者不一致时操作打到另一面板）
+        syncKeyboardFocusWithActivePane(side)
         // Wave2 P0-4（多窗口）：通知携带本窗口身份（object），其他窗口的侧边栏据此忽略
         NotificationCenter.default.post(name: .paneDidActivate, object: window, userInfo: ["side": side == .left ? "left" : "right"])
         // 任务 F11-8: 切换活动面板时同步侧边栏标签高亮（显示新活动面板的 tagFilter）
@@ -1730,6 +1780,37 @@ public class MainWindowController: NSWindowController {
             name: .paneTagFilterChanged, object: window,
             userInfo: ["tagFilter": vm.state.tagFilter as Any]
         )
+    }
+
+    /// Wave2 P0-2：把键盘焦点同步到指定面板的列表/网格（按当前视图模式）。
+    /// - 文本编辑中（field editor / 可编辑文本框）不打断——搜索框输入、内联重命名不受点击影响；
+    /// - 焦点已属于目标面板的文件视图时不动（避免无谓的 firstResponder 抖动）；
+    /// - 其余情况（焦点在另一面板/侧边栏/窗口本身）转移到目标面板，保证「点哪面板，⌘C 等文件
+    ///   操作作用于哪面板」。
+    private func syncKeyboardFocusWithActivePane(_ side: PaneSide) {
+        guard let window = window else { return }
+        let fr = window.firstResponder
+        if fr is NSTextView { return }  // 文本编辑中（field editor）
+        if let tf = fr as? NSTextField, tf.isEditable { return }
+        // 目标面板当前视图模式的焦点落点（分支取值避免可选类型提升后成员解析失败）
+        let isGrid = (side == .left ? leftPaneViewModel : rightPaneViewModel).state.viewMode == .grid
+        let target: NSView?
+        let currentPane: NSView?
+        if isGrid {
+            target = (side == .left ? leftFileGridView : rightFileGridView)?.keyFocusTarget
+            currentPane = side == .left ? leftFileGridView : rightFileGridView
+        } else {
+            target = (side == .left ? leftFileListView : rightFileListView)?.keyFocusTarget
+            currentPane = side == .left ? leftFileListView : rightFileListView
+        }
+        guard let target = target else { return }
+        // 焦点已在目标面板的文件视图（或其子视图）内则无需转移
+        if let frView = fr as? NSView,
+           let focusedPane = filePaneView(for: frView),
+           focusedPane === currentPane {
+            return
+        }
+        window.makeFirstResponder(target)
     }
 
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {

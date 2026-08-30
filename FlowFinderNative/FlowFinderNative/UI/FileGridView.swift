@@ -504,6 +504,10 @@ public class FileGridView: NSView {
     private var scrollView: NSScrollView!
     private var cancellables = Set<AnyCancellable>()
 
+    /// Wave2 P0-1：keyViewLoop 焦点落点（内部集合视图）。
+    /// MainWindowController 构建面板 keyViewLoop 时把链尾接到此视图。
+    var keyFocusTarget: NSView? { collectionView }
+
     private var lastFilesCount: Int = -1
 
     // 任务 F10-8: 分组渲染缓存。

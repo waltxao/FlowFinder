@@ -468,6 +468,11 @@ public class FileListView: NSView {
     /// 统一操作控制器：处理右键菜单、键盘操作、内联重命名等（与 FileGridView 共用同一套逻辑）
     private(set) lazy var actionsController: FFPaneActionsController = FFPaneActionsController(host: self)
 
+    /// Wave2 P0-1：keyViewLoop 焦点落点（内部表格视图）。
+    /// MainWindowController 构建面板 keyViewLoop 时把链尾接到此视图，
+    /// Tab 流转到文件列表后由 tableView 接管方向键/选中。
+    var keyFocusTarget: NSView? { tableView }
+
     // 问题 7 根因修复：拖拽过程中持续捕获修饰键（用于 ⌘ 判断，访达语义）。
     // validateDrop/acceptDrop 回调中 NSApp.currentEvent 不可靠（可能为 nil 或非拖拽事件），
     // 故在 draggingUpdated 及各拖拽回调中双保险写入。

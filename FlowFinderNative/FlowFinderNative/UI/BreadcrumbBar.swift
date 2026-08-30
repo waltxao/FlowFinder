@@ -468,7 +468,8 @@ private class BreadcrumbSegmentButton: NSButton {
         self.translatesAutoresizingMaskIntoConstraints = false
         self.wantsLayer = true
         self.applySquircleCornerRadius(4)
-        self.focusRingType = .none
+        // Wave2 P0-3：恢复默认焦点环（原 .none 致键盘焦点完全不可见——审计焦点环 §4）
+        self.focusRingType = .default
         self.toolTip = absolutePath
 
         configureAppearance()
@@ -576,7 +577,8 @@ private class BreadcrumbChevronButton: NSButton {
         self.translatesAutoresizingMaskIntoConstraints = false
         self.wantsLayer = true
         self.applySquircleCornerRadius(3)
-        self.focusRingType = .none
+        // Wave2 P0-3：恢复默认焦点环（原 .none 致键盘焦点完全不可见——审计焦点环 §4）
+        self.focusRingType = .default
         self.contentTintColor = NSColor.tertiaryLabelColor
         self.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "同级目录")
         self.toolTip = "点击查看同级目录"
@@ -641,7 +643,8 @@ private class BreadcrumbOverflowButton: NSButton {
         self.translatesAutoresizingMaskIntoConstraints = false
         self.wantsLayer = true
         self.applySquircleCornerRadius(3)
-        self.focusRingType = .none
+        // Wave2 P0-3：恢复默认焦点环（原 .none 致键盘焦点完全不可见——审计焦点环 §4）
+        self.focusRingType = .default
         self.contentTintColor = NSColor.secondaryLabelColor
         // 使用 ellipsis 图标（...）
         self.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "更多路径")

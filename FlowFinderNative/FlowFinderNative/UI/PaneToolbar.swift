@@ -145,7 +145,8 @@ class PaneToolbar: NSView {
         searchTextField.isBordered = false
         searchTextField.isBezeled = false
         searchTextField.drawsBackground = false
-        searchTextField.focusRingType = .none
+        // Wave2 P0-3：恢复默认焦点环（原 .none 致键盘焦点完全不可见——审计焦点环 §4）
+        searchTextField.focusRingType = .default
         searchTextField.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         searchTextField.target = self
         searchTextField.action = #selector(searchChanged)
@@ -293,6 +294,13 @@ class PaneToolbar: NSView {
     /// Wave2 P1：聚焦本面板搜索框（⌘F 分流入口；面板内筛选框获得全键盘可达性）
     func focusSearchField() {
         window?.makeFirstResponder(searchTextField)
+    }
+
+    /// Wave2 P0-1：返回本工具栏参与 keyViewLoop 的控件（数组顺序即 Tab 顺序）：
+    /// 搜索框 → 排序 → 分组 → 视图分段（列表/网格切换按钮）。链尾由 MainWindowController
+    /// 接到当前视图模式的文件列表/网格，再经窗口级 keyViewLoop 流转到另一面板。
+    func keyViewControls() -> [NSView] {
+        [searchTextField, sortPopup, groupPopup, listViewButton, gridViewButton].compactMap { $0 }
     }
 
     private func updateViewModeHighlight(_ mode: ViewMode) {
