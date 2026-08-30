@@ -887,7 +887,8 @@ public class FileGridView: NSView {
         // responder 链第一环拦截后转发，见该类注释）
         (collectionView as? DraggingCollectionView)?.onCommandScrollDelta = { [weak self] deltaY in
             guard let self = self else { return }
-            self.applyGridIconSize(self.gridIconSize - deltaY * 4)
+            // AppKit deltaY > 0 = 上滚 → 应放大（与访达 ⌘+上滚放大一致；实测曾用减号导致方向颠倒）
+            self.applyGridIconSize(self.gridIconSize + deltaY * 4)
         }
         (collectionView as? DraggingCollectionView)?.onMagnifyDelta = { [weak self] magnification in
             guard let self = self else { return }
