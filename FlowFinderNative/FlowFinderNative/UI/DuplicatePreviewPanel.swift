@@ -154,7 +154,7 @@ class DuplicatePreviewPanel: NSView {
 
     /// 创建对比列表项（卡片样式，FFGlassView .component 背景）
     private func makeCompareItem(file: FFDuplicateFile, isFirst: Bool) -> NSView {
-        let card = FFGlassView(level: .component, cornerRadius: 4)
+        let card = FFGlassView(level: .component, cornerRadius: 4, decoration: .strokeOnly)
         card.translatesAutoresizingMaskIntoConstraints = false
 
         // 色块缩略图（16x16，按文件类型着色），使用超椭圆

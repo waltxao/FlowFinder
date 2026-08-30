@@ -48,7 +48,7 @@ public class TaskProgressBar: NSView {
         layer?.backgroundColor = NSColor.clear.cgColor
 
         // 设计稿 ff-taskbar：28px 高，FFGlassView(.component) 提供亚克力磨砂质感
-        containerView = FFGlassView(level: .component, cornerRadius: 0)
+        containerView = FFGlassView(level: .component, cornerRadius: 0, decoration: .strokeOnly)
         containerView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(containerView)
 

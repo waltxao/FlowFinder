@@ -231,8 +231,19 @@ class PaneToolbar: NSView {
         sortPopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         groupPopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
-        listViewButton = createViewButton(systemSymbol: "list.bullet", action: #selector(listViewClicked), label: "列表视图")
-        gridViewButton = createViewButton(systemSymbol: "square.grid.2x2", action: #selector(gridViewClicked), label: "网格视图")
+        // Wave4 Task 6（审计 §2 折中）：Row2 溢出分级——窗口缩窄时按抗压缩优先级
+        // 从低到高依次压缩/截断，不破版：
+        //   搜索框(1，弹性输入域最先让位，止步于最小宽 120) → 文件夹选项(700) →
+        //   新建文件夹(710) → 视图切换(720) → 分组(730) → 排序(740，最保文字可读)。
+        // 图标按钮的固定宽度约束已在工厂方法中同步降至同级优先级。
+        searchContainer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
+        sortPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 740), for: .horizontal)
+        groupPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 730), for: .horizontal)
+
+        listViewButton = createViewButton(systemSymbol: "list.bullet", action: #selector(listViewClicked), label: "列表视图",
+                                          compressionPriority: NSLayoutConstraint.Priority(rawValue: 720))
+        gridViewButton = createViewButton(systemSymbol: "square.grid.2x2", action: #selector(gridViewClicked), label: "网格视图",
+                                          compressionPriority: NSLayoutConstraint.Priority(rawValue: 720))
 
         updateViewModeHighlight(.list)
 
@@ -244,13 +255,16 @@ class PaneToolbar: NSView {
 
         // v0.6.9+: 文件夹显示配置按钮，使用系统 SF Symbol「slider.horizontal.3」
         // 模板色自动适配浅/深色，与其他导航按钮视觉统一
-        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu), label: "文件夹选项")
+        // Wave4 Task 6：溢出分级 700——窗口缩窄时最先让位的图标按钮
+        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu), label: "文件夹选项",
+                                      compressionPriority: NSLayoutConstraint.Priority(rawValue: 700))
 
         // v0.7.4 项 2 + 项 6 合并（v0.7.4 修订）：单一「新建文件夹」按钮。
         // - 未选中任何项目：点击创建空文件夹（默认名"新建文件夹"，重名自动加序号）
         // - 选中 2 个及以上：点击自动"用所选 N 个项目新建文件夹"
         // - 悬停提示随选中状态动态变化（由 setFolderSelectionCount 更新）
-        newFolderButton = createNavButton(systemSymbol: "folder.badge.plus", action: #selector(newFolderClicked), label: "新建文件夹")
+        newFolderButton = createNavButton(systemSymbol: "folder.badge.plus", action: #selector(newFolderClicked), label: "新建文件夹",
+                                          compressionPriority: NSLayoutConstraint.Priority(rawValue: 710))
         newFolderButton.toolTip = "新建文件夹"
         newFolderButton.isEnabled = true
 
@@ -287,7 +301,10 @@ class PaneToolbar: NSView {
     // MARK: - Button Factory
 
     /// 创建访达风格的圆形药丸按钮
-    private func createNavButton(systemSymbol: String, action: Selector, label: String) -> NSButton {
+    /// - compressionPriority: Wave4 Task 6 溢出分级——非 nil 时按钮的固定 28pt 宽度约束
+    ///   与横向抗压缩优先级同步降为该值（图标按钮才可能在窗口缩窄时按分级让位/截断；
+    ///   required 宽度约束会让抗压缩分级形同虚设）。Row1 导航按钮不传（保持固定不压缩）。
+    private func createNavButton(systemSymbol: String, action: Selector, label: String, compressionPriority: NSLayoutConstraint.Priority? = nil) -> NSButton {
         let button = NSButton()
         button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: label)
         button.bezelStyle = .accessoryBarAction
@@ -297,13 +314,19 @@ class PaneToolbar: NSView {
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setAccessibilityLabel(label)
-        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        let widthConstraint = button.widthAnchor.constraint(equalToConstant: 28)
+        if let priority = compressionPriority {
+            widthConstraint.priority = priority
+            button.setContentCompressionResistancePriority(priority, for: .horizontal)
+        }
+        widthConstraint.isActive = true
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return button
     }
 
     /// 创建视图切换按钮（访达风格圆形药丸）
-    private func createViewButton(systemSymbol: String, action: Selector, label: String) -> NSButton {
+    /// - compressionPriority: 同 createNavButton（Wave4 Task 6 溢出分级）
+    private func createViewButton(systemSymbol: String, action: Selector, label: String, compressionPriority: NSLayoutConstraint.Priority? = nil) -> NSButton {
         let button = NSButton()
         button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: label)
         button.bezelStyle = .accessoryBarAction
@@ -313,7 +336,12 @@ class PaneToolbar: NSView {
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setAccessibilityLabel(label)
-        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        let widthConstraint = button.widthAnchor.constraint(equalToConstant: 28)
+        if let priority = compressionPriority {
+            widthConstraint.priority = priority
+            button.setContentCompressionResistancePriority(priority, for: .horizontal)
+        }
+        widthConstraint.isActive = true
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return button
     }

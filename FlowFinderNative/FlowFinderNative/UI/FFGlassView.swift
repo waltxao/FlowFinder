@@ -32,7 +32,20 @@ class FFGlassView: NSView {
 
     // MARK: - 配置
 
+    /// Wave4 Task 6: 装饰分级（审计 §3 弱化装饰）
+    ///
+    /// 磨边亮线 + 顶部高光 + 内阴影三层装饰在玻璃浮层上提供"浮起"质感，
+    /// 但叠加在实体背景上时只剩噪感——此时降级为仅单层描边。
+    enum DecorationStyle {
+        /// 玻璃浮层（详情栏/设备栏）：保留三层装饰
+        case glassOverlay
+        /// 叠在实体背景上（工具浮层/卡片/进度条等）：降级为仅单层描边
+        case strokeOnly
+    }
+
     let level: FFDesign.Glass.Level
+    /// 装饰分级（默认玻璃浮层三层装饰；实体底调用方应显式传 .strokeOnly）
+    let decoration: DecorationStyle
     /// 仅 macOS<26 回退路径使用（.panel 级）
     let material: NSVisualEffectView.Material?
     /// 仅 macOS 26+ 使用（.panel 级），通过 GlassStyle 映射到 NSGlassEffectView.Style；默认 .regular
@@ -77,11 +90,15 @@ class FFGlassView: NSView {
     ///   - cornerRadius: 圆角（nil 时按 level 取默认值）
     ///   - material: 仅 macOS<26 回退路径使用（.panel 级），如 .sidebar/.headerView/.sheet
     ///   - glassStyle: 仅 macOS 26+ 使用（.panel 级），默认 .regular（更好可读性，符合 Apple HIG）
+    ///   - decoration: 装饰分级，默认 .glassOverlay（三层装饰）；
+    ///     叠在实体背景上的调用方显式传 .strokeOnly（仅单层描边，Wave4 Task 6）
     init(level: FFDesign.Glass.Level,
          cornerRadius: CGFloat? = nil,
          material: NSVisualEffectView.Material? = nil,
-         glassStyle: GlassStyle = .regular) {
+         glassStyle: GlassStyle = .regular,
+         decoration: DecorationStyle = .glassOverlay) {
         self.level = level
+        self.decoration = decoration
         self.material = material
         self.glassStyle = glassStyle
         self.cornerRadius = cornerRadius ?? FFDesign.Glass.defaultCornerRadius(for: level)
@@ -206,19 +223,22 @@ class FFGlassView: NSView {
 
         // CALayer 叠加层（顺序：tint → 高光 → 内阴影 → 亮线）
         // 重设计 v0.7.2：去掉 noiseLayer（液态玻璃是平滑材质，不叠噪声）
+        // Wave4 Task 6：装饰分级——实体底上的面板降级为单层描边（无顶部高光/内阴影）
         let tint = CALayer()
         tint.backgroundColor = FFDesign.glassTint.cgColor
         applyCornerClip(to: tint)
         layer?.addSublayer(tint)
         tintLayer = tint
 
-        let highlight = makeHighlightLayer()
-        layer?.addSublayer(highlight)
-        highlightLayer = highlight
+        if decoration == .glassOverlay {
+            let highlight = makeHighlightLayer()
+            layer?.addSublayer(highlight)
+            highlightLayer = highlight
 
-        let inner = makeInnerShadowLayer()
-        layer?.addSublayer(inner)
-        innerShadowLayer = inner
+            let inner = makeInnerShadowLayer()
+            layer?.addSublayer(inner)
+            innerShadowLayer = inner
+        }
 
         // 全周细亮线（液态玻璃描边）：CAShapeLayer 沿圆角矩形边缘绘制，
         // 显式置于最上层，避免被原生玻璃子视图遮挡
@@ -257,6 +277,7 @@ class FFGlassView: NSView {
 
         // CALayer 叠加层（顺序：tint → 高光 → 内阴影 → 亮线）
         // 重设计 v0.7.2：去掉 noiseLayer（液态玻璃是平滑材质，不叠噪声）
+        // Wave4 Task 6：装饰分级——component 嵌在已有表面上，默认仅单层描边
 
         // tint 背景
         let tint = CALayer()
@@ -265,17 +286,18 @@ class FFGlassView: NSView {
         layer?.addSublayer(tint)
         tintLayer = tint
 
-        // 顶部高光
-        let highlight = makeHighlightLayer()
-        layer?.addSublayer(highlight)
-        highlightLayer = highlight
+        // 顶部高光 + 内阴影（仅玻璃浮层分级保留；实体底降级为单层描边）
+        if decoration == .glassOverlay {
+            let highlight = makeHighlightLayer()
+            layer?.addSublayer(highlight)
+            highlightLayer = highlight
 
-        // 内阴影
-        let inner = makeInnerShadowLayer()
-        layer?.addSublayer(inner)
-        innerShadowLayer = inner
+            let inner = makeInnerShadowLayer()
+            layer?.addSublayer(inner)
+            innerShadowLayer = inner
+        }
 
-        // 全周细亮线（液态玻璃描边；component 级用更弱的描边色）
+        // 全周细亮线（液态玻璃描边；降级面板与 component 级用更弱的描边色）
         let border = makeBorderLayer()
         layer?.addSublayer(border)
         borderLayer = border
@@ -301,12 +323,17 @@ class FFGlassView: NSView {
         return layer
     }
 
+    /// 描边色按层级 + 装饰分级取值：玻璃浮层 panel 用强亮描边（浮层显眼），
+    /// 降级面板（实体底单层描边）与 component 级用弱亮描边（嵌入式不突兀）
+    private var borderStrokeColor: NSColor {
+        (level == .panel && decoration == .glassOverlay) ? FFDesign.glassBorder : FFDesign.glassBorderComponent
+    }
+
     /// 全周细亮线（液态玻璃"磨边"反光）：沿圆角矩形边缘绘制，宽度 1.75pt
-    /// panel 级用强亮描边（浮层显眼），component 级用弱亮描边（嵌入式不突兀）
     private func makeBorderLayer() -> CAShapeLayer {
         let layer = CAShapeLayer()
         layer.fillColor = NSColor.clear.cgColor
-        layer.strokeColor = (level == .panel ? FFDesign.glassBorder : FFDesign.glassBorderComponent).cgColor
+        layer.strokeColor = borderStrokeColor.cgColor
         layer.lineWidth = FFDesign.Glass.borderWidth
         layer.opacity = 1.0
         return layer
@@ -456,8 +483,8 @@ class FFGlassView: NSView {
         if let visualEffect = nativeGlassView as? NSVisualEffectView {
             visualEffect.appearance = NSApp.appearance
         }
-        // 描边色随主题刷新（按分级：panel 强亮 / component 弱亮）
-        borderLayer?.strokeColor = (level == .panel ? FFDesign.glassBorder : FFDesign.glassBorderComponent).cgColor
+        // 描边色随主题刷新（按分级：玻璃浮层强亮 / 降级面板与 component 弱亮）
+        borderLayer?.strokeColor = borderStrokeColor.cgColor
         // tint
         tintLayer?.backgroundColor = FFDesign.glassTint.cgColor
         // 高光 alpha

@@ -238,7 +238,9 @@ public class ToolPanelView: NSView {
     private func setupUI() {
         // 任务 4: 液态玻璃背景：FFGlassView 统一提供玻璃质感、圆角与主题刷新
         // Wave4 Task 2：圆角 8→面板级默认 10（浮层圆角收敛两档：容器 16 / 浮层 10）
-        let glassBackground = FFGlassView(level: .panel, cornerRadius: FFDesign.Glass.cornerRadiusPanel)
+        // Wave4 Task 6：工具浮层叠在实体操作区上——装饰降级为单层描边（去噪感）
+        let glassBackground = FFGlassView(level: .panel, cornerRadius: FFDesign.Glass.cornerRadiusPanel,
+                                          decoration: .strokeOnly)
         glassBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glassBackground, positioned: .below, relativeTo: nil)
         NSLayoutConstraint.activate([

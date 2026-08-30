@@ -226,7 +226,7 @@ public class SMBManagerPanel: NSView {
 
     /// 创建服务器卡片（FFGlassView .component 背景）
     private func makeServerCard(volume: SMBVolume) -> NSView {
-        let card = FFGlassView(level: .component, cornerRadius: 6)
+        let card = FFGlassView(level: .component, cornerRadius: 6, decoration: .strokeOnly)
         card.translatesAutoresizingMaskIntoConstraints = false
 
         // 状态圆点（8x8，绿=已连接）

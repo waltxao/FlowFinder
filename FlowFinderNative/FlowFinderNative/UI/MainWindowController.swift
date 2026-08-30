@@ -640,17 +640,16 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
-    /// v0.6.9: 超椭圆圆角 16pt + 1px 边框 + 实体背景覆盖工具栏
+    /// v0.6.9: 超椭圆圆角 16pt + 实体背景（1px 边框已按 Wave4 Task 6 删除）
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
         let container = SquircleView(cornerRadius: 16, squircleFactor: 5.0, autoUpdateMask: true)
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
-        // v0.6.9: 操作区实体背景（日间#F5F5F5/夜间#2D2D2D）
+        // v0.6.9: 操作区实体背景（日间#F5F5F5/夜间#2D2D2D，Wave4 Task 3 起走 FFDesign 令牌）
         container.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
-        // v0.6.9: 1px 边框（日间浅灰/夜间深灰）
-        container.layer?.borderWidth = 1
-        container.layer?.borderColor = operationAreaBorderColor().cgColor
+        // Wave4 Task 6（审计 §3 装饰降噪）：删除 v0.6.9 的 1px 边框——卡片已有
+        // 4pt 边距 + 阴影 + 圆角分层，边框叠用显多余
 
         // 1.2 活动面板顶部 accent 色条（2pt 高，初始隐藏，由 updateActivePaneVisual 切换）
         let accentBar = NSView()
@@ -796,23 +795,12 @@ public class MainWindowController: NSWindowController {
         FFDesign.operationAreaBackground
     }
 
-    /// v0.6.9: 操作区边框颜色（日间浅灰/夜间深灰）
-    private func operationAreaBorderColor() -> NSColor {
-        let isDark = ThemeManager.shared.resolvedIsDark
-        return isDark
-            ? NSColor(srgbRed: 0.227, green: 0.227, blue: 0.227, alpha: 1.0)  // #3A3A3A
-            : NSColor.separatorColor  // 系统分隔线色（约 #E5E5E5）
-    }
-
-    /// v0.6.9: 刷新左右操作区容器背景色和边框色（主题切换时调用）
+    /// v0.6.9: 刷新左右操作区容器背景色（主题切换时调用）
+    /// Wave4 Task 6：1px 边框已删除，仅剩背景色刷新
     private func refreshOperationAreaBackgrounds() {
         let bgColor = operationAreaBackgroundColor().cgColor
-        let borderColor = operationAreaBorderColor().cgColor
         leftPaneContainer?.layer?.backgroundColor = bgColor
         rightPaneContainer?.layer?.backgroundColor = bgColor
-        // v0.6.9: 同步刷新边框颜色
-        leftPaneContainer?.layer?.borderColor = borderColor
-        rightPaneContainer?.layer?.borderColor = borderColor
         // 任务 F11-1: 设备栏浮层同步改为实体背景（与操作区一致）
         refreshDevicePanelBackground()
     }

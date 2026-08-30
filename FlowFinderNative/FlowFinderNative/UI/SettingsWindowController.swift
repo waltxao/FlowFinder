@@ -960,7 +960,7 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
         cell.textField = nil
 
         // 选中态玻璃背景层
-        let selectionBackground = FFGlassView(level: .component, cornerRadius: 8)
+        let selectionBackground = FFGlassView(level: .component, cornerRadius: 8, decoration: .strokeOnly)
         selectionBackground.translatesAutoresizingMaskIntoConstraints = false
         selectionBackground.isHidden = (tableView.selectedRow != row)
         selectionBackground.identifier = NSUserInterfaceItemIdentifier("selectionBg")
