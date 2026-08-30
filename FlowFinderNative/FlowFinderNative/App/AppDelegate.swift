@@ -52,19 +52,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 失败时仅记录日志，不阻断启动 —— 搜索面板会显示对应状态并提供重建入口。
         initContentIndex()
 
-        // 创建主窗口
-        let controller = MainWindowController()
-        controller.showWindow(nil)
-        self.mainWindowController = controller
+        // 测试宿主（XCTest）模式跳过主窗口创建：单元测试自建所需窗口。宿主应用的
+        // 真实主窗口在测试进程里与用例的窗口/主队列异步块竞态，曾引发窗口释放后
+        // AppKit 延迟簿记块悬空访问（NSZombie 实证 _endLiveResize SIGSEGV，运行器崩溃）。
+        // 注意用启动环境变量判定：XCTestBundle 在宿主 app 启动后才注入，
+        // NSClassFromString("XCTestCase") 在本时刻尚不可靠
+        let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
 
-        // 确保窗口可见并置前
-        if let window = controller.window {
-            window.makeKeyAndOrderFront(nil)
-            // macOS 14+: 使用新的 activate() API（旧的 ignoringOtherApps 已废弃且在 macOS 27 上不可靠）
-            if #available(macOS 14.0, *) {
-                NSApp.activate()
-            } else {
-                NSApp.activate(ignoringOtherApps: true)
+        // 创建主窗口
+        if !isRunningTests {
+            let controller = MainWindowController()
+            controller.showWindow(nil)
+            self.mainWindowController = controller
+
+            // 确保窗口可见并置前
+            if let window = controller.window {
+                window.makeKeyAndOrderFront(nil)
+                // macOS 14+: 使用新的 activate() API（旧的 ignoringOtherApps 已废弃且在 macOS 27 上不可靠）
+                if #available(macOS 14.0, *) {
+                    NSApp.activate()
+                } else {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
             }
         }
     }

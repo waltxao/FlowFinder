@@ -864,7 +864,10 @@ class ExpandableDetailsBar: NSView {
     /// 流动填充重排：按固定顺序把行分配到列1/列2，装不下的隐藏。
     /// 触发点：高度/分界线拖拽、展开切换、refresh 末尾、面板尺寸变化。
     func rearrangeFlow() {
-        guard isExpanded, window != nil else { return }
+        // 挂载判定：已加入视图层级（含测试用普通容器承载）即可重排；
+        // 不强制 window != nil——单元测试避免使用真实 NSWindow
+        //（窗口簿记延迟块与测试裸释放竞态，曾致运行器 SIGSEGV）
+        guard isExpanded, window != nil || superview != nil else { return }
         layoutSubtreeIfNeeded()
         // 图标边长在布局 flush 后更新：图标尺寸不参与内容行高度推导，flush 后按真实内容区高度算得更精确（终审 Minor 2）
         updateIconEdge()

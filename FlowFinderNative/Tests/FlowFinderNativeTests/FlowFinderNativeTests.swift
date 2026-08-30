@@ -576,16 +576,13 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
 
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
-        let host = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
-            styleMask: [.titled, .closable],
-            backing: .buffered, defer: false
-        )
-        host.contentView = bar // rearrangeFlow 需 window != nil 才生效
+        // 用普通容器承载（不用 NSWindow：窗口簿记延迟块与测试裸释放竞态，曾致运行器 SIGSEGV）
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
+        container.addSubview(bar)
         bar.isExpanded = true
 
         bar.update(with: [entry])
-        bar.layoutSubtreeIfNeeded()
+        container.layoutSubtreeIfNeeded()
 
         // 多次重排，等价于分界线拖拽/高度拖拽/窗口尺寸变化的触发路径
         bar.rearrangeFlow()
@@ -601,7 +598,6 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         XCTAssertTrue(
             attached.contains { !bar.infoRows.contains($0) && !bar.multiRows.contains($0) },
             "至少一个类型专属行应被列持有")
-        host.close()
     }
 
     /// 终审建议 3 回归（验收 4 接线）：栏变矮时溢出行被摘除（可见行数由
@@ -634,15 +630,9 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         defer { UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight") }
 
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
-        let host = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
-            styleMask: [.titled, .closable],
-            backing: .buffered, defer: false
-        )
-        // 托管与应用内浮层一致：底边贴容器、高度由栏自身高度约束驱动；
-        // 面板高 480（> 记忆值 210 + 让位 120），初始不触发 clamp
-        let container = NSView()
-        host.contentView = container
+        // 用普通容器承载（不用 NSWindow：窗口簿记延迟块与测试裸释放竞态，曾致运行器 SIGSEGV）
+        // 底边贴容器、高度由栏自身高度约束驱动；面板高 480（> 记忆值 210 + 让位 120），初始不触发 clamp
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         bar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(bar)
         NSLayoutConstraint.activate([
@@ -677,9 +667,5 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         XCTAssertEqual(attachedCount(), count1, "栏变高后可见行应恢复原数量（行回归）")
         // 全程行不得丢失：流动顺序注册表数量恒定
         XCTAssertEqual(bar.flowOrderedRows.count, flowCount, "行不得丢失（流动顺序注册表数量恒定）")
-        // 程序化创建的窗口默认 isReleasedWhenClosed = true，close() 会立即释放窗口，
-        // 测试结束时的局部强引用再释放即成 over-release（XCTest 内存检查段错误）——关掉该行为
-        host.isReleasedWhenClosed = false
-        host.close()
     }
 }
