@@ -891,15 +891,25 @@ class ExpandableDetailsBar: NSView {
         lastArrangedSize = bounds.size
     }
 
+    /// 布局期挂起的重排标记：layout() 中禁止同步重排（layoutSubtreeIfNeeded 在布局中递归
+    /// 属非法调用，系统 WarnOnce「already being laid out」）
+    private var isFlowDeferred = false
+
     override func layout() {
         super.layout()
-        guard isExpanded, bounds.size != lastArrangedSize else { return }
-        // 窗口/面板缩小后重新 clamp 已应用高度（终审 Important 1）
-        let applied = appliedExpandedHeight()
-        if heightConstraint.constant != applied {
-            heightConstraint.constant = applied
+        guard isExpanded, bounds.size != lastArrangedSize, !isFlowDeferred else { return }
+        isFlowDeferred = true
+        // 布局期的重排与高度重新 clamp 推迟到本次布局结束后执行（去抖合并）
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isFlowDeferred else { return }
+            self.isFlowDeferred = false
+            // 窗口/面板缩小后重新 clamp 已应用高度（终审 Important 1）
+            let applied = self.appliedExpandedHeight()
+            if self.heightConstraint.constant != applied {
+                self.heightConstraint.constant = applied
+            }
+            self.rearrangeFlow()
         }
-        rearrangeFlow()
     }
 
     // MARK: - Builders
