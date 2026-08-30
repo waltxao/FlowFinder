@@ -539,6 +539,9 @@ public class FileListView: NSView {
     /// 本次拖拽会话内已驻留展开过的文件夹（防重入：同文件夹只触发一次）
     private var springFiredPaths: Set<String> = []
 
+    /// Wave3 Task 5: 两指轻扫节流器（前进/后退动画期间忽略重复轻扫）
+    private lazy var swipeThrottler = FFSwipeThrottler()
+
     public var viewModel: PaneViewModel? {
         didSet {
             // 清空旧订阅，防止累积泄漏
@@ -2127,6 +2130,23 @@ extension FileListView {
     public override func mouseDown(with event: NSEvent) {
         FFDebug.log("FileListView.mouseDown hit=\(hitTest(event.locationInWindow))")
         super.mouseDown(with: event)
+    }
+
+    /// Wave3 Task 5: 触控板两指轻扫 = 前进/后退（对齐 Finder，左右面板各自响应）。
+    /// 方向判定与「自然滚动」设置一致：isDirectionInvertedFromDevice == true 表示事件方向
+    /// 已相对物理方向反转，先归一化回物理方向再判定——手指右滑 = 后退，手指左滑 = 前进。
+    /// 轻扫事件经 responder chain 从 tableView 冒泡到本视图（中间视图不实现 swipe 方法）。
+    /// 注：新 SDK 中 swipeWithEvent(_:) 的 Swift 名已改为 swipe(with:)，同一 ObjC selector。
+    public override func swipe(with event: NSEvent) {
+        // 防抖：动画进行中忽略重复轻扫（500ms 节流）
+        guard swipeThrottler.shouldAccept() else { return }
+        var dx = event.deltaX
+        if event.isDirectionInvertedFromDevice { dx = -dx }
+        if dx > 0 {
+            _ = viewModel?.goBack()
+        } else if dx < 0 {
+            _ = viewModel?.goForward()
+        }
     }
 
     /// 重写 keyDown：Enter/Return 触发内联重命名，空格触发 QuickLook 预览，

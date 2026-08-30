@@ -273,6 +273,30 @@ extension Notification.Name {
     static let FFDetailsBarLayoutChanged = Notification.Name("FFDetailsBarLayoutChanged")
 }
 
+// MARK: - FFSwipeThrottler（两指轻扫节流）
+
+/// Wave3 Task 5: 两指轻扫节流器——前进/后退动画进行中忽略重复轻扫（500ms 节流窗口）。
+/// FileListView 与 FileGridView 共用同一套轻扫判定逻辑（两个面板各自独立实例）。
+/// 主线程专用（仅在 swipeWithEvent 中调用）。
+final class FFSwipeThrottler {
+    /// 节流窗口（秒）
+    private let interval: TimeInterval
+    /// 上次接受轻扫的时间戳
+    private var lastAcceptedAt: TimeInterval = 0
+
+    init(interval: TimeInterval = 0.5) {
+        self.interval = interval
+    }
+
+    /// 距上次有效轻扫超过节流窗口时返回 true，并记录本次时间戳
+    func shouldAccept() -> Bool {
+        let now = Date().timeIntervalSince1970
+        guard now - lastAcceptedAt >= interval else { return false }
+        lastAcceptedAt = now
+        return true
+    }
+}
+
 // MARK: - FFPaneMenuBuilder（列表/网格视图共享右键菜单）
 
 /// 统一构建文件面板右键菜单：FileListView 与 FileGridView 共用同一套菜单结构与 action
