@@ -36,7 +36,7 @@ private final class FFDropHighlightBorderView: NSView {
 
 class FileGridCollectionViewItem: NSCollectionViewItem {
     private var thumbnailImageView: NSImageView!
-    /// 缩略图宽/高约束（动态重建：按图片原始比例，最长边 64pt——Finder 风格，替代固定方形）
+    /// 缩略图宽/高约束（动态重建：按图片原始比例，最长边随 thumbnailMaxEdge——Finder 风格，替代固定方形）
     private var thumbWidthConstraint: NSLayoutConstraint!
     private var thumbHeightConstraint: NSLayoutConstraint!
     /// 名称标签：内联重命名时需设为可编辑并获取焦点（与 FileListView 一致）。
@@ -178,17 +178,18 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         tagPillContainer?.arrangedSubviews.forEach { $0.removeFromSuperview() }
     }
 
-    /// 设置缩略图/图标并同步宽高比（Finder 风格：最长边 64pt，保持原始比例）。
+    /// 设置缩略图/图标并同步宽高比（Finder 风格：最长边随 thumbnailMaxEdge，保持原始比例）。
     /// 所有 image 赋值统一走此方法，替代直接改 thumbnailImageView.image。
     private func setThumbnail(_ image: NSImage?) {
         thumbnailImageView.image = image
         // 移除旧尺寸约束
         thumbWidthConstraint?.isActive = false
         thumbHeightConstraint?.isActive = false
+        let edge = thumbnailMaxEdge
         guard let image = image, image.size.width > 0, image.size.height > 0 else {
-            // 无图片/占位：回退 64×64 方形
-            thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: 64)
-            thumbHeightConstraint = thumbnailImageView.heightAnchor.constraint(equalToConstant: 64)
+            // 无图片/占位：回退 edge×edge 方形
+            thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: edge)
+            thumbHeightConstraint = thumbnailImageView.heightAnchor.constraint(equalToConstant: edge)
             thumbWidthConstraint.isActive = true
             thumbHeightConstraint.isActive = true
             return
@@ -196,17 +197,31 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         let w = image.size.width
         let h = image.size.height
         if w >= h {
-            // 宽图（含方形）：宽 64，高按比例
-            thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: 64)
-            thumbHeightConstraint = thumbnailImageView.heightAnchor.constraint(equalToConstant: max(64 * h / w, 1))
+            // 宽图（含方形）：宽 edge，高按比例
+            thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: edge)
+            thumbHeightConstraint = thumbnailImageView.heightAnchor.constraint(equalToConstant: max(edge * h / w, 1))
         } else {
-            // 高图：高 64，宽按比例
-            thumbHeightConstraint = thumbnailImageView.heightAnchor.constraint(equalToConstant: 64)
-            thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: max(64 * w / h, 1))
+            // 高图：高 edge，宽按比例
+            thumbHeightConstraint = thumbnailImageView.heightAnchor.constraint(equalToConstant: edge)
+            thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: max(edge * w / h, 1))
         }
         thumbWidthConstraint.isActive = true
         thumbHeightConstraint.isActive = true
         thumbnailImageView.needsLayout = true
+    }
+
+    // MARK: - Wave4 Task 4: 缩略图随网格缩放联动
+
+    /// 缩略图最长边：由 FileGridView 按图标大小设置（120pt 基准对应 64pt，等比联动）。
+    /// 默认 64 保持既有行为；prepareForReuse 的取消逻辑不依赖此值，不受缩放影响。
+    var thumbnailMaxEdge: CGFloat = 64
+
+    /// 缩放变化时更新最长边并按新尺寸重建缩略图约束（保留当前图片，按比例重算另一边）
+    func applyThumbnailMaxEdge(_ newEdge: CGFloat) {
+        guard newEdge != thumbnailMaxEdge else { return }
+        thumbnailMaxEdge = newEdge
+        // 复用 setThumbnail 的比例逻辑：有图按比例，无图回退方形
+        setThumbnail(thumbnailImageView.image)
     }
 
     override func loadView() {
@@ -268,9 +283,9 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             dropBorderView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         // 缩略图尺寸约束动态管理（setThumbnail 时按图片比例重建）：
-        // 初始 64×64 占位，图片到达后按原始宽高比（最长边 64）重建，Finder 风格。
-        thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: 64)
-        thumbHeightConstraint = thumbnailImageView.heightAnchor.constraint(equalToConstant: 64)
+        // 初始 64×64 占位（与默认 thumbnailMaxEdge 一致），图片到达后按原始宽高比重建，Finder 风格
+        thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: thumbnailMaxEdge)
+        thumbHeightConstraint = thumbnailImageView.heightAnchor.constraint(equalToConstant: thumbnailMaxEdge)
         thumbWidthConstraint.isActive = true
         thumbHeightConstraint.isActive = true
 
@@ -563,6 +578,30 @@ class DraggingCollectionView: NSCollectionView {
         }
         super.keyDown(with: event)
     }
+
+    // MARK: Wave4 Task 4: 网格缩放手势入口（⌘+滚轮 / 捏合）
+    //
+    // collectionView 是滚动事件 responder 链的第一环：若不在本子类拦截，
+    // 事件会被 NSScrollView 消费为普通滚动，FileGridView 永远收不到。
+
+    /// ⌘+滚轮缩放回调（携带本次滚轮 deltaY，向上滚为负 → 放大）
+    var onCommandScrollDelta: ((CGFloat) -> Void)?
+    /// 捏合手势缩放回调（携带本次 magnification 增量）
+    var onMagnifyDelta: ((CGFloat) -> Void)?
+
+    override public func scrollWheel(with event: NSEvent) {
+        // 仅 ⌘+滚轮作为缩放入口，普通滚动仍交给 NSScrollView
+        if event.modifierFlags.contains(.command), event.deltaY != 0 {
+            onCommandScrollDelta?(event.deltaY)
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
+    override public func magnify(with event: NSEvent) {
+        // 捏合手势始终缩放（访达网格视图语义），不走 super（无系统默认捏合行为）
+        onMagnifyDelta?(event.magnification)
+    }
 }
 
 // MARK: - FileGridView
@@ -621,6 +660,30 @@ public class FileGridView: NSView {
 
     /// Wave3 Task 5: 两指轻扫节流器（前进/后退动画期间忽略重复轻扫）
     private lazy var swipeThrottler = FFSwipeThrottler()
+
+    // Wave4 Task 4: 网格图标大小（状态驱动 itemSize）
+    // UserDefaults `grid_icon_size`，默认 120，范围 80–200；
+    // ⌘+滚轮 / 捏合手势实时调整 + invalidateLayout，设置页滑杆经通知同步，跨会话记忆。
+    private static let gridIconSizeRange: ClosedRange<CGFloat> = 80...200
+
+    /// 当前网格图标大小（item 宽；item 高 = 宽 + 20，为标签药丸行预留，与旧 120×140 比例一致）
+    private var gridIconSize: CGFloat = FileGridView.currentGridIconSize()
+
+    /// 读取当前图标大小（设置页滑杆与手势缩放共用：未保存回退 120，夹紧 80–200）
+    static func currentGridIconSize() -> CGFloat {
+        clampIconSize(CGFloat(UserDefaults.standard.double(forKey: FFUserDefaultsKeys.gridIconSize)))
+    }
+
+    /// 夹紧图标大小到合法范围；未保存过（0）时回退默认 120
+    private static func clampIconSize(_ value: CGFloat) -> CGFloat {
+        guard value > 0 else { return 120 }
+        return min(gridIconSizeRange.upperBound, max(gridIconSizeRange.lowerBound, value))
+    }
+
+    /// 当前缩略图最长边：120pt 基准对应 64pt（既有视觉基准），随 itemSize 等比联动
+    private var currentThumbnailMaxEdge: CGFloat {
+        round(gridIconSize * 64.0 / 120.0)
+    }
 
     public var viewModel: PaneViewModel? {
         didSet {
@@ -792,7 +855,8 @@ public class FileGridView: NSView {
         // NSCollectionViewGridLayout 不支持补充视图，无法渲染分组标题。
         // FlowLayout 横向排列填满一行后换行，与网格视觉效果一致，且支持 headerReferenceSize。
         let layout = NSCollectionViewFlowLayout()
-        layout.itemSize = NSSize(width: 120, height: 140)
+        // Wave4 Task 4: itemSize 由图标大小状态驱动（默认 120×140，范围 80–200）
+        layout.itemSize = NSSize(width: gridIconSize, height: gridIconSize + 20)
         layout.minimumInteritemSpacing = 8
         layout.minimumLineSpacing = 8
         layout.sectionInset = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
@@ -818,6 +882,21 @@ public class FileGridView: NSView {
             FFDebug.log("DraggingCollectionView.onDeleteKey 触发")
             self?.actionsController.deleteSelected(nil)
         }
+        // Wave4 Task 4: ⌘+滚轮 / 捏合缩放网格图标（回调由 DraggingCollectionView 在事件
+        // responder 链第一环拦截后转发，见该类注释）
+        (collectionView as? DraggingCollectionView)?.onCommandScrollDelta = { [weak self] deltaY in
+            guard let self = self else { return }
+            self.applyGridIconSize(self.gridIconSize - deltaY * 4)
+        }
+        (collectionView as? DraggingCollectionView)?.onMagnifyDelta = { [weak self] magnification in
+            guard let self = self else { return }
+            self.applyGridIconSize(self.gridIconSize * (1 + magnification))
+        }
+        // 设置页滑杆改图标大小后广播同步（persist=false 避免写回风暴）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(gridIconSizeDidChange),
+            name: .gridIconSizeChanged, object: nil
+        )
         collectionView.collectionViewLayout = layout
         // 任务 F11-1: collectionView 实体背景（v0.6.7）
         // 配合操作区容器实体背景，不再透明。实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
@@ -1116,6 +1195,35 @@ public class FileGridView: NSView {
     deinit {
         // G3: 移除 selector 版通知观察者（selector 观察者不会随 dealloc 自动移除）
         NotificationCenter.default.removeObserver(self, name: .fileListContentChanged, object: nil)
+        // Wave4 Task 4: 移除图标大小变更观察者
+        NotificationCenter.default.removeObserver(self, name: .gridIconSizeChanged, object: nil)
+    }
+
+    // MARK: - Wave4 Task 4: 网格图标大小缩放
+
+    /// 应用新的图标大小：夹紧范围 → 记忆（UserDefaults）→ 更新 itemSize + invalidateLayout
+    /// → 可见 item 即时重建缩略图约束（不经 reloadData，避免手势中全表重建打断复用取消逻辑）
+    private func applyGridIconSize(_ newSize: CGFloat, persist: Bool = true) {
+        let clamped = FileGridView.clampIconSize(newSize)
+        guard abs(clamped - gridIconSize) >= 0.5 else { return }
+        gridIconSize = clamped
+        if persist {
+            // 跨会话记忆
+            UserDefaults.standard.set(Double(clamped), forKey: FFUserDefaultsKeys.gridIconSize)
+        }
+        if let layout = collectionView?.collectionViewLayout as? NSCollectionViewFlowLayout {
+            layout.itemSize = NSSize(width: clamped, height: clamped + 20)
+            layout.invalidateLayout()
+        }
+        // 可见 item 按新最长边重建缩略图约束（prepareForReuse 取消逻辑不受影响）
+        for case let item as FileGridCollectionViewItem in collectionView?.visibleItems() ?? [] {
+            item.applyThumbnailMaxEdge(currentThumbnailMaxEdge)
+        }
+    }
+
+    /// 设置页滑杆改图标大小后：重读 UserDefaults 并同步本面板（不写回）
+    @objc private func gridIconSizeDidChange() {
+        applyGridIconSize(FileGridView.currentGridIconSize(), persist: false)
     }
 }
 
@@ -1147,6 +1255,8 @@ extension FileGridView: NSCollectionViewDataSource {
             let updatedTags = TagBridge.shared.getTags(path: path)
             NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": updatedTags])
         }
+        // Wave4 Task 4: 缩略图最长边随网格图标大小联动（复用与手势缩放共用同一取值）
+        item.thumbnailMaxEdge = currentThumbnailMaxEdge
         // 任务 F10-8: 通过 flatIndex 映射到 displayEntries
         let flatIdx = flatIndex(for: indexPath)
         if flatIdx < displayEntries.count {

@@ -797,6 +797,8 @@ public class FileListView: NSView {
         // G3: 移除 selector 版通知观察者（selector 观察者不会随 dealloc 自动移除，
         // 不清理则视图销毁后通知仍会向已释放对象发消息）
         NotificationCenter.default.removeObserver(self, name: .fileListContentChanged, object: nil)
+        // Wave4 Task 4: 移除列表密度变更观察者
+        NotificationCenter.default.removeObserver(self, name: .listDensityChanged, object: nil)
     }
 
     // MARK: - UI Setup
@@ -870,7 +872,14 @@ public class FileListView: NSView {
         // 列宽模式：sequentialColumnAutoresizingStyle（四列按比例伸缩，无横向滚动条）。
         // 用户仍可手动拖拽列头分隔条调整各列宽度。
         tableView.usesAlternatingRowBackgroundColors = false
-        tableView.rowHeight = 26
+        // Wave4 Task 4: 行高走密度三档（紧凑 22 / 标准 26 / 宽松 32），默认标准；
+        // 带标签行高在 heightOfRow 中按档位联动（42/48/56）
+        tableView.rowHeight = FFListDensity.current.baseRowHeight
+        // 设置页切换密度后广播刷新（重读档位 + 重算行高）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(listDensityDidChange),
+            name: .listDensityChanged, object: nil
+        )
         // 任务 F11-1: tableView 实体背景（v0.6.7）
         // 配合操作区容器实体背景，不再透明。实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
         // 保留 selectionHighlightStyle = .regular（标准选中绘制，默认值，不显式赋值）
@@ -1168,8 +1177,8 @@ public class FileListView: NSView {
     /// - 名称列 cell 结构（双行）：
     ///   上行：[文件图标] [文件名]
     ///   下行：[标签药丸容器]（横向排列，最多 3 个药丸 + "+N"）
-    /// - 无标签时药丸容器隐藏，行高保持单行高度（26pt）
-    /// - 有标签时药丸容器显示在文件名下方，行高增加（48pt）
+    /// - 无标签时药丸容器隐藏，行高保持基础单行高度（22/26/32，随密度档位，Wave4 Task 4）
+    /// - 有标签时药丸容器显示在文件名下方，行高增加（42/48/56 随档位联动）
     /// - 药丸不响应左键点击（仅显示），右键可弹出移除标签菜单
     private func configureInlineTagPills(in cellView: NSTableCellView, entry: FileEntry) {
         guard let textField = cellView.textField else { return }
@@ -1705,15 +1714,24 @@ extension FileListView: NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         // 任务 F10-8 / F11-5: 分组标题行高度 24（仿访达，留出标题+计数徽章+底部分隔线空间）
-        // 双行布局：有标签的文件行高度 48（文件名行 + 标签药丸行），无标签 26
-        guard row < displayRows.count else { return 26 }
+        // 双行布局：有标签的文件行高度随密度档位（42/48/56），无标签 22/26/32（Wave4 Task 4）
+        let density = FFListDensity.current
+        guard row < displayRows.count else { return density.baseRowHeight }
         let displayRow = displayRows[row]
         if displayRow.isHeader { return 24 }
         // v0.6.9: 使用预计算的 hasTags 避免高频 TagBridge I/O
         // 若关闭标签显示，始终使用单行高度
         let showTags = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
-        if !showTags { return 26 }
-        return displayRow.hasTags ? 48 : 26
+        if !showTags { return density.baseRowHeight }
+        return displayRow.hasTags ? density.taggedRowHeight : density.baseRowHeight
+    }
+
+    // MARK: - Wave4 Task 4: 列表密度切换
+
+    /// 设置页（或将来其他入口）切换密度后：重读档位并整表刷新行高
+    @objc private func listDensityDidChange() {
+        tableView.rowHeight = FFListDensity.current.baseRowHeight
+        reloadData()
     }
 
     /// 返回自定义 FFTableRowView。标准 NSTableRowView.drawSelection 已能正确绘制

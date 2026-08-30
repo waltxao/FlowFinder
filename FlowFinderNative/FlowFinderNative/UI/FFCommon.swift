@@ -47,6 +47,11 @@ extension Notification.Name {
     // 进程级单例（重复 start 会先 stop 旧 watcher），故挂在 AppDelegate 生命周期上，
     // 变更经此通知广播，各 MainWindowController 自行判断影响并刷新本窗口面板。
     static let fileSystemDidChange = Notification.Name("FFFileSystemDidChange")
+
+    // Wave4 Task 4: 列表密度 / 网格图标大小变更广播（设置页与手势双入口共用，
+    // 所有 FileListView / FileGridView / 设置滑杆监听后同步刷新）
+    static let listDensityChanged = Notification.Name("FFListDensityChanged")
+    static let gridIconSizeChanged = Notification.Name("FFGridIconSizeChanged")
 }
 
 // MARK: - FFUserDefaultsKeys
@@ -114,6 +119,54 @@ enum FFUserDefaultsKeys {
 
     // 任务 T12: 删除确认"不再询问"开关（全入口统一读取；勾选后跳过确认弹窗直接执行）
     static let deleteConfirmDisabled = "delete_confirm_disabled"
+
+    // Wave4 Task 4: 视图密度与缩放（列表密度三档 + 网格图标大小，跨会话记忆）
+    static let listDensity = "list_density"
+    static let gridIconSize = "grid_icon_size"
+}
+
+// MARK: - FFListDensity（Wave4 Task 4: 列表密度三档）
+
+/// 列表密度三档：紧凑 22 / 标准 26 / 宽松 32（带标签行 42/48/56 联动）。
+/// UserDefaults key `list_density`，默认标准；切换经 .listDensityChanged 广播刷新。
+enum FFListDensity: String, CaseIterable {
+    case compact = "compact"
+    case standard = "standard"
+    case relaxed = "relaxed"
+
+    /// 基础行高（无标签文件行）
+    var baseRowHeight: CGFloat {
+        switch self {
+        case .compact: return 22
+        case .standard: return 26
+        case .relaxed: return 32
+        }
+    }
+
+    /// 带标签行高（文件名行 + 标签药丸行，随档位联动）
+    var taggedRowHeight: CGFloat {
+        switch self {
+        case .compact: return 42
+        case .standard: return 48
+        case .relaxed: return 56
+        }
+    }
+
+    /// 设置页展示名
+    var title: String {
+        switch self {
+        case .compact: return "紧凑"
+        case .standard: return "标准"
+        case .relaxed: return "宽松"
+        }
+    }
+
+    /// 读取当前密度（无已保存设置时回退标准档）
+    static var current: FFListDensity {
+        guard let raw = UserDefaults.standard.string(forKey: FFUserDefaultsKeys.listDensity),
+              let density = FFListDensity(rawValue: raw) else { return .standard }
+        return density
+    }
 }
 
 // MARK: - ShortcutCenter（Wave2 P0-3：运行时快捷键统一读取）

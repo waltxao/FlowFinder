@@ -515,7 +515,36 @@ public class SettingsWindowController: NSWindowController {
         accentSection.addRow(accentRow)
         registerForSearch(accentSection, rows: [accentRow])
 
-        let stack = NSStackView(views: [themeSection, accentSection])
+        // Wave4 Task 4: 密度与缩放 section（列表密度三档 + 网格图标大小滑杆）。
+        // 与网格 ⌘+滚轮/捏合手势双入口共用 UserDefaults 键，变更经通知广播全窗口即时生效，
+        // 值跨会话记忆。
+        let densitySection = SettingsSectionView(title: "密度与缩放", iconName: "square.grid.2x2")
+        let listDensityRow = SettingsRowView.segmentedRow(
+            title: "列表密度",
+            desc: "列表视图行高：紧凑 / 标准 / 宽松",
+            labels: FFListDensity.allCases.map { $0.title },
+            selected: FFListDensity.allCases.firstIndex(of: FFListDensity.current) ?? 1
+        ) { idx in
+            guard FFListDensity.allCases.indices.contains(idx) else { return }
+            UserDefaults.standard.set(FFListDensity.allCases[idx].rawValue, forKey: FFUserDefaultsKeys.listDensity)
+            NotificationCenter.default.post(name: .listDensityChanged, object: nil)
+        }
+        densitySection.addRow(listDensityRow)
+
+        let iconSizeRow = SettingsRowView.sliderRow(
+            title: "图标大小",
+            desc: "网格视图图标尺寸（也可用 ⌘+滚轮或捏合实时调整）",
+            minValue: 80,
+            maxValue: 200,
+            value: Double(FileGridView.currentGridIconSize())
+        ) { value in
+            UserDefaults.standard.set(value, forKey: FFUserDefaultsKeys.gridIconSize)
+            NotificationCenter.default.post(name: .gridIconSizeChanged, object: nil)
+        }
+        densitySection.addRow(iconSizeRow)
+        registerForSearch(densitySection, rows: [listDensityRow, iconSizeRow])
+
+        let stack = NSStackView(views: [themeSection, accentSection, densitySection])
         stack.orientation = .vertical
         stack.spacing = 12
         stack.detachesHiddenViews = false
