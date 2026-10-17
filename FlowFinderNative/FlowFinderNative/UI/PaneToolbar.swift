@@ -16,11 +16,18 @@ protocol PaneToolbarDelegate: AnyObject {
     // v0.6.9: 文件夹显示配置菜单回调
     // v0.7.4 修订: 新建文件夹回调携带当前选中数量（未选中建空文件夹，选中>=2 用所选新建文件夹）
     func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar, selectedCount: Int)
+    /// 搜索框内按 ↓ / ↑：把键盘焦点交给本面板的文件视图并选中首 / 末项。
+    /// 核心旅程 J3（⌘F → ↑↓ → Enter）在「↓ 进入结果列表」这一环原先断掉。
+    func paneToolbarDidRequestMoveToResults(_ toolbar: PaneToolbar, toLast: Bool)
+    /// 搜索框内按 Enter：打开当前结果（无选中则取第一个结果）
+    func paneToolbarDidRequestOpenResult(_ toolbar: PaneToolbar)
 }
 
 // MARK: - PaneToolbarDelegate 默认实现
 extension PaneToolbarDelegate {
     func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar, selectedCount: Int) {}
+    func paneToolbarDidRequestMoveToResults(_ toolbar: PaneToolbar, toLast: Bool) {}
+    func paneToolbarDidRequestOpenResult(_ toolbar: PaneToolbar) {}
 }
 
 // MARK: - PaneToolbar
@@ -614,5 +621,28 @@ extension PaneToolbar: NSTextFieldDelegate {
         // 仅响应搜索框（避免将来若有其他 NSTextField 误触）
         guard let textField = obj.object as? NSTextField, textField === searchTextField else { return }
         searchChanged()
+    }
+
+    /// 搜索框内的特殊键。
+    ///
+    /// 设计取舍：Enter 在同项目里是「重命名」（访达语义，`FFCommon` 默认键位表
+    /// `shortcutRename: (36,0)`），不能全局改成「打开」。这里只在**搜索框**作用域内
+    /// 把 Enter 解释为「打开当前结果」——用户敲完关键词回车就是想要那个文件，
+    /// 而列表里的 Enter 仍是重命名，两者不冲突。
+    public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === searchTextField else { return false }
+        switch commandSelector {
+        case #selector(NSResponder.moveDown(_:)):
+            delegate?.paneToolbarDidRequestMoveToResults(self, toLast: false)
+            return true
+        case #selector(NSResponder.moveUp(_:)):
+            delegate?.paneToolbarDidRequestMoveToResults(self, toLast: true)
+            return true
+        case #selector(NSResponder.insertNewline(_:)):
+            delegate?.paneToolbarDidRequestOpenResult(self)
+            return true
+        default:
+            return false
+        }
     }
 }

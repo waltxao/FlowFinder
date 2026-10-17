@@ -631,6 +631,17 @@ public class FileGridView: NSView {
     /// MainWindowController 构建面板 keyViewLoop 时把链尾接到此视图。
     var keyFocusTarget: NSView? { collectionView }
 
+    /// 核心旅程 J3（⌘F → ↑↓ → Enter）：搜索框按 ↓/↑ 时把焦点交给网格，
+    /// 选中第一个 / 最后一个项目并滚动到可见。
+    func focusFirstSelectableItem(toLast: Bool) {
+        let count = collectionView.numberOfItems(inSection: 0)
+        guard count > 0 else { return }
+        let item = toLast ? count - 1 : 0
+        let indexPath = IndexPath(item: item, section: 0)
+        collectionView.selectItems(at: [indexPath], scrollPosition: toLast ? .bottom : .top)
+        window?.makeFirstResponder(collectionView)
+    }
+
     /// V0.8.0：详情栏浮层遮挡补偿（与 `FileListView.setBottomOverlayInset` 同语义）。
     /// 网格滚到底时最后一行图标不应被详情栏盖住，故在滚动内容底部预留浮层等高空白。
     func setBottomOverlayInset(_ height: CGFloat) {

@@ -1846,29 +1846,43 @@ public class MainWindowController: NSWindowController {
 
     private func loadInitialDirectories() {
         let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-        let desktopPath = (homePath as NSString).appendingPathComponent("Desktop")
-        let documentsPath = (homePath as NSString).appendingPathComponent("Documents")
 
         // 接线设置项「启动时打开」（UserDefaults key "startup_location"）：
-        // 0 = 上次打开的位置（暂回退到桌面，因持久化上次位置未实现）
-        // 1 = 主目录
-        // 2 = 桌面
-        // 默认 0 = 桌面（与原硬编码行为一致，避免破坏现有用户习惯）
+        // 0 = 上次打开的位置（已实现持久化）/ 1 = 主目录 / 2 = 桌面
+        //
+        // J1 兜底：路径必须真实存在才交给面板，否则首开是一屏「无法加载此文件夹」。
+        // 原实现把 ~/Desktop 硬编码进去且不校验，设置项「上次位置」也只是注释里的
+        // 「暂回退到桌面」。现在候选序列 = 设置 → 上次位置 → 桌面 → 主目录。
         let startupChoice = UserDefaults.standard.integer(forKey: "startup_location")
-        let leftStart: String
-        switch startupChoice {
-        case 1:  leftStart = homePath
-        case 2:  leftStart = desktopPath
-        default: leftStart = desktopPath  // 0 或未设置：桌面（"上次位置"暂回退到桌面）
-        }
+        let leftStart = FFStartupPath.resolve(
+            choice: startupChoice,
+            lastLocation: UserDefaults.standard.string(forKey: FFStartupPath.lastLeftKey),
+            home: homePath,
+            isDirectory: FFStartupPath.isDirectoryOnDisk
+        )
+        let rightStart = FFStartupPath.resolveSecondary(
+            lastLocation: UserDefaults.standard.string(forKey: FFStartupPath.lastRightKey),
+            home: homePath,
+            subdirectory: "Documents",
+            isDirectory: FFStartupPath.isDirectoryOnDisk
+        )
 
         leftPaneViewModel.state.path = leftStart
         leftPaneViewModel.state.history = [leftStart]
         leftPaneViewModel.state.historyIndex = 0
 
-        rightPaneViewModel.state.path = documentsPath
-        rightPaneViewModel.state.history = [documentsPath]
+        rightPaneViewModel.state.path = rightStart
+        rightPaneViewModel.state.history = [rightStart]
         rightPaneViewModel.state.historyIndex = 0
+
+        // 记住两侧当前目录，供下次启动还原
+        for (vm, key) in [(leftPaneViewModel, FFStartupPath.lastLeftKey),
+                          (rightPaneViewModel, FFStartupPath.lastRightKey)] {
+            vm.$state.map(\.path).removeDuplicates().sink { path in
+                guard !path.isEmpty else { return }
+                UserDefaults.standard.set(path, forKey: key)
+            }.store(in: &cancellables)
+        }
 
         // 接线设置项「默认视图」（UserDefaults key "default_view_mode"）：
         // "list"（默认）= 列表；"grid" = 网格。启动时按设置初始化左右面板视图模式。
@@ -2132,6 +2146,35 @@ extension MainWindowController: PaneToolbarDelegate {
     func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: ViewMode) {
         let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
         vm.setViewMode(mode)
+    }
+
+    // MARK: - 核心旅程 J3：⌘F → ↑↓ → Enter
+
+    /// 搜索框 ↓/↑：焦点交给本面板当前视图并选中首 / 末项
+    func paneToolbarDidRequestMoveToResults(_ toolbar: PaneToolbar, toLast: Bool) {
+        let isLeft = toolbar == leftPaneToolbar
+        let vm = isLeft ? leftPaneViewModel : rightPaneViewModel
+        activatePane(isLeft ? .left : .right)
+        switch vm.state.viewMode {
+        case .list:
+            (isLeft ? leftFileListView : rightFileListView)?.focusFirstSelectableRow(toLast: toLast)
+        case .grid:
+            (isLeft ? leftFileGridView : rightFileGridView)?.focusFirstSelectableItem(toLast: toLast)
+        }
+    }
+
+    /// 搜索框 Enter：打开结果。无选中时先落到第一项再打开，避免「回车没反应」
+    func paneToolbarDidRequestOpenResult(_ toolbar: PaneToolbar) {
+        let isLeft = toolbar == leftPaneToolbar
+        let vm = isLeft ? leftPaneViewModel : rightPaneViewModel
+        activatePane(isLeft ? .left : .right)
+        if vm.selectedFiles.isEmpty {
+            paneToolbarDidRequestMoveToResults(toolbar, toLast: false)
+        }
+        // 让步一帧：选中 → selectedFiles 是同步的，但视图选中态需先落地再打开
+        DispatchQueue.main.async { [weak self] in
+            self?.menuOpen(nil)
+        }
     }
 
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String) {

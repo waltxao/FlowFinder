@@ -541,6 +541,16 @@ public class FileListView: NSView {
     /// Tab 流转到文件列表后由 tableView 接管方向键/选中。
     var keyFocusTarget: NSView? { tableView }
 
+    /// 核心旅程 J3（⌘F → ↑↓ → Enter）：搜索框按 ↓/↑ 时把焦点交给列表，
+    /// 选中第一个 / 最后一个**可选**行（跳过分组标题行）并滚动到可见。
+    func focusFirstSelectableRow(toLast: Bool) {
+        let selectable = displayRows.indices.filter { !displayRows[$0].isHeader }
+        guard let row = toLast ? selectable.last : selectable.first else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
+        window?.makeFirstResponder(tableView)
+    }
+
     // 问题 7 根因修复：拖拽过程中持续捕获修饰键（用于 ⌘ 判断，访达语义）。
     // validateDrop/acceptDrop 回调中 NSApp.currentEvent 不可靠（可能为 nil 或非拖拽事件），
     // 故在 draggingUpdated 及各拖拽回调中双保险写入。

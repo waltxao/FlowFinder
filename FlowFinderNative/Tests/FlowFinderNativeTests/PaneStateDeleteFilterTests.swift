@@ -211,7 +211,21 @@ final class FFPaneStateDescriptorTests: XCTestCase {
         XCTAssertTrue(d.isFullScreen)
         XCTAssertTrue(d.showsRetry)
         XCTAssertEqual(d.retryKind, .reload)
-        XCTAssertEqual(d.subtitle, "权限不足，无法读取")
+        // 2026-10-17 J5：错误正文不再原样上屏，权限类错误改由 FFErrorText 给出
+        // 中文原因 + 下一步，并显示「打开系统设置」按钮
+        XCTAssertEqual(d.title, "没有访问权限")
+        XCTAssertTrue(d.subtitle.contains("系统设置"))
+        XCTAssertTrue(d.showsOpenSettings)
+    }
+
+    /// 非权限类错误不给「打开系统设置」（避免误导）
+    func testDescriptorNonPermissionErrorHasNoSettingsButton() {
+        var state = PaneState()
+        state.path = "/tmp/dir"
+        state.error = "No such file or directory (os error 2)"
+        let d = FFPaneStateDescriptor.make(from: state)
+        XCTAssertEqual(d.title, "找不到该项目")
+        XCTAssertFalse(d.showsOpenSettings)
     }
 
     func testDescriptorDeleteProgressBanner() {

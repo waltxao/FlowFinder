@@ -904,3 +904,119 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         XCTAssertFalse(MainWindowController.shouldTransferFocus(firstResponder: oldView, from: nil))
     }
 }
+
+// MARK: - FFErrorText（错误人话化，核心旅程 J5）
+
+final class FFErrorTextTests: XCTestCase {
+
+    func testPermissionDeniedIsRecognized() {
+        let m = FFErrorText.humanize("Permission denied (os error 13)")
+        XCTAssertTrue(m.isPermission)
+        XCTAssertTrue(m.title.contains("权限"))
+        XCTAssertTrue(m.detail.contains("系统设置"))
+    }
+
+    func testOperationNotPermittedIsPermission() {
+        XCTAssertTrue(FFErrorText.humanize("Operation not permitted").isPermission)
+    }
+
+    func testMissingFile() {
+        let m = FFErrorText.humanize("No such file or directory (os error 2)")
+        XCTAssertFalse(m.isPermission)
+        XCTAssertTrue(m.title.contains("找不到"))
+    }
+
+    func testReadOnlyVolume() {
+        let m = FFErrorText.humanize("Read-only file system (os error 30)")
+        XCTAssertTrue(m.title.contains("只读"))
+    }
+
+    func testNoSpace() {
+        XCTAssertTrue(FFErrorText.humanize("No space left on device (os error 28)").title.contains("空间"))
+    }
+
+    func testUnknownEnglishIsNotShownRaw() {
+        let m = FFErrorText.humanize("something completely unexpected")
+        XCTAssertFalse(m.title.contains("something"))
+        XCTAssertTrue(m.title.contains("没有成功"))
+        // 原始串保留在 detail 末行供排查，但不作为主标题
+        XCTAssertTrue(m.detail.contains("something completely unexpected"))
+    }
+
+    func testAlreadyChinesePassesThrough() {
+        let m = FFErrorText.humanize("目标文件夹已存在")
+        XCTAssertEqual(m.title, "目标文件夹已存在")
+        XCTAssertFalse(m.isPermission)
+    }
+}
+
+// MARK: - FFStartupPath（J1：首开必须能落到一个真实存在的目录）
+
+final class FFStartupPathTests: XCTestCase {
+
+    private let home = "/Users/tester"
+    private let desktop = "/Users/tester/Desktop"
+    private let documents = "/Users/tester/Documents"
+
+    private func exists(_ set: Set<String>) -> (String) -> Bool {
+        { set.contains($0) }
+    }
+
+    func testPrefersLastLocationWhenItStillExists() {
+        let p = FFStartupPath.resolve(
+            choice: 0, lastLocation: "/Users/tester/work", home: home,
+            isDirectory: exists(["/Users/tester/work", home, desktop])
+        )
+        XCTAssertEqual(p, "/Users/tester/work")
+    }
+
+    func testFallsBackToDesktopWhenLastLocationIsGone() {
+        let p = FFStartupPath.resolve(
+            choice: 0, lastLocation: "/Users/tester/gone", home: home,
+            isDirectory: exists([home, desktop])
+        )
+        XCTAssertEqual(p, desktop)
+    }
+
+    /// 真实场景：~/Desktop 被删除（或从未创建）时不能把空路径交给面板，
+    /// 否则首开是一屏「无法加载此文件夹」。
+    func testFallsBackToHomeWhenDesktopMissing() {
+        let p = FFStartupPath.resolve(
+            choice: 2, lastLocation: nil, home: home,
+            isDirectory: exists([home])
+        )
+        XCTAssertEqual(p, home)
+    }
+
+    func testHomeChoiceIgnoresLastLocation() {
+        let p = FFStartupPath.resolve(
+            choice: 1, lastLocation: "/Users/tester/work", home: home,
+            isDirectory: exists(["/Users/tester/work", home])
+        )
+        XCTAssertEqual(p, home)
+    }
+
+    func testSecondaryPrefersLastThenDocuments() {
+        XCTAssertEqual(
+            FFStartupPath.resolveSecondary(
+                lastLocation: "/Users/tester/a", home: home, subdirectory: "Documents",
+                isDirectory: exists(["/Users/tester/a", documents, home])
+            ),
+            "/Users/tester/a"
+        )
+        XCTAssertEqual(
+            FFStartupPath.resolveSecondary(
+                lastLocation: nil, home: home, subdirectory: "Documents",
+                isDirectory: exists([documents, home])
+            ),
+            documents
+        )
+        XCTAssertEqual(
+            FFStartupPath.resolveSecondary(
+                lastLocation: nil, home: home, subdirectory: "Documents",
+                isDirectory: exists([home])
+            ),
+            home
+        )
+    }
+}

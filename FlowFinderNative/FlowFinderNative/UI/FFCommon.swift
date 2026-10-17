@@ -499,6 +499,8 @@ struct FFPaneStateDescriptor: Equatable {
     let showsSpinner: Bool
     let showsRetry: Bool
     let retryKind: FFPaneRetryKind
+    /// 权限类错误：显示「打开系统设置」直达「隐私与安全性 › 文件和文件夹」
+    var showsOpenSettings: Bool = false
 
     /// 由 PaneState 计算呈现描述。优先级：删除中 > 错误 > 加载 > 空 > 内容。
     /// - 删除中：顶部横幅进度（不遮挡列表）
@@ -519,21 +521,26 @@ struct FFPaneStateDescriptor: Equatable {
         }
 
         if let error = state.error {
+            // J5：错误正文不得是系统英文原文，统一经 FFErrorText 转成中文 + 下一步
+            let msg = FFErrorText.humanize(error)
             if state.files.isEmpty {
                 let retryKind: FFPaneRetryKind = state.deleteFailedPaths.isEmpty ? .reload : .deleteRetry
                 return FFPaneStateDescriptor(
                     mode: .error, isFullScreen: true, iconName: "exclamationmark.triangle",
-                    title: "无法加载此文件夹", subtitle: error,
-                    showsSpinner: false, showsRetry: true, retryKind: retryKind
+                    title: msg.title,
+                    subtitle: msg.detail.isEmpty ? "点「重试」再试一次。" : msg.detail,
+                    showsSpinner: false, showsRetry: true, retryKind: retryKind,
+                    showsOpenSettings: msg.isPermission
                 )
             }
             let failedCount = state.deleteFailedPaths.count
             return FFPaneStateDescriptor(
                 mode: .error, isFullScreen: false, iconName: "exclamationmark.triangle",
-                title: failedCount > 0 ? "\(failedCount) 个项目删除失败" : "操作失败",
-                subtitle: error,
+                title: failedCount > 0 ? "\(failedCount) 个项目删除失败" : msg.title,
+                subtitle: msg.detail.isEmpty ? "点「重试」再试一次。" : msg.detail,
                 showsSpinner: false, showsRetry: true,
-                retryKind: failedCount > 0 ? .deleteRetry : .reload
+                retryKind: failedCount > 0 ? .deleteRetry : .reload,
+                showsOpenSettings: msg.isPermission
             )
         }
 
@@ -614,6 +621,8 @@ final class FFPaneStateOverlayView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let retryButton = NSButton(title: "重试", target: nil, action: nil)
+    /// 权限类错误时的定向引导（J5：无权限不能只告诉用户「失败了」）
+    private let settingsButton = NSButton(title: "打开系统设置", target: nil, action: nil)
     private let bannerView = NSView()
     private let bannerSpinner = NSProgressIndicator()
     private let bannerIcon = NSImageView()
@@ -664,6 +673,14 @@ final class FFPaneStateOverlayView: NSView {
         retryButton.target = self
         retryButton.action = #selector(retryTapped)
 
+        settingsButton.bezelStyle = .rounded
+        settingsButton.controlSize = .small
+        settingsButton.font = NSFont.systemFont(ofSize: 11)
+        settingsButton.translatesAutoresizingMaskIntoConstraints = false
+        settingsButton.target = self
+        settingsButton.action = #selector(openPrivacySettings)
+        settingsButton.isHidden = true
+
         fullStack.orientation = .vertical
         fullStack.alignment = .centerX
         fullStack.spacing = 8
@@ -673,6 +690,7 @@ final class FFPaneStateOverlayView: NSView {
         fullStack.addArrangedSubview(titleLabel)
         fullStack.addArrangedSubview(subtitleLabel)
         fullStack.addArrangedSubview(retryButton)
+        fullStack.addArrangedSubview(settingsButton)
 
         bannerView.wantsLayer = true
         bannerView.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.98).cgColor
@@ -773,6 +791,7 @@ final class FFPaneStateOverlayView: NSView {
                 subtitleLabel.isHidden = descriptor.subtitle.isEmpty
                 subtitleLabel.stringValue = descriptor.subtitle
                 retryButton.isHidden = !descriptor.showsRetry
+                settingsButton.isHidden = !descriptor.showsOpenSettings
             }
             titleLabel.stringValue = descriptor.title
         } else {
@@ -805,9 +824,17 @@ final class FFPaneStateOverlayView: NSView {
     /// 全屏空/加载/错误状态下列表为空，穿透可保留空白区右键菜单（新建文件夹等）。
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden, let hit = super.hitTest(point) else { return nil }
-        if hit === retryButton || hit === bannerRetryButton { return hit }
+        if hit === retryButton || hit === bannerRetryButton || hit === settingsButton { return hit }
         if hit === bannerView || hit.isDescendant(of: bannerView) { return hit }
         return nil
+    }
+
+    /// 打开「系统设置 › 隐私与安全性 › 文件和文件夹」，让用户就地授权。
+    @objc private func openPrivacySettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
+        if let url = url {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// 重试：按描述符的重试语义分派（reload → refresh；deleteRetry → 重删失败项）。
