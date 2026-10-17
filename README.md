@@ -4,9 +4,9 @@
 
 # FlowFinder
 
-**流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 玻璃态双栏
+**流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 原生双栏
 
-![Version](https://img.shields.io/badge/version-0.7.6-blue)
+![Version](https://img.shields.io/badge/version-0.8.0-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-green)
 ![Swift](https://img.shields.io/badge/Swift-5.9+-F05138)
 ![Rust](https://img.shields.io/badge/Rust-2021+-DEA584)
@@ -28,13 +28,13 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 
 ### 核心亮点
 
-- **纯原生 UI**：Swift & AppKit 构建，NSVisualEffectView 系统级毛玻璃，完全匹配 macOS 视觉语言
+- **纯原生 UI**：Swift & AppKit 构建，侧边栏与窗口边框使用系统亚克力材质，操作区为实体背景，贴近访达视觉
 - **高性能 Rust Core**：getattrlistbulk 批量读取、BLAKE3 哈希、rayon 并行处理，性能远超 WebView 方案
 - **Finder 级交互**：原生拖拽（同卷移动 / 跨卷复制 / Cmd 切换）、Quick Look 空格预览、双栏布局
 - **跨面板文件操作**：一键复制 / 移动到对侧面板，文件夹可在对侧打开（⌘⇧C / ⌘⇧X）
 - **APFS CoW 复制**：clonefile 零拷贝复制，APFS 卷内复制瞬时完成
-- **智能打标**：基于扩展名规则的自动标签生成，标签与 macOS 原生标签双向同步（LLM 多模型支持规划中）
-- **玻璃态双视图**：列表视图（可拖列宽 + 排序）+ 网格视图（缩略图），跟随系统深浅色主题
+- **按类型自动打标签**：基于扩展名规则的本地标签生成，标签写入 macOS 原生标签属性（格式与访达的完全兼容修正中）
+- **双视图**：列表视图（可拖列宽 + 排序）+ 网格视图（缩略图），跟随系统深浅色主题
 
 ---
 
@@ -45,7 +45,7 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 | 功能 | 描述 |
 |------|------|
 | 双栏布局 | 左右独立导航，可拖拽分隔条调整比例 |
-| 统一工具栏 | 后退 / 前进 / 上一级、面包屑、正则搜索、视图切换，嵌入标题栏 |
+| 双行工具栏 | 后退 / 前进 / 上一级、面包屑、关键词搜索、排序分组、视图切换 |
 | 双视图模式 | 表格视图（可拖列宽 + 点击排序）+ 网格视图（缩略图） |
 | 文件详情栏 | 选中文件时底部显示缩略图、类型、大小、日期、标签等信息 |
 | 跨面板操作 | 复制到对侧（⌘⇧C）、移动到对侧（⌘⇧X）、在对侧打开文件夹 |
@@ -54,10 +54,10 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 
 ### macOS 原生体验
 
-- **原生毛玻璃**：NSVisualEffectView 系统级毛玻璃材质，自动跟随系统深浅色主题
+- **原生材质**：侧边栏与窗口边框为系统亚克力，操作区为实体背景，自动跟随系统深浅色主题
 - **Quick Look 预览**：QLPreviewPanel 原生浮动预览，空格键触发
 - **混合缩略图引擎**：QLThumbnailGenerator + SQLite 缓存，P0/P1 双队列优先级调度
-- **Spotlight 搜索**：NSMetadataQuery 异步搜索 + Channel 流式推送
+- **Spotlight 搜索**：NSMetadataQuery 异步搜索，收尾后一次性返回结果
 - **FSEvents 实时监控**：文件系统变更自动刷新目录
 - **getattrlistbulk 批量读取**：单次系统调用获取目录全部元数据
 - **clonefile CoW 复制**：APFS 卷零拷贝文件复制
@@ -67,7 +67,7 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 
 - **个人收藏**：任意文件夹可拖拽添加到收藏夹
 - **存储设备**：磁盘分组显示，自动排除系统隐藏卷，支持 SMB/UNC 网络挂载
-- **标签管理**：标签分类树，颜色圆点标识，AI 标签与 macOS 原生标签双向同步
+- **标签管理**：标签颜色圆点标识，写入 macOS 原生标签属性
 - **固定区段**：收藏夹和标签区段直接平铺显示（不可折叠）
 
 ### 重复文件检测
@@ -78,10 +78,10 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 - **安全删除**：移入废纸篓（可恢复），每组强制保留一个文件
 - **SQLite 缓存**：基于 mtime 增量扫描，避免重复哈希计算
 
-### 智能打标
+### 按类型自动打标签
 
-- **规则引擎**：基于文件扩展名、类型、名称模式的自动标签生成（Rust Core 实现）
-- **Finder 原生兼容**：标签写入 macOS `com.apple.metadata:_kMDItemUserTags` 扩展属性，Finder 双向可见
+- **规则引擎**：基于文件扩展名、类型、名称模式的自动标签生成（Rust Core 实现，完全离线）
+- **macOS 原生标签**：标签写入 macOS `com.apple.metadata:_kMDItemUserTags` 扩展属性；当前写入格式与访达尚不完全兼容，修正中
 - **LLM 多模型**：OpenAI / Claude / Ollama 支持（规划中，当前未接入）
 
 ### 任务调度中心
@@ -247,7 +247,7 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 |  - cow_copy: APFS copy-on-write 克隆             |
 |  - dir_cache: LRU + TTL 目录缓存                 |
 |  - task_scheduler: 统一任务调度                  |
-|  - search_engine: 正则 / 通配符搜索              |
+|  - search_engine: 模糊匹配搜索                |
 |  - sqlite_cache: 标签 / 缩略图持久化             |
 |  - path_guard: 路径穿越防护                      |
 |  - volumes: 卷管理                               |
@@ -450,7 +450,7 @@ A: 使用了 macOS 13+ 引入的 NSVisualEffectView 新材质和 QLThumbnailGene
 **Q: 如何在双面板之间复制文件？**
 A: 选中文件后，右键菜单选择「复制到另一面板」，或使用快捷键 ⌘⇧C。移动使用 ⌘⇧X。
 
-**Q: 智能打标如何工作？会上传文件内容吗？**
+**Q: 按类型自动打标签如何工作？会上传文件内容吗？**
 A: 当前版本使用基于扩展名和文件类型的本地规则引擎生成标签，完全离线运行，不上传任何数据。LLM 多模型支持（OpenAI/Claude/Ollama）规划中，届时将仅发送文件名和扩展名，绝不发送文件内容。
 
 **Q: 标签能与 macOS Finder 同步吗？**
@@ -479,7 +479,7 @@ A: 参阅上方「贡献指南」，或查看 [迁移计划](docs/MIGRATION_PLAN
 | Phase 1: MVP | ✅ 完成 | 基础框架、文件操作、搜索、Quick Look |
 | Phase 2: 增强 | ✅ 完成 | 重复检测、目录缓存、批量重命名 |
 | Phase 3: 完善 | ✅ 完成 | 缩略图、设置面板、任务调度 |
-| Phase 4: 收尾 | ✅ 完成 | 卷管理、玻璃态双栏重构 |
+| Phase 4: 收尾 | ✅ 完成 | 卷管理、双栏界面重构 |
 | Phase 5: 稳定 | 🔄 进行中 | 跨面板操作、性能优化、0.6.0-alpha 发布 |
 | Phase 6: 正式版 | ⏳ 待开始 | 全面测试、文档完善、1.0 发布 |
 
