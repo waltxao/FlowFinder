@@ -3,13 +3,6 @@ import Combine
 import QuickLook
 import Quartz
 
-/// v0.6.9: 无分割线 NSSplitView 子类（用于侧边栏与操作区之间，divider 厚度为 0）
-private class FFNoDividerSplitView: NSSplitView {
-    override var dividerThickness: CGFloat {
-        return 0
-    }
-}
-
 /// 自定义 NSSplitView 子类：任务 R5 — divider 悬停高亮
 /// v0.7.6 发布后修复轮：亮点跟随鼠标 Y（上下各 60pt 渐隐）+ 拖动绝对跟随（禁隐式动画消迟滞）。
 /// 设计文档：docs/superpowers/specs/2026-08-28-divider-handle-glow-follow-design.md
@@ -115,11 +108,23 @@ private class FFSplitView: NSSplitView {
         NSCursor.arrow.set()
     }
 
+    /// 左侧子视图最小宽度。侧栏分隔用 160（DESIGN-SPEC B-01），双操作区用 450。
+    /// 分隔线厚度为 0 时系统不接管拖拽，最小/最大值只能由本类自行 clamp。
+    var leadingMinWidth: CGFloat = FFDividerGlowMath.minPaneWidth
+
+    /// 右侧子视图最小宽度（双操作区两侧各 450；侧栏分隔右侧为操作区，同样按 450 保底）
+    var trailingMinWidth: CGFloat = FFDividerGlowMath.minPaneWidth
+
     /// 绝对跟随：分隔线目标位置一律取 clamp(鼠标X)，返回实际生效的位置。
     /// 按下瞬间即对齐鼠标正下方（跳动 ≤ 热区半径 6pt）。
     @discardableResult
     private func applyDividerPosition(mouseX: CGFloat) -> CGFloat {
-        let clamped = FFDividerGlowMath.clampedDividerPosition(mouseX: mouseX, boundsWidth: self.bounds.width)
+        let clamped = FFDividerGlowMath.clampedDividerPosition(
+            mouseX: mouseX,
+            boundsWidth: bounds.width,
+            leadingMin: leadingMinWidth,
+            trailingMin: trailingMinWidth
+        )
         setPosition(clamped, ofDividerAt: 0)
         return clamped
     }
@@ -187,6 +192,24 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - Properties
 
+    /// 侧栏默认宽度（DESIGN-SPEC B-01）。访达侧栏约 210–220pt，取 220。
+    static let sidebarDefaultWidth: CGFloat = 220
+    /// 侧栏可拖最小宽度
+    static let sidebarMinWidth: CGFloat = 160
+    /// 侧栏可拖最大宽度
+    static let sidebarMaxWidth: CGFloat = 280
+    /// 侧栏宽度记忆键
+    private static let sidebarWidthKey = "sidebar_width"
+
+    /// 读取上次拖拽记忆的侧栏宽度，落在 [min, max] 内才采用
+    static func restoredSidebarWidth() -> CGFloat {
+        let saved = UserDefaults.standard.double(forKey: sidebarWidthKey)
+        guard saved >= Double(sidebarMinWidth), saved <= Double(sidebarMaxWidth) else {
+            return sidebarDefaultWidth
+        }
+        return CGFloat(saved)
+    }
+
     let leftPaneViewModel = PaneViewModel()
     let rightPaneViewModel = PaneViewModel()
     var activePane: PaneSide = .left
@@ -212,7 +235,9 @@ public class MainWindowController: NSWindowController {
     /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
     /// 与侧边栏收藏夹/标签模块视觉分离，展开时显示所有设备不需滚动条
     /// 任务 4: 改用 FFGlassView 液态玻璃背景，与侧边栏玻璃质感统一
-    private var devicePanel: FFGlassView!
+    /// 设备浮层。V0.8.0 起改为实体卡片（用户 2026-10-17 裁定保留本轮方案），
+    /// 不再使用 FFGlassView 玻璃材质。
+    private var devicePanel: FFPanelView!
     /// 任务 F10-3: 设备浮层头部（汇总信息 + 折叠箭头）
     private var devicePanelHeader: DeviceHeaderView!
     /// 任务 F10-3: 设备浮层内容 stack（设备行纵向排列，高度自适应）
@@ -278,7 +303,10 @@ public class MainWindowController: NSWindowController {
             defer: false
         )
         window.title = "FlowFinder"
-        window.minSize = NSSize(width: 1000, height: 700)
+        // 最小尺寸按「侧栏最小 160 + 两个操作区各 450」推导 = 1060（DESIGN-SPEC W-07）。
+        // 原值 1000 与 pane 的 450 保底自相矛盾：1000 − 160 = 840，两个 pane 各 420，
+        // 会触发 NSSplitView 约束冲突并把工具栏控件挤重叠。
+        window.minSize = NSSize(width: 1060, height: 700)
         window.center()
         // 注意：不要在这里 makeKeyAndOrderFront！
         // 必须先完成 setupUI（设置 isOpaque=false, backgroundColor=.clear, NSVisualEffectView），
@@ -398,8 +426,14 @@ public class MainWindowController: NSWindowController {
         paneSplitView.addArrangedSubview(makeCardWrapper(for: rightPaneContainer))
 
         // Main Split View（侧边栏 + 操作区）
-        // v0.6.9: 使用无分割线子类，移除侧边栏与操作区之间的可见分割线
-        mainSplitView = FFNoDividerSplitView()
+        // 2026-10-17：改用 FFSplitView，使侧栏宽度可拖（DESIGN-SPEC B-01 160–280）。
+        // 原先用无分割线私有子类，dividerThickness=0 时系统不接管拖拽，侧栏宽度被
+        // 硬编码 220 固定，用户无法调整——规格里写了「可拖」但实现没有。
+        // FFSplitView 自带热区命中 + 渐变亮线 + 绝对跟随拖拽，正好复用。
+        let mainSplit = FFSplitView()
+        mainSplit.leadingMinWidth = MainWindowController.sidebarMinWidth
+        mainSplit.trailingMinWidth = FFDividerGlowMath.minPaneWidth
+        mainSplitView = mainSplit
         mainSplitView.isVertical = true
         mainSplitView.dividerStyle = .thin
         mainSplitView.translatesAutoresizingMaskIntoConstraints = false
@@ -601,10 +635,10 @@ public class MainWindowController: NSWindowController {
         buildKeyViewLoops()
         window.initialFirstResponder = leftFileListView.keyFocusTarget
 
-        // 初始 divider 位置
+        // 初始 divider 位置（侧栏宽度取记忆值，无记忆时 220）
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.mainSplitView.setPosition(220, ofDividerAt: 0)
+            self.mainSplitView.setPosition(MainWindowController.restoredSidebarWidth(), ofDividerAt: 0)
             let totalWidth = self.paneSplitView.bounds.width
             if totalWidth > 0 {
                 self.paneSplitView.setPosition(totalWidth / 2, ofDividerAt: 0)
@@ -749,6 +783,18 @@ public class MainWindowController: NSWindowController {
             // 高度由 ExpandableDetailsBar 内部 heightConstraint 控制
         ])
 
+        // V0.8.0：详情栏浮层高度 → 列表/网格底部留白同步。
+        // 详情栏是浮层（v0.6.9 决策），会盖住列表最后一行；列表按浮层高度在滚动内容
+        // 底部预留空白，滚到底时最后一行完整露出。收起/展开/拖拽调高都会触发。
+        detailsBar.onHeightChanged = { [weak listView, weak gridView] height in
+            listView?.setBottomOverlayInset(height)
+            gridView?.setBottomOverlayInset(height)
+        }
+        // 初始同步：applyExpandedState 在 setupUI 阶段已执行过，那时回调尚未注入
+        let initialOverlayHeight = detailsBar.currentHeight
+        listView.setBottomOverlayInset(initialOverlayHeight)
+        gridView.setBottomOverlayInset(initialOverlayHeight)
+
         // v0.7.4 项 3：详情栏名称行单击改名 → 调用对应侧 viewModel.renameFile
         let paneVM = side == .left ? leftPaneViewModel : rightPaneViewModel
         detailsBar.onRename = { [weak paneVM] oldPath, newName in
@@ -809,12 +855,13 @@ public class MainWindowController: NSWindowController {
     /// - 浮动在窗口左下角，与侧边栏收藏夹/标签模块视觉分离（独立卡片样式）
     /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
     /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
-    private func createDevicePanel() -> FFGlassView {
+    private func createDevicePanel() -> FFPanelView {
         // Wave4 Task 2：圆角 8→面板级默认 10（浮层圆角收敛两档：容器 16 / 浮层 10）
-        let panel = FFGlassView(level: .panel, cornerRadius: FFDesign.Glass.cornerRadiusPanel)
+        // V0.8.0：FFGlassView → FFPanelView(.card) 实体卡片。
+        // 理由（用户裁定）：设备名与容量数字在半透明材质上可读性差，实体底更清楚。
+        // FFPanelView 自带 updateLayer 主题刷新，深浅色切换自动跟随。
+        let panel = FFPanelView(tone: .card, cornerRadius: FFDesign.Glass.cornerRadiusPanel)
         panel.translatesAutoresizingMaskIntoConstraints = false
-        // 任务 4: 液态玻璃：FFGlassView 自带主题刷新（内部监听外观变化），
-        // 与侧边栏玻璃质感统一；子视图不被裁剪（不设置 masksToBounds）
 
         // 设备栏头部（汇总信息 + 折叠箭头，复用 SidebarView 的 DeviceHeaderView）
         devicePanelHeader = DeviceHeaderView()
@@ -987,9 +1034,29 @@ public class MainWindowController: NSWindowController {
     }
 
     private func setupNotifications() {
+        // 强调色变更即时生效（DESIGN-SPEC C-04）。
+        // 此前 FFAccent 注释声称「设置改动即可全应用即时生效」，但全仓无人订阅
+        // .accentColorChanged——用户改完颜色要等下一次重绘才看得到。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleAccentColorChanged(_:)),
+            name: .accentColorChanged, object: nil
+        )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSidebarDirectorySelected(_:)),
             name: .sidebarDidSelectDirectory, object: nil
+        )
+        // v0.8.0 P1: 收藏右键菜单的窗口级动作（新标签页 / 新窗口 / 显示简介）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarOpenInNewTab(_:)),
+            name: .sidebarDidRequestOpenInNewTab, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarOpenInNewWindow(_:)),
+            name: .sidebarDidRequestOpenInNewWindow, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarShowFavoriteInfo(_:)),
+            name: .sidebarDidRequestShowFavoriteInfo, object: nil
         )
         // 任务 F11-8: 订阅侧边栏标签点击筛选通知（问题3）
         NotificationCenter.default.addObserver(
@@ -1675,7 +1742,40 @@ public class MainWindowController: NSWindowController {
                 name: .paneTagFilterChanged, object: window,
                 userInfo: ["tagFilter": state.tagFilter as Any]
             )
+            // DESIGN-SPEC §5.2：活动面板目录内的标签计数（后台 + 防抖）
+            scheduleTagCountRefresh(side: side)
         }
+    }
+
+    // MARK: - 标签计数（DESIGN-SPEC §5.2）
+
+    private var tagCountWorkItem: DispatchWorkItem?
+    /// 代次：导航/切换面板期间旧统计可能晚于新统计返回，用它丢弃旧结果
+    private var tagCountGeneration = 0
+
+    /// 防抖 300ms 后统计当前活动面板目录内的标签分布并推给侧栏。
+    /// 触发源是 updatePaneUI——分页加载、搜索、排序都会多次进入，
+    /// 防抖把连续的进入合并成一次 xattr 扫描。
+    private func scheduleTagCountRefresh(side: PaneSide) {
+        tagCountWorkItem?.cancel()
+        tagCountGeneration += 1
+        let generation = tagCountGeneration
+        let viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
+        // 用未过滤列表作基数：筛选某标签时该标签自己的计数不应塌缩为筛后条数
+        let paths = viewModel.unfilteredFiles.map { $0.path }
+        guard !paths.isEmpty else {
+            sidebarView?.updateTagCounts([:])
+            return
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            TagCountService.shared.count(paths: paths) { counts in
+                guard let self, self.tagCountGeneration == generation else { return }
+                self.sidebarView?.updateTagCounts(counts)
+            }
+        }
+        tagCountWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300), execute: work)
     }
 
     /// 问题7修复：获取指定路径所在卷的可用磁盘空间
@@ -1746,29 +1846,43 @@ public class MainWindowController: NSWindowController {
 
     private func loadInitialDirectories() {
         let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-        let desktopPath = (homePath as NSString).appendingPathComponent("Desktop")
-        let documentsPath = (homePath as NSString).appendingPathComponent("Documents")
 
         // 接线设置项「启动时打开」（UserDefaults key "startup_location"）：
-        // 0 = 上次打开的位置（暂回退到桌面，因持久化上次位置未实现）
-        // 1 = 主目录
-        // 2 = 桌面
-        // 默认 0 = 桌面（与原硬编码行为一致，避免破坏现有用户习惯）
+        // 0 = 上次打开的位置（已实现持久化）/ 1 = 主目录 / 2 = 桌面
+        //
+        // J1 兜底：路径必须真实存在才交给面板，否则首开是一屏「无法加载此文件夹」。
+        // 原实现把 ~/Desktop 硬编码进去且不校验，设置项「上次位置」也只是注释里的
+        // 「暂回退到桌面」。现在候选序列 = 设置 → 上次位置 → 桌面 → 主目录。
         let startupChoice = UserDefaults.standard.integer(forKey: "startup_location")
-        let leftStart: String
-        switch startupChoice {
-        case 1:  leftStart = homePath
-        case 2:  leftStart = desktopPath
-        default: leftStart = desktopPath  // 0 或未设置：桌面（"上次位置"暂回退到桌面）
-        }
+        let leftStart = FFStartupPath.resolve(
+            choice: startupChoice,
+            lastLocation: UserDefaults.standard.string(forKey: FFStartupPath.lastLeftKey),
+            home: homePath,
+            isDirectory: FFStartupPath.isDirectoryOnDisk
+        )
+        let rightStart = FFStartupPath.resolveSecondary(
+            lastLocation: UserDefaults.standard.string(forKey: FFStartupPath.lastRightKey),
+            home: homePath,
+            subdirectory: "Documents",
+            isDirectory: FFStartupPath.isDirectoryOnDisk
+        )
 
         leftPaneViewModel.state.path = leftStart
         leftPaneViewModel.state.history = [leftStart]
         leftPaneViewModel.state.historyIndex = 0
 
-        rightPaneViewModel.state.path = documentsPath
-        rightPaneViewModel.state.history = [documentsPath]
+        rightPaneViewModel.state.path = rightStart
+        rightPaneViewModel.state.history = [rightStart]
         rightPaneViewModel.state.historyIndex = 0
+
+        // 记住两侧当前目录，供下次启动还原
+        for (vm, key) in [(leftPaneViewModel, FFStartupPath.lastLeftKey),
+                          (rightPaneViewModel, FFStartupPath.lastRightKey)] {
+            vm.$state.map(\.path).removeDuplicates().sink { path in
+                guard !path.isEmpty else { return }
+                UserDefaults.standard.set(path, forKey: key)
+            }.store(in: &cancellables)
+        }
 
         // 接线设置项「默认视图」（UserDefaults key "default_view_mode"）：
         // "list"（默认）= 列表；"grid" = 网格。启动时按设置初始化左右面板视图模式。
@@ -1882,20 +1996,34 @@ public class MainWindowController: NSWindowController {
         window.makeFirstResponder(target)
     }
 
-    /// 判断侧边栏通知发送者是否属于本窗口（活体缺陷：发送者实际是 SidebarView
-    /// 内部的数据源对象 FavoritesSidebarDataSource/DeviceSidebarDataSource/TagPillView，
-    /// 守卫若只认 sidebarView 实例会误杀本窗口导航——改为验证发送者位于本侧边栏视图树内）
+    /// 判断侧边栏通知发送者是否属于本窗口（活体缺陷：发送者是侧边栏内部
+    /// 数据源/outlineView 视图——数据源对象非 NSView 无法走视图树判定；
+    /// 设备浮层 outlineView 挂在 mainContainer 也不在 sidebarView 子树内。
+    /// 归属判定以「发送者所属 NSWindow === 本窗口」为准，未挂窗时退回视图树判定）
     private func isOwnSidebarNotification(_ notification: Notification) -> Bool {
         guard let source = notification.object as? NSView else {
             return notification.object == nil // 旧 poster 兼容
         }
         if source === sidebarView { return true }
+        if let sourceWindow = source.window {
+            return sourceWindow === window
+        }
         var current: NSView? = source
         while let view = current {
             if view === sidebarView { return true }
             current = view.superview
         }
         return false
+    }
+
+    /// 强调色变更 → 三处选中态即时重绘（列表 / 网格 / 侧栏统一取 FFAccent）
+    @objc private func handleAccentColorChanged(_ notification: Notification) {
+        sidebarView?.needsDisplay = true
+        sidebarView?.refreshSelectionAppearance()
+        leftFileListView?.refreshAppearance()
+        rightFileListView?.refreshAppearance()
+        leftFileGridView?.refreshAppearance()
+        rightFileGridView?.refreshAppearance()
     }
 
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {
@@ -1906,6 +2034,54 @@ public class MainWindowController: NSWindowController {
         guard let entry = (notification.userInfo?["entry"] as? FileEntry) ?? (notification.object as? FileEntry) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: entry.path)
+    }
+
+    // MARK: - v0.8.0 P1：收藏右键菜单的窗口级动作
+
+    /// 在新标签页中打开收藏目录
+    @objc private func handleSidebarOpenInNewTab(_ notification: Notification) {
+        guard isOwnSidebarNotification(notification),
+              let path = notification.userInfo?["path"] as? String else { return }
+        openDirectoryInNewWindow(path: path, asTab: true)
+    }
+
+    /// 在新窗口中打开收藏目录
+    @objc private func handleSidebarOpenInNewWindow(_ notification: Notification) {
+        guard isOwnSidebarNotification(notification),
+              let path = notification.userInfo?["path"] as? String else { return }
+        openDirectoryInNewWindow(path: path, asTab: false)
+    }
+
+    /// 显示收藏目录的「简介」窗口
+    @objc private func handleSidebarShowFavoriteInfo(_ notification: Notification) {
+        guard isOwnSidebarNotification(notification),
+              let path = notification.userInfo?["path"] as? String else { return }
+        showFileInfo(forPath: path)
+    }
+
+    /// 新建窗口并在左面板导航到指定目录；`asTab` 为真时并入当前窗口的标签页。
+    ///
+    /// 窗口创建/持有归 MainWindowController（AppDelegate.extras 强引用），
+    /// SidebarView 仅发意图通知，不直接建窗——保持多窗口簿记单点。
+    private func openDirectoryInNewWindow(path: String, asTab: Bool) {
+        let controller = MainWindowController()
+        if let reference = window {
+            let origin = reference.frame.origin
+            controller.window?.setFrameOrigin(NSPoint(x: origin.x + 28, y: origin.y - 28))
+        }
+        (NSApp.delegate as? AppDelegate)?.registerWindowController(controller)
+        controller.showWindow(nil)
+        controller.leftPaneViewModel.navigate(to: path)
+
+        guard asTab, let host = window, host.tabbingMode != .disallowed,
+              let newWindow = controller.window else { return }
+        // 标签页合并要求两窗口 tabbingIdentifier 一致
+        if host.tabbingIdentifier.isEmpty {
+            host.tabbingIdentifier = "FlowFinderMain"
+        }
+        newWindow.tabbingIdentifier = host.tabbingIdentifier
+        host.addTabbedWindow(newWindow, ordered: .above)
+        newWindow.makeKeyAndOrderFront(nil)
     }
 
     /// 任务 F11-8: 处理侧边栏标签点击，设置当前活动面板的标签筛选（问题3）。
@@ -1972,6 +2148,35 @@ extension MainWindowController: PaneToolbarDelegate {
         vm.setViewMode(mode)
     }
 
+    // MARK: - 核心旅程 J3：⌘F → ↑↓ → Enter
+
+    /// 搜索框 ↓/↑：焦点交给本面板当前视图并选中首 / 末项
+    func paneToolbarDidRequestMoveToResults(_ toolbar: PaneToolbar, toLast: Bool) {
+        let isLeft = toolbar == leftPaneToolbar
+        let vm = isLeft ? leftPaneViewModel : rightPaneViewModel
+        activatePane(isLeft ? .left : .right)
+        switch vm.state.viewMode {
+        case .list:
+            (isLeft ? leftFileListView : rightFileListView)?.focusFirstSelectableRow(toLast: toLast)
+        case .grid:
+            (isLeft ? leftFileGridView : rightFileGridView)?.focusFirstSelectableItem(toLast: toLast)
+        }
+    }
+
+    /// 搜索框 Enter：打开结果。无选中时先落到第一项再打开，避免「回车没反应」
+    func paneToolbarDidRequestOpenResult(_ toolbar: PaneToolbar) {
+        let isLeft = toolbar == leftPaneToolbar
+        let vm = isLeft ? leftPaneViewModel : rightPaneViewModel
+        activatePane(isLeft ? .left : .right)
+        if vm.selectedFiles.isEmpty {
+            paneToolbarDidRequestMoveToResults(toolbar, toLast: false)
+        }
+        // 让步一帧：选中 → selectedFiles 是同步的，但视图选中态需先落地再打开
+        DispatchQueue.main.async { [weak self] in
+            self?.menuOpen(nil)
+        }
+    }
+
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String) {
         let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: path)
@@ -2030,9 +2235,9 @@ extension MainWindowController: BreadcrumbBarDelegate {
 extension MainWindowController: NSSplitViewDelegate {
     /// 限制每个面板的最小坐标，防止工具栏元素重叠
     public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        // 主 split view（sidebar + panes）：sidebar 最小 180
+        // 主 split view（sidebar + panes）：sidebar 最小 160（DESIGN-SPEC B-01）
         if splitView === mainSplitView {
-            return 180
+            return MainWindowController.sidebarMinWidth
         }
         // pane split view（left + right panes）：每个面板最小 450
         if splitView === paneSplitView {
@@ -2043,9 +2248,9 @@ extension MainWindowController: NSSplitViewDelegate {
 
     /// 限制每个面板的最大坐标，防止一个面板占据过多空间
     public func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        // 主 split view：sidebar 最大 280
+        // 主 split view：sidebar 最大 280（DESIGN-SPEC B-01）
         if splitView === mainSplitView {
-            return 280
+            return MainWindowController.sidebarMaxWidth
         }
         // pane split view：留出至少 450 给另一个面板
         if splitView === paneSplitView {
@@ -2055,11 +2260,19 @@ extension MainWindowController: NSSplitViewDelegate {
         return proposedMaximumPosition
     }
 
-    /// 拖动时实时更新布局
+    /// 拖动时实时更新布局 + 记忆侧栏宽度
     public func splitViewDidResizeSubviews(_ notification: Notification) {
         // 触发布局更新
         if let splitView = notification.object as? NSSplitView {
             splitView.window?.layoutIfNeeded()
+            // DESIGN-SPEC B-01：侧栏宽度记忆（下一窗口/下次启动沿用）
+            if splitView === mainSplitView, let sidebar = splitView.subviews.first {
+                let width = sidebar.frame.width
+                if width >= MainWindowController.sidebarMinWidth,
+                   width <= MainWindowController.sidebarMaxWidth {
+                    UserDefaults.standard.set(Double(width), forKey: MainWindowController.sidebarWidthKey)
+                }
+            }
         }
     }
 }

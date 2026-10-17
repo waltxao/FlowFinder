@@ -211,7 +211,21 @@ final class FFPaneStateDescriptorTests: XCTestCase {
         XCTAssertTrue(d.isFullScreen)
         XCTAssertTrue(d.showsRetry)
         XCTAssertEqual(d.retryKind, .reload)
-        XCTAssertEqual(d.subtitle, "权限不足，无法读取")
+        // 2026-10-17 J5：错误正文不再原样上屏，权限类错误改由 FFErrorText 给出
+        // 中文原因 + 下一步，并显示「打开系统设置」按钮
+        XCTAssertEqual(d.title, "没有访问权限")
+        XCTAssertTrue(d.subtitle.contains("系统设置"))
+        XCTAssertTrue(d.showsOpenSettings)
+    }
+
+    /// 非权限类错误不给「打开系统设置」（避免误导）
+    func testDescriptorNonPermissionErrorHasNoSettingsButton() {
+        var state = PaneState()
+        state.path = "/tmp/dir"
+        state.error = "No such file or directory (os error 2)"
+        let d = FFPaneStateDescriptor.make(from: state)
+        XCTAssertEqual(d.title, "找不到该项目")
+        XCTAssertFalse(d.showsOpenSettings)
     }
 
     func testDescriptorDeleteProgressBanner() {
@@ -678,5 +692,78 @@ final class FFMotionTests: XCTestCase {
         // 无法在测试中强制系统 reduced-motion 状态，验证纯函数在正常路径返回原值时长为正
         let d = FFMotion.animationDuration(0.25)
         XCTAssertGreaterThanOrEqual(d, 0)
+    }
+}
+
+/// 回归：侧边栏收藏/设备导航通知的发送者契约。
+///
+/// 接收方（MainWindowController.handleSidebarDirectorySelected）经
+/// isOwnSidebarNotification 判定归属后才会执行导航。该守卫要求
+/// notification.object 是可归属本窗口的 NSView；若 poster 以数据源对象
+/// （NSObject，非 NSView）作为 object，cast 必失败 → 守卫返回 false →
+/// 导航被静默吞掉（「收藏无法点开」根因，e3792db 修复不完整的回归防线）。
+final class SidebarNavigationPosterTests: XCTestCase {
+
+    /// 选中收藏行后发出的 sidebarDidSelectDirectory：
+    /// object 必须是 NSView，且接收方按视图归属（视图树/所属窗口）可判定为本侧边栏。
+    func testFavoriteSelectionPostsViewObjectInSidebarTree() throws {
+        let sidebar = SidebarView(frame: NSRect(x: 0, y: 0, width: 200, height: 600))
+
+        // 从侧边栏视图树中找到收藏 NSOutlineView
+        var outline: NSOutlineView?
+        var stack: [NSView] = [sidebar]
+        while let view = stack.popLast() {
+            if let ov = view as? NSOutlineView { outline = ov; break }
+            stack.append(contentsOf: view.subviews)
+        }
+        let favoritesOutline = try XCTUnwrap(outline, "侧边栏内未找到收藏 NSOutlineView")
+
+        favoritesOutline.reloadData()
+        // v0.8.0 P1：收藏改为分区模型，首行是「个人收藏」分区标题（group row，不可选中），
+        // 需展开分区并定位第一条真正的收藏行
+        favoritesOutline.expandItem(nil, expandChildren: true)
+        var favoriteRow: Int?
+        for row in 0..<favoritesOutline.numberOfRows {
+            if case .favorite? = favoritesOutline.item(atRow: row) as? SidebarItem {
+                favoriteRow = row
+                break
+            }
+        }
+        guard let targetRow = favoriteRow else {
+            throw XCTSkip("测试环境无收藏数据（UserDefaults 为空），跳过")
+        }
+
+        // 捕获真实 delegate（SidebarDataSourceBase.outlineViewSelectionDidChange）发出的通知
+        final class PosterProbe: NSObject {
+            var captured: Notification?
+            @objc func onNote(_ note: Notification) { captured = note }
+        }
+        let probe = PosterProbe()
+        NotificationCenter.default.addObserver(
+            probe, selector: #selector(PosterProbe.onNote(_:)),
+            name: .sidebarDidSelectDirectory, object: nil
+        )
+        defer { NotificationCenter.default.removeObserver(probe) }
+
+        favoritesOutline.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
+
+        let note = try XCTUnwrap(probe.captured, "选中收藏行后未发出 sidebarDidSelectDirectory")
+
+        // 契约 1：object 必须是 NSView（数据源 NSObject 会被接收方 cast 失败误杀）
+        guard let source = note.object as? NSView else {
+            XCTFail("sidebarDidSelectDirectory.object 必须是 NSView，实际 \(type(of: note.object))；"
+                    + "非视图发送者会被 isOwnSidebarNotification 静默误杀（收藏无法点开）")
+            return
+        }
+
+        // 契约 2：object 必须可归属本侧边栏——位于侧边栏视图树内，或已挂窗且窗口归属可判定
+        let inSidebarTree = source.isDescendant(of: sidebar)
+        let windowed = source.window != nil
+        XCTAssertTrue(inSidebarTree || windowed,
+                      "发送者 \(source) 既不在侧边栏视图树内也未挂窗，接收方无法判定归属")
+
+        // 契约 3：导航载荷必须完整（entry 可解析）
+        let entry = try XCTUnwrap(note.userInfo?["entry"] as? FileEntry, "userInfo 缺少 entry")
+        XCTAssertTrue(entry.isDirectory, "收藏导航 entry 应为目录")
     }
 }

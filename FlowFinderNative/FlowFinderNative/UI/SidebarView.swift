@@ -19,6 +19,59 @@ extension Notification.Name {
     static let sidebarDidRequestDedupScan = Notification.Name("sidebarDidRequestDedupScan")
     static let sidebarDidRequestBatchRename = Notification.Name("sidebarDidRequestBatchRename")
     static let sidebarDidRequestAITools = Notification.Name("sidebarDidRequestAITools")
+    /// v0.8.0 P1: 收藏右键菜单三项窗口级动作（object 携带发起方 outlineView，userInfo["path"]）
+    /// 窗口的创建/持有归 MainWindowController，SidebarView 只发意图，不直接建窗
+    static let sidebarDidRequestOpenInNewTab = Notification.Name("sidebarDidRequestOpenInNewTab")
+    static let sidebarDidRequestOpenInNewWindow = Notification.Name("sidebarDidRequestOpenInNewWindow")
+    static let sidebarDidRequestShowFavoriteInfo = Notification.Name("sidebarDidRequestShowFavoriteInfo")
+}
+
+// MARK: - 侧边栏布局度量（v0.8.0 P1）
+
+/// 侧边栏行高度量：outline 行高、内容高度计算与测试共用，避免魔法数字分叉
+enum SidebarMetrics {
+    /// 分区标题行（访达 group row：11pt 灰色小字）
+    static let sectionHeaderHeight: CGFloat = 22
+    /// 收藏项行高
+    static let rowHeight: CGFloat = 28
+    /// 空态引导行
+    static let emptyHintHeight: CGFloat = 26
+}
+
+// MARK: - 侧边栏分区节点（v0.8.0 P1）
+
+/// outline 分区节点（group row）
+///
+/// P1 只有「个人收藏」一个分区；P2 标签并入后在此枚举增加 `.tags`，
+/// 数据结构无需再改（设计稿 §3 单一 outline 分区模型）。
+enum SidebarSectionKind {
+    case favorites
+    case tags
+
+    var title: String {
+        switch self {
+        case .favorites: return "个人收藏"
+        case .tags: return "标签"
+        }
+    }
+}
+
+/// 分区标题节点（NSOutlineView 的 group item，需为引用类型以便展开态稳定）
+final class SidebarSectionNode: NSObject {
+    let kind: SidebarSectionKind
+
+    init(kind: SidebarSectionKind) {
+        self.kind = kind
+    }
+}
+
+/// 空态引导行（访达同款：分区下显示一行次要文字，不参与选中/拖拽）
+final class SidebarEmptyHintNode: NSObject {
+    let text: String
+
+    init(text: String) {
+        self.text = text
+    }
 }
 
 // MARK: - DeviceExtendedInfo (设备扩展信息，用于悬停气泡)
@@ -61,6 +114,50 @@ private class FFFNoDisclosureOutlineView: NSOutlineView {
         }
         return frame
     }
+
+    // MARK: - v0.8.0 P1：滚动容器内的自适应高度
+
+    /// 内容高度由数据源写入。
+    ///
+    /// 分区模型下行高混合（标题 22 / 空态 26 / 收藏 28），不能用 numberOfRows × rowHeight；
+    /// 用 intrinsicContentSize 而非 NSLayoutConstraint 定高——outline 位于滚动文档内，
+    /// 高度由内容驱动，不再与兄弟视图的定高约束互相钳制（v0.7.x 定高冲突的结构性根因）。
+    var explicitContentHeight: CGFloat = 0 {
+        didSet {
+            guard abs(oldValue - explicitContentHeight) > 0.5 else { return }
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: explicitContentHeight)
+    }
+
+    /// Enter 激活选中行（导航到收藏目录）
+    var onActivateRow: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        // Enter 自带 .numericPad 标志，不能用 modifiers.isEmpty 判定
+        let isReturn = event.keyCode == 36 || event.keyCode == 76
+        if isReturn,
+           !event.modifierFlags.contains(.command),
+           !event.modifierFlags.contains(.option),
+           !event.modifierFlags.contains(.control) {
+            onActivateRow?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    /// 侧边栏整体滚动：outline 本身不带滚动条，滚轮必须转交外层 NSScrollView，
+    /// 否则光标停在收藏列表上时侧边栏不滚动（P1 验收标准 1）
+    override func scrollWheel(with event: NSEvent) {
+        if let outer = enclosingScrollView {
+            outer.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
+        }
+    }
 }
 
 // MARK: - FFSidebarRowView（自绘选中高亮）
@@ -85,8 +182,8 @@ private class FFSidebarRowView: NSTableRowView {
             height: bounds.height
         )
         let path = NSBezierPath(roundedRect: highlightRect, xRadius: highlightRadius, yRadius: highlightRadius)
-        // 选中时用强调色；窗口失焦时用次级灰色（与系统行为一致）
-        let color: NSColor = isEmphasized ? FFAccent.current : .secondarySelectedControlColor
+        // 选中时用强调色；窗口失焦时用「未强调选中」系统灰（与列表同一令牌，C-05）
+        let color: NSColor = isEmphasized ? FFAccent.current : .unemphasizedSelectedContentBackgroundColor
         color.setFill()
         path.fill()
     }
@@ -105,28 +202,30 @@ class SidebarView: NSView {
     /// 任务 T1: 主题切换按钮（用于切换图标）
     private var themeToggleBtn: NSButton!
 
-    private var favoritesOutlineView: NSOutlineView!
+    /// v0.8.0 P1: 侧边栏滚动容器——品牌区与底部工具行固定，中间内容整体滚动
+    /// （访达同构：工具栏与底部不动，中间滚动；收藏 20+ 项不再溢出重叠）
+    private var sidebarScrollView: NSScrollView!
+    /// 滚动内容栈（收藏分区 + 标签分区）
+    private var scrollContentStack: NSStackView!
+    /// 标签分区标题行（标题 + "+" 按钮）；P2 标签并入 outline 后整体移除
+    private var tagsHeaderView: NSView!
+
+    private var favoritesOutlineView: FFFNoDisclosureOutlineView!
     /// 任务 F10-5: 标签视图（垂直纵向排列：圆点 + 完整标签名，每行一个）（v0.6.6）
     private var tagFlowView: TagFlowView!
-    /// 外置标题（访达风格：灰色小字紧贴左侧）
-    private var favoritesTitleLabel: NSTextField!
     private var tagsTitleLabel: NSTextField!
     /// 标签标题旁"+"按钮
     private var tagsAddButton: NSButton!
-    private let favoritesDataSource = FavoritesSidebarDataSource()
+    /// v0.8.0 P1: 收藏数据层（顺序 / 失效状态 / 持久化）
+    private let favoritesStore = SidebarFavoritesStore()
+    private lazy var favoritesDataSource = FavoritesSidebarDataSource(store: favoritesStore)
     private let tagsDataSource = TagsSidebarDataSource()
-    private var favoritesHeightConstraint: NSLayoutConstraint!
-    private var tagsHeightConstraint: NSLayoutConstraint!
 
     // v0.6.9: 侧边栏底部工具按钮，点击后在操作区弹出 ToolOverlayView 覆盖页
     /// 工具按钮引用（用于切换激活态 contentTintColor）
     private var toolBtn: NSButton!
     /// 工具面板当前是否展开
     private var isToolPanelExpanded: Bool = false
-
-    // MARK: - 收藏夹布局常量（updateFavoritesHeight 与 makeOutlineView 共享，避免魔法数字重复）
-    private let favoritesRowHeight: CGFloat = 28
-    private let favoritesRowSpacing: CGFloat = 2
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -185,12 +284,10 @@ class SidebarView: NSView {
             appNameLabel.centerYAnchor.constraint(equalTo: brandView.centerYAnchor),
         ])
 
-        // 访达风格：标题下方直接显示内容，无白色圆角卡片背景
-        favoritesTitleLabel = makeSectionTitleLabel("我的收藏")
-        addSubview(favoritesTitleLabel)
-
-        tagsTitleLabel = makeSectionTitleLabel("标签")
-        addSubview(tagsTitleLabel)
+        // v0.8.0 P1：「个人收藏」标题改为 outline 分区标题行（group row），不再用外置 label。
+        // 标签分区在 P2 并入 outline 前仍保留外置标题行，但改为随滚动内容整体移动。
+        tagsTitleLabel = makeSectionTitleLabel(SidebarSectionKind.tags.title)
+        tagsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         tagsAddButton = NSButton()
         tagsAddButton.bezelStyle = .inline
@@ -201,7 +298,21 @@ class SidebarView: NSView {
         tagsAddButton.target = self
         tagsAddButton.action = #selector(showCreateTagDialog)
         tagsAddButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(tagsAddButton)
+
+        // 标签分区标题容器（标题 + "+" 按钮），作为滚动内容栈的一员
+        tagsHeaderView = NSView()
+        tagsHeaderView.translatesAutoresizingMaskIntoConstraints = false
+        tagsHeaderView.addSubview(tagsTitleLabel)
+        tagsHeaderView.addSubview(tagsAddButton)
+        NSLayoutConstraint.activate([
+            tagsHeaderView.heightAnchor.constraint(equalToConstant: 20),
+            tagsTitleLabel.leadingAnchor.constraint(equalTo: tagsHeaderView.leadingAnchor),
+            tagsTitleLabel.centerYAnchor.constraint(equalTo: tagsHeaderView.centerYAnchor),
+            tagsAddButton.centerYAnchor.constraint(equalTo: tagsHeaderView.centerYAnchor),
+            tagsAddButton.trailingAnchor.constraint(equalTo: tagsHeaderView.trailingAnchor, constant: -4),
+            tagsAddButton.widthAnchor.constraint(equalToConstant: 16),
+            tagsAddButton.heightAnchor.constraint(equalToConstant: 16),
+        ])
 
         // 任务 F10-3: 设备区域已移出侧边栏，改为 MainWindowController 的浮动浮层（v0.6.6）
         // 故 deviceMaskView 不再在此创建
@@ -248,19 +359,22 @@ class SidebarView: NSView {
         // 任务 F11-11: 保存引用以便切换激活态（C1）
         self.toolBtn = toolBtn
 
-        // 收藏夹区域：直接使用 OutlineView，不套 NSScrollView（避免 ClipView 裁剪内容）
+        // v0.8.0 P1: 收藏分区——单一 outline 的分区模型（「个人收藏」group row + 收藏项）
         favoritesOutlineView = makeOutlineView()
         favoritesOutlineView.dataSource = favoritesDataSource
         favoritesOutlineView.delegate = favoritesDataSource
-        // A1: 注册拖拽类型 — 支持拖拽文件/文件夹到收藏夹
-        favoritesOutlineView.registerForDraggedTypes([.fileURL])
-        // 右键菜单（动态：收藏夹显示「移除收藏」）
+        // 拖拽类型：外部文件夹（添加收藏）+ 内部重排（自定义粘贴板类型）
+        favoritesOutlineView.registerForDraggedTypes([.fileURL, FavoritesSidebarDataSource.dragType])
+        // 内部拖拽仅允许移动语义（重排），不对外导出文件副本
+        favoritesOutlineView.setDraggingSourceOperationMask(.move, forLocal: true)
+        favoritesOutlineView.setDraggingSourceOperationMask([], forLocal: false)
+        favoritesOutlineView.onActivateRow = { [weak self] in
+            self?.navigateToSelectedFavorite()
+        }
+        // 右键菜单（多窗口/失效态均在 menuNeedsUpdate 中动态生成）
         let favoritesMenu = NSMenu()
         favoritesMenu.delegate = self
         favoritesOutlineView.menu = favoritesMenu
-        favoritesOutlineView.translatesAutoresizingMaskIntoConstraints = false
-        // 直接放入侧边栏（访达风格：无圆角卡片背景，无滚动容器）
-        addSubview(favoritesOutlineView)
 
         // 任务 F10-5: 标签区域 - 垂直纵向排列（圆点 + 完整标签名，每行一个）（v0.6.6）
         tagFlowView = TagFlowView()
@@ -271,7 +385,6 @@ class SidebarView: NSView {
         tagFlowView.onTagDeleted = { [weak self] tagId in
             self?.tagsDataSource.removeTag(id: tagId)
             self?.tagFlowView.updateTags(self?.tagsDataSource.allTags() ?? [])
-            self?.updateTagsHeight()
         }
         // 任务 F11-8: 标签点击 -> 发送通知，由 MainWindowController 设置当前活动面板的 tagFilter（问题3）
         // Wave2 P0-4（多窗口）：object 携带本侧边栏实例身份，接收方据此过滤本窗口通知
@@ -279,7 +392,6 @@ class SidebarView: NSView {
             guard let self = self else { return }
             NotificationCenter.default.post(name: .sidebarDidSelectTag, object: self, userInfo: ["tag": tag])
         }
-        addSubview(tagFlowView)
 
         // 任务 F11-8: 监听面板标签筛选变化，更新标签行高亮（当前筛选的标签高亮显示）
         NotificationCenter.default.addObserver(
@@ -290,74 +402,74 @@ class SidebarView: NSView {
         // 任务 F10-3: 设备区域相关视图（deviceHeaderView/deviceScrollView/deviceOutlineView）
         // 已迁移至 MainWindowController 的 createDevicePanel 浮层，此处不再创建
 
-        // A1: 拖拽添加收藏夹后的回调（重新加载 + 更新高度）
+        // A1: 收藏变化（增删/外部拖入/内部重排）后重建 outline
         favoritesDataSource.onFavoritesChanged = { [weak self] in
-            guard let self = self else { return }
-            self.favoritesOutlineView.reloadData()
-            self.updateFavoritesHeight()
+            self?.reloadFavorites()
         }
 
         // 初始化标签数据
         tagFlowView.updateTags(tagsDataSource.allTags())
 
-        // 收藏夹区高度根据收藏数量动态调整（保留最小高度）
-        favoritesHeightConstraint = favoritesOutlineView.heightAnchor.constraint(equalToConstant: 48)
-        favoritesHeightConstraint.priority = .required
+        // v0.8.0 P1: 品牌区与底部工具行固定，中间内容整体滚动
+        sidebarScrollView = makeSidebarScrollView()
+        sidebarScrollView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(sidebarScrollView)
 
-        // 任务 F10-5: 标签区高度根据标签行数动态调整（垂直布局）
-        // defaultHigh：常量由 updateTagsHeight 异步修正，瞬态内容超高时优雅让步，
-        // required 会在标签数超过估算高度时产生无解冲突
-        tagsHeightConstraint = tagFlowView.heightAnchor.constraint(equalToConstant: 80)
-        tagsHeightConstraint.priority = .defaultHigh
+        scrollContentStack = NSStackView(views: [favoritesOutlineView, tagsHeaderView, tagFlowView])
+        scrollContentStack.orientation = .vertical
+        scrollContentStack.alignment = .leading
+        scrollContentStack.distribution = .fill
+        scrollContentStack.spacing = 0
+        scrollContentStack.translatesAutoresizingMaskIntoConstraints = false
+        // 分区之间留 16pt 区块间距（收藏区底部 → 标签标题）
+        scrollContentStack.setCustomSpacing(16, after: favoritesOutlineView)
 
-        // 任务 F10-3: deviceHeightConstraint 已随设备区域迁移至 MainWindowController 浮层（v0.6.6）
+        // 滚动文档视图：isFlipped=true，内容天然贴顶（非 flipped 会导致内容贴底/顶部空白）
+        let scrollContainer = FlippedSidebarContainer()
+        scrollContainer.translatesAutoresizingMaskIntoConstraints = false
+        scrollContainer.addSubview(scrollContentStack)
+        sidebarScrollView.documentView = scrollContainer
 
         let padding: CGFloat = 12
 
         NSLayoutConstraint.activate([
-            // 收藏夹标题（紧跟 brandView 下方，与收藏夹图标左对齐）
-            favoritesTitleLabel.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: padding),
-            favoritesTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            favoritesTitleLabel.heightAnchor.constraint(equalToConstant: 16),
+            // 滚动内容：宽度跟随可视区，高度由内容撑开（不钉死，内容少时不留空白）
+            scrollContentStack.topAnchor.constraint(equalTo: scrollContainer.topAnchor, constant: 4),
+            scrollContentStack.leadingAnchor.constraint(equalTo: scrollContainer.leadingAnchor, constant: padding),
+            scrollContentStack.trailingAnchor.constraint(equalTo: scrollContainer.trailingAnchor, constant: -padding),
+            scrollContentStack.bottomAnchor.constraint(equalTo: scrollContainer.bottomAnchor, constant: -12),
+            scrollContainer.widthAnchor.constraint(equalTo: sidebarScrollView.contentView.widthAnchor),
 
-            // 收藏夹内容（标题下方 4pt 间距，避免标题与首项重叠，无卡片背景，高度自适应全部列出）
-            favoritesOutlineView.topAnchor.constraint(equalTo: favoritesTitleLabel.bottomAnchor, constant: 4),
-            favoritesOutlineView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            favoritesOutlineView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
-            favoritesHeightConstraint,
+            // 滚动区：品牌区下方 → 工具行上方
+            sidebarScrollView.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: 4),
+            sidebarScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sidebarScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            sidebarScrollView.bottomAnchor.constraint(equalTo: toolBarRow.topAnchor, constant: -6),
 
-            // 标签标题（收藏夹下方 16pt 区块间距，与收藏夹标题左对齐）
-            tagsTitleLabel.topAnchor.constraint(equalTo: favoritesOutlineView.bottomAnchor, constant: 16),
-            tagsTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            tagsTitleLabel.heightAnchor.constraint(equalToConstant: 16),
-
-            // "+" 按钮与标签标题同行右侧
-            tagsAddButton.centerYAnchor.constraint(equalTo: tagsTitleLabel.centerYAnchor),
-            tagsAddButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding - 4),
-            tagsAddButton.widthAnchor.constraint(equalToConstant: 16),
-            tagsAddButton.heightAnchor.constraint(equalToConstant: 16),
-
-            // 标签内容（标题下方直接显示，无卡片背景）
-            tagFlowView.topAnchor.constraint(equalTo: tagsTitleLabel.bottomAnchor, constant: 4),
-            tagFlowView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            tagFlowView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
-            tagsHeightConstraint,
-
-            // 工具栏行
+            // 工具栏行（固定在底部，不随内容滚动）
             toolBarRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             toolBarRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             toolBarRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             toolBarRow.heightAnchor.constraint(equalToConstant: 28),
         ])
 
+        // 每个分区视图铺满滚动内容宽度。
+        // 不依赖 NSStackView alignment 的隐式行为——v0.7.4 设置页已证实 .width alignment
+        // 与卡片内部约束冲突导致右对齐塌缩，改由显式 leading/trailing 约束接管。
+        for subview in scrollContentStack.arrangedSubviews {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                subview.leadingAnchor.constraint(equalTo: scrollContentStack.leadingAnchor),
+                subview.trailingAnchor.constraint(equalTo: scrollContentStack.trailingAnchor),
+            ])
+        }
+
         // 任务 F10-3: 卷挂载/卸载监听已迁移至 MainWindowController（设备浮层负责刷新）（v0.6.6）
 
-        // 收藏夹无 section 层级，直接显示收藏项列表，无需 expandItem
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.updateFavoritesHeight()
-            self.updateTagsHeight()
-        }
+        // 首次布局：同步展开分区并同步内容高度（避免首帧收藏区高度为 0）；
+        // 可用性校验另行异步（文件系统 I/O 不上主线程）
+        reloadFavorites()
+        validateFavoritesAvailability()
         // 监听标签数据源刷新通知，更新标签显示
         NotificationCenter.default.addObserver(self, selector: #selector(refreshTagDisplay), name: NSNotification.Name("SidebarTagsDidRefresh"), object: nil)
 
@@ -370,6 +482,16 @@ class SidebarView: NSView {
             self?.brandIconView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
             self?.themeToggleBtn.image = NSImage(systemSymbolName: ThemeManager.shared.currentMode.iconName, accessibilityDescription: "切换主题")
         }
+
+        // v0.8.0 P1: 卷挂载/卸载后重新校验收藏可用性（外置卷重插后失效项自动恢复）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleVolumesChanged(_:)),
+            name: NSWorkspace.didMountNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleVolumesChanged(_:)),
+            name: NSWorkspace.didUnmountNotification, object: nil
+        )
     }
 
     // MARK: - Helpers
@@ -383,10 +505,13 @@ class SidebarView: NSView {
         return label
     }
 
-    private func makeScrollView() -> NSScrollView {
+    /// v0.8.0 P1：侧边栏滚动容器
+    ///
+    /// overlay 细滚动条 + 透明背景 + 零 contentInsets。侧边栏中间内容（收藏 + 标签）
+    /// 整体滚动，品牌区与底部工具行固定不动（访达同构）。
+    private func makeSidebarScrollView() -> NSScrollView {
         let sv = NSScrollView()
-        sv.translatesAutoresizingMaskIntoConstraints = false
-        sv.hasVerticalScroller = false
+        sv.hasVerticalScroller = true
         sv.hasHorizontalScroller = false
         sv.autohidesScrollers = true
         // 任务 S1: 强制使用自定义细滚动条
@@ -394,18 +519,23 @@ class SidebarView: NSView {
         sv.scrollerStyle = .overlay
         sv.drawsBackground = false
         sv.backgroundColor = .clear
+        sv.borderType = .noBorder
         // NSClipView 默认绘制 controlBackgroundColor（浅灰），必须显式清除
         sv.contentView.drawsBackground = false
         sv.contentView.backgroundColor = .clear
+        // 顶部偏移会让首行内容压在品牌区下方留白（v0.7.2 设置页同类问题）
+        sv.automaticallyAdjustsContentInsets = false
+        sv.contentInsets = NSEdgeInsets()
+        sv.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         return sv
     }
 
-    private func makeOutlineView() -> NSOutlineView {
+    private func makeOutlineView() -> FFFNoDisclosureOutlineView {
         let ov = FFFNoDisclosureOutlineView()
         ov.allowsMultipleSelection = false
         ov.headerView = nil  // 无表头
-        // 收藏夹项目行高 28pt
-        ov.rowHeight = favoritesRowHeight
+        // 收藏项行高 28pt（分区标题 22pt / 空态行 26pt 由数据源按行指定）
+        ov.rowHeight = SidebarMetrics.rowHeight
         // 任务 F1: 收藏夹贴左边缘（Finder 风格，无缩进）
         ov.indentationPerLevel = 0
         // 行间距：水平无间距，垂直 0 间距——选中高亮由 FFSidebarRowView 自绘铺满整行，
@@ -421,8 +551,9 @@ class SidebarView: NSView {
         ov.deselectAll(nil)
         // 禁用焦点框（蓝色边框），NSOutlineView 获得键盘焦点时不再显示蓝色 ring
         ov.focusRingType = .none
-        // 使用自定义行视图（自绘选中高亮）
+        // 行高由数据源按行指定，不使用自动行高
         ov.usesAutomaticRowHeights = false
+        ov.translatesAutoresizingMaskIntoConstraints = false
         // 委托方法 rowViewForItem 在 SidebarDataSourceBase 中实现
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarItem"))
@@ -495,28 +626,158 @@ class SidebarView: NSView {
         }
     }
 
-    @objc private func removeFavorite(_ sender: Any?) {
-        let row = favoritesOutlineView.clickedRow
-        guard row >= 0 else { return }
-        let item = favoritesOutlineView.item(atRow: row)
-        if case .favorite(let fav) = item as? SidebarItem {
-            favoritesDataSource.removeFavorite(id: fav.id)
-            favoritesOutlineView.reloadData()
-            updateFavoritesHeight()
+    // MARK: - 收藏操作（v0.8.0 P1）
+
+    /// 右键菜单作用的收藏 id：优先取 clickedRow（右键点中的行），其次当前选中行
+    private func clickedFavoriteID() -> String? {
+        let row = favoritesOutlineView.clickedRow >= 0
+            ? favoritesOutlineView.clickedRow
+            : favoritesOutlineView.selectedRow
+        guard row >= 0,
+              case .favorite(let fav)? = favoritesOutlineView.item(atRow: row) as? SidebarItem else {
+            return nil
         }
+        return fav.id
+    }
+
+    /// 当前选中的收藏 id（重排/重校验后恢复选中用）
+    private var selectedFavoriteID: String? {
+        let row = favoritesOutlineView.selectedRow
+        guard row >= 0,
+              case .favorite(let fav)? = favoritesOutlineView.item(atRow: row) as? SidebarItem else {
+            return nil
+        }
+        return fav.id
+    }
+
+    @objc private func removeFavorite(_ sender: Any?) {
+        let id = (sender as? NSMenuItem)?.representedObject as? String ?? clickedFavoriteID()
+        guard let favoriteID = id, favoritesStore.remove(id: favoriteID) else { return }
+        reloadFavorites()
+    }
+
+    @objc private func moveFavoriteUp(_ sender: Any?) {
+        let id = (sender as? NSMenuItem)?.representedObject as? String ?? clickedFavoriteID()
+        guard let favoriteID = id, let index = favoritesStore.index(of: favoriteID),
+              favoritesStore.moveUp(index: index) != nil else { return }
+        reloadFavorites(selecting: favoriteID)
+    }
+
+    @objc private func moveFavoriteDown(_ sender: Any?) {
+        let id = (sender as? NSMenuItem)?.representedObject as? String ?? clickedFavoriteID()
+        guard let favoriteID = id, let index = favoritesStore.index(of: favoriteID),
+              favoritesStore.moveDown(index: index) != nil else { return }
+        reloadFavorites(selecting: favoriteID)
+    }
+
+    /// 在新标签页中打开（窗口级动作交由 MainWindowController）
+    @objc private func openFavoriteInNewTab(_ sender: Any?) {
+        guard let path = (sender as? NSMenuItem)?.representedObject as? String else { return }
+        NotificationCenter.default.post(name: .sidebarDidRequestOpenInNewTab,
+                                        object: favoritesOutlineView,
+                                        userInfo: ["path": path])
+    }
+
+    /// 在新窗口中打开
+    @objc private func openFavoriteInNewWindow(_ sender: Any?) {
+        guard let path = (sender as? NSMenuItem)?.representedObject as? String else { return }
+        NotificationCenter.default.post(name: .sidebarDidRequestOpenInNewWindow,
+                                        object: favoritesOutlineView,
+                                        userInfo: ["path": path])
+    }
+
+    /// 显示简介
+    @objc private func showFavoriteInfo(_ sender: Any?) {
+        guard let path = (sender as? NSMenuItem)?.representedObject as? String else { return }
+        NotificationCenter.default.post(name: .sidebarDidRequestShowFavoriteInfo,
+                                        object: favoritesOutlineView,
+                                        userInfo: ["path": path])
+    }
+
+    // MARK: - 收藏刷新与校验
+
+    /// 重建收藏 outline：展开分区、同步内容高度、按需恢复选中（不触发导航）
+    /// 强调色变更后刷新选中态（选中底色由 FFSidebarRowView 自绘，需重载行才重绘）
+    func refreshSelectionAppearance() {
+        favoritesOutlineView?.reloadData()
+        needsDisplay = true
+    }
+
+    private func reloadFavorites(selecting favoriteID: String? = nil) {
+        favoritesOutlineView.reloadData()
+        // 分区为 group item，需显式展开才会显示子行
+        favoritesOutlineView.expandItem(nil, expandChildren: true)
+        favoritesOutlineView.explicitContentHeight = favoritesDataSource.contentHeight
+        if let favoriteID = favoriteID {
+            selectFavorite(id: favoriteID)
+        }
+    }
+
+    /// 按收藏 id 定位并选中（抑制导航副作用）
+    private func selectFavorite(id: String) {
+        for row in 0..<favoritesOutlineView.numberOfRows {
+            guard case .favorite(let fav)? = favoritesOutlineView.item(atRow: row) as? SidebarItem else { continue }
+            guard fav.id == id else { continue }
+            favoritesDataSource.suppressSelectionNotification = true
+            favoritesOutlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            favoritesDataSource.suppressSelectionNotification = false
+            return
+        }
+    }
+
+    /// Enter / 双击激活当前选中收藏
+    private func navigateToSelectedFavorite() {
+        guard let favoriteID = selectedFavoriteID,
+              let favorite = favoritesStore.favorite(id: favoriteID) else { return }
+        guard !favoritesStore.isMissing(id: favoriteID) else {
+            NSSound.beep()
+            return
+        }
+        let entry = FileEntry(path: favorite.path, name: favorite.name, isDirectory: true)
+        NotificationCenter.default.post(name: .sidebarDidSelectDirectory,
+                                        object: favoritesOutlineView,
+                                        userInfo: ["entry": entry])
+    }
+
+    /// 后台校验收藏路径可用性（去抖 500ms，避免与首屏渲染争用主线程）
+    private func validateFavoritesAvailability() {
+        let store = favoritesStore
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            var result: [String: FavoriteAvailability] = [:]
+            for item in store.items {
+                result[item.id] = FileManager.default.fileExists(atPath: item.path) ? .available : .missing
+            }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                for (id, state) in result {
+                    store.setAvailability(state, for: id)
+                }
+                self.reloadFavorites(selecting: self.selectedFavoriteID)
+            }
+        }
+    }
+
+    /// 卷挂载/卸载后重新校验（外置卷重插后失效收藏自动恢复，不删除）
+    @objc private func handleVolumesChanged(_ notification: Notification) {
+        validateFavoritesAvailability()
     }
 
     @objc private func removeTag(_ sender: NSMenuItem?) {
         guard let tagId = sender?.representedObject as? String else { return }
         tagsDataSource.removeTag(id: tagId)
         tagFlowView.updateTags(tagsDataSource.allTags())
-        updateTagsHeight()
     }
 
     /// 标签数据源刷新后更新标签流视图显示
     @objc private func refreshTagDisplay() {
         tagFlowView.updateTags(tagsDataSource.allTags())
-        updateTagsHeight()
+    }
+
+    /// 更新标签计数（DESIGN-SPEC §5.2）。
+    /// 由 MainWindowController 在活动面板目录/内容变化后推送，key 为标签名。
+    /// 空字典表示「本目录不统计」（超上限或统计失败），侧栏不显示数字。
+    func updateTagCounts(_ counts: [String: Int]) {
+        tagFlowView.updateCounts(counts)
     }
 
     /// 任务 F11-8: 处理面板标签筛选变化通知，更新标签行高亮。
@@ -536,9 +797,10 @@ class SidebarView: NSView {
 
     /// 添加收藏夹（供外部调用）
     func addFavorite(name: String, path: String) {
-        favoritesDataSource.addFavorite(name: name, path: path)
-        favoritesOutlineView.reloadData()
-        updateFavoritesHeight()
+        let favorite = favoritesStore.add(name: name, path: path)
+        // 新增项立即可用（路径刚由用户选中/拖入，无需等待异步校验）
+        favoritesStore.setAvailability(.available, for: favorite.id)
+        reloadFavorites(selecting: favorite.id)
     }
 
     /// A1: 添加收藏夹（供外部调用，如 FileListView 的右键菜单）
@@ -560,26 +822,16 @@ class SidebarView: NSView {
         FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { [weak self] _ in
             guard let self = self else { return }
             self.tagFlowView.updateTags(self.tagsDataSource.allTags())
-            self.updateTagsHeight()
         }
     }
 
     // MARK: - Refresh
 
     // 任务 F10-3: 设备刷新逻辑（refreshDevices/updateDeviceHeight）已迁移至 MainWindowController 浮层（v0.6.6）
-
-    private func updateFavoritesHeight() {
-        // 收藏夹行高（intercellSpacing 已为 0，行间无缝隙，高度 = 行数 × 行高）
-        let count = favoritesDataSource.favoriteCount
-        let height = CGFloat(count) * favoritesRowHeight
-        favoritesHeightConstraint.constant = max(height, favoritesRowHeight)
-    }
-
-    /// 根据 tagFlowView 报告的理想高度调整标签区高度
-    private func updateTagsHeight() {
-        let flowHeight = tagFlowView.idealHeight(forWidth: bounds.width - 24)
-        tagsHeightConstraint.constant = max(flowHeight, 30)
-    }
+    //
+    // v0.8.0 P1: updateFavoritesHeight / updateTagsHeight 与两条定高约束一并移除。
+    // 高度改由内容驱动（outline.intrinsicContentSize + TagFlowView.intrinsicContentSize），
+    // 收藏 20+ 项时侧边栏整体滚动，不再出现"定高溢出重叠"与"required 约束瞬态无解"。
 }
 
 // MARK: - SidebarView + NSMenuDelegate
@@ -587,17 +839,55 @@ class SidebarView: NSView {
 extension SidebarView: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        if menu === favoritesOutlineView.menu {
-            // 收藏夹右键菜单
-            let row = favoritesOutlineView.clickedRow
-            guard row >= 0 else { return }
-            let item = favoritesOutlineView.item(atRow: row)
-            if case .favorite = item as? SidebarItem {
-                let mi = menu.addItem(withTitle: "移除收藏", action: #selector(removeFavorite(_:)), keyEquivalent: "")
-                mi.target = self
-            }
-        }
-        // 任务 F10-5: 标签右键菜单由 TagFlowView 内部处理（每个标签行自己的 menu）
+        guard menu === favoritesOutlineView.menu else { return }
+        // 收藏夹右键菜单：分区标题行/空态行不弹业务菜单
+        guard let favoriteID = clickedFavoriteID(),
+              let index = favoritesStore.index(of: favoriteID) else { return }
+        let missing = favoritesStore.isMissing(id: favoriteID)
+
+        let removeItem = menu.addItem(withTitle: "从边栏中移除",
+                                      action: #selector(removeFavorite(_:)), keyEquivalent: "")
+        removeItem.target = self
+        removeItem.representedObject = favoriteID
+
+        menu.addItem(.separator())
+
+        // 「在新标签页中打开」：宿主窗口不支持标签页时置灰（设计稿 §4.2）
+        let newTabItem = menu.addItem(withTitle: "在新标签页中打开",
+                                      action: #selector(openFavoriteInNewTab(_:)), keyEquivalent: "")
+        newTabItem.target = self
+        newTabItem.representedObject = favoritePath(for: favoriteID)
+        newTabItem.isEnabled = (window?.tabbingMode ?? .disallowed) != .disallowed && !missing
+
+        let newWindowItem = menu.addItem(withTitle: "在新窗口中打开",
+                                         action: #selector(openFavoriteInNewWindow(_:)), keyEquivalent: "")
+        newWindowItem.target = self
+        newWindowItem.representedObject = favoritePath(for: favoriteID)
+        newWindowItem.isEnabled = !missing
+
+        let infoItem = menu.addItem(withTitle: "显示简介",
+                                    action: #selector(showFavoriteInfo(_:)), keyEquivalent: "")
+        infoItem.target = self
+        infoItem.representedObject = favoritePath(for: favoriteID)
+        infoItem.isEnabled = !missing
+
+        menu.addItem(.separator())
+
+        let upItem = menu.addItem(withTitle: "上移",
+                                  action: #selector(moveFavoriteUp(_:)), keyEquivalent: "")
+        upItem.target = self
+        upItem.representedObject = favoriteID
+        upItem.isEnabled = index > 0
+
+        let downItem = menu.addItem(withTitle: "下移",
+                                    action: #selector(moveFavoriteDown(_:)), keyEquivalent: "")
+        downItem.target = self
+        downItem.representedObject = favoriteID
+        downItem.isEnabled = index < favoritesStore.items.count - 1
+    }
+
+    private func favoritePath(for id: String) -> String? {
+        favoritesStore.favorite(id: id)?.path
     }
 }
 
@@ -635,6 +925,12 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
 
     /// 点击「添加收藏夹」按钮的回调（A1 后收藏夹标题不再有+按钮，保留以兼容）
     var onCreateFavoriteTapped: (() -> Void)?
+
+    /// v0.8.0 P1: 程序化选中（重排后恢复选中）不应触发导航
+    var suppressSelectionNotification = false
+
+    /// v0.8.0 P1: 导航许可判定（失效收藏返回 false，点击/Enter 均无动作）
+    var isItemNavigable: ((SidebarItem) -> Bool)?
 
     @objc func handleCreateTagButton() {
         onCreateTagTapped?()
@@ -736,9 +1032,16 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
             // 任务 F10-4: 修正 F4 错误 - 收藏夹改回彩色真实图标（v0.6.6）
             // F4 错误地改为蓝色模板 SF Symbols，应使用 NSWorkspace 真实位置图标
             // 放大对齐访达 20pt，contentTintColor = nil 保留彩色（移除 F4 的 controlAccentColor）
-            let workspaceIcon = NSWorkspace.shared.icon(forFile: fav.path)
-            workspaceIcon.size = NSSize(width: 20, height: 20)
-            imageView.image = workspaceIcon
+            // B-06（v0.8.0）：标准位置改用专属彩色图标——系统文件夹图标在 20pt 下
+            // 内嵌符号几乎不可见，桌面/文稿/下载/应用程序看起来完全一样。
+            // 非标准位置仍回退真实文件图标（B-05 不变）。
+            if let standard = FFStandardLocationIcon.icon(forPath: fav.path) {
+                imageView.image = standard
+            } else {
+                let workspaceIcon = NSWorkspace.shared.icon(forFile: fav.path)
+                workspaceIcon.size = NSSize(width: 20, height: 20)
+                imageView.image = workspaceIcon
+            }
             imageView.contentTintColor = nil
 
         default:
@@ -817,24 +1120,30 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
     // MARK: - Selection
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        // v0.8.0 P1: 程序化恢复选中（拖拽重排/后台校验后）不得触发导航
+        guard !suppressSelectionNotification else { return }
         guard let outlineView = notification.object as? NSOutlineView else { return }
         let selectedRow = outlineView.selectedRow
         guard selectedRow >= 0 else { return }
 
         let item = outlineView.item(atRow: selectedRow)
         guard let sidebarItem = item as? SidebarItem else { return }
+        // 失效收藏拦截（灰显项点击不作导航）
+        if let isNavigable = isItemNavigable, !isNavigable(sidebarItem) { return }
 
         switch sidebarItem {
         case .favorite(let fav):
             let entry = FileEntry(path: fav.path, name: fav.name, isDirectory: true)
-            // Wave2 P0-4（多窗口）：object 携带本侧边栏实例身份，entry 移入 userInfo，
-            // 接收方据此过滤本窗口通知（避免 A 窗口点击收藏导航到 B 窗口）
-            NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: self,
+            // Wave2 P0-4（多窗口）：object 携带发起选择的 outlineView（本窗口视图），
+            // entry 移入 userInfo，接收方按视图归属过滤本窗口通知（避免 A 窗口点击导航到 B 窗口）。
+            // 注意：不能发数据源对象（NSObject 非 NSView）——接收方 isOwnSidebarNotification
+            // 的视图归属判定会 cast 失败而误杀本窗口导航（「收藏无法点开」根因）
+            NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: outlineView,
                                             userInfo: ["entry": entry])
         case .device(let dev):
             let entry = FileEntry(path: dev.path, name: dev.name, isDirectory: true)
-            // B10: 同时附带 userInfo，便于新监听者按需读取；object 携带本侧边栏实例身份
-            NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: self,
+            // B10: 同时附带 userInfo，便于新监听者按需读取；object 携带发起选择的 outlineView（本窗口视图）
+            NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: outlineView,
                                             userInfo: ["entry": entry, "path": dev.path])
         case .tag:
             // 标签点击可选不做导航（未来可筛选同名标签文件）
@@ -843,121 +1152,214 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
     }
 }
 
-// MARK: - FavoritesSidebarDataSource (收藏夹)
+// MARK: - FavoritesSidebarDataSource（收藏分区，v0.8.0 P1 分区模型）
 
-private class FavoritesSidebarDataSource: SidebarDataSourceBase {
-    private var favorites: [FavoriteItem] = []
+/// 收藏分区数据源
+///
+/// 结构：root → [「个人收藏」分区标题节点] → [收藏项… / 空态引导行]
+/// - 分区标题为 group item：不折叠、不可选中、行高 22pt（访达样式）
+/// - 收藏项行高 28pt；失效项灰显但保留（外置卷重插后自动恢复）
+/// - 内部拖拽走自定义粘贴板类型，与外部文件拖拽区分（外部文件夹=添加收藏）
+private final class FavoritesSidebarDataSource: SidebarDataSourceBase {
 
-    private let favoritesKey = "SidebarFavorites"
+    /// 内部重排的粘贴板类型
+    static let dragType = NSPasteboard.PasteboardType("com.flowfinder.sidebar.favorite")
 
-    /// A1: 收藏夹变化回调（拖拽添加后通知 SidebarView 刷新）
+    let store: SidebarFavoritesStore
+
+    /// 收藏集合变化回调（增删/重排/外部拖入后通知 SidebarView 重建 outline）
     var onFavoritesChanged: (() -> Void)?
 
-    var favoriteCount: Int { favorites.count }
+    private let favoritesSection = SidebarSectionNode(kind: .favorites)
+    private let emptyHint = SidebarEmptyHintNode(text: "拖入文件夹以添加收藏")
 
-    override init() {
+    init(store: SidebarFavoritesStore) {
+        self.store = store
         super.init()
-        loadFavorites()
-    }
-
-    // MARK: - Data Loading
-
-    private func loadFavorites() {
-        if let data = UserDefaults.standard.data(forKey: favoritesKey),
-           let decoded = try? JSONDecoder().decode([FavoriteItem].self, from: data) {
-            favorites = decoded
-        } else {
-            // 默认收藏夹 5 项（桌面/文档/下载/应用程序/主目录）
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
-            let homeName = homePathComponentsLast(home) ?? "主目录"
-            favorites = [
-                FavoriteItem(name: "桌面", path: (home as NSString).appendingPathComponent("Desktop")),
-                FavoriteItem(name: "文档", path: (home as NSString).appendingPathComponent("Documents")),
-                FavoriteItem(name: "下载", path: (home as NSString).appendingPathComponent("Downloads")),
-                FavoriteItem(name: "应用程序", path: "/Applications"),
-                FavoriteItem(name: homeName, path: home),
-            ]
-            saveFavorites()
+        // 失效收藏不导航（灰显项点击/Enter 均无动作）
+        isItemNavigable = { [weak self] item in
+            guard let self = self, case .favorite(let fav) = item else { return true }
+            return !self.store.isMissing(id: fav.id)
         }
     }
 
-    private func saveFavorites() {
-        if let data = try? JSONEncoder().encode(favorites) {
-            UserDefaults.standard.set(data, forKey: favoritesKey)
-        }
-    }
-
-    /// 辅助：从 home path 提取最后一段作为显示名（如 /Users/waltxao → waltxao）
-    private func homePathComponentsLast(_ path: String) -> String? {
-        let components = path.split(separator: "/").map(String.init)
-        return components.last
-    }
-
-    // MARK: - CRUD
-
-    func addFavorite(name: String, path: String) {
-        let fav = FavoriteItem(name: name, path: path)
-        favorites.append(fav)
-        saveFavorites()
-    }
-
-    func removeFavorite(id: String) {
-        favorites.removeAll(where: { $0.id == id })
-        saveFavorites()
+    /// outline 内容高度（分区标题 + 收藏行 / 空态行）
+    var contentHeight: CGFloat {
+        let body = store.items.isEmpty
+            ? SidebarMetrics.emptyHintHeight
+            : CGFloat(store.items.count) * SidebarMetrics.rowHeight
+        return SidebarMetrics.sectionHeaderHeight + body
     }
 
     // MARK: - NSOutlineViewDataSource
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        // 无 section 层级：root 直接返回收藏项数量
-        if item == nil {
-            return favorites.count
+        // root 只有一个分区；分区下为收藏项（空收藏时显示一行引导）
+        guard let item = item else { return 1 }
+        if item is SidebarSectionNode {
+            return max(store.items.count, 1)
         }
         return 0
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        // 无 section 层级：root 直接返回收藏项
-        if item == nil {
-            return SidebarItem.favorite(favorites[index])
+        guard item is SidebarSectionNode else { return favoritesSection }
+        if store.items.isEmpty { return emptyHint }
+        return SidebarItem.favorite(store.items[index])
+    }
+
+    override func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        item is SidebarSectionNode
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
+        item is SidebarSectionNode
+    }
+
+    override func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
+        // 分区标题与空态行不可选中
+        item is SidebarItem
+    }
+
+    override func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+        if item is SidebarSectionNode { return SidebarMetrics.sectionHeaderHeight }
+        if item is SidebarEmptyHintNode { return SidebarMetrics.emptyHintHeight }
+        return SidebarMetrics.rowHeight
+    }
+
+    // MARK: - NSOutlineViewDelegate（分区 / 空态 / 失效渲染）
+
+    override func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        if let section = item as? SidebarSectionNode {
+            return makeSectionHeaderCell(title: section.kind.title)
         }
-        return ""
+        if let hint = item as? SidebarEmptyHintNode {
+            return makeEmptyHintCell(text: hint.text)
+        }
+        // 收藏项沿用基类「图标 + 文字」布局，再叠加失效态
+        let baseCell = super.outlineView(outlineView, viewFor: tableColumn, item: item)
+        if case .favorite(let fav)? = item as? SidebarItem, let cell = baseCell as? NSTableCellView {
+            let missing = store.isMissing(id: fav.id)
+            cell.imageView?.alphaValue = missing ? 0.4 : 1.0
+            cell.textField?.textColor = missing ? NSColor.secondaryLabelColor : NSColor.labelColor
+            cell.toolTip = missing ? "找不到该文件夹" : fav.path
+        }
+        return baseCell
     }
 
-    // MARK: - A1: Drag & Drop Support
+    /// 分区标题 cell：11pt medium 次级色，左缘与收藏图标对齐
+    private func makeSectionHeaderCell(title: String) -> NSView {
+        let cellID = NSUserInterfaceItemIdentifier("SidebarSectionCell")
+        let cell = NSTableCellView()
+        cell.identifier = cellID
+        cell.subviews.forEach { $0.removeFromSuperview() }
 
-    /// A1: 验证拖拽操作 — 仅接受文件 URL，返回 .move 表示可接收
-    func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
-        // 仅接受 .fileURL 类型
-        let draggingTypes = info.draggingPasteboard.types ?? []
-        guard draggingTypes.contains(.fileURL) else { return [] }
-        return .move
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(label)
+        cell.textField = label
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -6),
+            label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -2),
+        ])
+        cell.setAccessibilityElement(true)
+        cell.setAccessibilityRole(.group)
+        cell.setAccessibilityLabel(title)
+        return cell
     }
 
-    /// A1: 接受拖拽 — 解析文件 URL，仅接受文件夹，调用 addFavorite
-    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
-        guard let items = info.draggingPasteboard.pasteboardItems else { return false }
-        var addedCount = 0
-        for pbItem in items {
-            guard let urlData = pbItem.data(forType: .fileURL),
-                  let url = URL(dataRepresentation: urlData, relativeTo: nil) else { continue }
-            let path = url.path
-            // 仅接受文件夹（isDirectory==true），文件拒绝
-            var isDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
-                continue
+    /// 空态引导 cell：次级色小字，不可选中
+    private func makeEmptyHintCell(text: String) -> NSView {
+        let cellID = NSUserInterfaceItemIdentifier("SidebarEmptyHintCell")
+        let cell = NSTableCellView()
+        cell.identifier = cellID
+        cell.subviews.forEach { $0.removeFromSuperview() }
+
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.textColor = .tertiaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(label)
+        cell.textField = label
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -6),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
+    // MARK: - 拖拽（外部添加 + 内部重排）
+
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+        guard case .favorite(let fav)? = item as? SidebarItem else { return nil }
+        let pasteboardItem = NSPasteboardItem()
+        pasteboardItem.setString(fav.id, forType: Self.dragType)
+        return pasteboardItem
+    }
+
+    func outlineView(_ outlineView: NSOutlineView,
+                     validateDrop info: NSDraggingInfo,
+                     proposedItem item: Any?,
+                     proposedChildIndex index: Int) -> NSDragOperation {
+        // 内部重排：必须落在分区内且给出明确插入位置（落在行上=重新排序的父级调整，忽略）
+        if info.draggingPasteboard.availableType(from: [Self.dragType]) != nil {
+            guard store.items.count > 1, index != NSOutlineViewDropOnItemIndex else { return [] }
+            let target = (item as? SidebarSectionNode) != nil ? item : favoritesSection
+            outlineView.setDropItem(target, dropChildIndex: min(max(index, 0), store.items.count))
+            return .move
+        }
+        // 外部拖拽：仅接受文件 URL（是否文件夹由 acceptDrop 过滤）
+        guard info.draggingPasteboard.types?.contains(.fileURL) == true else { return [] }
+        outlineView.setDropItem(favoritesSection, dropChildIndex: store.items.count)
+        return .copy
+    }
+
+    func outlineView(_ outlineView: NSOutlineView,
+                     acceptDrop info: NSDraggingInfo,
+                     item: Any?,
+                     childIndex index: Int) -> Bool {
+        // 内部重排
+        if let id = info.draggingPasteboard.string(forType: Self.dragType) {
+            guard let from = store.index(of: id) else { return false }
+            guard store.move(fromIndex: from, insertionIndex: min(max(index, 0), store.items.count)) else {
+                return false
             }
-            // 使用 URL 最后一段作为收藏夹名称
-            let name = url.lastPathComponent
-            addFavorite(name: name, path: path)
-            addedCount += 1
-        }
-        if addedCount > 0 {
             onFavoritesChanged?()
             return true
         }
-        return false
+        // 外部拖入文件夹 = 添加收藏（设计 D2 默认：不移动文件，防误操作）
+        guard let pasteboardItems = info.draggingPasteboard.pasteboardItems else { return false }
+        var addedCount = 0
+        for pasteboardItem in pasteboardItems {
+            guard let urlData = pasteboardItem.data(forType: .fileURL),
+                  let url = URL(dataRepresentation: urlData, relativeTo: nil) else { continue }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else { continue }
+            let favorite = store.add(name: url.lastPathComponent, path: url.path)
+            store.setAvailability(.available, for: favorite.id)
+            addedCount += 1
+        }
+        guard addedCount > 0 else { return false }
+        onFavoritesChanged?()
+        return true
     }
+}
+
+// MARK: - FlippedSidebarContainer（v0.8.0 P1 滚动文档视图）
+
+/// 侧边栏滚动容器：isFlipped=true，内容天然贴顶。
+/// 非 flipped 的 documentView 会让内容贴底并在顶部留白（v0.7.2 设置页同类根因）。
+private final class FlippedSidebarContainer: NSView {
+    override var isFlipped: Bool { true }
 }
 
 // MARK: - TagsSidebarDataSource (标签)
@@ -1601,6 +2003,89 @@ extension NSColor {
 /// 每行一个标签：8x8 彩色圆点 + 13pt 完整标签名，行高 28pt
 /// 对齐访达侧边栏项目高度，标签名完整显示不截断，行宽填满侧边栏
 /// 布局：[section header: "标签" + "+" 按钮] + [垂直标签行列表]
+/// 标签行视图（DESIGN-SPEC §5.2）
+///
+/// 行式布局的三态背景：
+/// - 常态：透明
+/// - 悬停：`labelColor` 6%
+/// - 筛选态：`controlAccentColor` 15%
+///
+/// 用 layer 背景而非绘制，是因为标签行会在悬停/筛选切换时高频改色；
+/// 动态色必须经 `performAsCurrentDrawingAppearance` 解析，否则深浅色切换后
+/// `cgColor` 会停留在旧外观（项目内既有同类坑，见 FFPanelView）。
+private class TagRowView: NSView {
+
+    var isFiltered: Bool = false {
+        didSet { guard isFiltered != oldValue else { return }; applyBackground() }
+    }
+
+    private var isHovered: Bool = false {
+        didSet { guard isHovered != oldValue else { return }; applyBackground() }
+    }
+
+    private var trackingAreaRef: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 5
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        layer?.cornerRadius = 5
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingAreaRef {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingAreaRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyBackground()
+    }
+
+    private func applyBackground() {
+        let color: NSColor
+        if isFiltered {
+            color = NSColor.controlAccentColor.withAlphaComponent(0.15)
+        } else if isHovered {
+            color = NSColor.labelColor.withAlphaComponent(0.06)
+        } else {
+            color = .clear
+        }
+        var resolved = NSColor.clear.cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            resolved = color.cgColor
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.backgroundColor = resolved
+        CATransaction.commit()
+    }
+}
+
 private class TagFlowView: NSView {
 
     // MARK: - Callbacks
@@ -1614,6 +2099,9 @@ private class TagFlowView: NSView {
     private var tags: [Tag] = []
     /// 任务 F11-8: 当前高亮的标签 id（来自活动面板的 tagFilter），nil 表示无高亮
     private var highlightedTagId: String?
+    /// 标签计数：key = 标签名。原生标签（`_kMDItemUserTags`）每次读取生成随机 id，
+    /// 不能作 key，故一律按名称匹配（与 TagBridge 的合并去重口径一致）。
+    private var counts: [String: Int] = [:]
 
     // MARK: - UI Elements
 
@@ -1621,8 +2109,9 @@ private class TagFlowView: NSView {
     private let listContainer: NSStackView = {
         let sv = NSStackView()
         sv.orientation = .vertical
-        sv.alignment = .leading          // 行左对齐
-        sv.spacing = 6                   // 药丸行间距 6pt
+        // 行式：每行铺满侧栏宽度（计数需右对齐），故用 .width 而非 .leading 对齐
+        sv.alignment = .width
+        sv.spacing = 2                   // 行式行间距 2pt（DESIGN-SPEC §5.2）
         sv.distribution = .fill           // 各行按内容填充
         sv.translatesAutoresizingMaskIntoConstraints = false
         sv.wantsLayer = true
@@ -1630,17 +2119,21 @@ private class TagFlowView: NSView {
         return sv
     }()
 
-    // MARK: - Layout Constants (药丸样式)
+    // MARK: - Layout Constants (行式，DESIGN-SPEC §5.2)
 
-    /// 行高 22pt（紧凑药丸）
-    private let rowHeight: CGFloat = 22
-    /// 药丸高度 20pt
-    private let pillHeight: CGFloat = 20
-    private let dotSize: CGFloat = 7
-    /// 药丸内部水平内边距
-    private let pillPaddingH: CGFloat = 8
+    /// 行高 24pt
+    private let rowHeight: CGFloat = 24
+    /// 行间距 2pt
+    private let rowSpacing: CGFloat = 2
+    private let dotSize: CGFloat = 8
+    /// 行左内边距（色点距行左缘）
+    private let rowPaddingLeading: CGFloat = 6
+    /// 行右内边距（计数距行右缘）
+    private let rowPaddingTrailing: CGFloat = 6
     /// 圆点与文字间距
-    private let dotLabelGap: CGFloat = 5
+    private let dotLabelGap: CGFloat = 6
+    /// 行背景圆角
+    private let rowCornerRadius: CGFloat = 5
 
     // MARK: - Init
 
@@ -1676,6 +2169,13 @@ private class TagFlowView: NSView {
         rebuildRows()
     }
 
+    /// 更新标签计数（DESIGN-SPEC §5.2）。key 为标签名，0 / 缺失一律不显示数字。
+    func updateCounts(_ newCounts: [String: Int]) {
+        guard newCounts != counts else { return }
+        counts = newCounts
+        rebuildRows()
+    }
+
     /// 任务 F11-8: 设置当前高亮标签 id（来自活动面板 tagFilter），并重建行以应用高亮样式。
     /// nil 表示无高亮（取消筛选）。点击同一标签切换筛选时由 MainWindowController 负责置 nil。
     func setHighlightedTagId(_ tagId: String?) {
@@ -1685,12 +2185,19 @@ private class TagFlowView: NSView {
         rebuildRows()
     }
 
-    /// 计算指定宽度下的理想高度（供外部 updateTagsHeight 使用）
-    /// 无 header：高度 = 行数 × 28pt
+    /// 计算指定宽度下的理想高度（供外部布局参考）
+    /// 无 header：高度 = 行数 × 24pt + 行间距 2pt
     func idealHeight(forWidth width: CGFloat) -> CGFloat {
         let rowsHeight = CGFloat(tags.count) * rowHeight
-        let spacing = CGFloat(max(tags.count - 1, 0)) * 6
+        let spacing = CGFloat(max(tags.count - 1, 0)) * rowSpacing
         return rowsHeight + spacing
+    }
+
+    /// v0.8.0 P1: 高度由内容驱动，替代外部 tagsHeightConstraint 定高约束
+    /// （定高约束在标签数超出估算值时必然无解，是 2026-08-28 冲突日志与
+    ///  「收藏/标签重叠」缺陷的结构性来源）
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: max(idealHeight(forWidth: bounds.width), 1))
     }
 
     // MARK: - Rows Rebuild
@@ -1703,35 +2210,28 @@ private class TagFlowView: NSView {
             $0.removeFromSuperview()
         }
         for tag in tags {
-            let pill = makeTagRow(tag: tag)
-            listContainer.addArrangedSubview(pill)
-            // 药丸宽度由内容自适应，高度固定，左边缘贴 listContainer leading
-            pill.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
-            pill.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor).isActive = true
-            // 大目录优化：限制药丸不超过容器宽度，使长标签名以省略号截断而非被裁剪
-            pill.trailingAnchor.constraint(lessThanOrEqualTo: listContainer.trailingAnchor).isActive = true
+            let row = makeTagRow(tag: tag)
+            listContainer.addArrangedSubview(row)
+            // 行式：宽度由 listContainer 的 .width 对齐自动铺满，此处只需固定行高
+            row.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
         }
+        // 行集合变化后高度随之变化（intrinsicContentSize 驱动外层 stack）
+        invalidateIntrinsicContentSize()
     }
 
-    // MARK: - Tag Row Creation (药丸样式：胶囊形 + 浅色底 + 圆点 + 文字)
+    // MARK: - Tag Row Creation (行式：色点 + 名称 + 计数，DESIGN-SPEC §5.2)
 
-    /// 创建药丸标签行
-    /// 药丸：胶囊形（左右半圆），背景为标签色的浅色底，内含圆点 + 文字
-    /// 药丸宽度由内容自适应，左边缘与收藏夹图标对齐
+    /// 创建标签行：色点 + 名称 + 右侧计数，整行铺满侧栏宽度
+    /// 常态透明，悬停 6% 底，筛选态 15% 强调色底 + 名称加粗（不再使用药丸底）
     private func makeTagRow(tag: Tag) -> NSView {
         let isHighlighted = (highlightedTagId == tag.id)
         let tagColor = NSColor(hex: tag.color) ?? .systemBlue
 
-        // 药丸容器：胶囊形，内容自适应宽度
-        let pill = SquircleMaskedView()
-        pill.translatesAutoresizingMaskIntoConstraints = false
-        pill.identifier = NSUserInterfaceItemIdentifier(tag.id)
-        pill.wantsLayer = true
-        // 浅色底（标签色的淡色版本），高亮态加深
-        let bgAlpha: CGFloat = isHighlighted ? 0.25 : 0.15
-        pill.layer?.backgroundColor = tagColor.withAlphaComponent(bgAlpha).cgColor
-        // 胶囊形：圆角 = 高度的一半，形成左右半圆（超椭圆）
-        pill.squircleRadius = pillHeight / 2
+        let row = TagRowView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.identifier = NSUserInterfaceItemIdentifier(tag.id)
+        row.isFiltered = isHighlighted
+        row.toolTip = tag.name
 
         // 圆点（8x8，tag.color）
         let dot = NSView()
@@ -1740,28 +2240,46 @@ private class TagFlowView: NSView {
         dot.layer?.cornerRadius = dotSize / 2
         dot.translatesAutoresizingMaskIntoConstraints = false
 
-        // 文字（12pt；高亮态加粗）
+        // 名称（13pt；筛选态加粗）
         let label = NSTextField(labelWithString: tag.name)
         label.font = isHighlighted
-            ? NSFont.boldSystemFont(ofSize: 12)
-            : NSFont.systemFont(ofSize: 12)
+            ? NSFont.boldSystemFont(ofSize: 13)
+            : NSFont.systemFont(ofSize: 13)
         label.textColor = NSColor.labelColor
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
+        // 名称吸收剩余宽度，把计数推到最右；空间不足时优先截断名称
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        pill.addSubview(dot)
-        pill.addSubview(label)
+        // 计数（11pt 次级灰，右对齐；0 / 未知不显示）
+        let countLabel = NSTextField(labelWithString: "")
+        countLabel.font = NSFont.systemFont(ofSize: 11)
+        countLabel.textColor = NSColor.secondaryLabelColor
+        countLabel.alignment = .right
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let count = counts[tag.name] ?? 0
+        countLabel.stringValue = count > 0 ? "\(count)" : ""
+        countLabel.isHidden = count <= 0
+
+        row.addSubview(dot)
+        row.addSubview(label)
+        row.addSubview(countLabel)
 
         NSLayoutConstraint.activate([
-            // 药丸内部布局：圆点左 padding → 圆点 → gap → 文字 → 右 padding
-            // 药丸宽度由这些约束 + label 内在宽度自动确定
-            dot.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: pillPaddingH),
-            dot.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: rowPaddingLeading),
+            dot.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: dotSize),
             dot.heightAnchor.constraint(equalToConstant: dotSize),
+
             label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: dotLabelGap),
-            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -pillPaddingH),
-            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+
+            countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 8),
+            countLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -rowPaddingTrailing),
+            countLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
         ])
 
         // 右键菜单（删除标签）
@@ -1770,13 +2288,13 @@ private class TagFlowView: NSView {
         mi.target = self
         mi.representedObject = tag.id
         menu.addItem(mi)
-        pill.menu = menu
+        row.menu = menu
 
-        // 点击选择
+        // 点击选择（整行可点）
         let click = NSClickGestureRecognizer(target: self, action: #selector(handleRowClick(_:)))
-        pill.addGestureRecognizer(click)
+        row.addGestureRecognizer(click)
 
-        return pill
+        return row
     }
 
     @objc private func handleDeleteTag(_ sender: NSMenuItem) {

@@ -4,6 +4,87 @@
 
 ---
 
+## [0.7.9-b1] — 2026-10-17
+
+> **第一个面向普通用户的测试版**（beta 1）。版本号 0.7.9 / 构建 7901。
+> 设计方向的唯一来源是 `docs/DESIGN-SPEC.md`，产品定义见 `docs/PRODUCT.md`，
+> 验收口径见 `docs/ACCEPTANCE.md`。
+>
+> 本次交付：发行链路打通 + 设计方向收口 + 五条核心旅程打通 + 工程债清理。
+> （内部曾按 V0.8.0 规划，发版号回落到 0.7.9 系列，故旧文档标题仍见 0.8.0。）
+
+### 发行链路（P0）
+- **Release 构建恢复**：`cargo build --release` 此前在 macOS 27 + Homebrew rustc 1.96.1 下必然失败（fat LTO 让 proc-macro dylib 产出 `mis-aligned LINKEDIT string pool`，`serde_derive` 无法 dlopen）。改 `[profile.release] lto = "thin"` 后通过，保留绝大部分跨 crate 优化
+- **dylib 重链接根治**：`build-rust.sh` 的 Xcode ld 重链接缺 `-framework CoreServices`，导致 FSEventStream 符号未定义、长期回退到未对齐的 rust-lld 产物。补齐后重链接真正成功，导出 66 个 `ff_*` 符号，`dlopen` 验证通过
+- **打包恢复 Release**：`package-beta.sh` 从 Debug 改回 Release（此前因上述构建失败被迫降级）
+- **版本号单一真源**：`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 收敛到 Xcode 工程一处（0.7.9 / 7901），`scripts/lib-version.sh` 供打包脚本与 `make version` 读取，不再有三处硬编码
+- **构建产物移出版本库**：`Libraries/*.a` / `*.dylib` 不再入库（此前每次构建产生 41MB 二进制 diff）
+- **Makefile 重写**：原 `swift build` 目标对 Xcode 工程无效。新目标：`make build / release / demo / beta / test / version / warnings`
+
+### 设计系统（P0 → 同日收口）
+- **字体令牌单一来源**：`FFDesign.Text`（17 / 15 / 13 / 13m / 13sb / 12 / 11sb / 11 / 10 / mono12）。曾并存的 `FFDesign.Typography`（10 / 11 / 11sb / 13sb）已删除，原档位由 `baseSemibold` / `captionEmphasis` 承接，映射后渲染零变化
+- **原子组件收口**：`FFComponents.swift` 只留 `FFPanelView`（设备浮层实体卡片）；零引用的 `FFSectionHeaderView` / `FFEmptyStateView` / `FFSeparatorView` 已删除——空态实际由 `FFPaneStateOverlayView` 承担
+- **设计预览窗口已删除**（原 ⌥⌘D / `--design-preview`）：它渲染的是被撤销的 ZCode 方向（中性遮罩选中态、36pt 工具栏），留着会让「现行设计是哪套」永远有第二个答案
+- ⚠️ **设计基线已回退访达**：P0 曾移植 [zai-org/ZCode](https://github.com/zai-org/ZCode) 的「扁平、致密、以边框分层」并声明「不追求像素级克隆访达」。该结论**未经确认且与已确认的方向冲突，已于同日撤销**，令牌层于当晚一并清除。详见 `docs/DESIGN-SPEC.md`
+
+### 复审修正（2026-10-17 晚，对照 DESIGN-SPEC 全量核查）
+
+- **「选中」曾有四个色源**：列表交给 `NSTableView` 默认绘制（系统强调色=蓝），侧栏与网格取应用强调色 `FFAccent`，标签筛选又单独用 `controlAccentColor` 15%。用户把强调色改成红后，同一语义同时存在蓝与红。现三处统一 `FFAccent`，失焦统一 `unemphasizedSelectedContentBackgroundColor`
+  - 机制根因：委托创建的 `NSTableRowView` 其 `selectionHighlightStyle` 默认为 `.none`，此时由 `NSTableView` 用系统色自绘，行视图的 `drawSelection` 覆写不生效。需显式设 `.regular`
+- **网格选中改为实心强调色 + 白字**（原为 25% 透明底 + 黑字，与列表完全不同）
+- **侧栏宽度止三处不一致**：规格 200 / 令牌 200 / 代码 220 → 统一默认 220，改 `FFSplitView` 可拖 160–280，宽度写入 `sidebar_width` 记忆
+- **详情栏文件名 13 → 15 semibold**（`FFDesign.Text.lg`）
+- **窗口最小尺寸 1000×700 → 1060×700**：1000 减去侧栏 160 后每侧只剩 420，与操作区 450 保底自相矛盾
+- **J1 首次打开就能看到文件**：补 `NSDesktopFolderUsageDescription` / `NSDocumentsFolderUsageDescription` / `NSDownloadsFolderUsageDescription` / `NSRemovableVolumesUsageDescription` / `NSNetworkVolumesUsageDescription`。macOS 14+ 缺键时系统直接拒绝且不弹授权框
+- **启动目录兜底**：新增 `FFStartupPath`，候选序列「设置 → 上次位置 → 桌面 → 主目录」取首个真实存在者；两侧路径持久化到 `last_left_path` / `last_right_path`
+- **J3 全键盘找并打开**：搜索框内 ↓/↑ 把焦点交给文件视图并选中首/末项，Enter 打开当前结果。Enter 在列表内仍是重命名（访达语义），两者作用域分离
+- **J5 遇到问题知道怎么办**：新增 `FFErrorText`，错误不再把 `Permission denied (os error 13)` 这类英文原样上屏；权限类错误附带「打开系统设置」直达「隐私与安全性 › 文件和文件夹」
+
+### 布局基线回归（2026-10-17 裁定）
+
+逐条核对 37 份历史设计文档后，确认 P0 后续的布局重排（`7fd5bb5`）推翻了 5 条已确认决策，已回退：
+
+- **工具栏恢复双行 72pt**（v0.6.5 决策）：Row1 = 导航 + 刷新 + 面包屑，Row2 = 搜索 + 排序 + 分组 + 视图 + 工具。单行方案虽省 32pt 高度，但面包屑被压到约 130pt，排序分组被迫收进图标菜单
+- **详情栏恢复浮层**（v0.6.9 决策）：圆角卡片覆盖在列表上方，四周 8pt 边距 + 阴影；新增**底部留白补偿**——列表按浮层高度在滚动内容底部预留空白，修掉"最后一行被盖住"的长期副作用
+- **侧栏恢复无缝贴合**（v0.6.7 架构）：亚克力侧边栏直接贴内容区，内容区保留 1px 边框 + 超椭圆圆角，去掉 4pt 面板间隙与独立面板框
+- **超椭圆圆角系统保留**（v0.6.9）：不再声明废除
+- **设备面板保留实体卡片**（本轮唯一保留项）：`FFGlassView` → `FFPanelView(.card)`，理由为设备名与容量数字在半透明材质上可读性差
+- **面包屑截断方向修复**：`contentStack` 由 `leading` 改 `trailing`，溢出时保留当前目录（访达行为），此前只能看到「磁盘 > 用户」这类前缀
+
+### 需求基线（新增）
+
+- 新增 `docs/REQUIREMENTS.md`：项目首份需求真源。含产品定义、按版本的需求演进史（v0.6.0 → v0.8.0-P1）、当前生效功能全集（10 个模块 90+ 条带来源与状态）、偏离登记、十项硬约束、发布门槛、变更控制规则
+
+### 工程债（P0）
+- **菜单 action 类型安全**：`FFCommon.swift` 18 处 `Selector("xxx:")` 字符串改为 `#selector(FFPaneActionsController.xxx(_:))`，方法改名即刻编译报错，不再静默失效；`MainMenu.swift` 响应链 selector 改 `NSSelectorFromString`
+- **编译警告 96 → 52**（剩余集中在 `onModeChanged` 已废弃 API 与弱引用书写，随 P2 主题重构与布局重排一并清理）
+- **调试日志复核**：`FFDebug.log` / `FFLog.debug` 均已由 `#if DEBUG` 包裹，Release 二进制内 `strings` 检索 `ff-debug.log` 命中 0；无裸 `print`
+
+### 侧边栏收藏模块重设计 P1
+
+### 结构性重构
+- **侧边栏改为滚动容器**：`NSScrollView` + flipped documentView + 垂直内容栈，品牌区与底部工具行固定，中间内容整体滚动。收藏 20+ 项时不再溢出重叠
+- **收藏改为分区模型**：单一 `NSOutlineView` 渲染「个人收藏」group row + 收藏项（P2 标签并入后为多分区），删除 `favoritesHeightConstraint` / `tagsHeightConstraint` 两条定高约束与 `updateFavoritesHeight` / `updateTagsHeight` 高度计算链
+- **高度改内容驱动**：outline 用 `intrinsicContentSize`（分区标题 22 / 收藏行 28 / 空态行 26），`TagFlowView` 同样改 intrinsic 高度，消除「瞬态可变约束无解」的冲突来源
+
+### 新功能
+- **拖拽重排收藏**：内部拖拽使用独立粘贴板类型（`com.flowfinder.sidebar.favorite`），带系统插入指示线，顺序即时持久化
+- **收藏右键菜单五项**：从边栏中移除 / 在新标签页中打开 / 在新窗口中打开 / 显示简介 / 上移 / 下移（边界项自动置灰）
+- **失效收藏灰显保留**：后台去抖 500ms 校验路径存在性，失效项图标 40% 透明 + 次级文字色 + tooltip「找不到该文件夹」，点击/Enter 不导航；卷挂载/卸载通知触发重校验，外置卷重插自动恢复（不自动删除）
+- **空态引导行**：收藏为空时显示「拖入文件夹以添加收藏」
+- **键盘与无障碍**：↑↓ 在收藏项间移动（跳过分区标题）、Enter 导航；分区标题标记 `AXGroup`，行保留 `sidebarLabel`
+
+### 修复
+- **拖文件到收藏区语义明确**：外部拖入文件夹=添加收藏（不移动文件，防误操作，设计决策 D2 默认）
+- **点击收藏不再被自己重排打断**：程序化恢复选中时抑制导航通知（`suppressSelectionNotification`）
+
+### 测试
+- 新增 `SidebarFavoritesStoreTests`（17 项）：顺序重排（含 childIndex 语义/越界夹紧/空数组）、上移下移边界、UserDefaults 持久化往返、失效状态机（unknown 不算失效 / 恢复）、默认值播种与「用户清空后不回填」
+- 测试基线：**Rust 200 tests / Swift XCTest 115 tests 全绿**（原 98 + 新增 17）
+- `SidebarNavigationPosterTests` 适配分区模型：定位首条真实收藏行（首行为 group row，不可选中）
+
+---
+
 ## [0.7.6] — 2026-08-28
 
 > v0.7.5 发布后修复轮：界面稳定 + 弹窗可用性

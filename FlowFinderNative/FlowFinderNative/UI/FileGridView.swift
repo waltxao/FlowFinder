@@ -140,14 +140,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 }
             }
 
-            // 隐藏文件灰色
-            if entry.isHidden {
-                nameLabel.textColor = NSColor.tertiaryLabelColor
-            } else if entry.isSystemProtected {
-                nameLabel.textColor = NSColor.systemRed
-            } else {
-                nameLabel.textColor = NSColor.labelColor
-            }
+            // 文件名颜色由 applyVisualState 统一处理（选中白字 / 隐藏灰 / 保护红）
+            applyLabelColor()
 
             // 配置标签药丸（文件名下方）
             configureTagPills()
@@ -309,7 +303,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     }
 
     /// Wave3 Task 1: 统一应用选中态 + Drop 高亮态视觉。
-    /// - 选中：accent 25% 实底 + 圆角 8（既有行为）
+    /// - 选中：实心强调色 + 白字（DESIGN-SPEC G-04；与列表 NSTableRowView 的
+    ///   系统蓝实底 + 白字保持同一语义，此前用 25% 透明底配黑字，与列表选中完全不同）
     /// - Drop 高亮：accent 8% 底 + 1.5pt accent 圆角描边 + 圆角 8
     /// 两者可并存（描边叠加在选中底色之上）。
     private func applyVisualState() {
@@ -318,11 +313,30 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             (view as? SquircleMaskedView)?.squircleRadius = 8
         } else {
             view.layer?.backgroundColor = isSelected
-                ? FFAccent.current.withAlphaComponent(0.25).cgColor
+                ? FFAccent.current.cgColor
                 : NSColor.clear.cgColor
             (view as? SquircleMaskedView)?.squircleRadius = isSelected ? 8 : 0
         }
         dropBorderView.isHighlighted = isDropTarget
+        applyLabelColor()
+    }
+
+    /// 文件名颜色：选中态统一白色（含隐藏文件 / 系统保护文件——与列表选中行一致），
+    /// 非选中态按隐藏 / 系统保护的语义色回落。
+    private func applyLabelColor() {
+        if isSelected {
+            nameLabel.textColor = .white
+            pathLabel?.textColor = NSColor.white.withAlphaComponent(0.85)
+            return
+        }
+        if entry?.isHidden == true {
+            nameLabel.textColor = NSColor.tertiaryLabelColor
+        } else if entry?.isSystemProtected == true {
+            nameLabel.textColor = NSColor.systemRed
+        } else {
+            nameLabel.textColor = NSColor.labelColor
+        }
+        pathLabel?.textColor = NSColor.secondaryLabelColor
     }
 
     // MARK: - Tag Pills（标签药丸）
@@ -455,7 +469,7 @@ private final class FFGridSectionHeaderView: NSView {
         layer?.backgroundColor = NSColor.clear.cgColor
 
         // Wave4 Task 5：分组标题统一 emphasis(11 semibold) 令牌（与列表分组标题同档）
-        titleLabel.font = FFDesign.Typography.emphasis
+        titleLabel.font = FFDesign.Text.captionEmphasis
         titleLabel.textColor = NSColor.secondaryLabelColor
         titleLabel.backgroundColor = .clear
         titleLabel.isBezeled = false
@@ -616,6 +630,32 @@ public class FileGridView: NSView {
     /// Wave2 P0-1：keyViewLoop 焦点落点（内部集合视图）。
     /// MainWindowController 构建面板 keyViewLoop 时把链尾接到此视图。
     var keyFocusTarget: NSView? { collectionView }
+
+    /// 核心旅程 J3（⌘F → ↑↓ → Enter）：搜索框按 ↓/↑ 时把焦点交给网格，
+    /// 选中第一个 / 最后一个项目并滚动到可见。
+    func focusFirstSelectableItem(toLast: Bool) {
+        let count = collectionView.numberOfItems(inSection: 0)
+        guard count > 0 else { return }
+        let item = toLast ? count - 1 : 0
+        let indexPath = IndexPath(item: item, section: 0)
+        collectionView.selectItems(at: [indexPath], scrollPosition: toLast ? .bottom : .top)
+        window?.makeFirstResponder(collectionView)
+    }
+
+    /// V0.8.0：详情栏浮层遮挡补偿（与 `FileListView.setBottomOverlayInset` 同语义）。
+    /// 网格滚到底时最后一行图标不应被详情栏盖住，故在滚动内容底部预留浮层等高空白。
+    func setBottomOverlayInset(_ height: CGFloat) {
+        guard let sv = scrollView else { return }
+        let inset = max(0, height + 8)
+        guard abs(sv.contentInsets.bottom - inset) > 0.5 else { return }
+        sv.automaticallyAdjustsContentInsets = false
+        sv.contentInsets = NSEdgeInsets(
+            top: sv.contentInsets.top,
+            left: sv.contentInsets.left,
+            bottom: inset,
+            right: sv.contentInsets.right
+        )
+    }
 
     private var lastFilesCount: Int = -1
 

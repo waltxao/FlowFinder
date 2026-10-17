@@ -105,14 +105,17 @@ class BreadcrumbBar: NSView {
             clipContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
             clipContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-            // contentStack 在 clipContainer 内靠左对齐：
-            // - leading 固定 → 路径栏紧跟刷新按钮，消除中间空白
+            // contentStack 在 clipContainer 内靠右对齐（访达行为）：
+            // - trailing 固定 → 溢出时裁剪的是左侧，当前目录始终可见
             // - top/bottom 固定 → 垂直充满
-            // - 不约束 trailing → 由 intrinsicContentSize 决定宽度，向右生长
-            //   当内容宽度 > 容器宽度时，溢出部分被 clipContainer 裁剪
+            // - 不约束 leading → 由 intrinsicContentSize 决定宽度，向左生长
+            //   当内容宽度 > 容器宽度时，溢出部分（更浅的祖先路径）被 clipContainer 裁剪，
+            //   左侧省略号按钮显示被隐藏的段数
+            // 注意：此前约束的是 leading，与注释「靠右对齐」相反，导致溢出时裁掉当前目录，
+            // 路径长时只能看到「磁盘 > 用户」这类前缀。改为 trailing 后恢复访达行为。
             contentStack.topAnchor.constraint(equalTo: clipContainer.topAnchor),
             contentStack.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor),
-            contentStack.leadingAnchor.constraint(equalTo: clipContainer.leadingAnchor, constant: 0),
+            contentStack.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor, constant: 0),
 
             // 溢出按钮贴左
             overflowButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 0),

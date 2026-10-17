@@ -62,6 +62,12 @@
 		FF0000000000000000200063 /* FFLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200064; };
 		FF0000000000000000200065 /* FFCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200066; };
 		FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200076; };
+		FF2000010000000000000001 /* SidebarFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF2000020000000000000002; };
+		FF5000010000000000000001 /* FFStandardLocationIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5000020000000000000002; };
+		FF7000010000000000000001 /* FFErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7000020000000000000002; };
+		FF7100010000000000000001 /* FFStartupPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7100020000000000000002; };
+		FF6000010000000000000001 /* TagCountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF6000020000000000000002; };
+		FF3000010000000000000001 /* FFComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3000020000000000000002; };
 		FF0000000000000000200067 /* SquircleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200068; };
 		FF0000000000000000200069 /* ToolOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006A; };
 		FF000000000000000020006B /* FFFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006C; };
@@ -70,6 +76,7 @@
 		FF1000230000000000000023 /* FlowFinderNativeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000200000000000000020; };
 		FF1000240000000000000024 /* ContentIndexBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000210000000000000021; };
 		FF1000250000000000000025 /* PaneStateDeleteFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000220000000000000022; };
+		FF2000030000000000000003 /* SidebarFavoritesStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF2000040000000000000004; };
 		FF1000270000000000000027 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FF1000260000000000000026; };
 /* End PBXBuildFile section */
 
@@ -130,6 +137,12 @@
 		FF0000000000000000200064 /* FFLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLog.swift; sourceTree = "<group>"; };
 		FF0000000000000000200066 /* FFCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCommon.swift; sourceTree = "<group>"; };
 		FF0000000000000000200076 /* FFPaneActionsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPaneActionsController.swift; sourceTree = "<group>"; };
+		FF2000020000000000000002 /* SidebarFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarFavoritesStore.swift; sourceTree = "<group>"; };
+		FF5000020000000000000002 /* FFStandardLocationIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFStandardLocationIcon.swift; sourceTree = "<group>"; };
+		FF7000020000000000000002 /* FFErrorText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFErrorText.swift; sourceTree = "<group>"; };
+		FF7100020000000000000002 /* FFStartupPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFStartupPath.swift; sourceTree = "<group>"; };
+		FF6000020000000000000002 /* TagCountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagCountService.swift; sourceTree = "<group>"; };
+		FF3000020000000000000002 /* FFComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFComponents.swift; sourceTree = "<group>"; };
 		FF0000000000000000200068 /* SquircleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquircleView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006A /* ToolOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOverlayView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006C /* FFFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFFormat.swift; sourceTree = "<group>"; };
@@ -139,6 +152,7 @@
 		FF1000200000000000000020 /* FlowFinderNativeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowFinderNativeTests.swift; sourceTree = "<group>"; };
 		FF1000210000000000000021 /* ContentIndexBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentIndexBridgeTests.swift; sourceTree = "<group>"; };
 		FF1000220000000000000022 /* PaneStateDeleteFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneStateDeleteFilterTests.swift; sourceTree = "<group>"; };
+		FF2000040000000000000004 /* SidebarFavoritesStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarFavoritesStoreTests.swift; sourceTree = "<group>"; };
 		FF1000010000000000000001 /* FlowFinderNativeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FlowFinderNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FF1000260000000000000026 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -237,6 +251,12 @@
 				FF0000000000000000200056 /* ConnectServerDialog.swift */,
 				FF0000000000000000200066 /* FFCommon.swift */,
 				FF0000000000000000200076 /* FFPaneActionsController.swift */,
+				FF2000020000000000000002 /* SidebarFavoritesStore.swift */,
+				FF5000020000000000000002 /* FFStandardLocationIcon.swift */,
+				FF7000020000000000000002 /* FFErrorText.swift */,
+				FF7100020000000000000002 /* FFStartupPath.swift */,
+				FF6000020000000000000002 /* TagCountService.swift */,
+				FF3000020000000000000002 /* FFComponents.swift */,
 				FF0000000000000000200068 /* SquircleView.swift */,
 				FF000000000000000020006A /* ToolOverlayView.swift */,
 				FF000000000000000020006C /* FFFormat.swift */,
@@ -300,6 +320,7 @@
 				FF1000200000000000000020 /* FlowFinderNativeTests.swift */,
 				FF1000210000000000000021 /* ContentIndexBridgeTests.swift */,
 				FF1000220000000000000022 /* PaneStateDeleteFilterTests.swift */,
+				FF2000040000000000000004 /* SidebarFavoritesStoreTests.swift */,
 			);
 			path = Tests/FlowFinderNativeTests;
 			sourceTree = "<group>";
@@ -498,6 +519,12 @@
 				FF0000000000000000200063 /* FFLog.swift in Sources */,
 				FF0000000000000000200065 /* FFCommon.swift in Sources */,
 				FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */,
+				FF2000010000000000000001 /* SidebarFavoritesStore.swift in Sources */,
+				FF5000010000000000000001 /* FFStandardLocationIcon.swift in Sources */,
+				FF7000010000000000000001 /* FFErrorText.swift in Sources */,
+				FF7100010000000000000001 /* FFStartupPath.swift in Sources */,
+				FF6000010000000000000001 /* TagCountService.swift in Sources */,
+				FF3000010000000000000001 /* FFComponents.swift in Sources */,
 				FF0000000000000000200067 /* SquircleView.swift in Sources */,
 				FF10002A000000000000002A /* ContentIndexBridge.swift in Sources */,
 				FF1000310000000000000031 /* MainWindowController+MenuActions.swift in Sources */,
@@ -513,6 +540,7 @@
 				FF1000230000000000000023 /* FlowFinderNativeTests.swift in Sources */,
 				FF1000240000000000000024 /* ContentIndexBridgeTests.swift in Sources */,
 				FF1000250000000000000025 /* PaneStateDeleteFilterTests.swift in Sources */,
+				FF2000030000000000000003 /* SidebarFavoritesStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -645,7 +673,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 740;
+				CURRENT_PROJECT_VERSION = 7901;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -669,7 +697,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.7.4;
+				MARKETING_VERSION = 0.7.9;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
@@ -690,7 +718,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 740;
+				CURRENT_PROJECT_VERSION = 7901;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -714,7 +742,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.7.4;
+				MARKETING_VERSION = 0.7.9;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",

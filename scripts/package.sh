@@ -26,8 +26,12 @@ SCHEME_NAME="FlowFinderNative"
 TARGET_NAME="FlowFinderNative"
 CONFIGURATION="Release"
 BUILD_DIR="$PROJECT_DIR/build"
-VERSION="0.7.6"
-BUILD_NUMBER="760"
+
+# 版本号唯一真源：Xcode 工程 MARKETING_VERSION / CURRENT_PROJECT_VERSION
+# shellcheck source=scripts/lib-version.sh
+source "$SCRIPT_DIR/lib-version.sh"
+VERSION="$FF_VERSION"
+BUILD_NUMBER="$FF_BUILD"
 
 # Optional Developer ID signing (set via environment)
 DEVELOPER_ID="${DEVELOPER_ID:-}"

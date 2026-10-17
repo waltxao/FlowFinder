@@ -118,23 +118,6 @@ enum FFDesign {
         isDark ? OperationArea.elevatedDark : OperationArea.elevatedLight
     }
 
-    // MARK: - 字体令牌（Wave4 Task 5）
-
-    //
-    // 审计 §3：全应用 9–20pt 字号分散硬编码、无字体令牌，同一信息档跨文件不一致。
-    // 本期仅统一已确认的不一致点（分组标题 / 详情栏标签值与名称 / 同档引用），
-    // 全量令牌化列入后续（避免大范围回归）。
-    enum Typography {
-        /// 辅助信息（预留：小型徽标/计数等 10pt 档）
-        static let caption = NSFont.systemFont(ofSize: 10)
-        /// 正文基准（列表/网格文件名、详情栏标签与值）
-        static let body = NSFont.systemFont(ofSize: 11)
-        /// 强调正文（分组标题，semibold）
-        static let emphasis = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        /// 标题（详情栏文件名，semibold）
-        static let title = NSFont.systemFont(ofSize: 13, weight: .semibold)
-    }
-
     // MARK: - 主题相关便捷访问
 
     /// 当前是否深色（供玻璃层判断令牌）
@@ -170,5 +153,34 @@ enum FFDesign {
     /// 当前描边色（嵌入式 component，比 panel 弱）
     static var glassBorderComponent: NSColor {
         isDark ? Glass.borderDarkComponent : Glass.borderLightComponent
+    }
+
+
+    // MARK: - 字体令牌（唯一来源，对应 docs/DESIGN-SPEC.md §3.2）
+
+    //
+    // 2026-10-17 收敛：删除并存的 Typography（10/11/11sb/13sb）与 Text 两套令牌。
+    // 每档只有一个条目，任何字号都必须指向此处，不得再直接写 systemFont(ofSize:)。
+    enum Text {
+        /// 17 semibold：空态主标题、引导页标题
+        static let xl = NSFont.systemFont(ofSize: 17, weight: .semibold)
+        /// 15 semibold：详情栏文件名、弹窗标题
+        static let lg = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        /// 13 regular：列表/网格文件名、侧栏条目、按钮
+        static let base = NSFont.systemFont(ofSize: 13)
+        /// 13 medium：选中项、当前分区
+        static let baseEmphasis = NSFont.systemFont(ofSize: 13, weight: .medium)
+        /// 13 semibold：语义上需要强调但尺寸同正文（如详情栏多选汇总标题）
+        static let baseSemibold = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        /// 12 regular：次要说明、路径
+        static let caption = NSFont.systemFont(ofSize: 12)
+        /// 11 semibold：列头、分组标题
+        static let captionEmphasis = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        /// 11 regular：辅助信息、tooltip
+        static let sm = NSFont.systemFont(ofSize: 11)
+        /// 10 regular：徽标、计数、快捷键提示
+        static let xs = NSFont.systemFont(ofSize: 10)
+        /// 12 等宽：路径、大小、日期列
+        static let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     }
 }

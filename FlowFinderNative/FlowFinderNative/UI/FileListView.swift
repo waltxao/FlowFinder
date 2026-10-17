@@ -328,6 +328,24 @@ private class FFTableRowView: NSTableRowView {
         path.lineWidth = 1.5
         path.stroke()
     }
+
+    /// 选中底色统一走应用强调色（DESIGN-SPEC C-04 / C-05）。
+    ///
+    /// 2026-10-17 修复跨视图不一致：此前完全交给 NSTableView 默认绘制，取的是
+    /// **系统**强调色；而侧栏与网格用的是 **应用**强调色（FFAccent，可在设置里改）。
+    /// 用户把强调色改成红后，列表选中是蓝、侧栏与网格是红——同一「选中」概念两种颜色。
+    /// 现三处都从 FFAccent 取，获焦实底、失焦灰底（白字由 backgroundStyle 自动处理）。
+    override func drawSelection(in dirtyRect: NSRect) {
+        // 注意：行视图的 selectionHighlightStyle 默认为 .none（NSTableView 不会把
+        // 自己的 style 传给委托创建的 row view），若按 style 提前返回会一行都画不出来。
+        // 故只以 isSelected 判定。
+        guard isSelected else { return }
+        let color = isEmphasized
+            ? FFAccent.current
+            : NSColor.unemphasizedSelectedContentBackgroundColor
+        color.setFill()
+        bounds.fill()
+    }
 }
 
 /// 任务 F10-8 / F11-5: 分组标题行的 rowView。
@@ -358,7 +376,7 @@ private final class FFSectionHeaderRowView: NSTableRowView {
 
         // 标题文字：小字号、次级标签色，左对齐留 12pt 边距（Wave4 Task 5：emphasis 令牌）
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: FFDesign.Typography.emphasis,
+            .font: FFDesign.Text.captionEmphasis,
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
         let title = sectionTitle as NSString
@@ -420,7 +438,7 @@ private final class FFStickySectionHeaderView: NSView {
         layer?.backgroundColor = NSColor.clear.cgColor
 
         // Wave4 Task 5：分组标题统一 emphasis(11 semibold) 令牌（与网格分组标题同档）
-        titleLabel.font = FFDesign.Typography.emphasis
+        titleLabel.font = FFDesign.Text.captionEmphasis
         titleLabel.textColor = NSColor.secondaryLabelColor
         titleLabel.backgroundColor = .clear
         titleLabel.isBezeled = false
@@ -522,6 +540,16 @@ public class FileListView: NSView {
     /// MainWindowController 构建面板 keyViewLoop 时把链尾接到此视图，
     /// Tab 流转到文件列表后由 tableView 接管方向键/选中。
     var keyFocusTarget: NSView? { tableView }
+
+    /// 核心旅程 J3（⌘F → ↑↓ → Enter）：搜索框按 ↓/↑ 时把焦点交给列表，
+    /// 选中第一个 / 最后一个**可选**行（跳过分组标题行）并滚动到可见。
+    func focusFirstSelectableRow(toLast: Bool) {
+        let selectable = displayRows.indices.filter { !displayRows[$0].isHeader }
+        guard let row = toLast ? selectable.last : selectable.first else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
+        window?.makeFirstResponder(tableView)
+    }
 
     // 问题 7 根因修复：拖拽过程中持续捕获修饰键（用于 ⌘ 判断，访达语义）。
     // validateDrop/acceptDrop 回调中 NSApp.currentEvent 不可靠（可能为 nil 或非拖拽事件），
@@ -1786,7 +1814,12 @@ extension FileListView: NSTableViewDelegate {
             hv.sectionCount = viewModel?.groupedFiles.first(where: { $0.key == displayRows[row].key })?.entries.count ?? 0
             return hv
         }
-        return FFTableRowView()
+        // DESIGN-SPEC C-04：显式指定 .regular，让行视图自己负责选中绘制。
+        // 委托创建的 row view 其 selectionHighlightStyle 默认为 .none，此时 NSTableView
+        // 会用系统强调色自己画——这正是「列表蓝、侧栏与网格红」的成因。
+        let rowView = FFTableRowView()
+        rowView.selectionHighlightStyle = .regular
+        return rowView
     }
 
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
@@ -2344,6 +2377,29 @@ extension FileListView: FFPaneViewHost {
     var focusRestoreTarget: NSResponder? { tableView }
 
     func reloadPaneData() { reloadData() }
+
+    /// V0.8.0：详情栏浮层遮挡补偿。
+    ///
+    /// 详情栏以浮层形式覆盖在列表底部（v0.6.9 决策），列表本身始终延伸到容器底部。
+    /// 副作用是最后一行被浮层盖住，必须盲滚才能点到。此处按浮层高度在滚动内容底部
+    /// 预留同等空白（额外 +8pt 对应浮层距容器底部的边距），使列表能滚出遮挡区。
+    ///
+    /// - Parameter height: 详情栏当前高度（收起 54 / 展开为可调高度）
+    func setBottomOverlayInset(_ height: CGFloat) {
+        guard let sv = scrollView else { return }
+        // 浮层底部距容器 8pt，留白需一并覆盖
+        let inset = max(0, height + 8)
+        guard abs(sv.contentInsets.bottom - inset) > 0.5 else { return }
+        // 关闭自动调整，否则 AppKit 会在滚动条出现/消失时覆盖我们设的值
+        sv.automaticallyAdjustsContentInsets = false
+        sv.contentInsets = NSEdgeInsets(
+            top: sv.contentInsets.top,
+            left: sv.contentInsets.left,
+            bottom: inset,
+            right: sv.contentInsets.right
+        )
+        FFDebug.log("FileListView.setBottomOverlayInset side=\(getSide()) barHeight=\(height) inset=\(inset)")
+    }
 }
 
 // MARK: - FFCreateTagColorHolder（新建标签对话框颜色选择辅助类）

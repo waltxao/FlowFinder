@@ -48,8 +48,8 @@ class MainMenu {
         mainMenu.addItem(editMenuItem)
         let editMenu = NSMenu(title: "编辑")
         editMenuItem.submenu = editMenu
-        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "撤销", action: NSSelectorFromString("undo:"), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "重做", action: NSSelectorFromString("redo:"), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
         // Wave2 P0-2：剪切/复制/粘贴改用标准编辑 selector（copy:/cut:/paste:）——
@@ -186,8 +186,8 @@ class MainMenu {
         (FFUserDefaultsKeys.shortcutPaste, #selector(NSText.paste(_:))),
         (FFUserDefaultsKeys.shortcutSelectAll, #selector(MainWindowController.menuSelectAll(_:))),
         (FFUserDefaultsKeys.shortcutTrash, #selector(MainWindowController.menuMoveToTrash(_:))),
-        (FFUserDefaultsKeys.shortcutUndo, Selector("undo:")),
-        (FFUserDefaultsKeys.shortcutRedo, Selector("redo:")),
+        (FFUserDefaultsKeys.shortcutUndo, NSSelectorFromString("undo:")),
+        (FFUserDefaultsKeys.shortcutRedo, NSSelectorFromString("redo:")),
         (FFUserDefaultsKeys.shortcutListView, #selector(MainWindowController.menuListView(_:))),
         (FFUserDefaultsKeys.shortcutGridView, #selector(MainWindowController.menuGridView(_:))),
         (FFUserDefaultsKeys.shortcutRefresh, #selector(MainWindowController.menuRefresh(_:))),

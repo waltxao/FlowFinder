@@ -354,8 +354,10 @@ final class FFSwipeThrottler {
 
 /// 统一构建文件面板右键菜单：FileListView 与 FileGridView 共用同一套菜单结构与 action
 /// （架构统一：两种视图只是排列方式不同，右键操作完全一致）。
-/// 所有 item 的 action 用 Selector 字符串引用，target 传入 FFPaneActionsController
-/// （v0.7.3 起两个视图的操作统一委托给控制器实现，运行时按 selector 分派到控制器）。
+/// 所有 item 的 action 用 #selector 静态引用 FFPaneActionsController 的方法，
+/// target 传入 actionsController（v0.7.3 起两个视图的操作统一委托给控制器）。
+/// 用 #selector 而非 Selector("字符串")：方法改名/删除时编译期即报错，
+/// 避免菜单静默失效（旧写法曾导致 20 个 selector 失去静态检查）。
 enum FFPaneMenuBuilder {
 
     /// 构建右键菜单
@@ -369,66 +371,66 @@ enum FFPaneMenuBuilder {
         // v0.7.4 修订 2：撤销/重做项（默认隐藏，有可撤销/重做操作时由 menuNeedsUpdate 显示）
         // 标题动态更新为"撤销 X"/"重做 X"，如"撤销删除"、"重做删除"
         // tag 100=撤销, 101=重做（用 tag 识别避免标题变化后匹配失败）
-        let undoItem = menu.addItem(withTitle: "撤销", action: Selector("undoFromMenu:"), keyEquivalent: "z")
+        let undoItem = menu.addItem(withTitle: "撤销", action: #selector(FFPaneActionsController.undoFromMenu(_:)), keyEquivalent: "z")
         undoItem.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "撤销")
         undoItem.isHidden = true
         undoItem.tag = 100
-        let redoItem = menu.addItem(withTitle: "重做", action: Selector("redoFromMenu:"), keyEquivalent: "Z")
+        let redoItem = menu.addItem(withTitle: "重做", action: #selector(FFPaneActionsController.redoFromMenu(_:)), keyEquivalent: "Z")
         redoItem.image = NSImage(systemSymbolName: "arrow.uturn.forward", accessibilityDescription: "重做")
         redoItem.isHidden = true
         redoItem.tag = 101
         menu.addItem(.separator())
 
         // 1. 打开
-        menu.addItem(withTitle: "打开", action: Selector("openSelected:"), keyEquivalent: "")
+        menu.addItem(withTitle: "打开", action: #selector(FFPaneActionsController.openSelected(_:)), keyEquivalent: "")
         // 2. 分隔线
         menu.addItem(.separator())
         // 3. 复制
-        let copyItem = menu.addItem(withTitle: "复制", action: Selector("copySelected:"), keyEquivalent: "c")
+        let copyItem = menu.addItem(withTitle: "复制", action: #selector(FFPaneActionsController.copySelected(_:)), keyEquivalent: "c")
         copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制")
         // 4. 剪切
-        let cutItem = menu.addItem(withTitle: "剪切", action: Selector("cutSelected:"), keyEquivalent: "x")
+        let cutItem = menu.addItem(withTitle: "剪切", action: #selector(FFPaneActionsController.cutSelected(_:)), keyEquivalent: "x")
         cutItem.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "剪切")
         // 5. 粘贴
-        let pasteItem = menu.addItem(withTitle: "粘贴", action: Selector("pasteSelected:"), keyEquivalent: "v")
+        let pasteItem = menu.addItem(withTitle: "粘贴", action: #selector(FFPaneActionsController.pasteSelected(_:)), keyEquivalent: "v")
         pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "粘贴")
         // Wave2 P1：拷贝路径（多选时每行一个路径，写入系统剪贴板）
-        let copyPathItem = menu.addItem(withTitle: "拷贝路径", action: Selector("copyPathsSelected:"), keyEquivalent: "")
+        let copyPathItem = menu.addItem(withTitle: "拷贝路径", action: #selector(FFPaneActionsController.copyPathsSelected(_:)), keyEquivalent: "")
         copyPathItem.image = NSImage(systemSymbolName: "link", accessibilityDescription: "拷贝路径")
         // 6. 分隔线
         menu.addItem(.separator())
         // 7. 移动到另一面板（箭头方向随面板）
-        let moveItem = menu.addItem(withTitle: "移动到另一面板", action: Selector("moveToOtherPane:"), keyEquivalent: "")
+        let moveItem = menu.addItem(withTitle: "移动到另一面板", action: #selector(FFPaneActionsController.moveToOtherPane(_:)), keyEquivalent: "")
         moveItem.image = NSImage(systemSymbolName: isLeft ? "arrow.right" : "arrow.left",
                                  accessibilityDescription: "移动到另一面板")
         // 8. 复制到另一面板
-        let copyOtherItem = menu.addItem(withTitle: "复制到另一面板", action: Selector("copyToOtherPane:"), keyEquivalent: "")
+        let copyOtherItem = menu.addItem(withTitle: "复制到另一面板", action: #selector(FFPaneActionsController.copyToOtherPane(_:)), keyEquivalent: "")
         copyOtherItem.image = NSImage(systemSymbolName: isLeft ? "arrow.right.square" : "arrow.left.square",
                                       accessibilityDescription: "复制到另一面板")
         // 9. 在对侧面板打开（仅文件夹，由 menuNeedsUpdate 动态显示）
-        let openOtherItem = menu.addItem(withTitle: "在对侧面板打开", action: Selector("openInOtherPane:"), keyEquivalent: "")
+        let openOtherItem = menu.addItem(withTitle: "在对侧面板打开", action: #selector(FFPaneActionsController.openInOtherPane(_:)), keyEquivalent: "")
         openOtherItem.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "在对侧面板打开")
         openOtherItem.isHidden = true
         // 10. 分隔线
         menu.addItem(.separator())
         // 11. 重命名
-        let renameItem = menu.addItem(withTitle: "重命名", action: Selector("renameSelected:"), keyEquivalent: "")
+        let renameItem = menu.addItem(withTitle: "重命名", action: #selector(FFPaneActionsController.renameSelected(_:)), keyEquivalent: "")
         renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "重命名")
         // 12. 移到废纸篓（红色文字）
-        let deleteItem = menu.addItem(withTitle: "移到废纸篓", action: Selector("deleteSelected:"), keyEquivalent: "\u{7F}")
+        let deleteItem = menu.addItem(withTitle: "移到废纸篓", action: #selector(FFPaneActionsController.deleteSelected(_:)), keyEquivalent: "\u{7F}")
         deleteItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "移到废纸篓")
         let redAttrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.systemRed]
         deleteItem.attributedTitle = NSAttributedString(string: "移到废纸篓", attributes: redAttrs)
         // 13. 分隔线
         menu.addItem(.separator())
         // 14. 新建文件夹
-        let newFolderItem = menu.addItem(withTitle: "新建文件夹", action: Selector("createDirectory:"), keyEquivalent: "n")
+        let newFolderItem = menu.addItem(withTitle: "新建文件夹", action: #selector(FFPaneActionsController.createDirectory(_:)), keyEquivalent: "n")
         newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
         // 15. 用所选项目新建文件夹（选中数量在 menuNeedsUpdate 中动态更新标题）
         // v0.7.4 项 6：标题 "用所选 X 个项目新建文件夹"，X 由 updateMainMenu 填充
         let folderFromSelectionItem = menu.addItem(
             withTitle: "用所选项目新建文件夹",
-            action: Selector("createFolderFromSelection:"),
+            action: #selector(FFPaneActionsController.createFolderFromSelection(_:)),
             keyEquivalent: ""
         )
         folderFromSelectionItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "用所选项目新建文件夹")
@@ -436,7 +438,7 @@ enum FFPaneMenuBuilder {
         // 16. 分隔线
         menu.addItem(.separator())
         // 17. 添加到我的收藏
-        let favItem = menu.addItem(withTitle: "添加到我的收藏", action: Selector("addToFavorites:"), keyEquivalent: "")
+        let favItem = menu.addItem(withTitle: "添加到我的收藏", action: #selector(FFPaneActionsController.addToFavorites(_:)), keyEquivalent: "")
         favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
         // 18. 标签（二级菜单）
         if let tagsSubmenu = tagsSubmenu {
@@ -445,15 +447,15 @@ enum FFPaneMenuBuilder {
             tagsItem.submenu = tagsSubmenu
         }
         // 19. AI 自动打标签
-        let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: Selector("generateAITags:"), keyEquivalent: "")
+        let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: #selector(FFPaneActionsController.generateAITags(_:)), keyEquivalent: "")
         aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI 自动打标签")
         // 20. 查重扫描
-        let dupItem = menu.addItem(withTitle: "查重扫描", action: Selector("duplicateScan:"), keyEquivalent: "")
+        let dupItem = menu.addItem(withTitle: "查重扫描", action: #selector(FFPaneActionsController.duplicateScan(_:)), keyEquivalent: "")
         dupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
         // 21. 分隔线
         menu.addItem(.separator())
         // 22. 显示简介
-        let infoItem = menu.addItem(withTitle: "显示简介", action: Selector("showInfoMenu:"), keyEquivalent: "i")
+        let infoItem = menu.addItem(withTitle: "显示简介", action: #selector(FFPaneActionsController.showInfoMenu(_:)), keyEquivalent: "i")
         infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "显示简介")
 
         // 设置 target 与快捷键修饰键（与访达一致：⌘N 新建文件夹用 ⇧⌘N）
@@ -497,6 +499,8 @@ struct FFPaneStateDescriptor: Equatable {
     let showsSpinner: Bool
     let showsRetry: Bool
     let retryKind: FFPaneRetryKind
+    /// 权限类错误：显示「打开系统设置」直达「隐私与安全性 › 文件和文件夹」
+    var showsOpenSettings: Bool = false
 
     /// 由 PaneState 计算呈现描述。优先级：删除中 > 错误 > 加载 > 空 > 内容。
     /// - 删除中：顶部横幅进度（不遮挡列表）
@@ -517,21 +521,26 @@ struct FFPaneStateDescriptor: Equatable {
         }
 
         if let error = state.error {
+            // J5：错误正文不得是系统英文原文，统一经 FFErrorText 转成中文 + 下一步
+            let msg = FFErrorText.humanize(error)
             if state.files.isEmpty {
                 let retryKind: FFPaneRetryKind = state.deleteFailedPaths.isEmpty ? .reload : .deleteRetry
                 return FFPaneStateDescriptor(
                     mode: .error, isFullScreen: true, iconName: "exclamationmark.triangle",
-                    title: "无法加载此文件夹", subtitle: error,
-                    showsSpinner: false, showsRetry: true, retryKind: retryKind
+                    title: msg.title,
+                    subtitle: msg.detail.isEmpty ? "点「重试」再试一次。" : msg.detail,
+                    showsSpinner: false, showsRetry: true, retryKind: retryKind,
+                    showsOpenSettings: msg.isPermission
                 )
             }
             let failedCount = state.deleteFailedPaths.count
             return FFPaneStateDescriptor(
                 mode: .error, isFullScreen: false, iconName: "exclamationmark.triangle",
-                title: failedCount > 0 ? "\(failedCount) 个项目删除失败" : "操作失败",
-                subtitle: error,
+                title: failedCount > 0 ? "\(failedCount) 个项目删除失败" : msg.title,
+                subtitle: msg.detail.isEmpty ? "点「重试」再试一次。" : msg.detail,
                 showsSpinner: false, showsRetry: true,
-                retryKind: failedCount > 0 ? .deleteRetry : .reload
+                retryKind: failedCount > 0 ? .deleteRetry : .reload,
+                showsOpenSettings: msg.isPermission
             )
         }
 
@@ -612,6 +621,8 @@ final class FFPaneStateOverlayView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let retryButton = NSButton(title: "重试", target: nil, action: nil)
+    /// 权限类错误时的定向引导（J5：无权限不能只告诉用户「失败了」）
+    private let settingsButton = NSButton(title: "打开系统设置", target: nil, action: nil)
     private let bannerView = NSView()
     private let bannerSpinner = NSProgressIndicator()
     private let bannerIcon = NSImageView()
@@ -662,6 +673,14 @@ final class FFPaneStateOverlayView: NSView {
         retryButton.target = self
         retryButton.action = #selector(retryTapped)
 
+        settingsButton.bezelStyle = .rounded
+        settingsButton.controlSize = .small
+        settingsButton.font = NSFont.systemFont(ofSize: 11)
+        settingsButton.translatesAutoresizingMaskIntoConstraints = false
+        settingsButton.target = self
+        settingsButton.action = #selector(openPrivacySettings)
+        settingsButton.isHidden = true
+
         fullStack.orientation = .vertical
         fullStack.alignment = .centerX
         fullStack.spacing = 8
@@ -671,6 +690,7 @@ final class FFPaneStateOverlayView: NSView {
         fullStack.addArrangedSubview(titleLabel)
         fullStack.addArrangedSubview(subtitleLabel)
         fullStack.addArrangedSubview(retryButton)
+        fullStack.addArrangedSubview(settingsButton)
 
         bannerView.wantsLayer = true
         bannerView.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.98).cgColor
@@ -771,6 +791,7 @@ final class FFPaneStateOverlayView: NSView {
                 subtitleLabel.isHidden = descriptor.subtitle.isEmpty
                 subtitleLabel.stringValue = descriptor.subtitle
                 retryButton.isHidden = !descriptor.showsRetry
+                settingsButton.isHidden = !descriptor.showsOpenSettings
             }
             titleLabel.stringValue = descriptor.title
         } else {
@@ -803,9 +824,17 @@ final class FFPaneStateOverlayView: NSView {
     /// 全屏空/加载/错误状态下列表为空，穿透可保留空白区右键菜单（新建文件夹等）。
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden, let hit = super.hitTest(point) else { return nil }
-        if hit === retryButton || hit === bannerRetryButton { return hit }
+        if hit === retryButton || hit === bannerRetryButton || hit === settingsButton { return hit }
         if hit === bannerView || hit.isDescendant(of: bannerView) { return hit }
         return nil
+    }
+
+    /// 打开「系统设置 › 隐私与安全性 › 文件和文件夹」，让用户就地授权。
+    @objc private func openPrivacySettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
+        if let url = url {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// 重试：按描述符的重试语义分派（reload → refresh；deleteRetry → 重删失败项）。
@@ -893,10 +922,17 @@ enum FFDividerGlowMath {
         return [max(0, c - r), c, min(1, c + r)]
     }
 
-    /// 鼠标 X → 分隔线目标位置（绝对跟随模型）：clamp 到每侧最小 450pt 约束内
-    static func clampedDividerPosition(mouseX: CGFloat, boundsWidth: CGFloat) -> CGFloat {
-        let maxPosition = max(minPaneWidth, boundsWidth - minPaneWidth)
-        return min(max(mouseX, minPaneWidth), maxPosition)
+    /// 鼠标 X → 分隔线目标位置（绝对跟随模型）：clamp 到每侧最小宽约束内。
+    /// - leadingMin: 左侧子视图最小宽（双操作区 450；侧栏分隔 160，见 DESIGN-SPEC B-01）
+    /// - trailingMin: 右侧子视图最小宽
+    static func clampedDividerPosition(
+        mouseX: CGFloat,
+        boundsWidth: CGFloat,
+        leadingMin: CGFloat = minPaneWidth,
+        trailingMin: CGFloat = minPaneWidth
+    ) -> CGFloat {
+        let maxPosition = max(leadingMin, boundsWidth - trailingMin)
+        return min(max(mouseX, leadingMin), maxPosition)
     }
 }
 
@@ -928,5 +964,108 @@ enum FFDetailsFlowLayout {
         let rest = Array(itemHeights[first...])
         let second = flowSplit(itemHeights: rest, availableHeight: availableHeight)
         return first + second
+    }
+
+    // MARK: - 多列自适应（DESIGN-SPEC D-05 / D-06，v0.8.0）
+
+    /// 列间距（列与列之间，取代原列1/列2 分界线的 8pt）
+    static let columnGap: CGFloat = 8
+    /// 单列最小宽度：低于此值信息行会频繁换行，不如减少列数
+    static let minColumnWidth: CGFloat = 170
+    /// 列数上限。4 列之后单列宽度必然低于 minColumnWidth（常规窗口下），
+    /// 且更多列会让阅读顺序变跳跃
+    static let maxColumnCount: Int = 4
+
+    /// 一组行装进某一列后的总高（含行间距）
+    static func columnHeight(of indexes: [Int], itemHeights: [CGFloat]) -> CGFloat {
+        guard !indexes.isEmpty else { return 0 }
+        var total: CGFloat = 0
+        for (position, index) in indexes.enumerated() {
+            guard index < itemHeights.count else { continue }
+            total += (position == 0 ? 0 : rowSpacing) + itemHeights[index]
+        }
+        return total
+    }
+
+    /// 把行按顺序均衡分到 `columnCount` 列：目标是每列高度接近 `总高 / 列数`。
+    /// 顺序保持（不重排行序），只在越过目标高度时换列；最后一列接收剩余全部行。
+    static func distribute(itemHeights: [CGFloat], columnCount: Int) -> [[Int]] {
+        guard !itemHeights.isEmpty else { return [] }
+        let count = max(1, columnCount)
+        if count == 1 { return [Array(itemHeights.indices)] }
+
+        let all = Array(itemHeights.indices)
+        let target = columnHeight(of: all, itemHeights: itemHeights) / CGFloat(count)
+
+        var columns: [[Int]] = []
+        var current: [Int] = []
+        var currentHeight: CGFloat = 0
+
+        for (index, height) in itemHeights.enumerated() {
+            let addition = current.isEmpty ? height : height + rowSpacing
+            let exceedsTarget = currentHeight + addition > target + rowSpacing
+            // 只允许在「还没到最后一列」时换列，保证最后一列兜住所有剩余行
+            if !current.isEmpty, columns.count < count - 1, exceedsTarget {
+                columns.append(current)
+                current = [index]
+                currentHeight = height
+            } else {
+                current.append(index)
+                currentHeight += addition
+            }
+        }
+        if !current.isEmpty { columns.append(current) }
+        return columns
+    }
+
+    /// 可行列数：使每列高度都不超过 `availableHeight` 的最小列数，受宽度与上限约束。
+    /// 返回 1 表示单列已够；都装不下时返回上限值（由调用方截断）。
+    static func columnCount(itemHeights: [CGFloat],
+                            availableHeight: CGFloat,
+                            availableWidth: CGFloat) -> Int {
+        guard !itemHeights.isEmpty else { return 1 }
+        let upper = maxColumnLimit(forWidth: availableWidth)
+        for count in 1...upper {
+            let columns = distribute(itemHeights: itemHeights, columnCount: count)
+            if columns.allSatisfy({ columnHeight(of: $0, itemHeights: itemHeights) <= availableHeight }) {
+                return count
+            }
+        }
+        return upper
+    }
+
+    /// 宽度允许的最大列数：单列宽不得低于 `minColumnWidth`
+    static func maxColumnLimit(forWidth availableWidth: CGFloat) -> Int {
+        let estimated = Int(floor((availableWidth + columnGap) / (minColumnWidth + columnGap)))
+        return max(1, min(maxColumnCount, estimated))
+    }
+
+    /// 每列应显示的行索引（未包含的行隐藏）。
+    /// 优先找「不超高」的最小列数；都超高时用最大列数并逐列截断到装得下为止。
+    static func columnLayout(itemHeights: [CGFloat],
+                             availableHeight: CGFloat,
+                             availableWidth: CGFloat) -> [[Int]] {
+        guard !itemHeights.isEmpty else { return [] }
+        let count = columnCount(itemHeights: itemHeights,
+                                availableHeight: availableHeight,
+                                availableWidth: availableWidth)
+        let columns = distribute(itemHeights: itemHeights, columnCount: count)
+        return columns.map { trim($0, itemHeights: itemHeights, availableHeight: availableHeight) }
+    }
+
+    /// 按可用高度截断一列（保序，装不下即停）
+    private static func trim(_ indexes: [Int],
+                             itemHeights: [CGFloat],
+                             availableHeight: CGFloat) -> [Int] {
+        var result: [Int] = []
+        var total: CGFloat = 0
+        for index in indexes {
+            guard index < itemHeights.count else { continue }
+            let addition = result.isEmpty ? itemHeights[index] : itemHeights[index] + rowSpacing
+            if total + addition > availableHeight { break }
+            result.append(index)
+            total += addition
+        }
+        return result
     }
 }
