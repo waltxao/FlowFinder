@@ -133,17 +133,6 @@ class MainMenu {
         windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: "将全部窗口前置", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
 
-        #if DEBUG
-        // 设计系统预览（仅 Debug 构建，不进发行包）
-        windowMenu.addItem(.separator())
-        let previewItem = windowMenu.addItem(
-            withTitle: "设计系统预览",
-            action: #selector(AppDelegate.menuShowDesignPreview(_:)),
-            keyEquivalent: "d"
-        )
-        previewItem.keyEquivalentModifierMask = [.command, .option]
-        #endif
-
         // Help menu
         let helpMenuItem = NSMenuItem()
         mainMenu.addItem(helpMenuItem)

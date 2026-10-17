@@ -358,7 +358,7 @@ private final class FFSectionHeaderRowView: NSTableRowView {
 
         // 标题文字：小字号、次级标签色，左对齐留 12pt 边距（Wave4 Task 5：emphasis 令牌）
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: FFDesign.Typography.emphasis,
+            .font: FFDesign.Text.captionEmphasis,
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
         let title = sectionTitle as NSString
@@ -420,7 +420,7 @@ private final class FFStickySectionHeaderView: NSView {
         layer?.backgroundColor = NSColor.clear.cgColor
 
         // Wave4 Task 5：分组标题统一 emphasis(11 semibold) 令牌（与网格分组标题同档）
-        titleLabel.font = FFDesign.Typography.emphasis
+        titleLabel.font = FFDesign.Text.captionEmphasis
         titleLabel.textColor = NSColor.secondaryLabelColor
         titleLabel.backgroundColor = .clear
         titleLabel.isBezeled = false

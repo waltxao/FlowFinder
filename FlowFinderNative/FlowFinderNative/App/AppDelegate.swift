@@ -22,15 +22,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         FFDebug.clear()
         FFDebug.log("AppDelegate: applicationDidFinishLaunching")
 
-        #if DEBUG
-        // 设计审阅用：以 --design-preview 启动时直接打开设计系统预览窗口
-        if CommandLine.arguments.contains("--design-preview") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                FFDesignPreviewWindowController.shared.show()
-            }
-        }
-        #endif
-
         // 任务 F11-3: 全局 ErrorBoundary（v0.6.7）
         // 捕获未处理异常，弹窗提示而非崩溃。轻量进程重启依赖 terminate 后由
         // launch agent / 用户再次打开；此处“重启”按钮通过 relaunch 触发再终止。
@@ -241,10 +232,4 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    #if DEBUG
-    /// 打开设计系统预览窗口（仅 Debug；Release 构建不编译此方法）
-    @objc func menuShowDesignPreview(_ sender: Any?) {
-        FFDesignPreviewWindowController.shared.show()
-    }
-    #endif
 }
