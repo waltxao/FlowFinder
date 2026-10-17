@@ -991,6 +991,19 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleSidebarDirectorySelected(_:)),
             name: .sidebarDidSelectDirectory, object: nil
         )
+        // v0.8.0 P1: 收藏右键菜单的窗口级动作（新标签页 / 新窗口 / 显示简介）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarOpenInNewTab(_:)),
+            name: .sidebarDidRequestOpenInNewTab, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarOpenInNewWindow(_:)),
+            name: .sidebarDidRequestOpenInNewWindow, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarShowFavoriteInfo(_:)),
+            name: .sidebarDidRequestShowFavoriteInfo, object: nil
+        )
         // 任务 F11-8: 订阅侧边栏标签点击筛选通知（问题3）
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSidebarTagSelected(_:)),
@@ -1882,14 +1895,18 @@ public class MainWindowController: NSWindowController {
         window.makeFirstResponder(target)
     }
 
-    /// 判断侧边栏通知发送者是否属于本窗口（活体缺陷：发送者实际是 SidebarView
-    /// 内部的数据源对象 FavoritesSidebarDataSource/DeviceSidebarDataSource/TagPillView，
-    /// 守卫若只认 sidebarView 实例会误杀本窗口导航——改为验证发送者位于本侧边栏视图树内）
+    /// 判断侧边栏通知发送者是否属于本窗口（活体缺陷：发送者是侧边栏内部
+    /// 数据源/outlineView 视图——数据源对象非 NSView 无法走视图树判定；
+    /// 设备浮层 outlineView 挂在 mainContainer 也不在 sidebarView 子树内。
+    /// 归属判定以「发送者所属 NSWindow === 本窗口」为准，未挂窗时退回视图树判定）
     private func isOwnSidebarNotification(_ notification: Notification) -> Bool {
         guard let source = notification.object as? NSView else {
             return notification.object == nil // 旧 poster 兼容
         }
         if source === sidebarView { return true }
+        if let sourceWindow = source.window {
+            return sourceWindow === window
+        }
         var current: NSView? = source
         while let view = current {
             if view === sidebarView { return true }
@@ -1906,6 +1923,54 @@ public class MainWindowController: NSWindowController {
         guard let entry = (notification.userInfo?["entry"] as? FileEntry) ?? (notification.object as? FileEntry) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: entry.path)
+    }
+
+    // MARK: - v0.8.0 P1：收藏右键菜单的窗口级动作
+
+    /// 在新标签页中打开收藏目录
+    @objc private func handleSidebarOpenInNewTab(_ notification: Notification) {
+        guard isOwnSidebarNotification(notification),
+              let path = notification.userInfo?["path"] as? String else { return }
+        openDirectoryInNewWindow(path: path, asTab: true)
+    }
+
+    /// 在新窗口中打开收藏目录
+    @objc private func handleSidebarOpenInNewWindow(_ notification: Notification) {
+        guard isOwnSidebarNotification(notification),
+              let path = notification.userInfo?["path"] as? String else { return }
+        openDirectoryInNewWindow(path: path, asTab: false)
+    }
+
+    /// 显示收藏目录的「简介」窗口
+    @objc private func handleSidebarShowFavoriteInfo(_ notification: Notification) {
+        guard isOwnSidebarNotification(notification),
+              let path = notification.userInfo?["path"] as? String else { return }
+        showFileInfo(forPath: path)
+    }
+
+    /// 新建窗口并在左面板导航到指定目录；`asTab` 为真时并入当前窗口的标签页。
+    ///
+    /// 窗口创建/持有归 MainWindowController（AppDelegate.extras 强引用），
+    /// SidebarView 仅发意图通知，不直接建窗——保持多窗口簿记单点。
+    private func openDirectoryInNewWindow(path: String, asTab: Bool) {
+        let controller = MainWindowController()
+        if let reference = window {
+            let origin = reference.frame.origin
+            controller.window?.setFrameOrigin(NSPoint(x: origin.x + 28, y: origin.y - 28))
+        }
+        (NSApp.delegate as? AppDelegate)?.registerWindowController(controller)
+        controller.showWindow(nil)
+        controller.leftPaneViewModel.navigate(to: path)
+
+        guard asTab, let host = window, host.tabbingMode != .disallowed,
+              let newWindow = controller.window else { return }
+        // 标签页合并要求两窗口 tabbingIdentifier 一致
+        if host.tabbingIdentifier.isEmpty {
+            host.tabbingIdentifier = "FlowFinderMain"
+        }
+        newWindow.tabbingIdentifier = host.tabbingIdentifier
+        host.addTabbedWindow(newWindow, ordered: .above)
+        newWindow.makeKeyAndOrderFront(nil)
     }
 
     /// 任务 F11-8: 处理侧边栏标签点击，设置当前活动面板的标签筛选（问题3）。
