@@ -1703,7 +1703,40 @@ public class MainWindowController: NSWindowController {
                 name: .paneTagFilterChanged, object: window,
                 userInfo: ["tagFilter": state.tagFilter as Any]
             )
+            // DESIGN-SPEC §5.2：活动面板目录内的标签计数（后台 + 防抖）
+            scheduleTagCountRefresh(side: side)
         }
+    }
+
+    // MARK: - 标签计数（DESIGN-SPEC §5.2）
+
+    private var tagCountWorkItem: DispatchWorkItem?
+    /// 代次：导航/切换面板期间旧统计可能晚于新统计返回，用它丢弃旧结果
+    private var tagCountGeneration = 0
+
+    /// 防抖 300ms 后统计当前活动面板目录内的标签分布并推给侧栏。
+    /// 触发源是 updatePaneUI——分页加载、搜索、排序都会多次进入，
+    /// 防抖把连续的进入合并成一次 xattr 扫描。
+    private func scheduleTagCountRefresh(side: PaneSide) {
+        tagCountWorkItem?.cancel()
+        tagCountGeneration += 1
+        let generation = tagCountGeneration
+        let viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
+        // 用未过滤列表作基数：筛选某标签时该标签自己的计数不应塌缩为筛后条数
+        let paths = viewModel.unfilteredFiles.map { $0.path }
+        guard !paths.isEmpty else {
+            sidebarView?.updateTagCounts([:])
+            return
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            TagCountService.shared.count(paths: paths) { counts in
+                guard let self, self.tagCountGeneration == generation else { return }
+                self.sidebarView?.updateTagCounts(counts)
+            }
+        }
+        tagCountWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300), execute: work)
     }
 
     /// 问题7修复：获取指定路径所在卷的可用磁盘空间

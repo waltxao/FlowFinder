@@ -63,6 +63,8 @@
 		FF0000000000000000200065 /* FFCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200066; };
 		FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200076; };
 		FF2000010000000000000001 /* SidebarFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF2000020000000000000002; };
+		FF5000010000000000000001 /* FFStandardLocationIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5000020000000000000002; };
+		FF6000010000000000000001 /* TagCountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF6000020000000000000002; };
 		FF3000010000000000000001 /* FFComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3000020000000000000002; };
 		FF4000010000000000000001 /* FFDesignPreviewWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4000020000000000000002; };
 		FF0000000000000000200067 /* SquircleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200068; };
@@ -135,6 +137,8 @@
 		FF0000000000000000200066 /* FFCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCommon.swift; sourceTree = "<group>"; };
 		FF0000000000000000200076 /* FFPaneActionsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPaneActionsController.swift; sourceTree = "<group>"; };
 		FF2000020000000000000002 /* SidebarFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarFavoritesStore.swift; sourceTree = "<group>"; };
+		FF5000020000000000000002 /* FFStandardLocationIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFStandardLocationIcon.swift; sourceTree = "<group>"; };
+		FF6000020000000000000002 /* TagCountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagCountService.swift; sourceTree = "<group>"; };
 		FF3000020000000000000002 /* FFComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFComponents.swift; sourceTree = "<group>"; };
 		FF4000020000000000000002 /* FFDesignPreviewWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDesignPreviewWindow.swift; sourceTree = "<group>"; };
 		FF0000000000000000200068 /* SquircleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquircleView.swift; sourceTree = "<group>"; };
@@ -246,6 +250,8 @@
 				FF0000000000000000200066 /* FFCommon.swift */,
 				FF0000000000000000200076 /* FFPaneActionsController.swift */,
 				FF2000020000000000000002 /* SidebarFavoritesStore.swift */,
+				FF5000020000000000000002 /* FFStandardLocationIcon.swift */,
+				FF6000020000000000000002 /* TagCountService.swift */,
 				FF3000020000000000000002 /* FFComponents.swift */,
 				FF4000020000000000000002 /* FFDesignPreviewWindow.swift */,
 				FF0000000000000000200068 /* SquircleView.swift */,
@@ -511,6 +517,8 @@
 				FF0000000000000000200065 /* FFCommon.swift in Sources */,
 				FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */,
 				FF2000010000000000000001 /* SidebarFavoritesStore.swift in Sources */,
+				FF5000010000000000000001 /* FFStandardLocationIcon.swift in Sources */,
+				FF6000010000000000000001 /* TagCountService.swift in Sources */,
 				FF3000010000000000000001 /* FFComponents.swift in Sources */,
 				FF4000010000000000000001 /* FFDesignPreviewWindow.swift in Sources */,
 				FF0000000000000000200067 /* SquircleView.swift in Sources */,

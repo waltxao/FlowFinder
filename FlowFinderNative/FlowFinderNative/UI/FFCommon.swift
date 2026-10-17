@@ -931,4 +931,107 @@ enum FFDetailsFlowLayout {
         let second = flowSplit(itemHeights: rest, availableHeight: availableHeight)
         return first + second
     }
+
+    // MARK: - 多列自适应（DESIGN-SPEC D-05 / D-06，v0.8.0）
+
+    /// 列间距（列与列之间，取代原列1/列2 分界线的 8pt）
+    static let columnGap: CGFloat = 8
+    /// 单列最小宽度：低于此值信息行会频繁换行，不如减少列数
+    static let minColumnWidth: CGFloat = 170
+    /// 列数上限。4 列之后单列宽度必然低于 minColumnWidth（常规窗口下），
+    /// 且更多列会让阅读顺序变跳跃
+    static let maxColumnCount: Int = 4
+
+    /// 一组行装进某一列后的总高（含行间距）
+    static func columnHeight(of indexes: [Int], itemHeights: [CGFloat]) -> CGFloat {
+        guard !indexes.isEmpty else { return 0 }
+        var total: CGFloat = 0
+        for (position, index) in indexes.enumerated() {
+            guard index < itemHeights.count else { continue }
+            total += (position == 0 ? 0 : rowSpacing) + itemHeights[index]
+        }
+        return total
+    }
+
+    /// 把行按顺序均衡分到 `columnCount` 列：目标是每列高度接近 `总高 / 列数`。
+    /// 顺序保持（不重排行序），只在越过目标高度时换列；最后一列接收剩余全部行。
+    static func distribute(itemHeights: [CGFloat], columnCount: Int) -> [[Int]] {
+        guard !itemHeights.isEmpty else { return [] }
+        let count = max(1, columnCount)
+        if count == 1 { return [Array(itemHeights.indices)] }
+
+        let all = Array(itemHeights.indices)
+        let target = columnHeight(of: all, itemHeights: itemHeights) / CGFloat(count)
+
+        var columns: [[Int]] = []
+        var current: [Int] = []
+        var currentHeight: CGFloat = 0
+
+        for (index, height) in itemHeights.enumerated() {
+            let addition = current.isEmpty ? height : height + rowSpacing
+            let exceedsTarget = currentHeight + addition > target + rowSpacing
+            // 只允许在「还没到最后一列」时换列，保证最后一列兜住所有剩余行
+            if !current.isEmpty, columns.count < count - 1, exceedsTarget {
+                columns.append(current)
+                current = [index]
+                currentHeight = height
+            } else {
+                current.append(index)
+                currentHeight += addition
+            }
+        }
+        if !current.isEmpty { columns.append(current) }
+        return columns
+    }
+
+    /// 可行列数：使每列高度都不超过 `availableHeight` 的最小列数，受宽度与上限约束。
+    /// 返回 1 表示单列已够；都装不下时返回上限值（由调用方截断）。
+    static func columnCount(itemHeights: [CGFloat],
+                            availableHeight: CGFloat,
+                            availableWidth: CGFloat) -> Int {
+        guard !itemHeights.isEmpty else { return 1 }
+        let upper = maxColumnLimit(forWidth: availableWidth)
+        for count in 1...upper {
+            let columns = distribute(itemHeights: itemHeights, columnCount: count)
+            if columns.allSatisfy({ columnHeight(of: $0, itemHeights: itemHeights) <= availableHeight }) {
+                return count
+            }
+        }
+        return upper
+    }
+
+    /// 宽度允许的最大列数：单列宽不得低于 `minColumnWidth`
+    static func maxColumnLimit(forWidth availableWidth: CGFloat) -> Int {
+        let estimated = Int(floor((availableWidth + columnGap) / (minColumnWidth + columnGap)))
+        return max(1, min(maxColumnCount, estimated))
+    }
+
+    /// 每列应显示的行索引（未包含的行隐藏）。
+    /// 优先找「不超高」的最小列数；都超高时用最大列数并逐列截断到装得下为止。
+    static func columnLayout(itemHeights: [CGFloat],
+                             availableHeight: CGFloat,
+                             availableWidth: CGFloat) -> [[Int]] {
+        guard !itemHeights.isEmpty else { return [] }
+        let count = columnCount(itemHeights: itemHeights,
+                                availableHeight: availableHeight,
+                                availableWidth: availableWidth)
+        let columns = distribute(itemHeights: itemHeights, columnCount: count)
+        return columns.map { trim($0, itemHeights: itemHeights, availableHeight: availableHeight) }
+    }
+
+    /// 按可用高度截断一列（保序，装不下即停）
+    private static func trim(_ indexes: [Int],
+                             itemHeights: [CGFloat],
+                             availableHeight: CGFloat) -> [Int] {
+        var result: [Int] = []
+        var total: CGFloat = 0
+        for index in indexes {
+            guard index < itemHeights.count else { continue }
+            let addition = result.isEmpty ? itemHeights[index] : itemHeights[index] + rowSpacing
+            if total + addition > availableHeight { break }
+            result.append(index)
+            total += addition
+        }
+        return result
+    }
 }

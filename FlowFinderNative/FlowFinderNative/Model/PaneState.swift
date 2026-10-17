@@ -108,6 +108,11 @@ public class PaneViewModel: ObservableObject {
     /// 引入 allFiles 保存原始列表，applyFilter 始终从 allFiles 过滤到 state.files。
     private var allFiles: [FileEntry] = []
 
+    /// 当前目录原始列表的只读视图（未经过搜索/标签/显示过滤）。
+    /// 标签计数需要这个基数：用 `state.files` 会让「筛选中某标签」时
+    /// 该标签自己的计数塌缩为筛后条数，失去参考意义。
+    var unfilteredFiles: [FileEntry] { allFiles }
+
     /// 任务 F11-11: 大目录分页加载状态（C5）。
     /// 为避免 10 万+ 文件一次性渲染卡顿，loadDirectory 后首批 pageSize 条立即显示，
     /// 其余按 pageSize 分批异步追加（DispatchQueue.main.asyncAfter）。

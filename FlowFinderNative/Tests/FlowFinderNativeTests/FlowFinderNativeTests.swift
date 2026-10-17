@@ -523,6 +523,86 @@ final class FFDetailsFlowLayoutTests: XCTestCase {
     func testVisibleItemCountEmpty() {
         XCTAssertEqual(FFDetailsFlowLayout.visibleItemCount(itemHeights: [], availableHeight: 100), 0)
     }
+
+    // MARK: - 多列自适应（D-05 / D-06）
+
+    func testMaxColumnLimitByWidth() {
+        // (宽度 + 间距) / (最小列宽 + 间距)，向下取整，上限 4
+        XCTAssertEqual(FFDetailsFlowLayout.maxColumnLimit(forWidth: 300), 1)   // 308/178 = 1.7
+        XCTAssertEqual(FFDetailsFlowLayout.maxColumnLimit(forWidth: 400), 2)   // 408/178 = 2.2
+        XCTAssertEqual(FFDetailsFlowLayout.maxColumnLimit(forWidth: 600), 3)   // 608/178 = 3.4
+        XCTAssertEqual(FFDetailsFlowLayout.maxColumnLimit(forWidth: 2000), 4)  // 受上限 4 约束
+        XCTAssertEqual(FFDetailsFlowLayout.maxColumnLimit(forWidth: 0), 1)     // 下限 1
+    }
+
+    func testColumnCountGrowsWithAvailableHeight() {
+        let heights = [CGFloat](repeating: 16, count: 8)
+        let width: CGFloat = 900  // 4 列可用
+        // 总高 = 16*8 + 4*7 = 156
+        XCTAssertEqual(FFDetailsFlowLayout.columnCount(itemHeights: heights, availableHeight: 160, availableWidth: width), 1)
+        // 80 装不下 8 行 → 需要更多列
+        XCTAssertGreaterThan(FFDetailsFlowLayout.columnCount(itemHeights: heights, availableHeight: 80, availableWidth: width), 1)
+        // 高度极小时取上限
+        XCTAssertEqual(FFDetailsFlowLayout.columnCount(itemHeights: heights, availableHeight: 16, availableWidth: width), 4)
+    }
+
+    func testColumnCountRespectsWidthLimit() {
+        let heights = [CGFloat](repeating: 16, count: 20)
+        // 宽度只够 2 列：即使高度不足也不应超过 2 列
+        XCTAssertEqual(FFDetailsFlowLayout.columnCount(itemHeights: heights, availableHeight: 16, availableWidth: 400), 2)
+    }
+
+    func testDistributeIsBalancedAndOrdered() {
+        let heights = [CGFloat](repeating: 16, count: 6)
+        let columns = FFDetailsFlowLayout.distribute(itemHeights: heights, columnCount: 2)
+        // 均衡：各 3 行
+        XCTAssertEqual(columns.count, 2)
+        XCTAssertEqual(columns[0], [0, 1, 2])
+        XCTAssertEqual(columns[1], [3, 4, 5])
+    }
+
+    func testDistributeKeepsOrderAcrossColumns() {
+        let heights: [CGFloat] = [40, 16, 16, 16, 16, 16]
+        let columns = FFDetailsFlowLayout.distribute(itemHeights: heights, columnCount: 2)
+        let flattened = columns.flatMap { $0 }
+        // 顺序必须保持（阅读顺序不可乱）
+        XCTAssertEqual(flattened, flattened.sorted())
+        XCTAssertEqual(Set(flattened).count, heights.count)
+        // 首行最高，应落在第一列首项
+        XCTAssertEqual(columns.first?.first, 0)
+    }
+
+    func testColumnLayoutNeverOverflowsHeight() {
+        let heights = [CGFloat](repeating: 30, count: 12)
+        let layout = FFDetailsFlowLayout.columnLayout(
+            itemHeights: heights,
+            availableHeight: 50,        // 每列最多 1 行（30 + 4 + 30 = 64 > 50）
+            availableWidth: 900
+        )
+        for column in layout {
+            XCTAssertLessThanOrEqual(
+                FFDetailsFlowLayout.columnHeight(of: column, itemHeights: heights),
+                50
+            )
+        }
+        // 4 列各 1 行 → 最多可见 4 行，其余隐藏
+        XCTAssertLessThanOrEqual(layout.flatMap { $0 }.count, 4)
+    }
+
+    func testColumnLayoutSingleColumnWhenHeightPlenty() {
+        let heights = [CGFloat](repeating: 16, count: 3)
+        let layout = FFDetailsFlowLayout.columnLayout(
+            itemHeights: heights,
+            availableHeight: 500,
+            availableWidth: 900
+        )
+        XCTAssertEqual(layout.count, 1)
+        XCTAssertEqual(layout[0], [0, 1, 2])
+    }
+
+    func testColumnLayoutEmptyInput() {
+        XCTAssertTrue(FFDetailsFlowLayout.columnLayout(itemHeights: [], availableHeight: 100, availableWidth: 900).isEmpty)
+    }
 }
 
 // MARK: - FFDetailsBarLayoutTests（详情栏三模块布局回归）
@@ -555,7 +635,13 @@ final class FFDetailsBarLayoutTests: XCTestCase {
         // 期望值由栏自身尺寸推导，不依赖默认展开高度记忆值
         let expected = bar.frame.height - 6 - 18
         XCTAssertEqual(bar.dividerIconToCol1.bounds.height, expected, accuracy: 1.0)
-        XCTAssertEqual(bar.dividerCol1ToCol2.bounds.height, expected, accuracy: 1.0)
+        // D-05 起信息区内部不再有分界线（列宽等分、列数按高度推导），
+        // 改为核对各可见列高度一致（等分后并排、同一 top/bottom）
+        let visibleHeights = bar.infoColumns.filter { !$0.isHidden }.map { $0.bounds.height }
+        XCTAssertFalse(visibleHeights.isEmpty)
+        for height in visibleHeights {
+            XCTAssertEqual(height, visibleHeights[0], accuracy: 1.0)
+        }
     }
 }
 
@@ -620,7 +706,7 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
                       "专属信息行应保留在流动顺序中（6 常规 + ≥1 专属 + 3 常规），实际 \(flow.count)")
 
         // 且至少一个类型专属行仍被某一列持有（不在 infoRows/multiRows 中的行）
-        let attached = bar.mainColumn1.arrangedSubviews + bar.mainColumn2.arrangedSubviews
+        let attached = bar.infoColumns.flatMap { $0.arrangedSubviews }
         XCTAssertTrue(
             attached.contains { !bar.infoRows.contains($0) && !bar.multiRows.contains($0) },
             "至少一个类型专属行应被列持有")
@@ -687,7 +773,8 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         container.layoutSubtreeIfNeeded()
 
         func attachedCount() -> Int {
-            bar.mainColumn1.arrangedSubviews.count + bar.mainColumn2.arrangedSubviews.count
+            // D-06：列数随高度变化，须统计全部列而非前两列
+            bar.infoColumns.reduce(0) { $0 + $1.arrangedSubviews.count }
         }
 
         // 初始：栏高 210，行按可用高度分配（放不下的已摘除隐藏）

@@ -767,6 +767,13 @@ class SidebarView: NSView {
         tagFlowView.updateTags(tagsDataSource.allTags())
     }
 
+    /// 更新标签计数（DESIGN-SPEC §5.2）。
+    /// 由 MainWindowController 在活动面板目录/内容变化后推送，key 为标签名。
+    /// 空字典表示「本目录不统计」（超上限或统计失败），侧栏不显示数字。
+    func updateTagCounts(_ counts: [String: Int]) {
+        tagFlowView.updateCounts(counts)
+    }
+
     /// 任务 F11-8: 处理面板标签筛选变化通知，更新标签行高亮。
     /// userInfo["tagFilter"] 为当前活动面板的 tagFilter（Tag 或 nil），用于高亮对应标签行。
     @objc private func handlePaneTagFilterChanged(_ notification: Notification) {
@@ -1019,9 +1026,16 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
             // 任务 F10-4: 修正 F4 错误 - 收藏夹改回彩色真实图标（v0.6.6）
             // F4 错误地改为蓝色模板 SF Symbols，应使用 NSWorkspace 真实位置图标
             // 放大对齐访达 20pt，contentTintColor = nil 保留彩色（移除 F4 的 controlAccentColor）
-            let workspaceIcon = NSWorkspace.shared.icon(forFile: fav.path)
-            workspaceIcon.size = NSSize(width: 20, height: 20)
-            imageView.image = workspaceIcon
+            // B-06（v0.8.0）：标准位置改用专属彩色图标——系统文件夹图标在 20pt 下
+            // 内嵌符号几乎不可见，桌面/文稿/下载/应用程序看起来完全一样。
+            // 非标准位置仍回退真实文件图标（B-05 不变）。
+            if let standard = FFStandardLocationIcon.icon(forPath: fav.path) {
+                imageView.image = standard
+            } else {
+                let workspaceIcon = NSWorkspace.shared.icon(forFile: fav.path)
+                workspaceIcon.size = NSSize(width: 20, height: 20)
+                imageView.image = workspaceIcon
+            }
             imageView.contentTintColor = nil
 
         default:
@@ -1983,6 +1997,89 @@ extension NSColor {
 /// 每行一个标签：8x8 彩色圆点 + 13pt 完整标签名，行高 28pt
 /// 对齐访达侧边栏项目高度，标签名完整显示不截断，行宽填满侧边栏
 /// 布局：[section header: "标签" + "+" 按钮] + [垂直标签行列表]
+/// 标签行视图（DESIGN-SPEC §5.2）
+///
+/// 行式布局的三态背景：
+/// - 常态：透明
+/// - 悬停：`labelColor` 6%
+/// - 筛选态：`controlAccentColor` 15%
+///
+/// 用 layer 背景而非绘制，是因为标签行会在悬停/筛选切换时高频改色；
+/// 动态色必须经 `performAsCurrentDrawingAppearance` 解析，否则深浅色切换后
+/// `cgColor` 会停留在旧外观（项目内既有同类坑，见 FFPanelView）。
+private class TagRowView: NSView {
+
+    var isFiltered: Bool = false {
+        didSet { guard isFiltered != oldValue else { return }; applyBackground() }
+    }
+
+    private var isHovered: Bool = false {
+        didSet { guard isHovered != oldValue else { return }; applyBackground() }
+    }
+
+    private var trackingAreaRef: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 5
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        layer?.cornerRadius = 5
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingAreaRef {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingAreaRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyBackground()
+    }
+
+    private func applyBackground() {
+        let color: NSColor
+        if isFiltered {
+            color = NSColor.controlAccentColor.withAlphaComponent(0.15)
+        } else if isHovered {
+            color = NSColor.labelColor.withAlphaComponent(0.06)
+        } else {
+            color = .clear
+        }
+        var resolved = NSColor.clear.cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            resolved = color.cgColor
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.backgroundColor = resolved
+        CATransaction.commit()
+    }
+}
+
 private class TagFlowView: NSView {
 
     // MARK: - Callbacks
@@ -1996,6 +2093,9 @@ private class TagFlowView: NSView {
     private var tags: [Tag] = []
     /// 任务 F11-8: 当前高亮的标签 id（来自活动面板的 tagFilter），nil 表示无高亮
     private var highlightedTagId: String?
+    /// 标签计数：key = 标签名。原生标签（`_kMDItemUserTags`）每次读取生成随机 id，
+    /// 不能作 key，故一律按名称匹配（与 TagBridge 的合并去重口径一致）。
+    private var counts: [String: Int] = [:]
 
     // MARK: - UI Elements
 
@@ -2003,8 +2103,9 @@ private class TagFlowView: NSView {
     private let listContainer: NSStackView = {
         let sv = NSStackView()
         sv.orientation = .vertical
-        sv.alignment = .leading          // 行左对齐
-        sv.spacing = 6                   // 药丸行间距 6pt
+        // 行式：每行铺满侧栏宽度（计数需右对齐），故用 .width 而非 .leading 对齐
+        sv.alignment = .width
+        sv.spacing = 2                   // 行式行间距 2pt（DESIGN-SPEC §5.2）
         sv.distribution = .fill           // 各行按内容填充
         sv.translatesAutoresizingMaskIntoConstraints = false
         sv.wantsLayer = true
@@ -2012,17 +2113,21 @@ private class TagFlowView: NSView {
         return sv
     }()
 
-    // MARK: - Layout Constants (药丸样式)
+    // MARK: - Layout Constants (行式，DESIGN-SPEC §5.2)
 
-    /// 行高 22pt（紧凑药丸）
-    private let rowHeight: CGFloat = 22
-    /// 药丸高度 20pt
-    private let pillHeight: CGFloat = 20
-    private let dotSize: CGFloat = 7
-    /// 药丸内部水平内边距
-    private let pillPaddingH: CGFloat = 8
+    /// 行高 24pt
+    private let rowHeight: CGFloat = 24
+    /// 行间距 2pt
+    private let rowSpacing: CGFloat = 2
+    private let dotSize: CGFloat = 8
+    /// 行左内边距（色点距行左缘）
+    private let rowPaddingLeading: CGFloat = 6
+    /// 行右内边距（计数距行右缘）
+    private let rowPaddingTrailing: CGFloat = 6
     /// 圆点与文字间距
-    private let dotLabelGap: CGFloat = 5
+    private let dotLabelGap: CGFloat = 6
+    /// 行背景圆角
+    private let rowCornerRadius: CGFloat = 5
 
     // MARK: - Init
 
@@ -2058,6 +2163,13 @@ private class TagFlowView: NSView {
         rebuildRows()
     }
 
+    /// 更新标签计数（DESIGN-SPEC §5.2）。key 为标签名，0 / 缺失一律不显示数字。
+    func updateCounts(_ newCounts: [String: Int]) {
+        guard newCounts != counts else { return }
+        counts = newCounts
+        rebuildRows()
+    }
+
     /// 任务 F11-8: 设置当前高亮标签 id（来自活动面板 tagFilter），并重建行以应用高亮样式。
     /// nil 表示无高亮（取消筛选）。点击同一标签切换筛选时由 MainWindowController 负责置 nil。
     func setHighlightedTagId(_ tagId: String?) {
@@ -2068,10 +2180,10 @@ private class TagFlowView: NSView {
     }
 
     /// 计算指定宽度下的理想高度（供外部布局参考）
-    /// 无 header：高度 = 行数 × 22pt + 行间距 6pt
+    /// 无 header：高度 = 行数 × 24pt + 行间距 2pt
     func idealHeight(forWidth width: CGFloat) -> CGFloat {
         let rowsHeight = CGFloat(tags.count) * rowHeight
-        let spacing = CGFloat(max(tags.count - 1, 0)) * 6
+        let spacing = CGFloat(max(tags.count - 1, 0)) * rowSpacing
         return rowsHeight + spacing
     }
 
@@ -2092,37 +2204,28 @@ private class TagFlowView: NSView {
             $0.removeFromSuperview()
         }
         for tag in tags {
-            let pill = makeTagRow(tag: tag)
-            listContainer.addArrangedSubview(pill)
-            // 药丸宽度由内容自适应，高度固定，左边缘贴 listContainer leading
-            pill.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
-            pill.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor).isActive = true
-            // 大目录优化：限制药丸不超过容器宽度，使长标签名以省略号截断而非被裁剪
-            pill.trailingAnchor.constraint(lessThanOrEqualTo: listContainer.trailingAnchor).isActive = true
+            let row = makeTagRow(tag: tag)
+            listContainer.addArrangedSubview(row)
+            // 行式：宽度由 listContainer 的 .width 对齐自动铺满，此处只需固定行高
+            row.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
         }
         // 行集合变化后高度随之变化（intrinsicContentSize 驱动外层 stack）
         invalidateIntrinsicContentSize()
     }
 
-    // MARK: - Tag Row Creation (药丸样式：胶囊形 + 浅色底 + 圆点 + 文字)
+    // MARK: - Tag Row Creation (行式：色点 + 名称 + 计数，DESIGN-SPEC §5.2)
 
-    /// 创建药丸标签行
-    /// 药丸：胶囊形（左右半圆），背景为标签色的浅色底，内含圆点 + 文字
-    /// 药丸宽度由内容自适应，左边缘与收藏夹图标对齐
+    /// 创建标签行：色点 + 名称 + 右侧计数，整行铺满侧栏宽度
+    /// 常态透明，悬停 6% 底，筛选态 15% 强调色底 + 名称加粗（不再使用药丸底）
     private func makeTagRow(tag: Tag) -> NSView {
         let isHighlighted = (highlightedTagId == tag.id)
         let tagColor = NSColor(hex: tag.color) ?? .systemBlue
 
-        // 药丸容器：胶囊形，内容自适应宽度
-        let pill = SquircleMaskedView()
-        pill.translatesAutoresizingMaskIntoConstraints = false
-        pill.identifier = NSUserInterfaceItemIdentifier(tag.id)
-        pill.wantsLayer = true
-        // 浅色底（标签色的淡色版本），高亮态加深
-        let bgAlpha: CGFloat = isHighlighted ? 0.25 : 0.15
-        pill.layer?.backgroundColor = tagColor.withAlphaComponent(bgAlpha).cgColor
-        // 胶囊形：圆角 = 高度的一半，形成左右半圆（超椭圆）
-        pill.squircleRadius = pillHeight / 2
+        let row = TagRowView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.identifier = NSUserInterfaceItemIdentifier(tag.id)
+        row.isFiltered = isHighlighted
+        row.toolTip = tag.name
 
         // 圆点（8x8，tag.color）
         let dot = NSView()
@@ -2131,28 +2234,46 @@ private class TagFlowView: NSView {
         dot.layer?.cornerRadius = dotSize / 2
         dot.translatesAutoresizingMaskIntoConstraints = false
 
-        // 文字（12pt；高亮态加粗）
+        // 名称（13pt；筛选态加粗）
         let label = NSTextField(labelWithString: tag.name)
         label.font = isHighlighted
-            ? NSFont.boldSystemFont(ofSize: 12)
-            : NSFont.systemFont(ofSize: 12)
+            ? NSFont.boldSystemFont(ofSize: 13)
+            : NSFont.systemFont(ofSize: 13)
         label.textColor = NSColor.labelColor
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
+        // 名称吸收剩余宽度，把计数推到最右；空间不足时优先截断名称
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        pill.addSubview(dot)
-        pill.addSubview(label)
+        // 计数（11pt 次级灰，右对齐；0 / 未知不显示）
+        let countLabel = NSTextField(labelWithString: "")
+        countLabel.font = NSFont.systemFont(ofSize: 11)
+        countLabel.textColor = NSColor.secondaryLabelColor
+        countLabel.alignment = .right
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let count = counts[tag.name] ?? 0
+        countLabel.stringValue = count > 0 ? "\(count)" : ""
+        countLabel.isHidden = count <= 0
+
+        row.addSubview(dot)
+        row.addSubview(label)
+        row.addSubview(countLabel)
 
         NSLayoutConstraint.activate([
-            // 药丸内部布局：圆点左 padding → 圆点 → gap → 文字 → 右 padding
-            // 药丸宽度由这些约束 + label 内在宽度自动确定
-            dot.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: pillPaddingH),
-            dot.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: rowPaddingLeading),
+            dot.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: dotSize),
             dot.heightAnchor.constraint(equalToConstant: dotSize),
+
             label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: dotLabelGap),
-            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -pillPaddingH),
-            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+
+            countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 8),
+            countLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -rowPaddingTrailing),
+            countLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
         ])
 
         // 右键菜单（删除标签）
@@ -2161,13 +2282,13 @@ private class TagFlowView: NSView {
         mi.target = self
         mi.representedObject = tag.id
         menu.addItem(mi)
-        pill.menu = menu
+        row.menu = menu
 
-        // 点击选择
+        // 点击选择（整行可点）
         let click = NSClickGestureRecognizer(target: self, action: #selector(handleRowClick(_:)))
-        pill.addGestureRecognizer(click)
+        row.addGestureRecognizer(click)
 
-        return pill
+        return row
     }
 
     @objc private func handleDeleteTag(_ sender: NSMenuItem) {

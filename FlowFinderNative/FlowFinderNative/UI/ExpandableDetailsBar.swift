@@ -150,7 +150,6 @@ class ExpandableDetailsBar: NSView {
     /// 记忆 key（左右面板共用）
     private static let heightKey = "FFDetailsBarExpandedHeight"
     static let iconWidthKey = "FFDetailsBarIconWidth"
-    static let column1WidthKey = "FFDetailsBarColumn1Width"
 
     // MARK: - State
 
@@ -166,22 +165,22 @@ class ExpandableDetailsBar: NSView {
     private var isApplyingRemoteLayout = false
     /// 图标区宽度（记忆值；图标边长由此与内容区高度推导）
     private var iconWidth: CGFloat
-    /// 列1 宽度（记忆值；列2 兜底剩余宽度）
-    private var column1Width: CGFloat
     // 约束引用（Task 3 setupUI 中赋值）
     private var iconWidthC: NSLayoutConstraint!
-    private var column1WidthC: NSLayoutConstraint!
     private var bigIconWidthC: NSLayoutConstraint!
     private var bigIconHeightC: NSLayoutConstraint!
     private var multiIconWidthC: NSLayoutConstraint!
     private var multiIconHeightC: NSLayoutConstraint!
-    /// 两条内部分界线
+    /// 图标区与信息区之间的分界线（信息区内部不再有分界线：
+    /// D-05 起列宽等分，列数由高度自动推导，手动列宽与之互斥）
     /// internal 以便布局回归测试访问（FFDetailsDragStrip 经 @testable 访问；类型可见性以文件内定义为准）
     var dividerIconToCol1: FFDetailsDragStrip!
-    var dividerCol1ToCol2: FFDetailsDragStrip!
-    /// 内容模块区（contentModules）：图标区 | 分界线1 | 两列区，手动约束布局
+    /// 内容模块区（contentModules）：图标区 | 分界线 | 信息区，手动约束布局
     private var contentModules: NSView!
-    private var columnsArea: NSView!
+    /// 信息区：水平等分的 N 列容器（D-05）
+    private var columnsStack: NSStackView!
+    /// 全部列容器（1…4）。可见性由 rearrangeFlow 按列数控制
+    private var columnViews: [NSStackView] = []
 
     /// 展开/收起状态。设置时自动带动画过渡。
     var isExpanded: Bool = false {
@@ -232,6 +231,11 @@ class ExpandableDetailsBar: NSView {
     /// 第二列信息容器（标签/文件说明/文件来源）
     /// internal：回归测试访问
     var mainColumn2: NSStackView!
+
+    /// 全部信息列（当前可见的前 N 列有行，其余为空且隐藏）。
+    /// internal：回归测试需要遍历「行实际被哪一列持有」——D-06 起列数可变，
+    /// 只看前两列会漏掉第 3/4 列。
+    var infoColumns: [NSStackView] { columnViews }
 
     // v0.7.4 项 7：所有信息行的引用（多选/未选时隐藏空白条目，单选时显示）
     /// internal：回归测试访问
@@ -308,7 +312,6 @@ class ExpandableDetailsBar: NSView {
     override init(frame frameRect: NSRect) {
         userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? 210
         iconWidth = (UserDefaults.standard.object(forKey: Self.iconWidthKey) as? CGFloat) ?? 112
-        column1Width = (UserDefaults.standard.object(forKey: Self.column1WidthKey) as? CGFloat) ?? 220
         super.init(frame: frameRect)
         setupUI()
     }
@@ -316,7 +319,6 @@ class ExpandableDetailsBar: NSView {
     required init?(coder: NSCoder) {
         userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? 210
         iconWidth = (UserDefaults.standard.object(forKey: Self.iconWidthKey) as? CGFloat) ?? 112
-        column1Width = (UserDefaults.standard.object(forKey: Self.column1WidthKey) as? CGFloat) ?? 220
         super.init(coder: coder)
         setupUI()
     }
@@ -435,10 +437,26 @@ class ExpandableDetailsBar: NSView {
         // 避免 required 宽度在窄窗口下无法同时满足而刷布局冲突日志（审查发现 2）
         iconWidthC.priority = NSLayoutConstraint.Priority(999)
 
-        // 两列区容器（plain NSView；列内垂直流式布局由 Task 4 rearrangeFlow 用 setColumn 管理）
-        let area = NSView()
+        // 信息区容器：水平等分 N 列（D-05）。列内垂直流式布局由 rearrangeFlow 用 setColumn 管理。
+        // 改成 NSStackView 的原因：列数由高度自动推导（D-06），1–4 列之间切换时
+        // 需要「等分 + 自动腾位」，手动约束里列宽记忆值与动态列数互斥。
+        let area = NSStackView()
+        area.orientation = .horizontal
+        area.spacing = FFDetailsFlowLayout.columnGap
+        area.distribution = .fillEqually
+        area.alignment = .top
         area.translatesAutoresizingMaskIntoConstraints = false
-        columnsArea = area
+        columnsStack = area
+
+        /// 新建一列（垂直 stack，行由 setColumn 全量替换）
+        func makeInfoColumn() -> NSStackView {
+            let column = NSStackView()
+            column.orientation = .vertical
+            column.spacing = FFDetailsFlowLayout.rowSpacing
+            column.alignment = .leading
+            column.translatesAutoresizingMaskIntoConstraints = false
+            return column
+        }
 
         // 第一列：名称 / 种类 / 大小 / 位置 / 创建日期 / 修改日期 + 文件类型专属信息
         let column1 = NSStackView()
@@ -566,27 +584,27 @@ class ExpandableDetailsBar: NSView {
         // v0.7.4 项 7：收集所有信息行引用（多选/未选时隐藏）
         infoRows = [nameRow, typeRow, sizeRow, locationRow, createdRow, modifiedRow, tagsRow, descRow, sourceRow]
 
-        // 列1 宽度约束 = 记忆值（列2 兜底剩余宽度，见大约束数组）
-        column1WidthC = column1.widthAnchor.constraint(equalToConstant: column1Width)
-        // 999 优先级：窗口/面板过窄时优雅压缩（列2 由 required 边缘约束兜底），
-        // 避免 required 宽度在窄窗口下无法同时满足而刷布局冲突日志（审查发现 2）
-        column1WidthC.priority = NSLayoutConstraint.Priority(999)
-
-        // 两条内部分界线：图标区|两列区（div1）、列1|列2（div2），带 1pt 可见线
+        // 图标区 | 信息区 之间的分界线，带 1pt 可见线。
+        // 信息区内部不再有分界线：D-05 起列宽等分、列数按高度自动推导，
+        // 手动列宽记忆与动态列数互斥，故一并废除（原 div2 / column1Width）。
         let div1 = FFDetailsDragStrip(axis: .horizontal, cursor: .resizeLeftRight, showsLine: true)
-        let div2 = FFDetailsDragStrip(axis: .horizontal, cursor: .resizeLeftRight, showsLine: true)
         div1.translatesAutoresizingMaskIntoConstraints = false
-        div2.translatesAutoresizingMaskIntoConstraints = false
         dividerIconToCol1 = div1
-        dividerCol1ToCol2 = div2
 
-        // 手动组装：图标区与两列区挂到模块区，列1/列2 挂到两列区（不再是 stack arranged）
+        // 第三、四列：多列自适应时启用，默认隐藏（可见性与行分配由 rearrangeFlow 决定）
+        let column3 = makeInfoColumn()
+        let column4 = makeInfoColumn()
+        column3.isHidden = true
+        column4.isHidden = true
+
+        // 手动组装：图标区与信息区挂到模块区，各列由信息区 stack 管理
         modules.addSubview(iconSlot)
         modules.addSubview(div1)
         modules.addSubview(area)
-        area.addSubview(column1)
-        area.addSubview(div2)
-        area.addSubview(column2)
+        columnViews = [column1, column2, column3, column4]
+        for column in columnViews {
+            area.addArrangedSubview(column)
+        }
 
         // 多选内容行容器：Task 4 后汇总行由 rearrangeFlow 摆放到主信息两列，
         // 此容器仅保留隐藏占位（避免改动 expandedStack 结构）
@@ -772,28 +790,13 @@ class ExpandableDetailsBar: NSView {
             div1.bottomAnchor.constraint(equalTo: modules.bottomAnchor),
             div1.widthAnchor.constraint(equalToConstant: 8),
 
-            // 两列区：分界线1 右侧到模块区右缘
+            // 两列区：分界线1 右侧到模块区右缘（列宽与列数由 stack 与 rearrangeFlow 管理）
             area.leadingAnchor.constraint(equalTo: div1.trailingAnchor),
             area.trailingAnchor.constraint(equalTo: modules.trailingAnchor),
             area.topAnchor.constraint(equalTo: modules.topAnchor),
             area.bottomAnchor.constraint(equalTo: modules.bottomAnchor),
 
-            // 列1：宽度 = 记忆值
-            column1.leadingAnchor.constraint(equalTo: area.leadingAnchor),
-            column1.topAnchor.constraint(equalTo: area.topAnchor),
-            column1WidthC,
-
-            // 分界线2：列1 | 列2
-            div2.leadingAnchor.constraint(equalTo: column1.trailingAnchor),
-            div2.topAnchor.constraint(equalTo: area.topAnchor),
-            div2.bottomAnchor.constraint(equalTo: area.bottomAnchor),
-            div2.widthAnchor.constraint(equalToConstant: 8),
-
-            // 列2：兜底剩余宽度
-            column2.leadingAnchor.constraint(equalTo: div2.trailingAnchor),
-            column2.trailingAnchor.constraint(equalTo: area.trailingAnchor),
-            column2.topAnchor.constraint(equalTo: area.topAnchor),
-
+            // 各列的宽度/位置由信息区 stack（fillEqually）自动管理，此处不再单独约束
             heightConstraint,
         ])
 
@@ -820,15 +823,6 @@ class ExpandableDetailsBar: NSView {
             NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
             rearrangeFlow()
         }
-        div2.onDrag = { [weak self] dx in self?.applyColumn1WidthDrag(deltaX: dx) }
-        div2.onDragEnd = { [weak self] in
-            guard let self else { return }
-            // 尺寸记忆在拖拽结束时一次性落盘并广播（同上，复核 Important 1）
-            UserDefaults.standard.set(self.column1Width, forKey: Self.column1WidthKey)
-            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
-            rearrangeFlow()
-        }
-
         // 多选汇总行注册表（顺序即流动顺序；行由 rearrangeFlow 统一摆放）
         multiRows = [multiCountRow, multiSizeRow, multiTypesRow, multiTagsRow]
 
@@ -837,10 +831,14 @@ class ExpandableDetailsBar: NSView {
         refresh()
     }
 
-    /// 按内容区高度与图标区宽度重算图标边长：min(图标区宽 − 16, 内容区高 − 16)，下限 32
+    /// 按内容区高度与图标区宽度重算图标边长（D-05b）：
+    /// `clamp(min(图标区宽 − 16, 内容区高 − 16), 32, 140)`。
+    /// 上限 140：实测 200 时图标会占掉面板两成宽度、把信息区挤成单列，
+    /// 反而不如让图标停在「一眼能认出文件类型」的尺寸。
     func updateIconEdge() {
         let contentHeight = expandedView.bounds.height
-        let edge = max(min(iconWidth - 16, contentHeight - 16), 32)
+        let raw = min(iconWidth - 16, contentHeight - 16)
+        let edge = min(max(raw, 32), 140)
         bigIconWidthC.constant = edge
         bigIconHeightC.constant = edge
         multiIconWidthC.constant = edge
@@ -858,14 +856,18 @@ class ExpandableDetailsBar: NSView {
         return Array(base[0..<6]) + appendedTypeInfoRows + Array(base[6..<base.count])
     }
 
-    /// 按列宽测量行高（locationField 等可换行行随宽度变化），下限 16。
-    /// AppKit 没有 UIKit 的 systemLayoutSizeFitting(_:withHorizontalFittingPriority:
-    /// verticalFittingPriority:)——改为把行临时全量放入列1、flush 列布局后读取真实
-    /// frame 高度（行尚未摆回列2，统一按列1宽度测量，与纯计算核心的输入语义一致）。
+    /// 按当前列宽测量行高（locationField 等可换行行随宽度变化），下限 16。
+    /// AppKit 没有 UIKit 的 `systemLayoutSizeFitting(_:withHorizontalFittingPriority:
+    /// verticalFittingPriority:)`——改为把行临时全量放入列1、flush 后读取真实
+    /// frame 高度（行统一按列1 宽度测量，与纯计算核心的输入语义一致）。
     private func measuredRowHeights(of rows: [NSView]) -> [CGFloat] {
-        setColumn(mainColumn2, rows: [])
+        for column in columnViews where column !== mainColumn1 {
+            setColumn(column, rows: [])
+        }
         setColumn(mainColumn1, rows: rows)
-        mainColumn1.layoutSubtreeIfNeeded()
+        // flush 上层 stack：列宽由 columnsStack 的 fillEqually 决定，
+        // 只 flush 列本身会拿到上一轮的宽度
+        columnsStack.layoutSubtreeIfNeeded()
         return rows.map { max($0.frame.height, 16) }
     }
 
@@ -884,8 +886,12 @@ class ExpandableDetailsBar: NSView {
         }
     }
 
-    /// 流动填充重排：按固定顺序把行分配到列1/列2，装不下的隐藏。
-    /// 触发点：高度/分界线拖拽、展开切换、refresh 末尾、面板尺寸变化。
+    /// 流动填充重排（D-06）：按可用高度推导列数（1–4），把行按顺序均衡分配到各列，
+    /// 装不下的行隐藏。触发点：高度/分界线拖拽、展开切换、refresh 末尾、面板尺寸变化。
+    ///
+    /// 两轮测量：列宽决定可换行行的高度，而行高又决定列数（循环依赖）。
+    /// 第一轮按最大列数（最窄列宽）测量——列越窄行越高，是保守估计；
+    /// 第二轮按第一轮得出的列数重测，取更紧凑的布局。两次足以收敛，不做循环。
     func rearrangeFlow() {
         // 挂载判定：已加入视图层级（含测试用普通容器承载）即可重排；
         // 不强制 window != nil——单元测试避免使用真实 NSWindow
@@ -896,25 +902,69 @@ class ExpandableDetailsBar: NSView {
         updateIconEdge()
         let ordered = flowOrderedRows
         guard !ordered.isEmpty else {
-            setColumn(mainColumn1, rows: [])
-            setColumn(mainColumn2, rows: [])
+            for column in columnViews { setColumn(column, rows: []) }
             // 空分支同样记录尺寸，避免 layout() 因 lastArrangedSize 滞后而反复触发重排（终审 Minor 8）
             lastArrangedSize = bounds.size
             return
         }
+
+        let availableHeight = max(expandedView.bounds.height - 4, 32)
+        let availableWidth = max(columnsStack.bounds.width, 1)
+
+        // 第一轮：最大列数（最窄列宽）下的行高
+        applyColumnVisibility(count: FFDetailsFlowLayout.maxColumnLimit(forWidth: availableWidth))
+        let narrowHeights = measuredRowHeights(of: ordered)
+        let firstPass = FFDetailsFlowLayout.columnLayout(
+            itemHeights: narrowHeights,
+            availableHeight: availableHeight,
+            availableWidth: availableWidth
+        )
+
+        // 第二轮：按第一轮列数重测（列变宽 → 可换行行变矮 → 可能容纳更多行）
+        applyColumnVisibility(count: max(firstPass.count, 1))
         let heights = measuredRowHeights(of: ordered)
-        let available = max(expandedView.bounds.height - 4, 32)
-        let split = FFDetailsFlowLayout.flowSplit(itemHeights: heights, availableHeight: available)
-        let visible = FFDetailsFlowLayout.visibleItemCount(itemHeights: heights, availableHeight: available)
-        let firstCount = min(split, ordered.count)
-        let first = Array(ordered[0..<firstCount])
-        let second = Array(ordered[firstCount..<min(visible, ordered.count)])
-        setColumn(mainColumn1, rows: first)
-        setColumn(mainColumn2, rows: second)
-        for row in ordered where !first.contains(row) && !second.contains(row) {
+        let layout = FFDetailsFlowLayout.columnLayout(
+            itemHeights: heights,
+            availableHeight: availableHeight,
+            availableWidth: availableWidth
+        )
+
+        applyColumnVisibility(count: max(layout.count, 1))
+        placeRows(ordered, layout: layout)
+        lastArrangedSize = bounds.size
+    }
+
+    /// 显示前 count 列，其余隐藏。信息区 stack 的 fillEqually 会把可用宽度均分给可见列，
+    /// 因此「隐藏多余列」同时完成了列宽重算。
+    private func applyColumnVisibility(count: Int) {
+        let visible = max(1, min(count, max(columnViews.count, 1)))
+        for (index, column) in columnViews.enumerated() {
+            let shouldHide = index >= visible
+            if column.isHidden != shouldHide {
+                column.isHidden = shouldHide
+            }
+        }
+    }
+
+    /// 按列布局摆放行；未被任何列接收的行从视图层级摘除
+    /// （注册表仍持有，栏变高后重新归位）
+    private func placeRows(_ ordered: [NSView], layout: [[Int]]) {
+        var placed = Set<Int>()
+        for (columnIndex, indexes) in layout.enumerated() where columnIndex < columnViews.count {
+            var rows: [NSView] = []
+            rows.reserveCapacity(indexes.count)
+            for index in indexes where index < ordered.count {
+                placed.insert(index)
+                rows.append(ordered[index])
+            }
+            setColumn(columnViews[columnIndex], rows: rows)
+        }
+        for index in layout.count..<columnViews.count {
+            setColumn(columnViews[index], rows: [])
+        }
+        for (index, row) in ordered.enumerated() where !placed.contains(index) {
             row.removeFromSuperview()
         }
-        lastArrangedSize = bounds.size
     }
 
     /// 布局期挂起的重排标记：layout() 中禁止同步重排（layoutSubtreeIfNeeded 在布局中递归
@@ -1092,21 +1142,6 @@ class ExpandableDetailsBar: NSView {
         }
     }
 
-    /// 分界线2 拖拽：列1 宽度（clamp [120, 总宽 − 图标区 − 240]；落盘延迟到拖拽结束）
-    private func applyColumn1WidthDrag(deltaX: CGFloat) {
-        guard isExpanded else { return }
-        let modulesWidth = contentModules?.bounds.width ?? 0
-        let maxCol1 = max(120, modulesWidth - iconWidth - 240)
-        let newWidth = min(max(column1Width + deltaX, 120), maxCol1)
-        guard newWidth != column1Width else { return }
-        column1Width = newWidth
-        column1WidthC.constant = newWidth
-        rearrangeFlow()
-        if !isApplyingRemoteLayout {
-            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
-        }
-    }
-
     /// 监听另一侧详情栏的布局变更（拖左栏右栏同步）
     private func observeLayoutChanged() {
         NotificationCenter.default.addObserver(
@@ -1124,11 +1159,10 @@ class ExpandableDetailsBar: NSView {
         if isExpanded {
             // 恢复/同步路径同样 clamp（终审 Important 1：大屏记忆值在小面板上重新收敛）
             heightConstraint.constant = appliedExpandedHeight()
-            // Task 3：宽度记忆值同步（另一栏拖分界线后本栏应用同样宽度）
+            // Task 3：图标区宽度记忆值同步（另一栏拖分界线后本栏应用同样宽度）。
+            // 信息区列宽不再记忆（D-05：列宽等分，列数按高度推导）
             iconWidth = (UserDefaults.standard.object(forKey: Self.iconWidthKey) as? CGFloat) ?? iconWidth
-            column1Width = (UserDefaults.standard.object(forKey: Self.column1WidthKey) as? CGFloat) ?? column1Width
             iconWidthC.constant = iconWidth
-            column1WidthC.constant = column1Width
             updateIconEdge()
             rearrangeFlow()
         }
@@ -1149,7 +1183,6 @@ class ExpandableDetailsBar: NSView {
         topEdgeStrip?.isHidden = !isExpanded
         // 内部分界线仅展开态可见（收起态无内容模块区）
         dividerIconToCol1?.isHidden = !isExpanded
-        dividerCol1ToCol2?.isHidden = !isExpanded
         compactView.isHidden = isExpanded
         expandedView.isHidden = !isExpanded
 
