@@ -617,6 +617,21 @@ public class FileGridView: NSView {
     /// MainWindowController 构建面板 keyViewLoop 时把链尾接到此视图。
     var keyFocusTarget: NSView? { collectionView }
 
+    /// V0.8.0：详情栏浮层遮挡补偿（与 `FileListView.setBottomOverlayInset` 同语义）。
+    /// 网格滚到底时最后一行图标不应被详情栏盖住，故在滚动内容底部预留浮层等高空白。
+    func setBottomOverlayInset(_ height: CGFloat) {
+        guard let sv = scrollView else { return }
+        let inset = max(0, height + 8)
+        guard abs(sv.contentInsets.bottom - inset) > 0.5 else { return }
+        sv.automaticallyAdjustsContentInsets = false
+        sv.contentInsets = NSEdgeInsets(
+            top: sv.contentInsets.top,
+            left: sv.contentInsets.left,
+            bottom: inset,
+            right: sv.contentInsets.right
+        )
+    }
+
     private var lastFilesCount: Int = -1
 
     // 任务 F10-8: 分组渲染缓存。

@@ -258,6 +258,18 @@ class ExpandableDetailsBar: NSView {
     /// v0.7.4 修订 4：当前所在文件夹路径（未选中时显示该文件夹图标）
     private var currentDirectoryPath: String?
 
+    /// V0.8.0：高度变化回调。由 MainWindowController 注入，用于同步文件列表的底部留白。
+    ///
+    /// 背景：详情栏是浮层（v0.6.9 决策），会盖住列表最后一行。列表按此高度在滚动内容
+    /// 底部预留空白，使滚到底时最后一行完整露出。回调在收起/展开/拖拽/远端同步后触发，
+    /// 参数为详情栏当前高度（含浮层距容器底部的 8pt 由接收方自行补上）。
+    var onHeightChanged: ((CGFloat) -> Void)?
+
+    /// V0.8.0：当前高度（收起 = 54，展开 = 记忆的可调高度）。
+    /// 供 MainWindowController 在接线后做一次初始同步——`applyExpandedState` 在
+    /// setupUI 阶段就执行过，那时回调尚未注入。
+    var currentHeight: CGFloat { heightConstraint?.constant ?? collapsedHeight }
+
     /// E2: 缩略图是否已成功加载（置位后工作区图标回调不再覆盖大图标）
     private var didReceiveThumbnail = false
 
@@ -318,24 +330,16 @@ class ExpandableDetailsBar: NSView {
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
-        // V0.8.0：详情栏改为固定底栏，不再自己做圆角（由外层操作区面板裁剪）。
-        layer?.cornerRadius = 0
+        // Wave4 Task 2：圆角收敛两档——浮层级 10（FFDesign.Glass.cornerRadiusPanel）。
+        // 此处与 glassBackground 同用面板级令牌，保证层圆角与玻璃圆角一致。
+        layer?.cornerRadius = FFDesign.Glass.cornerRadiusPanel
 
-        // V0.8.0：玻璃浮层 → 实体底栏。
-        //
-        // 旧实现是 FFGlassView(.panel) + 10pt 圆角 + 浮起阴影，覆盖在文件列表上方；
-        // 现在它是操作区面板的固定底栏，层级由「比面板亮一档的底色 + 顶部 1px 分隔线」表达，
-        // 与 ZCode 的边框分层立场一致，不再用模糊材质和投影。
-        let solidBackground = FFPanelView(tone: .header, cornerRadius: 0)
-        solidBackground.showsBorder = false
-        solidBackground.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(solidBackground)
-        NSLayoutConstraint.activate([
-            solidBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-            solidBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
-            solidBackground.topAnchor.constraint(equalTo: topAnchor),
-            solidBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        // v0.6.9: 玻璃背景浮层（超椭圆由 SquircleView 处理，此处用 FFGlassView 提供材质）
+        // Wave4 Task 2：圆角 12→面板级 10；浮层阴影由 FFGlassView 分级提供（唯一来源，
+        // MainWindowController 侧的双投阴影已删除，消除双投与反向 offset）
+        let glassBackground = FFGlassView(level: .panel, cornerRadius: FFDesign.Glass.cornerRadiusPanel, material: .sidebar)
+        glassBackground.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glassBackground)
 
         // 修复鼠标穿透：详情栏作为浮层覆盖在文件列表上方，但空白区域（无子控件的区域）
         // 的鼠标事件会穿透到下方的文件列表——用户反馈"鼠标居然可以穿透详情栏点击下方内容"。
@@ -687,6 +691,12 @@ class ExpandableDetailsBar: NSView {
         heightConstraint.priority = .required
 
         NSLayoutConstraint.activate([
+            // 1.6 玻璃背景填满整个 bar
+            glassBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            glassBackground.topAnchor.constraint(equalTo: topAnchor),
+            glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             // 鼠标拦截层撑满（修复穿透：确保详情栏区域内的点击不穿到下方文件列表）
             mouseInterceptor.leadingAnchor.constraint(equalTo: leadingAnchor),
             mouseInterceptor.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -1059,6 +1069,8 @@ class ExpandableDetailsBar: NSView {
         userExpandedHeight = newHeight
         heightConstraint.constant = newHeight
         rearrangeFlow()
+        // V0.8.0：拖拽调高时实时同步列表底部留白
+        onHeightChanged?(newHeight)
         if !isApplyingRemoteLayout {
             NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
         }
@@ -1162,6 +1174,9 @@ class ExpandableDetailsBar: NSView {
         } else {
             performLayout()
         }
+
+        // V0.8.0：通知外部同步列表底部留白（收起/展开都会改变遮挡高度）
+        onHeightChanged?(newHeight)
     }
 
     // MARK: - 路径交互（问题 9：点击跳转 / 右键复制）

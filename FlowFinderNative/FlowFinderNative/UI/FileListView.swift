@@ -2344,6 +2344,29 @@ extension FileListView: FFPaneViewHost {
     var focusRestoreTarget: NSResponder? { tableView }
 
     func reloadPaneData() { reloadData() }
+
+    /// V0.8.0：详情栏浮层遮挡补偿。
+    ///
+    /// 详情栏以浮层形式覆盖在列表底部（v0.6.9 决策），列表本身始终延伸到容器底部。
+    /// 副作用是最后一行被浮层盖住，必须盲滚才能点到。此处按浮层高度在滚动内容底部
+    /// 预留同等空白（额外 +8pt 对应浮层距容器底部的边距），使列表能滚出遮挡区。
+    ///
+    /// - Parameter height: 详情栏当前高度（收起 54 / 展开为可调高度）
+    func setBottomOverlayInset(_ height: CGFloat) {
+        guard let sv = scrollView else { return }
+        // 浮层底部距容器 8pt，留白需一并覆盖
+        let inset = max(0, height + 8)
+        guard abs(sv.contentInsets.bottom - inset) > 0.5 else { return }
+        // 关闭自动调整，否则 AppKit 会在滚动条出现/消失时覆盖我们设的值
+        sv.automaticallyAdjustsContentInsets = false
+        sv.contentInsets = NSEdgeInsets(
+            top: sv.contentInsets.top,
+            left: sv.contentInsets.left,
+            bottom: inset,
+            right: sv.contentInsets.right
+        )
+        FFDebug.log("FileListView.setBottomOverlayInset side=\(getSide()) barHeight=\(height) inset=\(inset)")
+    }
 }
 
 // MARK: - FFCreateTagColorHolder（新建标签对话框颜色选择辅助类）

@@ -21,10 +21,25 @@
 - **Makefile 重写**：原 `swift build` 目标对 Xcode 工程无效。新目标：`make build / release / demo / beta / test / version / warnings`
 
 ### 设计系统（P0）
-- **设计基线转向**：从「液态玻璃 + 超椭圆 + 多重投影」改为「扁平、致密、以边框分层」，移植 [zai-org/ZCode](https://github.com/zai-org/ZCode) `DESIGN.md`
-- **`FFDesign` 新增令牌**：`Color`（11 个语义色，`NSColor(name:dynamicProvider:)` 自动跟随深浅色）、`Layout`（窗口留白 4 / 面板间隙 4 / 拖拽指示线 2）、`Radius`（12/8/6/4 嵌套递减）、`Spacing`（4/8/12/16/20/24 六档）、`Text`（正文基准 13pt，替代旧 11pt）
-- **新增原子组件** `FFComponents.swift`：`FFPanelView`（独立面板框：背景 + 1px 弱边框 + 圆角）、`FFSectionHeaderView`、`FFEmptyStateView`、`FFSeparatorView`
+- **设计令牌落地**：`FFDesign` 新增 `Color`（11 个语义色，`NSColor(name:dynamicProvider:)` 自动跟随深浅色）、`Layout`、`Radius`、`Spacing`、`Text` 五组语义令牌
+- **新增原子组件** `FFComponents.swift`：`FFPanelView`（面板框）、`FFSectionHeaderView`、`FFEmptyStateView`、`FFSeparatorView`
 - **设计预览窗口**（仅 Debug，⌥⌘D / `--design-preview`）：色板、字体层级、面板布局模型、行三态、空态，供肉眼验收
+- ⚠️ **设计基线未转向**：P0 曾试图移植 [zai-org/ZCode](https://github.com/zai-org/ZCode) 的「扁平、致密、以边框分层」并声明"不追求像素级克隆访达"。该结论**未经确认且与 v0.6.6 确立的「完全克隆访达」冲突，已于同日撤销**。令牌与组件保留（本身与访达风格不冲突），但布局与材质回到访达基线。详见 `docs/REQUIREMENTS.md` §5
+
+### 布局基线回归（2026-10-17 裁定）
+
+逐条核对 37 份历史设计文档后，确认 P0 后续的布局重排（`7fd5bb5`）推翻了 5 条已确认决策，已回退：
+
+- **工具栏恢复双行 72pt**（v0.6.5 决策）：Row1 = 导航 + 刷新 + 面包屑，Row2 = 搜索 + 排序 + 分组 + 视图 + 工具。单行方案虽省 32pt 高度，但面包屑被压到约 130pt，排序分组被迫收进图标菜单
+- **详情栏恢复浮层**（v0.6.9 决策）：圆角卡片覆盖在列表上方，四周 8pt 边距 + 阴影；新增**底部留白补偿**——列表按浮层高度在滚动内容底部预留空白，修掉"最后一行被盖住"的长期副作用
+- **侧栏恢复无缝贴合**（v0.6.7 架构）：亚克力侧边栏直接贴内容区，内容区保留 1px 边框 + 超椭圆圆角，去掉 4pt 面板间隙与独立面板框
+- **超椭圆圆角系统保留**（v0.6.9）：不再声明废除
+- **设备面板保留实体卡片**（本轮唯一保留项）：`FFGlassView` → `FFPanelView(.card)`，理由为设备名与容量数字在半透明材质上可读性差
+- **面包屑截断方向修复**：`contentStack` 由 `leading` 改 `trailing`，溢出时保留当前目录（访达行为），此前只能看到「磁盘 > 用户」这类前缀
+
+### 需求基线（新增）
+
+- 新增 `docs/REQUIREMENTS.md`：项目首份需求真源。含产品定义、按版本的需求演进史（v0.6.0 → v0.8.0-P1）、当前生效功能全集（10 个模块 90+ 条带来源与状态）、偏离登记、十项硬约束、发布门槛、变更控制规则
 
 ### 工程债（P0）
 - **菜单 action 类型安全**：`FFCommon.swift` 18 处 `Selector("xxx:")` 字符串改为 `#selector(FFPaneActionsController.xxx(_:))`，方法改名即刻编译报错，不再静默失效；`MainMenu.swift` 响应链 selector 改 `NSSelectorFromString`

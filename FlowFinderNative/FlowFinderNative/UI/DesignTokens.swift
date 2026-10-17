@@ -108,21 +108,14 @@ enum FFDesign {
         static let elevatedDark = NSColor(srgbRed: 0.200, green: 0.200, blue: 0.200, alpha: 1.0)     // #333333
     }
 
-    /// 当前操作区基色
-    ///
-    /// V0.8.0：改为转发 `Color.panel`（#f8f8f8 / #161616），与侧栏、工具栏同属
-    /// 一个「面板」语义层。旧实现的 isDark 双值判断是「主题不跟随」缺陷的来源，
-    /// 动态色由系统 appearance 自动解析，调用方无需再在主题回调里重设。
-    ///
-    /// 单点杠杆：FileListView / FileGridView 的 tableView.backgroundColor、
-    /// createPaneContainer 的容器底色均读此令牌，改这一处即全操作区同步。
+    /// 当前操作区基色（日间 #F5F5F5 / 夜间 #2D2D2D）
     static var operationAreaBackground: NSColor {
-        Color.panel
+        isDark ? OperationArea.backgroundDark : OperationArea.backgroundLight
     }
 
-    /// 当前操作区浅一档灰度（工具栏/表头等次级表面）
+    /// 当前操作区浅一档灰度（日间 #FAFAFA / 夜间 #333333）
     static var operationAreaElevated: NSColor {
-        Color.header
+        isDark ? OperationArea.elevatedDark : OperationArea.elevatedLight
     }
 
     // MARK: - 字体令牌（Wave4 Task 5）

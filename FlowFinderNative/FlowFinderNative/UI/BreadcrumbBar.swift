@@ -106,17 +106,16 @@ class BreadcrumbBar: NSView {
             clipContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
 
             // contentStack 在 clipContainer 内靠右对齐（访达行为）：
-            // - trailing 固定 → 当前目录（路径末段）始终可见，这是用户最关心的信息
+            // - trailing 固定 → 溢出时裁剪的是左侧，当前目录始终可见
             // - top/bottom 固定 → 垂直充满
-            // - 不约束 leading → 宽度由 intrinsicContentSize 决定，向左生长；
-            //   内容宽度 > 容器宽度时，左侧路径段被裁掉，由省略号按钮补位
-            //
-            // V0.8.0 修正：原实现固定的是 leading（靠左），溢出时裁掉的是右侧，
-            // 结果是只能看到 "磁盘 > 用户" 这类前缀，当前目录反而看不见。
-            // 单行工具栏把可用宽度压到约 130pt 后，这个缺陷变得非常明显。
+            // - 不约束 leading → 由 intrinsicContentSize 决定宽度，向左生长
+            //   当内容宽度 > 容器宽度时，溢出部分（更浅的祖先路径）被 clipContainer 裁剪，
+            //   左侧省略号按钮显示被隐藏的段数
+            // 注意：此前约束的是 leading，与注释「靠右对齐」相反，导致溢出时裁掉当前目录，
+            // 路径长时只能看到「磁盘 > 用户」这类前缀。改为 trailing 后恢复访达行为。
             contentStack.topAnchor.constraint(equalTo: clipContainer.topAnchor),
             contentStack.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor, constant: 0),
 
             // 溢出按钮贴左
             overflowButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 0),
