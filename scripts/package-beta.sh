@@ -5,15 +5,16 @@ set -euo pipefail
 # FlowFinder Native — 测试版（Beta）打包脚本
 # ============================================================================
 # 与 scripts/package.sh 的区别：
-#   1. 使用 Debug 配置（Release 在当前环境 macOS 27 + Homebrew Rust 1.96.1 下
-#      生成的 proc-macro dylib LINKEDIT mis-aligned，dlopen 拒绝，见 HANDOVER
-#      「Release 打包环境问题」）。
-#   2. 产物输出到 build-beta/，不污染 Release 的 build/。
-#   3. 版本号带 beta 标签，不含公证流程（ad-hoc 签名，右键 -> 打开）。
+#   1. 产物输出到 build-beta/，不污染正式版的 build/。
+#   2. 产物名带 beta 标签（CFBundleShortVersionString 仍是 x.y.z）。
+#   3. 不含公证流程（ad-hoc 签名，DMG 内附首次打开说明）。
+#
+# 版本号取自 Xcode 工程的 MARKETING_VERSION / CURRENT_PROJECT_VERSION，
+# 见 scripts/lib-version.sh —— 不要在脚本里硬编码版本。
 #
 # 用法：
-#   DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer bash scripts/package-beta.sh
-#   BETA_LABEL=beta.2 bash scripts/package-beta.sh        # 迭代第二个测试版
+#   bash scripts/package-beta.sh
+#   BETA_LABEL=beta.2 bash scripts/package-beta.sh       # 迭代第二个测试版
 #   INSTALL=1 bash scripts/package-beta.sh               # 打包后安装到 /Applications
 # ============================================================================
 
@@ -24,13 +25,19 @@ APP_NAME="FlowFinderNative"
 DMG_NAME="FlowFinder"
 SCHEME_NAME="FlowFinderNative"
 TARGET_NAME="FlowFinderNative"
-CONFIGURATION="Debug"
+# Release 构建。此前因 Homebrew rustc fat LTO 的 LINKEDIT mis-aligned 无法出包，
+# 临时降级为 Debug；该问题已在 rust-core/Cargo.toml 改 thin LTO + build-rust.sh
+# 用 Xcode ld 重链接解决（2026-10-17），测试版恢复 Release 构建。
+CONFIGURATION="Release"
 BUILD_DIR="$PROJECT_DIR/build-beta"
 
-# 版本号：CFBundleShortVersionString 必须是 x.y.z 形式，beta 标签只用于产物文件名
-VERSION="0.8.0"
-BUILD_NUMBER="8001"
-BETA_LABEL="${BETA_LABEL:-beta.1}"
+# 版本号唯一真源：Xcode 工程 MARKETING_VERSION / CURRENT_PROJECT_VERSION
+# beta 标签只用于产物文件名，不进入 CFBundleShortVersionString（必须 x.y.z）
+# shellcheck source=scripts/lib-version.sh
+source "$SCRIPT_DIR/lib-version.sh"
+VERSION="$FF_VERSION"
+BUILD_NUMBER="$FF_BUILD"
+BETA_LABEL="${BETA_LABEL:-${FF_BETA_LABEL:-beta.1}}"
 LABEL="$VERSION-$BETA_LABEL"
 
 ENTITLEMENTS_PATH="$PROJECT_DIR/FlowFinderNative/FlowFinderNative/FlowFinderNative.entitlements"

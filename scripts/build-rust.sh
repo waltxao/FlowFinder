@@ -210,6 +210,10 @@ RELINK_LDFLAGS=(
     -force_load "$STATICLIB_PATH"
     -liconv
     -framework CoreFoundation
+    # FSEventStream* 符号在 CoreServices 中（fsevents.rs 依赖）。
+    # 缺这个 framework 会让 relink 报 Undefined symbols 并回退到 rust-lld
+    # 产出的未对齐 dylib（2026-10-17 定位）。
+    -framework CoreServices
     -lSystem
 )
 if [[ -n "$RELINK_SYSROOT" ]]; then

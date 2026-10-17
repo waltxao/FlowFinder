@@ -63,6 +63,8 @@
 		FF0000000000000000200065 /* FFCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200066; };
 		FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200076; };
 		FF2000010000000000000001 /* SidebarFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF2000020000000000000002; };
+		FF3000010000000000000001 /* FFComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3000020000000000000002; };
+		FF4000010000000000000001 /* FFDesignPreviewWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4000020000000000000002; };
 		FF0000000000000000200067 /* SquircleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200068; };
 		FF0000000000000000200069 /* ToolOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006A; };
 		FF000000000000000020006B /* FFFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006C; };
@@ -133,6 +135,8 @@
 		FF0000000000000000200066 /* FFCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCommon.swift; sourceTree = "<group>"; };
 		FF0000000000000000200076 /* FFPaneActionsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPaneActionsController.swift; sourceTree = "<group>"; };
 		FF2000020000000000000002 /* SidebarFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarFavoritesStore.swift; sourceTree = "<group>"; };
+		FF3000020000000000000002 /* FFComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFComponents.swift; sourceTree = "<group>"; };
+		FF4000020000000000000002 /* FFDesignPreviewWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDesignPreviewWindow.swift; sourceTree = "<group>"; };
 		FF0000000000000000200068 /* SquircleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquircleView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006A /* ToolOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOverlayView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006C /* FFFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFFormat.swift; sourceTree = "<group>"; };
@@ -242,6 +246,8 @@
 				FF0000000000000000200066 /* FFCommon.swift */,
 				FF0000000000000000200076 /* FFPaneActionsController.swift */,
 				FF2000020000000000000002 /* SidebarFavoritesStore.swift */,
+				FF3000020000000000000002 /* FFComponents.swift */,
+				FF4000020000000000000002 /* FFDesignPreviewWindow.swift */,
 				FF0000000000000000200068 /* SquircleView.swift */,
 				FF000000000000000020006A /* ToolOverlayView.swift */,
 				FF000000000000000020006C /* FFFormat.swift */,
@@ -505,6 +511,8 @@
 				FF0000000000000000200065 /* FFCommon.swift in Sources */,
 				FF0000000000000000200075 /* FFPaneActionsController.swift in Sources */,
 				FF2000010000000000000001 /* SidebarFavoritesStore.swift in Sources */,
+				FF3000010000000000000001 /* FFComponents.swift in Sources */,
+				FF4000010000000000000001 /* FFDesignPreviewWindow.swift in Sources */,
 				FF0000000000000000200067 /* SquircleView.swift in Sources */,
 				FF10002A000000000000002A /* ContentIndexBridge.swift in Sources */,
 				FF1000310000000000000031 /* MainWindowController+MenuActions.swift in Sources */,
@@ -653,7 +661,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 740;
+				CURRENT_PROJECT_VERSION = 8000;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -677,7 +685,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.7.4;
+				MARKETING_VERSION = 0.8.0;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",
@@ -698,7 +706,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinderNative/FlowFinderNative.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 740;
+				CURRENT_PROJECT_VERSION = 8000;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -722,7 +730,7 @@
 					"$(PROJECT_DIR)/FlowFinderNative/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.7.4;
+				MARKETING_VERSION = 0.8.0;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinderNative/Libraries",

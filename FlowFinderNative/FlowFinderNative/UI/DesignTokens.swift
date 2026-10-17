@@ -171,4 +171,167 @@ enum FFDesign {
     static var glassBorderComponent: NSColor {
         isDark ? Glass.borderDarkComponent : Glass.borderLightComponent
     }
+
+    // MARK: - V0.8.0 设计基线（移植自 zai-org/ZCode DESIGN.md）
+    //
+    // 立场转变：从「液态玻璃 + 超椭圆 + 多重投影」改为「扁平、致密、以边框分层」。
+    // ZCode 原文：Layer primarily through background contrast, borders, and radius
+    // before relying on heavy shadows；Avoid playful gradients / bright full-surface fills。
+    //
+    // 命名与取值一一对应 ZCode 的 CSS 变量，便于对照上游文档：
+    //   --color-background      → Color.panel
+    //   --color-background-alt  → Color.window
+    //   --color-sidebar         → Color.sidebar
+    //   --color-border          → Color.border
+    //   --color-hover/selected  → Color.rowHover / Color.rowSelected
+    //
+    // 实现要点：全部用 NSColor(name:dynamicProvider:) 生成动态色，
+    // 由系统 appearance 自动解析，不再需要调用方判断 isDark 后重设 cgColor
+    // （旧 Glass 令牌的双值纪律是大量「主题不跟随」缺陷的来源）。
+
+    /// 取色辅助：按 appearance 返回对应值
+    private static func dynamic(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let best = appearance.bestMatch(from: [.aqua, .darkAqua])
+            return best == .darkAqua ? dark : light
+        }
+    }
+
+    /// 语义色令牌（对应 ZCode Color Palette）
+    enum Color {
+        // 背景层次：窗口根 < 面板 < 卡片 < 弹层
+        /// 窗口根背景（ZCode --color-background-alt）
+        static let window = dynamic(
+            light: NSColor(srgbRed: 0.925, green: 0.925, blue: 0.933, alpha: 1),  // #ececee
+            dark: NSColor(srgbRed: 0.059, green: 0.059, blue: 0.059, alpha: 1)    // #0f0f0f
+        )
+        /// 面板底（ZCode --color-background）
+        static let panel = dynamic(
+            light: NSColor(srgbRed: 0.973, green: 0.973, blue: 0.973, alpha: 1),  // #f8f8f8
+            dark: NSColor(srgbRed: 0.086, green: 0.086, blue: 0.086, alpha: 1)    // #161616
+        )
+        /// 侧栏底（ZCode --color-sidebar）
+        static let sidebar = dynamic(
+            light: NSColor(srgbRed: 0.941, green: 0.941, blue: 0.941, alpha: 1),  // #f0f0f0
+            dark: NSColor(srgbRed: 0.086, green: 0.086, blue: 0.086, alpha: 1)    // #161616
+        )
+        /// 头部/工具栏底（ZCode --color-header / --color-panel）
+        static let header = dynamic(
+            light: NSColor.white,                                                  // #ffffff
+            dark: NSColor(srgbRed: 0.125, green: 0.125, blue: 0.125, alpha: 1)     // #202020
+        )
+        /// 卡片/输入框/弹层底（ZCode --color-card / --color-input）
+        static let card = dynamic(
+            light: NSColor.white,                                                  // #ffffff
+            dark: NSColor(srgbRed: 0.169, green: 0.169, blue: 0.169, alpha: 1)     // #2b2b2b
+        )
+
+        // 边框：结构分层的唯一手段（不用阴影）
+        /// 默认边框（ZCode --color-border，rgba(13,13,13,.10) / rgba(255,255,255,.10)）
+        static let border = dynamic(
+            light: NSColor(srgbRed: 0.051, green: 0.051, blue: 0.051, alpha: 0.10),
+            dark: NSColor(white: 1.0, alpha: 0.10)
+        )
+        /// hover 边框（ZCode --color-border-hover）
+        static let borderHover = dynamic(
+            light: NSColor(srgbRed: 0.051, green: 0.051, blue: 0.051, alpha: 0.15),
+            dark: NSColor(white: 1.0, alpha: 0.15)
+        )
+
+        // 状态遮罩：选中不再用系统蓝填充，改中性遮罩 + 左侧强调条
+        /// 行 hover（ZCode --color-hover，5% 中性）
+        static let rowHover = dynamic(
+            light: NSColor(srgbRed: 0.051, green: 0.051, blue: 0.051, alpha: 0.05),
+            dark: NSColor(white: 1.0, alpha: 0.05)
+        )
+        /// 行选中（ZCode --color-selected，浅 5% / 深 10%）
+        static let rowSelected = dynamic(
+            light: NSColor(srgbRed: 0.051, green: 0.051, blue: 0.051, alpha: 0.05),
+            dark: NSColor(white: 1.0, alpha: 0.10)
+        )
+
+        // 文字层次
+        /// 主文字（ZCode --color-foreground，neutral-800 / #f5f5f5）
+        static let textPrimary = dynamic(
+            light: NSColor(srgbRed: 0.149, green: 0.149, blue: 0.149, alpha: 1),   // #262626
+            dark: NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1)     // #f5f5f5
+        )
+        /// 次要文字 60%
+        static let textSecondary = dynamic(
+            light: NSColor(srgbRed: 0.149, green: 0.149, blue: 0.149, alpha: 0.60),
+            dark: NSColor(white: 1.0, alpha: 0.60)
+        )
+        /// 三级文字 40%（占位、弱提示、拖拽指示线）
+        static let textTertiary = dynamic(
+            light: NSColor(srgbRed: 0.149, green: 0.149, blue: 0.149, alpha: 0.40),
+            dark: NSColor(white: 1.0, alpha: 0.40)
+        )
+
+        /// 危险操作（删除）
+        static let destructive = NSColor.systemRed
+    }
+
+    /// 布局几何令牌
+    enum Layout {
+        /// 窗口四边留白（ZCode: 4px outer inset）
+        static let windowInset: CGFloat = 4
+        /// 面板间透明间隙（间隙即拖拽热区）
+        static let panelGap: CGFloat = 4
+        /// 分隔拖拽指示线宽度（ZCode: 2px）
+        static let resizeIndicatorWidth: CGFloat = 2
+        /// 拖拽热区宽度
+        static let resizeHitWidth: CGFloat = 4
+        /// 面板边框宽度
+        static let borderWidth: CGFloat = 1
+        /// 工具栏高度（紧凑致密）
+        static let toolbarHeight: CGFloat = 36
+        /// 侧栏默认宽度
+        static let sidebarWidth: CGFloat = 200
+    }
+
+    /// 圆角令牌：按嵌套层级递减（ZCode Radius 规则）
+    enum Radius {
+        /// 面板框（ZCode rounded-xl）
+        static let xl: CGFloat = 12
+        /// 卡片、按钮、菜单外壳（rounded-lg）
+        static let lg: CGFloat = 8
+        /// 菜单项、输入框（rounded-md）
+        static let md: CGFloat = 6
+        /// 嵌套容器、药丸内元素（rounded-sm）
+        static let sm: CGFloat = 4
+    }
+
+    /// 间距令牌：全项目只用这六档（ZCode base unit 4px）
+    enum Spacing {
+        static let x1: CGFloat = 4
+        static let x2: CGFloat = 8
+        static let x3: CGFloat = 12
+        static let x4: CGFloat = 16
+        static let x5: CGFloat = 20
+        static let x6: CGFloat = 24
+    }
+
+    /// 字体令牌（V0.8.0 基准 13pt）
+    ///
+    /// 迁移说明：旧 Typography.body(11) / emphasis(11) / title(13) 偏小 2pt，
+    /// 是「看不清、不精致」的直接来源。新令牌对齐 macOS 标准 13pt 正文。
+    /// 旧令牌保留至 P2 布局重排完成（行高需同步从 26 调到 28，否则文字被裁）。
+    enum Text {
+        /// 17 semibold：空态主标题、引导页标题
+        static let xl = NSFont.systemFont(ofSize: 17, weight: .semibold)
+        /// 15 semibold：分区标题、详情栏文件名
+        static let lg = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        /// 13 regular：正文、文件名、按钮
+        static let base = NSFont.systemFont(ofSize: 13)
+        /// 13 medium：选中项、当前分区
+        static let baseEmphasis = NSFont.systemFont(ofSize: 13, weight: .medium)
+        /// 12 regular：次要说明、路径
+        static let caption = NSFont.systemFont(ofSize: 12)
+        /// 11 regular：辅助信息、tooltip
+        static let sm = NSFont.systemFont(ofSize: 11)
+        /// 10 regular：徽标、计数、快捷键提示
+        static let xs = NSFont.systemFont(ofSize: 10)
+        /// 12 等宽：路径、大小、日期列
+        static let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    }
 }

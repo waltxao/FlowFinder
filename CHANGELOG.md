@@ -6,7 +6,32 @@
 
 ## [0.8.0] — 未发版（开发中）
 
-> 侧边栏收藏模块重设计 P1（分区模型 + 滚动容器 + 拖拽重排）
+> V0.8.0 定位：**第一个面向普通用户的测试版**。
+> 需求基线见 `docs/superpowers/specs/2026-10-17-v0.8.0-beta-spec.md`，
+> 审查结论见 `docs/superpowers/specs/2026-10-17-v0.8.0-requirements-audit.md`。
+>
+> 本次交付 P0「地基」：发行链路打通 + 设计系统落地 + 工程债清理。
+
+### 发行链路（P0）
+- **Release 构建恢复**：`cargo build --release` 此前在 macOS 27 + Homebrew rustc 1.96.1 下必然失败（fat LTO 让 proc-macro dylib 产出 `mis-aligned LINKEDIT string pool`，`serde_derive` 无法 dlopen）。改 `[profile.release] lto = "thin"` 后通过，保留绝大部分跨 crate 优化
+- **dylib 重链接根治**：`build-rust.sh` 的 Xcode ld 重链接缺 `-framework CoreServices`，导致 FSEventStream 符号未定义、长期回退到未对齐的 rust-lld 产物。补齐后重链接真正成功，导出 66 个 `ff_*` 符号，`dlopen` 验证通过
+- **打包恢复 Release**：`package-beta.sh` 从 Debug 改回 Release（此前因上述构建失败被迫降级）
+- **版本号单一真源**：`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 收敛到 Xcode 工程一处（0.8.0 / 8000），`scripts/lib-version.sh` 供打包脚本与 `make version` 读取，不再有三处硬编码
+- **构建产物移出版本库**：`Libraries/*.a` / `*.dylib` 不再入库（此前每次构建产生 41MB 二进制 diff）
+- **Makefile 重写**：原 `swift build` 目标对 Xcode 工程无效。新目标：`make build / release / demo / beta / test / version / warnings`
+
+### 设计系统（P0）
+- **设计基线转向**：从「液态玻璃 + 超椭圆 + 多重投影」改为「扁平、致密、以边框分层」，移植 [zai-org/ZCode](https://github.com/zai-org/ZCode) `DESIGN.md`
+- **`FFDesign` 新增令牌**：`Color`（11 个语义色，`NSColor(name:dynamicProvider:)` 自动跟随深浅色）、`Layout`（窗口留白 4 / 面板间隙 4 / 拖拽指示线 2）、`Radius`（12/8/6/4 嵌套递减）、`Spacing`（4/8/12/16/20/24 六档）、`Text`（正文基准 13pt，替代旧 11pt）
+- **新增原子组件** `FFComponents.swift`：`FFPanelView`（独立面板框：背景 + 1px 弱边框 + 圆角）、`FFSectionHeaderView`、`FFEmptyStateView`、`FFSeparatorView`
+- **设计预览窗口**（仅 Debug，⌥⌘D / `--design-preview`）：色板、字体层级、面板布局模型、行三态、空态，供肉眼验收
+
+### 工程债（P0）
+- **菜单 action 类型安全**：`FFCommon.swift` 18 处 `Selector("xxx:")` 字符串改为 `#selector(FFPaneActionsController.xxx(_:))`，方法改名即刻编译报错，不再静默失效；`MainMenu.swift` 响应链 selector 改 `NSSelectorFromString`
+- **编译警告 96 → 52**（剩余集中在 `onModeChanged` 已废弃 API 与弱引用书写，随 P2 主题重构与布局重排一并清理）
+- **调试日志复核**：`FFDebug.log` / `FFLog.debug` 均已由 `#if DEBUG` 包裹，Release 二进制内 `strings` 检索 `ff-debug.log` 命中 0；无裸 `print`
+
+### 侧边栏收藏模块重设计 P1
 
 ### 结构性重构
 - **侧边栏改为滚动容器**：`NSScrollView` + flipped documentView + 垂直内容栈，品牌区与底部工具行固定，中间内容整体滚动。收藏 20+ 项时不再溢出重叠

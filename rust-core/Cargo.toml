@@ -15,7 +15,12 @@ debug = true
 
 [profile.release]
 opt-level = 3
-lto = true
+# 注意：不要改回 lto = true。
+# Homebrew rustc 1.96.1 + macOS 27 下，fat LTO 会让 proc-macro dylib 产出
+# "mis-aligned LINKEDIT string pool"，serde_derive 无法 dlopen，release 直接编译失败。
+# thin LTO 既能通过编译，也保留了绝大部分跨 crate 优化（产物 3.0MB vs 无 LTO 3.1MB）。
+# 最终 dylib 的对齐问题由 scripts/build-rust.sh 用 Xcode ld 从静态库重新链接解决。
+lto = "thin"
 
 [dependencies]
 libc = "0.2"

@@ -1,136 +1,159 @@
 # FlowFinder Native Build System
 # ================================
+# 一条命令覆盖日常：make build / make test / make demo / make beta
 
-# Configuration
 RUST_DIR := rust-core
 SWIFT_DIR := FlowFinderNative
 SCRIPT_DIR := scripts
+XCODEPROJ := $(SWIFT_DIR)/FlowFinderNative.xcodeproj
 BUILD_SCRIPT := $(SCRIPT_DIR)/build-rust.sh
 SETUP_SCRIPT := $(SCRIPT_DIR)/setup.sh
 
-# macOS deployment target (minimum supported macOS version)
 export MACOSX_DEPLOYMENT_TARGET := 12.0
 
-# Xcode developer directory: prefer the first Xcode.app in /Applications;
-# fall back to the active `xcode-select` directory (may be Command Line Tools,
-# which does NOT ship xcodebuild — XCTest requires full Xcode).
+# Xcode 开发者目录：优先 /Applications 下的 Xcode*.app，回退 xcode-select。
+# 注意 XCTest 需要完整 Xcode，Command Line Tools 不含 xcodebuild 的测试能力。
 XCODE_DEV_DIR := $(firstword $(wildcard /Applications/Xcode*.app/Contents/Developer))
 ifeq ($(strip $(XCODE_DEV_DIR)),)
 XCODE_DEV_DIR := $(shell xcode-select -p 2>/dev/null)
 endif
+export DEVELOPER_DIR := $(XCODE_DEV_DIR)
 
-# Isolated home used by the hosted XCTest run (see scheme CFFIXED_USER_HOME).
-# Redirecting the host app's home avoids scanning the developer's real
-# iCloud-managed ~/Desktop & ~/Documents, whose getattrlistbulk metadata read
-# can block under the XCTest harness.
+# 隔离的测试 home：避免宿主 App 扫描真实 ~/Desktop / ~/Documents
 TEST_HOME := /tmp/flowfinder-test-home
 
-# Default target
+# 构建产物根目录
+# 注意 1：-target 模式不接受 -derivedDataPath（需 -scheme 才可用），改用 SYMROOT/OBJROOT
+# 注意 2：SYMROOT 必须用绝对路径——xcodebuild 会以 $(SRCROOT) 为基准解析相对路径，
+#         写成 build/Products 会落到 FlowFinderNative/build/Products 而不是仓库根
+DERIVED := $(CURDIR)/build
+APP_DEBUG := $(DERIVED)/Products/Debug/FlowFinderNative.app
+APP_RELEASE := $(DERIVED)/Products/Release/FlowFinderNative.app
+DESKTOP_APP := $(HOME)/Desktop/FlowFinderNative.app
+
+# 构建公共参数：本机 ad-hoc 签名，arm64
+XCB := xcodebuild -project $(XCODEPROJ) -target FlowFinderNative \
+	SYMROOT=$(DERIVED)/Products OBJROOT=$(DERIVED)/Intermediates \
+	ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+	CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
+
 .DEFAULT_GOAL := build
 
-# Colors
 BLUE := \033[0;34m
 GREEN := \033[0;32m
 YELLOW := \033[1;33m
 RED := \033[0;31m
 NC := \033[0m
 
+.PHONY: build app release test rust-test swift-test integration-test \
+	clean setup run demo beta version warnings help
+
 # =============================================================================
-# Main targets
+# 构建
 # =============================================================================
 
-.PHONY: build test clean setup rust swift integration-test help
+## build: Debug 构建（Rust + Swift）
+build: rust
+	@echo "$(BLUE)Building Swift (Debug)...$(NC)"
+	@$(XCB) -configuration Debug build 2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" || true
+	@test -d "$(APP_DEBUG)" && echo "$(GREEN)✓ $(APP_DEBUG)$(NC)" || (echo "$(RED)✗ 构建失败$(NC)"; exit 1)
 
-## build: Build both Rust core and Swift project
-build: rust swift
-	@echo "$(GREEN)✓ Build completed successfully$(NC)"
+## app: build 的别名
+app: build
 
-## rust: Build the Rust core library
+## release: Release 构建（可直接分发）
+release: 
+	@echo "$(BLUE)Building Rust (Release)...$(NC)"
+	@bash $(BUILD_SCRIPT) Release >/dev/null
+	@echo "$(BLUE)Building Swift (Release)...$(NC)"
+	@$(XCB) -configuration Release build 2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" || true
+	@test -d "$(APP_RELEASE)" && echo "$(GREEN)✓ $(APP_RELEASE)$(NC)" || (echo "$(RED)✗ Release 构建失败$(NC)"; exit 1)
+
+## rust: 构建 Rust core（Debug）
 rust:
 	@echo "$(BLUE)Building Rust core...$(NC)"
-	@bash $(BUILD_SCRIPT)
+	@bash $(BUILD_SCRIPT) >/dev/null && echo "$(GREEN)✓ Rust core$(NC)"
 
-## swift: Build the Swift project
- swift:
-	@echo "$(BLUE)Building Swift project...$(NC)"
-	@cd $(SWIFT_DIR) && swift build
+## demo: Debug 构建并复制到桌面（用户实测用）
+demo: build
+	@rm -rf "$(DESKTOP_APP)"
+	@cp -R "$(APP_DEBUG)" "$(DESKTOP_APP)"
+	@echo "$(GREEN)✓ 已复制到桌面：$(DESKTOP_APP)$(NC)"
+	@echo "$(YELLOW)  首次打开需右键 → 打开（ad-hoc 签名）$(NC)"
 
-## run: Build and launch the app (debug)
-run: build
-	@echo "$(BLUE)Launching FlowFinder...$(NC)"
-	@APP=$$(find "$(SWIFT_DIR)/.build" -type f -name FlowFinderNative -perm -111 2>/dev/null | head -1); \
-	if [ -n "$$APP" ]; then open "$$APP"; \
-	else echo "$(YELLOW)未找到 SwiftPM 可执行产物；请用 make xcode 在 Xcode 中运行$(NC)"; exit 1; fi
+## beta: 打测试版 DMG/ZIP 到 build-beta/
+beta:
+	@bash $(SCRIPT_DIR)/package-beta.sh
 
-## test: Run all tests (Rust + Swift + Integration)
-test: rust-test swift-test integration-test
+# =============================================================================
+# 测试
+# =============================================================================
+
+## test: 全部测试（Rust + Swift）
+test: rust-test swift-test
 	@echo "$(GREEN)✓ All tests passed$(NC)"
 
-## rust-test: Run Rust unit tests
+## rust-test: Rust 单元测试
 rust-test:
 	@echo "$(BLUE)Running Rust tests...$(NC)"
-	@cd $(RUST_DIR) && cargo test
+	@cd $(RUST_DIR) && cargo test 2>&1 | tail -5
 
-## swift-test: Run Swift XCTest unit tests (via xcodebuild, NOT `swift test`)
+## swift-test: Swift XCTest（走 xcodebuild，不是 swift test）
 swift-test:
-	@echo "$(BLUE)Running Swift XCTest via xcodebuild...$(NC)"
+	@echo "$(BLUE)Running Swift XCTest...$(NC)"
 	@mkdir -p "$(TEST_HOME)/Desktop" "$(TEST_HOME)/Documents"
-	@DEVELOPER_DIR="$(XCODE_DEV_DIR)" \
-		xcodebuild test \
-			-project "$(SWIFT_DIR)/FlowFinderNative.xcodeproj" \
-			-scheme FlowFinderNativeTests \
-			-destination 'platform=macOS' \
-			CODE_SIGN_IDENTITY=- \
-			CODE_SIGNING_REQUIRED=NO
+	@pkill -f "MacOS/FlowFinderNative" 2>/dev/null || true
+	@xcodebuild test -project $(XCODEPROJ) -scheme FlowFinderNativeTests \
+		-destination 'platform=macOS' \
+		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO 2>&1 \
+		| grep -E "error:|Executed .* tests|TEST SUCCEEDED|TEST FAILED" | tail -8
 
-## integration-test: Run integration tests
+## integration-test: 集成测试
 integration-test: rust
-	@echo "$(BLUE)Running integration tests...$(NC)"
 	@bash $(SCRIPT_DIR)/integration-test.sh
 
-## clean: Remove all build artifacts
+# =============================================================================
+# 诊断
+# =============================================================================
+
+## version: 打印当前版本（唯一真源：Xcode 工程）
+version:
+	@bash -c 'source $(SCRIPT_DIR)/lib-version.sh; echo "版本: $$FF_VERSION ($$FF_BUILD)"'
+
+## warnings: 统计编译警告数
+warnings:
+	@echo "$(BLUE)统计编译警告...$(NC)"
+	@$(XCB) -configuration Debug clean build 2>&1 | grep -cE "warning:" || echo 0
+
+## run: 启动 Debug 产物
+run: build
+	@open "$(APP_DEBUG)"
+
+# =============================================================================
+# 维护
+# =============================================================================
+
+## clean: 清理全部构建产物
 clean:
-	@echo "$(BLUE)Cleaning build artifacts...$(NC)"
+	@echo "$(BLUE)Cleaning...$(NC)"
 	@cd $(RUST_DIR) && cargo clean 2>/dev/null || true
-	@cd $(SWIFT_DIR) && swift package clean 2>/dev/null || true
-	@rm -rf $(SWIFT_DIR)/Libraries/*.dylib
-	@rm -rf $(SWIFT_DIR)/Libraries/*.a
-	@rm -rf $(SWIFT_DIR)/.build
-	@rm -rf $(SWIFT_DIR)/FlowFinderNative.xcodeproj/project.xcworkspace
-	@rm -rf $(SWIFT_DIR)/FlowFinderNative.xcodeproj/xcuserdata
+	@rm -rf build build-beta
+	@rm -f $(SWIFT_DIR)/FlowFinderNative/Libraries/*.dylib
+	@rm -f $(SWIFT_DIR)/FlowFinderNative/Libraries/*.a
+	@rm -rf $(XCODEPROJ)/project.xcworkspace $(XCODEPROJ)/xcuserdata
 	@echo "$(GREEN)✓ Clean completed$(NC)"
 
-## setup: Run initial environment setup
+## setup: 首次环境配置
 setup:
-	@echo "$(BLUE)Running setup...$(NC)"
 	@bash $(SETUP_SCRIPT)
 
-## release: Build everything in release mode
-release:
-	@echo "$(BLUE)Building Release mode...$(NC)"
-	@bash $(BUILD_SCRIPT) Release
-	@cd $(SWIFT_DIR) && swift build -c release
-	@echo "$(GREEN)✓ Release build completed$(NC)"
-
-## xcode: Open the project in Xcode
+## xcode: 用 Xcode 打开工程
 xcode:
-	@open $(SWIFT_DIR)/FlowFinderNative.xcodeproj
+	@open $(XCODEPROJ)
 
-## help: Show this help message
+## help: 显示帮助
 help:
 	@echo "FlowFinder Native Build System"
 	@echo "=============================="
 	@echo ""
-	@echo "Available targets:"
-	@echo "  $(GREEN)build$(NC)            - Build both Rust and Swift"
-	@echo "  $(GREEN)rust$(NC)             - Build Rust core library"
-	@echo "  $(GREEN)swift$(NC)            - Build Swift project"
-	@echo "  $(GREEN)test$(NC)             - Run all tests (Rust + Swift + Integration)"
-	@echo "  $(GREEN)rust-test$(NC)        - Run Rust unit tests"
-	@echo "  $(GREEN)swift-test$(NC)       - Run Swift XCTest unit tests (xcodebuild)"
-	@echo "  $(GREEN)integration-test$(NC) - Run integration tests"
-	@echo "  $(GREEN)clean$(NC)            - Remove all build artifacts"
-	@echo "  $(GREEN)setup$(NC)            - Run initial environment setup"
-	@echo "  $(GREEN)release$(NC)          - Build everything in release mode"
-	@echo "  $(GREEN)xcode$(NC)            - Open project in Xcode"
-	@echo "  $(GREEN)help$(NC)             - Show this help message"
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
