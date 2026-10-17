@@ -318,16 +318,24 @@ class ExpandableDetailsBar: NSView {
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
-        // Wave4 Task 2：圆角收敛两档——浮层级 10（FFDesign.Glass.cornerRadiusPanel）。
-        // 此处与 glassBackground 同用面板级令牌，保证层圆角与玻璃圆角一致。
-        layer?.cornerRadius = FFDesign.Glass.cornerRadiusPanel
+        // V0.8.0：详情栏改为固定底栏，不再自己做圆角（由外层操作区面板裁剪）。
+        layer?.cornerRadius = 0
 
-        // v0.6.9: 玻璃背景浮层（超椭圆由 SquircleView 处理，此处用 FFGlassView 提供材质）
-        // Wave4 Task 2：圆角 12→面板级 10；浮层阴影由 FFGlassView 分级提供（唯一来源，
-        // MainWindowController 侧的双投阴影已删除，消除双投与反向 offset）
-        let glassBackground = FFGlassView(level: .panel, cornerRadius: FFDesign.Glass.cornerRadiusPanel, material: .sidebar)
-        glassBackground.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(glassBackground)
+        // V0.8.0：玻璃浮层 → 实体底栏。
+        //
+        // 旧实现是 FFGlassView(.panel) + 10pt 圆角 + 浮起阴影，覆盖在文件列表上方；
+        // 现在它是操作区面板的固定底栏，层级由「比面板亮一档的底色 + 顶部 1px 分隔线」表达，
+        // 与 ZCode 的边框分层立场一致，不再用模糊材质和投影。
+        let solidBackground = FFPanelView(tone: .header, cornerRadius: 0)
+        solidBackground.showsBorder = false
+        solidBackground.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(solidBackground)
+        NSLayoutConstraint.activate([
+            solidBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            solidBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            solidBackground.topAnchor.constraint(equalTo: topAnchor),
+            solidBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         // 修复鼠标穿透：详情栏作为浮层覆盖在文件列表上方，但空白区域（无子控件的区域）
         // 的鼠标事件会穿透到下方的文件列表——用户反馈"鼠标居然可以穿透详情栏点击下方内容"。
@@ -679,12 +687,6 @@ class ExpandableDetailsBar: NSView {
         heightConstraint.priority = .required
 
         NSLayoutConstraint.activate([
-            // 1.6 玻璃背景填满整个 bar
-            glassBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glassBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
-            glassBackground.topAnchor.constraint(equalTo: topAnchor),
-            glassBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
-
             // 鼠标拦截层撑满（修复穿透：确保详情栏区域内的点击不穿到下方文件列表）
             mouseInterceptor.leadingAnchor.constraint(equalTo: leadingAnchor),
             mouseInterceptor.trailingAnchor.constraint(equalTo: trailingAnchor),

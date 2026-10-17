@@ -212,7 +212,7 @@ public class MainWindowController: NSWindowController {
     /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
     /// 与侧边栏收藏夹/标签模块视觉分离，展开时显示所有设备不需滚动条
     /// 任务 4: 改用 FFGlassView 液态玻璃背景，与侧边栏玻璃质感统一
-    private var devicePanel: FFGlassView!
+    private var devicePanel: FFPanelView!
     /// 任务 F10-3: 设备浮层头部（汇总信息 + 折叠箭头）
     private var devicePanelHeader: DeviceHeaderView!
     /// 任务 F10-3: 设备浮层内容 stack（设备行纵向排列，高度自适应）
@@ -362,9 +362,15 @@ public class MainWindowController: NSWindowController {
         }
         FFDebug.log("setupUI: started, window=\(window.frame)")
 
-        // 窗口必须透明，否则玻璃效果无法模糊窗口背后的内容
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        // V0.8.0（ZCode 面板模型）：窗口回归不透明。
+        //
+        // 旧实现：isOpaque=false + clear 背景 + NSVisualEffectView(underWindowBackground)，
+        // 即「液态玻璃」——内容是模糊透出的，且逐像素 alpha 导致鼠标穿透风险
+        // （见 FFOpaqueContainerView 的根因注释）。
+        // 新实现：不透明纯色底（Color.window），层级靠「面板框 + 1px 边框 + 4pt 间隙」表达，
+        // 不再依赖模糊与投影。窗口阴影保留（OS 级窗口阴影，不是内容投影）。
+        window.isOpaque = true
+        window.backgroundColor = FFDesign.Color.window
         window.hasShadow = true
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -393,12 +399,23 @@ public class MainWindowController: NSWindowController {
         paneSplitView.delegate = self
         paneSplitView.wantsLayer = true
         paneSplitView.layer?.backgroundColor = NSColor.clear.cgColor
-        // 问题13修复：左右操作区用圆角卡片包裹，四周留 8pt 边距使圆角在所有边可见
-        paneSplitView.addArrangedSubview(makeCardWrapper(for: leftPaneContainer))
-        paneSplitView.addArrangedSubview(makeCardWrapper(for: rightPaneContainer))
+        // V0.8.0（ZCode 布局模型）：左右操作区各占一个独立面板框，两框之间留 4pt 透明间隙。
+        //
+        // 间隙由 panel slot 的内边距承担，因此 FFSplitView 仍维持 dividerThickness=0，
+        // 其自绘亮线与手动拖拽逻辑（currentDividerX = subviews[0].frame.maxX）完全不用改。
+        // 两侧各让 panelGap/2，合计一个 panelGap。
+        paneSplitView.addArrangedSubview(makePanelSlot(
+            tone: .panel,
+            content: leftPaneContainer,
+            insets: NSEdgeInsets(top: 0, left: 0, bottom: 0, right: FFDesign.Layout.panelGap / 2)
+        ))
+        paneSplitView.addArrangedSubview(makePanelSlot(
+            tone: .panel,
+            content: rightPaneContainer,
+            insets: NSEdgeInsets(top: 0, left: FFDesign.Layout.panelGap / 2, bottom: 0, right: 0)
+        ))
 
         // Main Split View（侧边栏 + 操作区）
-        // v0.6.9: 使用无分割线子类，移除侧边栏与操作区之间的可见分割线
         mainSplitView = FFNoDividerSplitView()
         mainSplitView.isVertical = true
         mainSplitView.dividerStyle = .thin
@@ -406,7 +423,12 @@ public class MainWindowController: NSWindowController {
         mainSplitView.delegate = self
         mainSplitView.wantsLayer = true
         mainSplitView.layer?.backgroundColor = NSColor.clear.cgColor
-        mainSplitView.addArrangedSubview(sidebarView)
+        // 侧栏也是一个独立面板框（tone: .sidebar，比操作区深一档），右侧留一个 panelGap
+        mainSplitView.addArrangedSubview(makePanelSlot(
+            tone: .sidebar,
+            content: sidebarView,
+            insets: NSEdgeInsets(top: 0, left: 0, bottom: 0, right: FFDesign.Layout.panelGap)
+        ))
         mainSplitView.addArrangedSubview(paneSplitView)
 
         // Task Progress Bar
@@ -433,32 +455,34 @@ public class MainWindowController: NSWindowController {
         taskProgressBarHeightConstraint = taskProgressBar.heightAnchor.constraint(equalToConstant: 0)
         taskProgressBarHeightConstraint.priority = .required
         NSLayoutConstraint.activate([
-            // mainSplitView 顶到 mainContainer 顶部（红绿灯浮在上方）
-            mainSplitView.topAnchor.constraint(equalTo: mainContainer.topAnchor),
-            mainSplitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
-            mainSplitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            // V0.8.0：窗口四边留白 windowInset(4pt)，面板框不贴窗边。
+            // 红绿灯浮在左上留白之上（titlebarAppearsTransparent=true），
+            // 侧栏内部另有顶部安全区，不与面板内容冲突。
+            mainSplitView.topAnchor.constraint(equalTo: mainContainer.topAnchor,
+                                               constant: FFDesign.Layout.windowInset),
+            mainSplitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor,
+                                                   constant: FFDesign.Layout.windowInset),
+            mainSplitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor,
+                                                    constant: -FFDesign.Layout.windowInset),
             // mainSplitView 底部锚定到 taskProgressBar 顶部，进度栏展开时上推操作区
             mainSplitView.bottomAnchor.constraint(equalTo: taskProgressBar.topAnchor),
 
-            taskProgressBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
-            taskProgressBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            taskProgressBar.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
+            taskProgressBar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor,
+                                                     constant: FFDesign.Layout.windowInset),
+            taskProgressBar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor,
+                                                      constant: -FFDesign.Layout.windowInset),
+            taskProgressBar.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor,
+                                                    constant: -FFDesign.Layout.windowInset),
             taskProgressBarHeightConstraint,
         ])
 
-        // 统一使用 NSVisualEffectView 作为窗口背景玻璃
-        let visualEffectView = NSVisualEffectView()
-        visualEffectView.material = .underWindowBackground
-        visualEffectView.blendingMode = .behindWindow
-        visualEffectView.state = .active
-        visualEffectView.addSubview(mainContainer)
-        mainContainer.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
-            mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
-            mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
-            mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
-        ])
+        // V0.8.0：移除窗口级 NSVisualEffectView(underWindowBackground)。
+        //
+        // 旧实现把整窗做成模糊玻璃，面板再无自己的边界，层级只能靠阴影勉强表达；
+        // 新实现是纯色底 + 独立面板框，contentView 直接就是 mainContainer。
+        mainContainer.translatesAutoresizingMaskIntoConstraints = true
+        mainContainer.autoresizingMask = [.width, .height]
+        mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
         mainContainerView = mainContainer
 
         // 任务 F10-3: 创建设备浮层并浮动到窗口左下角（v0.6.6）
@@ -502,7 +526,7 @@ public class MainWindowController: NSWindowController {
         workspaceNC.addObserver(self, selector: #selector(handleVolumeUnmount(_:)),
                                 name: NSWorkspace.didUnmountNotification, object: nil)
 
-        window.contentView = visualEffectView
+        window.contentView = mainContainer
 
         // 窗口外观跟随 ThemeManager 设置（不强制 nil，否则夜间模式无法生效）
         DispatchQueue.main.async { [weak self] in
@@ -618,32 +642,48 @@ public class MainWindowController: NSWindowController {
         TaskSchedulerManager.shared.startPolling()
     }
 
-    /// 问题13修复：为操作区创建带 8pt 边距的透明包裹视图
-    /// createPaneContainer 已设置 cornerRadius=8 + masksToBounds + 实体背景色，
-    /// 但此前容器直接铺满 split view，圆角紧贴窗口边缘不可见。
-    /// 此包裹视图在容器四周留出 8pt 透明边距，使圆角矩形在四个边均可见，形成独立卡片效果。
-    /// 两个卡片之间经 split divider 分隔，视觉上呈现为左右两张独立圆角卡片。
-    private func makeCardWrapper(for content: NSView) -> NSView {
-        let wrapper = NSView()
-        wrapper.wantsLayer = true
-        wrapper.layer?.backgroundColor = NSColor.clear.cgColor
-        wrapper.translatesAutoresizingMaskIntoConstraints = false
+    /// 面板槽（V0.8.0）：把内容包进一个独立面板框，四边按 insets 留出透明间隙。
+    ///
+    /// 结构：slot(透明) → FFPanelView(底色 + 1px 边框 + 圆角) → content(内容视图)
+    ///
+    /// 为什么用「槽」而不是直接把 divider 加宽：
+    /// FFSplitView 的自绘亮线依赖 `subviews[0].frame.maxX` 定位，且 dividerThickness=0 时
+    /// 内置拖拽失效、改用手动拖拽。若把 divider 改成 4pt，会与自绘亮线叠加并打乱热区计算。
+    /// 保持 divider=0、把间隙放进槽的内边距，拖拽与亮线逻辑完全不受影响。
+    private func makePanelSlot(tone: FFPanelView.Tone, content: NSView, insets: NSEdgeInsets) -> NSView {
+        let slot = NSView()
+        slot.translatesAutoresizingMaskIntoConstraints = false
+        slot.wantsLayer = true
+        slot.layer?.backgroundColor = NSColor.clear.cgColor
+
+        let panel = FFPanelView(tone: tone)
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        slot.addSubview(panel)
+
         content.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(content)
+        panel.addSubview(content)
+
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 4),
-            content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 4),
-            content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -4),
-            content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -4),
+            panel.topAnchor.constraint(equalTo: slot.topAnchor, constant: insets.top),
+            panel.leadingAnchor.constraint(equalTo: slot.leadingAnchor, constant: insets.left),
+            panel.trailingAnchor.constraint(equalTo: slot.trailingAnchor, constant: -insets.right),
+            panel.bottomAnchor.constraint(equalTo: slot.bottomAnchor, constant: -insets.bottom),
+
+            content.topAnchor.constraint(equalTo: panel.topAnchor),
+            content.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
         ])
-        return wrapper
+        return slot
     }
 
     /// 创建面板容器（工具栏 + 文件列表/网格 + DetailsBar）
     /// v0.6.9: 超椭圆圆角 16pt + 实体背景（1px 边框已按 Wave4 Task 6 删除）
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
-        let container = SquircleView(cornerRadius: 16, squircleFactor: 5.0, autoUpdateMask: true)
+        // V0.8.0：圆角 16 → 12（ZCode rounded-xl），与包在外层的 FFPanelView 一致。
+        // 内外两层圆角半径不同会产生「双轮廓」视觉（面板框与内容容器边缘错位）。
+        let container = SquircleView(cornerRadius: FFDesign.Radius.xl, squircleFactor: 5.0, autoUpdateMask: true)
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
         // v0.6.9: 操作区实体背景（日间#F5F5F5/夜间#2D2D2D，Wave4 Task 3 起走 FFDesign 令牌）
@@ -730,22 +770,26 @@ public class MainWindowController: NSWindowController {
             toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
-            // v0.6.9: 文件列表底部锚定 container 底部（不再锚定 detailsBar.topAnchor）
-            // 文件列表始终占满操作区全高，详情栏以浮层形式覆盖在上方
+            // V0.8.0：详情栏由「浮动玻璃覆盖层」改为「固定底栏」。
+            //
+            // 旧实现让列表/网格占满全高，详情栏以 8pt 内缩的玻璃浮层压在上面，
+            // 结果是浮层永久遮住列表最后一行内容，且玻璃与实体面板材质冲突。
+            // 现在列表底部让位给详情栏，详情栏作为面板的一部分贴底，
+            // 层次完全由「工具栏 / 列表 / 底栏」三段式表达，不再需要浮层阴影。
             listView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             listView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             listView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            listView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            listView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
 
             gridView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             gridView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             gridView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            gridView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            gridView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
 
-            // v0.6.9: 详情栏浮层定位——底部留 8pt 边距，左右各 8pt
-            detailsBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            detailsBar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            detailsBar.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            // 详情栏固定贴容器底部，左右不再留浮动边距
+            detailsBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            detailsBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            detailsBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             // 高度由 ExpandableDetailsBar 内部 heightConstraint 控制
         ])
 
@@ -809,12 +853,12 @@ public class MainWindowController: NSWindowController {
     /// - 浮动在窗口左下角，与侧边栏收藏夹/标签模块视觉分离（独立卡片样式）
     /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
     /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
-    private func createDevicePanel() -> FFGlassView {
-        // Wave4 Task 2：圆角 8→面板级默认 10（浮层圆角收敛两档：容器 16 / 浮层 10）
-        let panel = FFGlassView(level: .panel, cornerRadius: FFDesign.Glass.cornerRadiusPanel)
+    private func createDevicePanel() -> FFPanelView {
+        // V0.8.0：液态玻璃 → 扁平面板卡。
+        // 设备栏是浮在侧栏之上的独立卡片，改由「比侧栏亮一档的底色 + 1px 边框 + 12pt 圆角」
+        // 表达层级，不再用模糊材质与投影。
+        let panel = FFPanelView(tone: .card, cornerRadius: FFDesign.Radius.xl)
         panel.translatesAutoresizingMaskIntoConstraints = false
-        // 任务 4: 液态玻璃：FFGlassView 自带主题刷新（内部监听外观变化），
-        // 与侧边栏玻璃质感统一；子视图不被裁剪（不设置 masksToBounds）
 
         // 设备栏头部（汇总信息 + 折叠箭头，复用 SidebarView 的 DeviceHeaderView）
         devicePanelHeader = DeviceHeaderView()

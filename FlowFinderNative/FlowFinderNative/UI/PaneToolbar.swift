@@ -34,6 +34,8 @@ class PaneToolbar: NSView {
     private var upButton: NSButton!
     private var refreshButton: NSButton!
     private var row1: NSStackView!
+    /// V0.8.0：row2 仅作为控件容器存在，创建后即并入 row1（见 mergeRow2IntoRow1）
+    private var row2: NSStackView!
 
     // Row 2: Search + Sort + Group + View
     /// 1.4 自定义搜索框（替代 NSSearchField）：图标 + 文本框，放入实体容器
@@ -42,6 +44,10 @@ class PaneToolbar: NSView {
     private var searchTextField: NSTextField!
     private var sortPopup: NSPopUpButton!
     private var groupPopup: NSPopUpButton!
+    /// V0.8.0：单行工具栏里的「排序与分组」入口。
+    /// 原 sortPopup / groupPopup 两个下拉各占约 65pt，单行下会把面包屑挤到最小宽度；
+    /// 二者合并为一个 28pt 图标按钮 + 菜单，逻辑仍走原 popup（单一数据源）。
+    private var sortGroupButton: NSButton!
     private var listViewButton: NSButton!
     private var gridViewButton: NSButton!
     private var toolsButton: NSButton!  // 任务 D15: 工具菜单按钮
@@ -96,11 +102,16 @@ class PaneToolbar: NSView {
             name: .appearanceChanged, object: nil
         )
 
-        // 固定双行高度 72pt（每行 32 + 间距 4 + 边距 4）
-        heightAnchor.constraint(equalToConstant: 72).isActive = true
+        // V0.8.0：单行 40pt（ZCode 紧凑头部）。
+        //
+        // 原实现是 72pt 双行（导航+路径 / 搜索+排序+分组+视图+工具），在约 600pt
+        // 宽的单面板里，两行各只用到一半横向空间，纵向却吃掉 72pt，信息密度很低。
+        // 合并成一行后同样的控件横向排开，列表可视区立刻多出 32pt。
+        heightAnchor.constraint(equalToConstant: 40).isActive = true
 
         setupRow1()
         setupRow2()
+        mergeRow2IntoRow1()
         // v0.7.4 修订 1：注册新建文件夹按钮悬停跟踪（鼠标移入立即弹提示气泡）
         setupNewFolderHoverHint()
     }
@@ -135,10 +146,11 @@ class PaneToolbar: NSView {
         addSubview(row1)
 
         NSLayoutConstraint.activate([
-            row1.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            // 单行方案：行垂直居中于 40pt 高的工具栏（行高 28，上下各留 6）
+            row1.centerYAnchor.constraint(equalTo: centerYAnchor),
             row1.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             row1.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            row1.heightAnchor.constraint(equalToConstant: 32),
+            row1.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -153,7 +165,11 @@ class PaneToolbar: NSView {
         row1.insertArrangedSubview(bar, at: 4)
         // 面包屑 flex 撑满 Row1 剩余空间
         bar.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        bar.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // V0.8.0 单行：路径是工具栏主体信息，不允许被压成 0。
+        // 原实现压缩阻力为 .defaultLow，双行时无所谓（独占一行），
+        // 单行下与固定 150pt 的搜索框抢空间，会被直接压没。
+        bar.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 700), for: .horizontal)
+        bar.widthAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
     }
 
     // MARK: - Row 2: Search + Sort + Group + View
@@ -211,10 +227,14 @@ class PaneToolbar: NSView {
             searchIcon.heightAnchor.constraint(equalToConstant: 13),
             searchContainer.heightAnchor.constraint(equalToConstant: 24),
         ])
-        searchContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        // 搜索框 hugging 设为最低（1）：弹性吸收 row2 剩余宽度（窗口越宽搜索框越宽），
-        // 右侧图标簇（排序/分组/视图/显示设置）因默认 hugging 更高而固定贴最右。
-        searchContainer.setContentHuggingPriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
+        // V0.8.0（单行）：搜索框固定 150pt。
+        //
+        // 原双行实现把搜索框 hugging 设为 1（最低），让它吸收 row2 的全部剩余宽度；
+        // 合并成单行后，面包屑与搜索框同处一行，这个策略会把面包屑挤成 0（路径完全消失）。
+        // 单行下主体信息是路径，所以搜索框改为固定宽度，剩余宽度交给面包屑。
+        searchContainer.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        searchContainer.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        searchContainer.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
         sortPopup = NSPopUpButton()
         sortPopup.addItems(withTitles: SortField.allCases.map { $0.rawValue })
@@ -236,7 +256,8 @@ class PaneToolbar: NSView {
         //   搜索框(1，弹性输入域最先让位，止步于最小宽 120) → 文件夹选项(700) →
         //   新建文件夹(710) → 视图切换(720) → 分组(730) → 排序(740，最保文字可读)。
         // 图标按钮的固定宽度约束已在工厂方法中同步降至同级优先级。
-        searchContainer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
+        // V0.8.0 单行：搜索框已改为固定 150pt（见上方约束），不再参与横向让位，
+        // 压缩优先级保持默认，避免它被压到 0 而面包屑又拿不到空间。
         sortPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 740), for: .horizontal)
         groupPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 730), for: .horizontal)
 
@@ -268,10 +289,20 @@ class PaneToolbar: NSView {
         newFolderButton.toolTip = "新建文件夹"
         newFolderButton.isEnabled = true
 
-        let row2 = NSStackView(views: [
+        // V0.8.0：排序 + 分组合并为单行里的一个图标菜单（省出约 100pt 给面包屑）。
+        sortGroupButton = createNavButton(systemSymbol: "arrow.up.arrow.down",
+                                          action: #selector(showSortGroupMenu(_:)),
+                                          label: "排序与分组",
+                                          compressionPriority: NSLayoutConstraint.Priority(rawValue: 705))
+        sortGroupButton.toolTip = "排序与分组"
+
+        // V0.8.0：本方法只负责创建控件，不再独立成行。
+        // 控件随后由 mergeRow2IntoRow1() 依序并入 row1，形成单行工具栏。
+        // 注意 sortPopup / groupPopup 不再进入布局（仅作为状态与逻辑的载体保留，
+        // 入口已换成 sortGroupButton，见 showSortGroupMenu）。
+        row2 = NSStackView(views: [
             searchContainer,
-            sortPopup,
-            groupPopup,
+            sortGroupButton,
             listViewButton, gridViewButton,
             newFolderButton,
             toolsSeparator,
@@ -279,23 +310,26 @@ class PaneToolbar: NSView {
         ])
         row2.orientation = .horizontal
         row2.alignment = .centerY
-        row2.spacing = 4
-        // 修复问题 2：默认 distribution 不会拉伸低 hugging 子视图，导致搜索框卡在 120pt 自然宽度、
-        // 图标簇挤不到最右、行尾留白。设为 .fill 后，NSStackView 会拉伸水平 hugging 最低的子视图
-        // （即 searchContainer，hugging=1）吃掉全部剩余宽度，排序/分组/视图/显示设置等
-        // 高 hugging 控件保持固有宽度并整体贴到行最右。
-        row2.distribution = .fill
+        row2.spacing = 3
         row2.detachesHiddenViews = false
         row2.translatesAutoresizingMaskIntoConstraints = false
-        row2.setContentHuggingPriority(.defaultHigh, for: .vertical)
-        addSubview(row2)
+    }
 
-        NSLayoutConstraint.activate([
-            row2.topAnchor.constraint(equalTo: row1.bottomAnchor, constant: 4),
-            row2.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            row2.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            row2.heightAnchor.constraint(equalToConstant: 32),
-        ])
+    /// 把 row2 的控件按顺序并入 row1，完成「双行 → 单行」合并。
+    ///
+    /// 合并后顺序为：导航 4 钮 →（面包屑由 setBreadcrumbBar 插到 index 4）→
+    /// 搜索框 → 排序 → 分组 → 视图切换 → 新建文件夹 → 分隔符 → 工具菜单。
+    /// distribution 设为 .fill，让 hugging 最低的搜索框吸收剩余宽度，
+    /// 右侧图标簇保持固有宽度并整体贴到行尾（与原 row2 行为一致）。
+    private func mergeRow2IntoRow1() {
+        guard let row2 = row2 else { return }
+        for view in row2.arrangedSubviews {
+            row2.removeArrangedSubview(view)
+            row1.addArrangedSubview(view)
+        }
+        row2.removeFromSuperview()
+        row1.spacing = 3
+        row1.distribution = .fill
     }
 
     // MARK: - Button Factory
@@ -365,7 +399,8 @@ class PaneToolbar: NSView {
     /// 搜索框 → 排序 → 分组 → 视图分段（列表/网格切换按钮）。链尾由 MainWindowController
     /// 接到当前视图模式的文件列表/网格，再经窗口级 keyViewLoop 流转到另一面板。
     func keyViewControls() -> [NSView] {
-        [searchTextField, sortPopup, groupPopup, listViewButton, gridViewButton].compactMap { $0 }
+        // V0.8.0：排序/分组已合并为 sortGroupButton（单行工具栏），Tab 顺序随之简化
+        [searchTextField, sortGroupButton, listViewButton, gridViewButton].compactMap { $0 }
     }
 
     private func updateViewModeHighlight(_ mode: ViewMode) {
@@ -394,6 +429,74 @@ class PaneToolbar: NSView {
     @objc private func groupSelected(_ sender: NSPopUpButton) {
         let groupBy: String
         switch sender.titleOfSelectedItem {
+        case "无分组": groupBy = "none"
+        case "按种类": groupBy = "kind"
+        case "按日期": groupBy = "date"
+        case "按大小": groupBy = "size"
+        default: groupBy = "none"
+        }
+        delegate?.paneToolbar(self, didChangeGroupBy: groupBy)
+    }
+
+    // MARK: - V0.8.0 排序与分组菜单（单行工具栏入口）
+
+    /// 弹出「排序方式 + 分组方式」合并菜单。
+    ///
+    /// 单行工具栏横向空间有限，原 sortPopup / groupPopup 并排约占 130pt，
+    /// 把面包屑压到最小宽度。合并进 28pt 图标菜单后，路径可正常显示。
+    /// 状态仍以 sortPopup / groupPopup 的选中项为唯一数据源，菜单只是另一种入口。
+    @objc private func showSortGroupMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let sortHeader = NSMenuItem(title: "排序方式", action: nil, keyEquivalent: "")
+        sortHeader.isEnabled = false
+        menu.addItem(sortHeader)
+
+        let currentSort = sortPopup.titleOfSelectedItem
+        for field in SortField.allCases {
+            let item = NSMenuItem(title: field.rawValue,
+                                  action: #selector(menuSortSelected(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = field.rawValue
+            item.state = (field.rawValue == currentSort) ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        let groupHeader = NSMenuItem(title: "分组方式", action: nil, keyEquivalent: "")
+        groupHeader.isEnabled = false
+        menu.addItem(groupHeader)
+
+        let currentGroup = groupPopup.titleOfSelectedItem
+        for title in ["无分组", "按种类", "按日期", "按大小"] {
+            let item = NSMenuItem(title: title,
+                                  action: #selector(menuGroupSelected(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = title
+            item.state = (title == currentGroup) ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.minY - 4), in: sender)
+    }
+
+    @objc private func menuSortSelected(_ item: NSMenuItem) {
+        guard let title = item.representedObject as? String,
+              let field = SortField(rawValue: title) else { return }
+        sortPopup.selectItem(withTitle: title)
+        // 与 sortSelected 一致：切换字段时默认升序，升降序由列头点击控制
+        delegate?.paneToolbar(self, didChangeSortField: field, ascending: true)
+    }
+
+    @objc private func menuGroupSelected(_ item: NSMenuItem) {
+        guard let title = item.representedObject as? String else { return }
+        groupPopup.selectItem(withTitle: title)
+        let groupBy: String
+        switch title {
         case "无分组": groupBy = "none"
         case "按种类": groupBy = "kind"
         case "按日期": groupBy = "date"
