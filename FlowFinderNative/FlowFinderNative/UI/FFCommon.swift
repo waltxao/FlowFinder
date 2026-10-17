@@ -895,10 +895,17 @@ enum FFDividerGlowMath {
         return [max(0, c - r), c, min(1, c + r)]
     }
 
-    /// 鼠标 X → 分隔线目标位置（绝对跟随模型）：clamp 到每侧最小 450pt 约束内
-    static func clampedDividerPosition(mouseX: CGFloat, boundsWidth: CGFloat) -> CGFloat {
-        let maxPosition = max(minPaneWidth, boundsWidth - minPaneWidth)
-        return min(max(mouseX, minPaneWidth), maxPosition)
+    /// 鼠标 X → 分隔线目标位置（绝对跟随模型）：clamp 到每侧最小宽约束内。
+    /// - leadingMin: 左侧子视图最小宽（双操作区 450；侧栏分隔 160，见 DESIGN-SPEC B-01）
+    /// - trailingMin: 右侧子视图最小宽
+    static func clampedDividerPosition(
+        mouseX: CGFloat,
+        boundsWidth: CGFloat,
+        leadingMin: CGFloat = minPaneWidth,
+        trailingMin: CGFloat = minPaneWidth
+    ) -> CGFloat {
+        let maxPosition = max(leadingMin, boundsWidth - trailingMin)
+        return min(max(mouseX, leadingMin), maxPosition)
     }
 }
 

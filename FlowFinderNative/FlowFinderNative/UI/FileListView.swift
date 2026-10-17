@@ -328,6 +328,24 @@ private class FFTableRowView: NSTableRowView {
         path.lineWidth = 1.5
         path.stroke()
     }
+
+    /// 选中底色统一走应用强调色（DESIGN-SPEC C-04 / C-05）。
+    ///
+    /// 2026-10-17 修复跨视图不一致：此前完全交给 NSTableView 默认绘制，取的是
+    /// **系统**强调色；而侧栏与网格用的是 **应用**强调色（FFAccent，可在设置里改）。
+    /// 用户把强调色改成红后，列表选中是蓝、侧栏与网格是红——同一「选中」概念两种颜色。
+    /// 现三处都从 FFAccent 取，获焦实底、失焦灰底（白字由 backgroundStyle 自动处理）。
+    override func drawSelection(in dirtyRect: NSRect) {
+        // 注意：行视图的 selectionHighlightStyle 默认为 .none（NSTableView 不会把
+        // 自己的 style 传给委托创建的 row view），若按 style 提前返回会一行都画不出来。
+        // 故只以 isSelected 判定。
+        guard isSelected else { return }
+        let color = isEmphasized
+            ? FFAccent.current
+            : NSColor.unemphasizedSelectedContentBackgroundColor
+        color.setFill()
+        bounds.fill()
+    }
 }
 
 /// 任务 F10-8 / F11-5: 分组标题行的 rowView。
@@ -1786,7 +1804,12 @@ extension FileListView: NSTableViewDelegate {
             hv.sectionCount = viewModel?.groupedFiles.first(where: { $0.key == displayRows[row].key })?.entries.count ?? 0
             return hv
         }
-        return FFTableRowView()
+        // DESIGN-SPEC C-04：显式指定 .regular，让行视图自己负责选中绘制。
+        // 委托创建的 row view 其 selectionHighlightStyle 默认为 .none，此时 NSTableView
+        // 会用系统强调色自己画——这正是「列表蓝、侧栏与网格红」的成因。
+        let rowView = FFTableRowView()
+        rowView.selectionHighlightStyle = .regular
+        return rowView
     }
 
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {

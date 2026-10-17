@@ -182,8 +182,8 @@ private class FFSidebarRowView: NSTableRowView {
             height: bounds.height
         )
         let path = NSBezierPath(roundedRect: highlightRect, xRadius: highlightRadius, yRadius: highlightRadius)
-        // 选中时用强调色；窗口失焦时用次级灰色（与系统行为一致）
-        let color: NSColor = isEmphasized ? FFAccent.current : .secondarySelectedControlColor
+        // 选中时用强调色；窗口失焦时用「未强调选中」系统灰（与列表同一令牌，C-05）
+        let color: NSColor = isEmphasized ? FFAccent.current : .unemphasizedSelectedContentBackgroundColor
         color.setFill()
         path.fill()
     }
@@ -697,6 +697,12 @@ class SidebarView: NSView {
     // MARK: - 收藏刷新与校验
 
     /// 重建收藏 outline：展开分区、同步内容高度、按需恢复选中（不触发导航）
+    /// 强调色变更后刷新选中态（选中底色由 FFSidebarRowView 自绘，需重载行才重绘）
+    func refreshSelectionAppearance() {
+        favoritesOutlineView?.reloadData()
+        needsDisplay = true
+    }
+
     private func reloadFavorites(selecting favoriteID: String? = nil) {
         favoritesOutlineView.reloadData()
         // 分区为 group item，需显式展开才会显示子行

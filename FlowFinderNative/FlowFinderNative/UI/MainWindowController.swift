@@ -3,13 +3,6 @@ import Combine
 import QuickLook
 import Quartz
 
-/// v0.6.9: 无分割线 NSSplitView 子类（用于侧边栏与操作区之间，divider 厚度为 0）
-private class FFNoDividerSplitView: NSSplitView {
-    override var dividerThickness: CGFloat {
-        return 0
-    }
-}
-
 /// 自定义 NSSplitView 子类：任务 R5 — divider 悬停高亮
 /// v0.7.6 发布后修复轮：亮点跟随鼠标 Y（上下各 60pt 渐隐）+ 拖动绝对跟随（禁隐式动画消迟滞）。
 /// 设计文档：docs/superpowers/specs/2026-08-28-divider-handle-glow-follow-design.md
@@ -115,11 +108,23 @@ private class FFSplitView: NSSplitView {
         NSCursor.arrow.set()
     }
 
+    /// 左侧子视图最小宽度。侧栏分隔用 160（DESIGN-SPEC B-01），双操作区用 450。
+    /// 分隔线厚度为 0 时系统不接管拖拽，最小/最大值只能由本类自行 clamp。
+    var leadingMinWidth: CGFloat = FFDividerGlowMath.minPaneWidth
+
+    /// 右侧子视图最小宽度（双操作区两侧各 450；侧栏分隔右侧为操作区，同样按 450 保底）
+    var trailingMinWidth: CGFloat = FFDividerGlowMath.minPaneWidth
+
     /// 绝对跟随：分隔线目标位置一律取 clamp(鼠标X)，返回实际生效的位置。
     /// 按下瞬间即对齐鼠标正下方（跳动 ≤ 热区半径 6pt）。
     @discardableResult
     private func applyDividerPosition(mouseX: CGFloat) -> CGFloat {
-        let clamped = FFDividerGlowMath.clampedDividerPosition(mouseX: mouseX, boundsWidth: self.bounds.width)
+        let clamped = FFDividerGlowMath.clampedDividerPosition(
+            mouseX: mouseX,
+            boundsWidth: bounds.width,
+            leadingMin: leadingMinWidth,
+            trailingMin: trailingMinWidth
+        )
         setPosition(clamped, ofDividerAt: 0)
         return clamped
     }
@@ -186,6 +191,24 @@ public class MainWindowController: NSWindowController {
     internal static let undoRedoQueue = DispatchQueue(label: "FlowFinder.UndoRedo.Serial")
 
     // MARK: - Properties
+
+    /// 侧栏默认宽度（DESIGN-SPEC B-01）。访达侧栏约 210–220pt，取 220。
+    static let sidebarDefaultWidth: CGFloat = 220
+    /// 侧栏可拖最小宽度
+    static let sidebarMinWidth: CGFloat = 160
+    /// 侧栏可拖最大宽度
+    static let sidebarMaxWidth: CGFloat = 280
+    /// 侧栏宽度记忆键
+    private static let sidebarWidthKey = "sidebar_width"
+
+    /// 读取上次拖拽记忆的侧栏宽度，落在 [min, max] 内才采用
+    static func restoredSidebarWidth() -> CGFloat {
+        let saved = UserDefaults.standard.double(forKey: sidebarWidthKey)
+        guard saved >= Double(sidebarMinWidth), saved <= Double(sidebarMaxWidth) else {
+            return sidebarDefaultWidth
+        }
+        return CGFloat(saved)
+    }
 
     let leftPaneViewModel = PaneViewModel()
     let rightPaneViewModel = PaneViewModel()
@@ -280,7 +303,10 @@ public class MainWindowController: NSWindowController {
             defer: false
         )
         window.title = "FlowFinder"
-        window.minSize = NSSize(width: 1000, height: 700)
+        // 最小尺寸按「侧栏最小 160 + 两个操作区各 450」推导 = 1060（DESIGN-SPEC W-07）。
+        // 原值 1000 与 pane 的 450 保底自相矛盾：1000 − 160 = 840，两个 pane 各 420，
+        // 会触发 NSSplitView 约束冲突并把工具栏控件挤重叠。
+        window.minSize = NSSize(width: 1060, height: 700)
         window.center()
         // 注意：不要在这里 makeKeyAndOrderFront！
         // 必须先完成 setupUI（设置 isOpaque=false, backgroundColor=.clear, NSVisualEffectView），
@@ -400,8 +426,14 @@ public class MainWindowController: NSWindowController {
         paneSplitView.addArrangedSubview(makeCardWrapper(for: rightPaneContainer))
 
         // Main Split View（侧边栏 + 操作区）
-        // v0.6.9: 使用无分割线子类，移除侧边栏与操作区之间的可见分割线
-        mainSplitView = FFNoDividerSplitView()
+        // 2026-10-17：改用 FFSplitView，使侧栏宽度可拖（DESIGN-SPEC B-01 160–280）。
+        // 原先用无分割线私有子类，dividerThickness=0 时系统不接管拖拽，侧栏宽度被
+        // 硬编码 220 固定，用户无法调整——规格里写了「可拖」但实现没有。
+        // FFSplitView 自带热区命中 + 渐变亮线 + 绝对跟随拖拽，正好复用。
+        let mainSplit = FFSplitView()
+        mainSplit.leadingMinWidth = MainWindowController.sidebarMinWidth
+        mainSplit.trailingMinWidth = FFDividerGlowMath.minPaneWidth
+        mainSplitView = mainSplit
         mainSplitView.isVertical = true
         mainSplitView.dividerStyle = .thin
         mainSplitView.translatesAutoresizingMaskIntoConstraints = false
@@ -603,10 +635,10 @@ public class MainWindowController: NSWindowController {
         buildKeyViewLoops()
         window.initialFirstResponder = leftFileListView.keyFocusTarget
 
-        // 初始 divider 位置
+        // 初始 divider 位置（侧栏宽度取记忆值，无记忆时 220）
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.mainSplitView.setPosition(220, ofDividerAt: 0)
+            self.mainSplitView.setPosition(MainWindowController.restoredSidebarWidth(), ofDividerAt: 0)
             let totalWidth = self.paneSplitView.bounds.width
             if totalWidth > 0 {
                 self.paneSplitView.setPosition(totalWidth / 2, ofDividerAt: 0)
@@ -1002,6 +1034,13 @@ public class MainWindowController: NSWindowController {
     }
 
     private func setupNotifications() {
+        // 强调色变更即时生效（DESIGN-SPEC C-04）。
+        // 此前 FFAccent 注释声称「设置改动即可全应用即时生效」，但全仓无人订阅
+        // .accentColorChanged——用户改完颜色要等下一次重绘才看得到。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleAccentColorChanged(_:)),
+            name: .accentColorChanged, object: nil
+        )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSidebarDirectorySelected(_:)),
             name: .sidebarDidSelectDirectory, object: nil
@@ -1963,6 +2002,16 @@ public class MainWindowController: NSWindowController {
         return false
     }
 
+    /// 强调色变更 → 三处选中态即时重绘（列表 / 网格 / 侧栏统一取 FFAccent）
+    @objc private func handleAccentColorChanged(_ notification: Notification) {
+        sidebarView?.needsDisplay = true
+        sidebarView?.refreshSelectionAppearance()
+        leftFileListView?.refreshAppearance()
+        rightFileListView?.refreshAppearance()
+        leftFileGridView?.refreshAppearance()
+        rightFileGridView?.refreshAppearance()
+    }
+
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {
         // Wave2 P0-4（多窗口）：仅响应本窗口侧边栏发出的选择。发送者可能是
         // SidebarView 自身或其内部数据源（收藏/设备 outlineView 的 dataSource），
@@ -2143,9 +2192,9 @@ extension MainWindowController: BreadcrumbBarDelegate {
 extension MainWindowController: NSSplitViewDelegate {
     /// 限制每个面板的最小坐标，防止工具栏元素重叠
     public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        // 主 split view（sidebar + panes）：sidebar 最小 180
+        // 主 split view（sidebar + panes）：sidebar 最小 160（DESIGN-SPEC B-01）
         if splitView === mainSplitView {
-            return 180
+            return MainWindowController.sidebarMinWidth
         }
         // pane split view（left + right panes）：每个面板最小 450
         if splitView === paneSplitView {
@@ -2156,9 +2205,9 @@ extension MainWindowController: NSSplitViewDelegate {
 
     /// 限制每个面板的最大坐标，防止一个面板占据过多空间
     public func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        // 主 split view：sidebar 最大 280
+        // 主 split view：sidebar 最大 280（DESIGN-SPEC B-01）
         if splitView === mainSplitView {
-            return 280
+            return MainWindowController.sidebarMaxWidth
         }
         // pane split view：留出至少 450 给另一个面板
         if splitView === paneSplitView {
@@ -2168,11 +2217,19 @@ extension MainWindowController: NSSplitViewDelegate {
         return proposedMaximumPosition
     }
 
-    /// 拖动时实时更新布局
+    /// 拖动时实时更新布局 + 记忆侧栏宽度
     public func splitViewDidResizeSubviews(_ notification: Notification) {
         // 触发布局更新
         if let splitView = notification.object as? NSSplitView {
             splitView.window?.layoutIfNeeded()
+            // DESIGN-SPEC B-01：侧栏宽度记忆（下一窗口/下次启动沿用）
+            if splitView === mainSplitView, let sidebar = splitView.subviews.first {
+                let width = sidebar.frame.width
+                if width >= MainWindowController.sidebarMinWidth,
+                   width <= MainWindowController.sidebarMaxWidth {
+                    UserDefaults.standard.set(Double(width), forKey: MainWindowController.sidebarWidthKey)
+                }
+            }
         }
     }
 }

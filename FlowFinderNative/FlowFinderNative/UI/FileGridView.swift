@@ -140,14 +140,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 }
             }
 
-            // 隐藏文件灰色
-            if entry.isHidden {
-                nameLabel.textColor = NSColor.tertiaryLabelColor
-            } else if entry.isSystemProtected {
-                nameLabel.textColor = NSColor.systemRed
-            } else {
-                nameLabel.textColor = NSColor.labelColor
-            }
+            // 文件名颜色由 applyVisualState 统一处理（选中白字 / 隐藏灰 / 保护红）
+            applyLabelColor()
 
             // 配置标签药丸（文件名下方）
             configureTagPills()
@@ -309,7 +303,8 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     }
 
     /// Wave3 Task 1: 统一应用选中态 + Drop 高亮态视觉。
-    /// - 选中：accent 25% 实底 + 圆角 8（既有行为）
+    /// - 选中：实心强调色 + 白字（DESIGN-SPEC G-04；与列表 NSTableRowView 的
+    ///   系统蓝实底 + 白字保持同一语义，此前用 25% 透明底配黑字，与列表选中完全不同）
     /// - Drop 高亮：accent 8% 底 + 1.5pt accent 圆角描边 + 圆角 8
     /// 两者可并存（描边叠加在选中底色之上）。
     private func applyVisualState() {
@@ -318,11 +313,30 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             (view as? SquircleMaskedView)?.squircleRadius = 8
         } else {
             view.layer?.backgroundColor = isSelected
-                ? FFAccent.current.withAlphaComponent(0.25).cgColor
+                ? FFAccent.current.cgColor
                 : NSColor.clear.cgColor
             (view as? SquircleMaskedView)?.squircleRadius = isSelected ? 8 : 0
         }
         dropBorderView.isHighlighted = isDropTarget
+        applyLabelColor()
+    }
+
+    /// 文件名颜色：选中态统一白色（含隐藏文件 / 系统保护文件——与列表选中行一致），
+    /// 非选中态按隐藏 / 系统保护的语义色回落。
+    private func applyLabelColor() {
+        if isSelected {
+            nameLabel.textColor = .white
+            pathLabel?.textColor = NSColor.white.withAlphaComponent(0.85)
+            return
+        }
+        if entry?.isHidden == true {
+            nameLabel.textColor = NSColor.tertiaryLabelColor
+        } else if entry?.isSystemProtected == true {
+            nameLabel.textColor = NSColor.systemRed
+        } else {
+            nameLabel.textColor = NSColor.labelColor
+        }
+        pathLabel?.textColor = NSColor.secondaryLabelColor
     }
 
     // MARK: - Tag Pills（标签药丸）

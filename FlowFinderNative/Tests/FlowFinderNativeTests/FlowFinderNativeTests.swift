@@ -485,6 +485,24 @@ final class FFDividerGlowMathTests: XCTestCase {
         XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 700, boundsWidth: 800), 450)
         XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 800), 450)
     }
+
+    /// DESIGN-SPEC B-01：侧栏分隔用 160 最小宽，右侧仍是操作区 450 保底。
+    /// 侧栏可拖 160–280，故 160 不能被双操作区的 450 覆盖。
+    func testClampedDividerPositionSidebarLeadingMin() {
+        XCTAssertEqual(
+            FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 1400, leadingMin: 160),
+            160
+        )
+        XCTAssertEqual(
+            FFDividerGlowMath.clampedDividerPosition(mouseX: 240, boundsWidth: 1400, leadingMin: 160),
+            240
+        )
+        // 上限仍受右侧 450 保底约束
+        XCTAssertEqual(
+            FFDividerGlowMath.clampedDividerPosition(mouseX: 1200, boundsWidth: 1400, leadingMin: 160),
+            950
+        )
+    }
 }
 
 // MARK: - FFDetailsFlowLayout（详情栏流动填充分配）

@@ -362,9 +362,9 @@ class ExpandableDetailsBar: NSView {
         smallIconView.translatesAutoresizingMaskIntoConstraints = false
         compactView.addSubview(smallIconView)
 
-        // 1.6 收起态名称：13pt semibold（Wave4 Task 5 改用 Typography.title 令牌，
-        // 与展开态名称同档，避免选中数量切换时字号/字重跳变）
-        compactNameField.font = FFDesign.Text.baseSemibold
+        // 1.6 收起态名称：15pt semibold（DESIGN-SPEC D-13）。
+        // 与展开态名称同档，避免选中数量切换时字号/字重跳变
+        compactNameField.font = FFDesign.Text.lg
         compactNameField.textColor = NSColor.labelColor
         compactNameField.lineBreakMode = .byTruncatingTail
         compactNameField.maximumNumberOfLines = 1
@@ -466,10 +466,10 @@ class ExpandableDetailsBar: NSView {
         column1.translatesAutoresizingMaskIntoConstraints = false
         mainColumn1 = column1
 
-        // v0.7.4 项 3：名称行（可单击改名）。Wave4 Task 5：改用 Typography.title(13 semibold)
+        // v0.7.4 项 3：名称行（可单击改名）。2026-10-17：按 DESIGN-SPEC D-13 提到 15 semibold
         // 令牌，与收起态名称同档（此前 11pt semibold，低于标题档一档且与收起态 13pt 不一致）
         configureValue(nameField)
-        nameField.font = FFDesign.Text.baseSemibold
+        nameField.font = FFDesign.Text.lg
         nameField.textColor = NSColor.labelColor
         nameField.lineBreakMode = .byTruncatingTail
         nameField.maximumNumberOfLines = 1
