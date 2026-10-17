@@ -12,6 +12,7 @@ rust-core/target/
 xcuserdata/
 *.xcuserstate
 build/
+build-beta/
 DerivedData/
 *.ipa
 *.dSYM.zip
@@ -42,3 +43,10 @@ dist/
 *.code-workspace
 CONTINUE_DEV_PROMPT.md
 FlowFinder.app/
+
+# 构建产物（由 scripts/build-rust.sh 生成，不入库）
+FlowFinderNative/FlowFinderNative/Libraries/*.a
+FlowFinderNative/FlowFinderNative/Libraries/*.dylib
+
+# Agent 工作目录（审计/头脑风暴临时产物）
+.superpowers/

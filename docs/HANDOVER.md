@@ -6,7 +6,7 @@
 > **分支：** main
 > **最新提交：** 524edff（docs: 修改历史补录收藏导航误杀缺陷）
 > **本地路径：** `/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native`
-> **测试基线：** Rust 200 tests / Swift XCTest 97 tests 全绿，集成测试通过（2026-08-30 清洁重编译采信）
+> **测试基线：** Rust 200 tests / Swift XCTest 98 tests 全绿，集成测试通过（2026-09-02 复验，含侧边栏导航回归测试）
 
 ---
 
@@ -166,7 +166,7 @@ v0.6.7 经历了从"全透明玻璃"到"亚克力侧边栏 + 实体内容区"的
 | **打包架构** | ARCHS=arm64 + ONLY_ACTIVE_ARCH=YES | v0.7.5 固定（dylib 仅 arm64） |
 | **目录列举队列** | 独立并发队列（directoryListQueue）+ 10s 超时兜底 | 2026-08-30 热修：共享 ffiQueue 曾被慢目录（iCloud）阻塞致全局死锁 |
 | **FSEvents 线程 QoS** | USER_INITIATED（0x19，pthread_set_qos_class_self_np） | 2026-08-30：修复主线程同步握手优先级反转（正式版导航卡顿根因） |
-| **侧边栏通知身份守卫** | isOwnSidebarNotification：发送者沿 superview 链归属本窗口侧边栏 | 2026-08-30：初版只认 SidebarView 实例误杀本窗口导航（数据源对象是实际发送者） |
+| **侧边栏通知身份守卫** | isOwnSidebarNotification：发送者为 NSView 且所属窗口=本窗口（未挂窗退回视图树判定）；poster（outlineViewSelectionDidChange）必须以 outlineView 为 object | 2026-08-30：初版只认 SidebarView 实例误杀本窗口导航（数据源对象是实际发送者）；e3792db 视图树判定仍误杀——数据源（NSObject）cast NSView 必失败、设备浮层不在 sidebarView 子树；2026-09-02 根治：poster 改发 outlineView + 守卫补窗口身份判定（回归测试 SidebarNavigationPosterTests） |
 | **快捷键系统** | ShortcutCenter 统一键位读取（UserDefaults，默认=旧行为）| 2026-08-30：硬编码键位全部改读设置 |
 | **测试宿主** | XCTest 环境跳过宿主 UI 创建（启动环境变量判定） | 2026-08-30：宿主主窗口簿记块与测试裸释放竞态曾致运行器 SIGSEGV |
 | **视觉令牌** | FFDesign.OperationArea / Typography / Glass.cornerRadiusPanel，全双值+刷新链 | 2026-08-30：三套硬编码灰归一、字体层级化、圆角收敛 16/10 |
@@ -182,7 +182,9 @@ v0.6.7 经历了从"全透明玻璃"到"亚克力侧边栏 + 实体内容区"的
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
 | 中 | **Developer ID 公证** | 0.7.6 产物仍为 ad-hoc 签名（首次打开需右键→打开）。配置 Secrets `APPLE_DEVELOPER_ID` + `NOTARY_API_KEY`/`NOTARY_KEY_ID`/`NOTARY_ISSUER` 后推送 tag 自动公证 |
-| 高 | **Release 打包环境问题** | macOS 27 + Homebrew Rust 1.96.1：Release 构建的 proc-macro dylib（serde_derive 等）LINKEDIT mis-aligned，`dlopen` 拒绝（Debug 正常）。临时方案：用 Debug 构建替换安装；根治待 rustup 换工具链或 Rust 修复 |
+| 高 | **Release 打包环境问题** | macOS 27 + Homebrew Rust 1.96.1：Release 构建的 proc-macro dylib（serde_derive 等）LINKEDIT mis-aligned，`dlopen` 拒绝（Debug 正常）。临时方案：用 `scripts/package-beta.sh` 出 Debug 测试版；根治待 rustup 换工具链或 Rust 修复 |
+| 高 | **build-rust.sh 的 Xcode ld relink 失效** | 2026-09-13 复现：`ld -force_load libflowfinder_core.a` 报 `Undefined symbols for architecture arm64`，脚本回退到直接拷贝 rust-lld 产出的 dylib。Debug 链路仍能通过（.app 可启动），但 Release 的重链接兜底实际已失效，需补齐缺失的系统库/框架链接参数 |
+| 高 | **Swift 测试跑不起来（环境）** | 2026-09-13：`make swift-test` 连续报 `The test runner hung before establishing connection`（宿主进程 sample 显示主线程空闲在 run loop，应用本身没死锁）。疑似 testmanagerd 状态污染。跑测试前务必先 `pkill -f "MacOS/FlowFinderNative"`（单实例策略会让宿主秒退）；若仍失败，重启 Xcode 或系统后再试 |
 | 高 | **版本号元数据** | pbxproj MARKETING_VERSION=0.7.4、Info.plist 版本字段未随新功能更新；发版前统一升版 |
 | 中 | **发版决策** | 60+ 提交未发版：需决策版本号（建议 0.8.0）、CHANGELOG、DMG/ZIP 资产、公证 |
 | 已完成 | ~~v0.7.5 Release 资产过时~~ | 已发 v0.7.6（含发布后修复，DMG/ZIP/sha256 资产齐） |
@@ -231,6 +233,17 @@ make clean / setup / release / xcode / help
 ```bash
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer bash scripts/package.sh
 ```
+
+测试版（Debug）打包 2026-09-13 新增，Release 通道不可用时用它出可测产物：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer bash scripts/package-beta.sh
+# BETA_LABEL=beta.2 ...   # 迭代下一版
+# INSTALL=1 ...           # 打包后直接装进 /Applications
+```
+
+产出目录 `build-beta/`（与 Release 的 `build/` 隔离）：
+- `FlowFinder-0.8.0-beta.1.dmg` / `.zip` / `.sha256`
 
 产出（`build/` 目录）：
 - `FlowFinder-0.7.5.dmg` — DMG 安装镜像
@@ -298,7 +311,7 @@ gh release create v0.7.5 \
 | `ffi/mod.rs` | ~3121 | FFI 入口（tests 已拆出） |
 | `ffi/tests.rs` | - | FFI 集成测试（69 个 #[test]，v0.7.5 拆分） |
 
-**Swift 测试：** `FlowFinderNative/Tests/FlowFinderNativeTests/`（97 tests；覆盖：PaneState 删除/过滤/流程、详情栏流动填充与布局回归、键盘焦点与重复行回归、查重/搜索/无障碍等）
+**Swift 测试：** `FlowFinderNative/Tests/FlowFinderNativeTests/`（98 tests；覆盖：PaneState 删除/过滤/流程、详情栏流动填充与布局回归、键盘焦点与重复行回归、查重/搜索/无障碍、侧边栏导航通知发送者契约等）
 
 ### 9.2 设计文档
 
@@ -358,7 +371,7 @@ gh release create v0.7.5 \
 1. 先读本文件（HANDOVER.md），了解项目全貌和关键架构决策
 2. 再读 CHANGELOG.md（v0.7.2 起）与 docs/MIGRATION_LOG.md，了解版本历史
 3. 设置 Xcode-beta：export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-4. 验证基线：make rust-test（200 passed）+ make swift-test（97 passed）
+4. 验证基线：make rust-test（200 passed）+ make swift-test（98 passed）
 5. 打包发布：bash scripts/package.sh（产出 build/FlowFinder-*.dmg/zip/sha256）
 6. 等待用户反馈（注意：你看不到图片，需文字描述）
 7. 如有新问题，先问一个澄清问题，一次只问一个
