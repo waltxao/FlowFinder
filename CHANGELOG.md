@@ -4,27 +4,41 @@
 
 ---
 
-## [0.8.0] — 未发版（开发中）
+## [0.7.9-b1] — 2026-10-17
 
-> V0.8.0 定位：**第一个面向普通用户的测试版**。
-> 需求基线见 `docs/superpowers/specs/2026-10-17-v0.8.0-beta-spec.md`，
-> 审查结论见 `docs/superpowers/specs/2026-10-17-v0.8.0-requirements-audit.md`。
+> **第一个面向普通用户的测试版**（beta 1）。版本号 0.7.9 / 构建 7901。
+> 设计方向的唯一来源是 `docs/DESIGN-SPEC.md`，产品定义见 `docs/PRODUCT.md`，
+> 验收口径见 `docs/ACCEPTANCE.md`。
 >
-> 本次交付 P0「地基」：发行链路打通 + 设计系统落地 + 工程债清理。
+> 本次交付：发行链路打通 + 设计方向收口 + 五条核心旅程打通 + 工程债清理。
+> （内部曾按 V0.8.0 规划，发版号回落到 0.7.9 系列，故旧文档标题仍见 0.8.0。）
 
 ### 发行链路（P0）
 - **Release 构建恢复**：`cargo build --release` 此前在 macOS 27 + Homebrew rustc 1.96.1 下必然失败（fat LTO 让 proc-macro dylib 产出 `mis-aligned LINKEDIT string pool`，`serde_derive` 无法 dlopen）。改 `[profile.release] lto = "thin"` 后通过，保留绝大部分跨 crate 优化
 - **dylib 重链接根治**：`build-rust.sh` 的 Xcode ld 重链接缺 `-framework CoreServices`，导致 FSEventStream 符号未定义、长期回退到未对齐的 rust-lld 产物。补齐后重链接真正成功，导出 66 个 `ff_*` 符号，`dlopen` 验证通过
 - **打包恢复 Release**：`package-beta.sh` 从 Debug 改回 Release（此前因上述构建失败被迫降级）
-- **版本号单一真源**：`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 收敛到 Xcode 工程一处（0.8.0 / 8000），`scripts/lib-version.sh` 供打包脚本与 `make version` 读取，不再有三处硬编码
+- **版本号单一真源**：`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 收敛到 Xcode 工程一处（0.7.9 / 7901），`scripts/lib-version.sh` 供打包脚本与 `make version` 读取，不再有三处硬编码
 - **构建产物移出版本库**：`Libraries/*.a` / `*.dylib` 不再入库（此前每次构建产生 41MB 二进制 diff）
 - **Makefile 重写**：原 `swift build` 目标对 Xcode 工程无效。新目标：`make build / release / demo / beta / test / version / warnings`
 
-### 设计系统（P0）
-- **设计令牌落地**：`FFDesign` 新增 `Color`（11 个语义色，`NSColor(name:dynamicProvider:)` 自动跟随深浅色）、`Layout`、`Radius`、`Spacing`、`Text` 五组语义令牌
-- **新增原子组件** `FFComponents.swift`：`FFPanelView`（面板框）、`FFSectionHeaderView`、`FFEmptyStateView`、`FFSeparatorView`
-- **设计预览窗口**（仅 Debug，⌥⌘D / `--design-preview`）：色板、字体层级、面板布局模型、行三态、空态，供肉眼验收
-- ⚠️ **设计基线未转向**：P0 曾试图移植 [zai-org/ZCode](https://github.com/zai-org/ZCode) 的「扁平、致密、以边框分层」并声明"不追求像素级克隆访达"。该结论**未经确认且与 v0.6.6 确立的「完全克隆访达」冲突，已于同日撤销**。令牌与组件保留（本身与访达风格不冲突），但布局与材质回到访达基线。详见 `docs/REQUIREMENTS.md` §5
+### 设计系统（P0 → 同日收口）
+- **字体令牌单一来源**：`FFDesign.Text`（17 / 15 / 13 / 13m / 13sb / 12 / 11sb / 11 / 10 / mono12）。曾并存的 `FFDesign.Typography`（10 / 11 / 11sb / 13sb）已删除，原档位由 `baseSemibold` / `captionEmphasis` 承接，映射后渲染零变化
+- **原子组件收口**：`FFComponents.swift` 只留 `FFPanelView`（设备浮层实体卡片）；零引用的 `FFSectionHeaderView` / `FFEmptyStateView` / `FFSeparatorView` 已删除——空态实际由 `FFPaneStateOverlayView` 承担
+- **设计预览窗口已删除**（原 ⌥⌘D / `--design-preview`）：它渲染的是被撤销的 ZCode 方向（中性遮罩选中态、36pt 工具栏），留着会让「现行设计是哪套」永远有第二个答案
+- ⚠️ **设计基线已回退访达**：P0 曾移植 [zai-org/ZCode](https://github.com/zai-org/ZCode) 的「扁平、致密、以边框分层」并声明「不追求像素级克隆访达」。该结论**未经确认且与已确认的方向冲突，已于同日撤销**，令牌层于当晚一并清除。详见 `docs/DESIGN-SPEC.md`
+
+### 复审修正（2026-10-17 晚，对照 DESIGN-SPEC 全量核查）
+
+- **「选中」曾有四个色源**：列表交给 `NSTableView` 默认绘制（系统强调色=蓝），侧栏与网格取应用强调色 `FFAccent`，标签筛选又单独用 `controlAccentColor` 15%。用户把强调色改成红后，同一语义同时存在蓝与红。现三处统一 `FFAccent`，失焦统一 `unemphasizedSelectedContentBackgroundColor`
+  - 机制根因：委托创建的 `NSTableRowView` 其 `selectionHighlightStyle` 默认为 `.none`，此时由 `NSTableView` 用系统色自绘，行视图的 `drawSelection` 覆写不生效。需显式设 `.regular`
+- **网格选中改为实心强调色 + 白字**（原为 25% 透明底 + 黑字，与列表完全不同）
+- **侧栏宽度止三处不一致**：规格 200 / 令牌 200 / 代码 220 → 统一默认 220，改 `FFSplitView` 可拖 160–280，宽度写入 `sidebar_width` 记忆
+- **详情栏文件名 13 → 15 semibold**（`FFDesign.Text.lg`）
+- **窗口最小尺寸 1000×700 → 1060×700**：1000 减去侧栏 160 后每侧只剩 420，与操作区 450 保底自相矛盾
+- **J1 首次打开就能看到文件**：补 `NSDesktopFolderUsageDescription` / `NSDocumentsFolderUsageDescription` / `NSDownloadsFolderUsageDescription` / `NSRemovableVolumesUsageDescription` / `NSNetworkVolumesUsageDescription`。macOS 14+ 缺键时系统直接拒绝且不弹授权框
+- **启动目录兜底**：新增 `FFStartupPath`，候选序列「设置 → 上次位置 → 桌面 → 主目录」取首个真实存在者；两侧路径持久化到 `last_left_path` / `last_right_path`
+- **J3 全键盘找并打开**：搜索框内 ↓/↑ 把焦点交给文件视图并选中首/末项，Enter 打开当前结果。Enter 在列表内仍是重命名（访达语义），两者作用域分离
+- **J5 遇到问题知道怎么办**：新增 `FFErrorText`，错误不再把 `Permission denied (os error 13)` 这类英文原样上屏；权限类错误附带「打开系统设置」直达「隐私与安全性 › 文件和文件夹」
 
 ### 布局基线回归（2026-10-17 裁定）
 

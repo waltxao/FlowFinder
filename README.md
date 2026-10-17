@@ -6,7 +6,7 @@
 
 **流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 原生双栏
 
-![Version](https://img.shields.io/badge/version-0.8.0-blue)
+![Version](https://img.shields.io/badge/version-0.7.9--b1-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-green)
 ![Swift](https://img.shields.io/badge/Swift-5.9+-F05138)
 ![Rust](https://img.shields.io/badge/Rust-2021+-DEA584)

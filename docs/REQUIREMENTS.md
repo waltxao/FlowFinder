@@ -159,7 +159,7 @@
 | 5 | 任务中心支持暂停/恢复/优先级 | `ff_task_submit` 零调用，面板永远空 | 阶段 C 接线，否则隐藏入口 |
 | 6 | 7 个设置项 | 只写 UserDefaults，无读取方 | 阶段 C 逐项接线或删除 |
 | 7 | SMB 记住密码 / 自动重连 | 只回传布尔值，不使用 | 阶段 C 接线或删控件 |
-| 8 | 版本号 | pbxproj 0.8.0 / Cargo.toml 0.7.6 / README badge 0.7.6 / beta 0.8.0-beta.1 | 统一走 `scripts/lib-version.sh` |
+| 8 | 版本号 | ✅ 2026-10-17 统一为 **0.7.9 / 7901**：pbxproj 一处为真源，Cargo.toml、README badge、DMG 名同步；`make version` 读 `scripts/lib-version.sh` |
 
 ---
 
