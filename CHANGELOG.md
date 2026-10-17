@@ -4,6 +4,33 @@
 
 ---
 
+## [0.8.0] — 未发版（开发中）
+
+> 侧边栏收藏模块重设计 P1（分区模型 + 滚动容器 + 拖拽重排）
+
+### 结构性重构
+- **侧边栏改为滚动容器**：`NSScrollView` + flipped documentView + 垂直内容栈，品牌区与底部工具行固定，中间内容整体滚动。收藏 20+ 项时不再溢出重叠
+- **收藏改为分区模型**：单一 `NSOutlineView` 渲染「个人收藏」group row + 收藏项（P2 标签并入后为多分区），删除 `favoritesHeightConstraint` / `tagsHeightConstraint` 两条定高约束与 `updateFavoritesHeight` / `updateTagsHeight` 高度计算链
+- **高度改内容驱动**：outline 用 `intrinsicContentSize`（分区标题 22 / 收藏行 28 / 空态行 26），`TagFlowView` 同样改 intrinsic 高度，消除「瞬态可变约束无解」的冲突来源
+
+### 新功能
+- **拖拽重排收藏**：内部拖拽使用独立粘贴板类型（`com.flowfinder.sidebar.favorite`），带系统插入指示线，顺序即时持久化
+- **收藏右键菜单五项**：从边栏中移除 / 在新标签页中打开 / 在新窗口中打开 / 显示简介 / 上移 / 下移（边界项自动置灰）
+- **失效收藏灰显保留**：后台去抖 500ms 校验路径存在性，失效项图标 40% 透明 + 次级文字色 + tooltip「找不到该文件夹」，点击/Enter 不导航；卷挂载/卸载通知触发重校验，外置卷重插自动恢复（不自动删除）
+- **空态引导行**：收藏为空时显示「拖入文件夹以添加收藏」
+- **键盘与无障碍**：↑↓ 在收藏项间移动（跳过分区标题）、Enter 导航；分区标题标记 `AXGroup`，行保留 `sidebarLabel`
+
+### 修复
+- **拖文件到收藏区语义明确**：外部拖入文件夹=添加收藏（不移动文件，防误操作，设计决策 D2 默认）
+- **点击收藏不再被自己重排打断**：程序化恢复选中时抑制导航通知（`suppressSelectionNotification`）
+
+### 测试
+- 新增 `SidebarFavoritesStoreTests`（17 项）：顺序重排（含 childIndex 语义/越界夹紧/空数组）、上移下移边界、UserDefaults 持久化往返、失效状态机（unknown 不算失效 / 恢复）、默认值播种与「用户清空后不回填」
+- 测试基线：**Rust 200 tests / Swift XCTest 115 tests 全绿**（原 98 + 新增 17）
+- `SidebarNavigationPosterTests` 适配分区模型：定位首条真实收藏行（首行为 group row，不可选中）
+
+---
+
 ## [0.7.6] — 2026-08-28
 
 > v0.7.5 发布后修复轮：界面稳定 + 弹窗可用性

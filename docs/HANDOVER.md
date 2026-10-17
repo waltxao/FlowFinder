@@ -1,12 +1,15 @@
 # FlowFinder Native 项目交接文档
 
-> **交接日期：** 2026-08-30（原生体验重设计完成，未发版）
-> **当前版本：** 0.7.6 基线 + 未发版大改（详情栏重设计 + 原生体验四波次，共 60+ 提交）
+> **交接日期：** 2026-10-17（v0.8.0 侧边栏 P1 完成，未发版）
+> **当前版本：** 0.7.6 基线 + 未发版大改（详情栏重设计 + 原生体验四波次 + v0.8.0 侧边栏 P1）
 > **仓库地址：** https://github.com/waltxao/FlowFinder
 > **分支：** main
-> **最新提交：** 524edff（docs: 修改历史补录收藏导航误杀缺陷）
-> **本地路径：** `/Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native`
-> **测试基线：** Rust 200 tests / Swift XCTest 98 tests 全绿，集成测试通过（2026-09-02 复验，含侧边栏导航回归测试）
+> **最新提交：** ea1494f（docs: 交接文档更新）；v0.8.0 P1 改动在工作区未提交
+> **本地路径：** `/Volumes/Iris-Data/文件管理系统/flowfinder-native`
+> **测试基线：** Rust 200 tests / Swift XCTest 115 tests 全绿（2026-10-17 复验）
+>
+> ⚠️ **路径变更（2026-10-17）**：项目已从 `/Volumes/Iris-Data/Download/AI/文件管理系统/` 迁移到
+> `/Volumes/Iris-Data/文件管理系统/`。本文档中所有旧路径引用均已失效，以本节路径为准。
 
 ---
 
@@ -52,6 +55,7 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 | **0.7.5** | **2026-08-14** | **安全加固 + FTS5 内容索引 + 测试/发布基建** |
 | **0.7.6** | **2026-08-28** | **发布后修复轮：布局冲突清零 + 弹窗几何 + sheet 会话正规化（当前版）** |
 | **0.8.0-WIP** | **2026-08-30** | **未发版大改：详情栏重设计（可调高/三模块/流动填充）+ 原生体验四波次（主线程根治/键盘优先/Finder互通/交互反馈/视觉材质密度）+ 收藏导航误杀修复** |
+| **0.8.0-P1** | **2026-10-17** | **侧边栏收藏模块重设计 P1：滚动容器 + 单一 outline 分区模型（「个人收藏」group row）+ 删除两条定高约束链 + 拖拽重排 + 右键菜单五项 + 失效灰显保留 + 空态引导行；Swift 测试 98→115** |
 
 > 注：0.7.1 / 0.7.3 为内部版本号跳号，未发布 Release。
 >
@@ -204,6 +208,19 @@ v0.6.7 经历了从"全透明玻璃"到"亚克力侧边栏 + 实体内容区"的
 | 低 | 子窗口正文字号令牌化 | Wave4 顺延项（SearchPanelController:414 残留 calibratedWhite） |
 | 低 | 列举按路径合并 | 卡死线程无界累积为已接受取舍；可做按路径去重/有界工作线程 |
 
+### 6.3 v0.8.0 侧边栏重设计剩余（P1 已完成，2026-10-17）
+
+设计稿：`docs/superpowers/specs/2026-09-02-v0.8.0-sidebar-favorites-redesign-design.md`
+
+| 阶段 | 事项 | 状态 / 说明 |
+|------|------|-------------|
+| P1 | 收藏分区访达化（滚动容器 / 分区 outline / 拖拽重排 / 右键五项 / 失效灰显 / 空态行 / 删除定高约束） | ✅ 已完成（2026-10-17） |
+| P2 | 标签区并入统一 outline：**行式**（色点+名称+计数徽章）或保留药丸 —— 设计决策点 **D3 待拍板** | 未开始 |
+| P2 | 拖文件到标签行=打标签（复用 TagBridge）；hover「…」菜单（重命名/删除） | 未开始 |
+| P3 | 设备区：**甲·保留浮动浮层仅换真实卷图标**（D4 推荐）或 **乙·并入「位置」分区**（含 ⏏ 弹出） | 未开始（D4 待拍板） |
+| 决策 | D1 标准位置图标：A 维持 NSWorkspace / **B 专属彩色映射表（推荐）**；D2 拖文件到收藏项=仅添加收藏（已按推荐实现） | D1 未实施（P1 未纳入范围） |
+| 遗留 | 拖出侧边栏移除收藏（访达语义）未实现——风险高于收益，验收清单未列入；如需可加「拖到窗口外松手」多重判定 | 待评估 |
+
 ---
 
 ## 7. 构建与发布
@@ -218,15 +235,44 @@ v0.6.7 经历了从"全透明玻璃"到"亚克力侧边栏 + 实体内容区"的
 
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-cd /Volumes/Iris-Data/Download/AI/文件管理系统/flowfinder-native
+cd /Volumes/Iris-Data/文件管理系统/flowfinder-native
 
 make build        # Rust dylib + Debug app 构建
 make run          # 构建并启动
 make test         # rust-test + swift-test + integration-test
-make rust-test    # cargo test --all-features（200 tests）
-make swift-test   # xcodebuild test（97 tests，含详情栏/流动填充/键盘/拖拽回归）
+make rust-test    # cargo test（200 tests）
+make swift-test   # xcodebuild test（115 tests）
 make clean / setup / release / xcode / help
 ```
+
+**⚠️ 2026-10-17 实测更正（重要）：** 工程**没有** `FlowFinderNative` 共享 scheme，只有
+`FlowFinderNativeTests`。旧文档里的 `-scheme FlowFinderNative` 会直接报
+`does not contain a scheme named "FlowFinderNative"`。Debug 构建必须走 `-target`：
+
+```bash
+xcodebuild -project FlowFinderNative/FlowFinderNative.xcodeproj \
+           -target FlowFinderNative \
+           -configuration Debug \
+           SYMROOT=/tmp/ff-dd/Build/Products \
+           OBJROOT=/tmp/ff-dd/Build/Intermediates \
+           MARKETING_VERSION=0.8.0 CURRENT_PROJECT_VERSION=8002 \
+           ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+           CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO build
+# 产物：/tmp/ff-dd/Build/Products/Debug/FlowFinderNative.app
+```
+
+跑 Swift 测试前必须先 `pkill -f "MacOS/FlowFinderNative"`（单实例策略会让测试宿主秒退；
+否则会看到 `test runner hung before establishing connection` 假故障）。
+
+```bash
+pkill -f "MacOS/FlowFinderNative" 2>/dev/null
+xcodebuild test -project FlowFinderNative/FlowFinderNative.xcodeproj \
+                -scheme FlowFinderNativeTests -destination 'platform=macOS' \
+                CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
+```
+
+**新增 Swift 文件必须注册 `project.pbxproj` 四处**（PBXBuildFile / PBXFileReference /
+Group children / Sources build phase），ID 用 24 位十六进制且先 grep 确认不冲突。
 
 ### 7.3 一键打包（推荐）
 
@@ -293,7 +339,8 @@ gh release create v0.7.5 \
 | `UI/FileListView.swift` | ~2117 | 文件列表（列头、选中、分组、缩略图、搜索过滤） |
 | `UI/MainWindowController.swift` | ~1873 | 主窗口（布局、设备浮层、底部进度栏、主题监听） |
 | `UI/MainWindowController+MenuActions.swift` | ~814 | 菜单操作扩展（v0.7.5 拆分） |
-| `UI/SidebarView.swift` | ~1763 | 侧边栏（收藏夹、标签、工具面板、主题/设置按钮） |
+| `UI/SidebarView.swift` | ~2194 | 侧边栏（滚动容器、收藏分区 outline、标签、工具面板、主题/设置按钮、收藏右键菜单） |
+| `UI/SidebarFavoritesStore.swift` | ~209 | v0.8.0 P1 新增：收藏数据层（顺序重排纯函数 / 失效状态机 / UserDefaults 持久化），可独立单测 |
 | `UI/ExpandableDetailsBar.swift` | ~1733 | 详情栏（占位图标、选中显示） |
 | `UI/FileGridView.swift` | ~1300 | 网格视图（选中、分组、缩略图复用） |
 | `UI/PaneToolbar.swift` | ~355 | 工具栏（搜索、排序、分组、视图切换） |
@@ -311,20 +358,21 @@ gh release create v0.7.5 \
 | `ffi/mod.rs` | ~3121 | FFI 入口（tests 已拆出） |
 | `ffi/tests.rs` | - | FFI 集成测试（69 个 #[test]，v0.7.5 拆分） |
 
-**Swift 测试：** `FlowFinderNative/Tests/FlowFinderNativeTests/`（98 tests；覆盖：PaneState 删除/过滤/流程、详情栏流动填充与布局回归、键盘焦点与重复行回归、查重/搜索/无障碍、侧边栏导航通知发送者契约等）
+**Swift 测试：** `FlowFinderNative/Tests/FlowFinderNativeTests/`（**115 tests**；覆盖：PaneState 删除/过滤/流程、详情栏流动填充与布局回归、键盘焦点与重复行回归、查重/搜索/无障碍、侧边栏导航通知发送者契约、**收藏数据层（顺序/失效/持久化，v0.8.0 P1 新增 17 项）** 等）
 
 ### 9.2 设计文档
 
 | 文档 | 说明 |
 |------|------|
-| `docs/superpowers/specs/2026-07-29-v0.6.7-full-ui-redesign-design.md` | **v0.6.7 全应用 UI 重设计（最新）** |
+| `docs/superpowers/specs/2026-09-02-v0.8.0-sidebar-favorites-redesign-design.md` | **v0.8.0 侧边栏收藏重设计（P1 已实施；D1/D3/D4 待拍板）** |
+| `docs/superpowers/specs/2026-07-29-v0.6.7-full-ui-redesign-design.md` | v0.6.7 全应用 UI 重设计 |
 | `docs/superpowers/specs/2026-07-28-v0.6.6-finder-clone-redesign-design.md` | v0.6.6 仿访达完整重设计 |
 | `docs/superpowers/specs/2026-07-27-v0.6.5-ui-audit-report.md` | **v0.6.5 全量 UI 巡检报告（P1/P2 清单）** |
 | `docs/MIGRATION_LOG.md` | **完整重构日志（建议先读）** |
 
 ### 9.3 设计稿 HTML
 
-位于 `/Volumes/Iris-Data/Download/AI/文件管理系统/.trae/design-mockups/pages/`
+位于 `/Volumes/Iris-Data/文件管理系统/.trae/design-mockups/pages/`（旧路径 `Download/AI/` 已失效）
 
 ---
 
@@ -369,18 +417,25 @@ gh release create v0.7.5 \
 
 ```
 1. 先读本文件（HANDOVER.md），了解项目全貌和关键架构决策
-2. 再读 CHANGELOG.md（v0.7.2 起）与 docs/MIGRATION_LOG.md，了解版本历史
-3. 设置 Xcode-beta：export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-4. 验证基线：make rust-test（200 passed）+ make swift-test（98 passed）
-5. 打包发布：bash scripts/package.sh（产出 build/FlowFinder-*.dmg/zip/sha256）
-6. 等待用户反馈（注意：你看不到图片，需文字描述）
-7. 如有新问题，先问一个澄清问题，一次只问一个
-8. 所有 UI 文案和代码注释使用简体中文
-9. 工作完成后更新此交接文档
-10. 注意：用户偏好优先于旧硬约束
-11. 勿对 pbxproj 执行 git checkout（T11 test target 重建后多次修复；正确改法是编辑 pbxproj 而非回滚）
+2. 再读 CHANGELOG.md（v0.7.2 起 / v0.8.0 段）与 docs/MIGRATION_LOG.md，了解版本历史
+3. 项目根目录：/Volumes/Iris-Data/文件管理系统/flowfinder-native（旧 Download/AI 路径已迁移）
+4. 设置 Xcode-beta：export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+5. 验证基线：cargo test（Rust 200 passed）+ xcodebuild test -scheme FlowFinderNativeTests（Swift 115 passed）
+   跑 Swift 测试前先 pkill -f "MacOS/FlowFinderNative"（单实例策略会让宿主秒退）
+6. Debug 构建用 -target（工程无 FlowFinderNative 共享 scheme），命令见 §7.2
+   【用户约定】构建完必须复制到桌面供用户测试：
+   cp -R /tmp/ff-dd/Build/Products/Debug/FlowFinderNative.app ~/Desktop/FlowFinderNative.app
+7. 发布：Release 通道在当前环境（macOS 27 + Homebrew Rust 1.96.1）不可用，
+   用 bash scripts/package-beta.sh 出测试版（build-beta/）
+8. 等待用户反馈（注意：你看不到图片，需文字描述）
+9. 如有新问题，先问一个澄清问题，一次只问一个
+10. 所有 UI 文案和代码注释使用简体中文
+11. 工作完成后更新此交接文档 + CHANGELOG
+12. 注意：用户偏好优先于旧硬约束
+13. 勿对 pbxproj 执行 git checkout（T11 test target 重建后多次修复；正确改法是编辑 pbxproj 而非回滚）
+14. 新增 Swift 文件必须注册 pbxproj 四处，否则静默不参与编译（测试文件同理）
 ```
 
 ---
 
-**交接完成。** 请下一个 AI 接手后，先阅读本文件，理解核心架构（亚克力侧边栏+实体内容区、Rust FFI C ABI、FTS5 内容索引），然后验证测试基线（make test），等待用户反馈继续开发。
+**交接完成。** 请下一个 AI 接手后，先阅读本文件，理解核心架构（亚克力侧边栏+实体内容区、Rust FFI C ABI、FTS5 内容索引、侧边栏分区 outline），然后验证测试基线（Rust 200 + Swift 115），等待用户反馈继续开发。
