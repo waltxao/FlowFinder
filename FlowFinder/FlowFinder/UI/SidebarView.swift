@@ -24,6 +24,8 @@ extension Notification.Name {
     static let sidebarDidRequestOpenInNewTab = Notification.Name("sidebarDidRequestOpenInNewTab")
     static let sidebarDidRequestOpenInNewWindow = Notification.Name("sidebarDidRequestOpenInNewWindow")
     static let sidebarDidRequestShowFavoriteInfo = Notification.Name("sidebarDidRequestShowFavoriteInfo")
+    /// 2026-10-18 #3：侧栏顶部单/双窗口切换按钮
+    static let sidebarDidTogglePaneMode = Notification.Name("sidebarDidTogglePaneMode")
 }
 
 // MARK: - 侧边栏布局度量（v0.8.0 P1）
@@ -226,6 +228,8 @@ class SidebarView: NSView {
     private var placesRowsStack: NSStackView!
     /// 位置分区标题行
     private var placesHeaderView: NSView!
+    /// 2026-10-18 #3：单/双窗口切换按钮（红绿灯同一水平带的最右侧）
+    private var paneModeButton: NSButton!
     /// v0.8.0 P1: 收藏数据层（顺序 / 失效状态 / 持久化）
     private let favoritesStore = SidebarFavoritesStore()
     private lazy var favoritesDataSource = FavoritesSidebarDataSource(store: favoritesStore)
@@ -289,6 +293,25 @@ class SidebarView: NSView {
 
             brandVersionLabel.leadingAnchor.constraint(equalTo: brandView.leadingAnchor),
             brandVersionLabel.topAnchor.constraint(equalTo: appNameLabel.bottomAnchor, constant: 2),
+        ])
+
+        // 2026-10-18 #3：单/双窗口切换按钮——与红绿灯同一水平带，贴侧栏最右侧
+        paneModeButton = NSButton()
+        paneModeButton.bezelStyle = .inline
+        paneModeButton.isBordered = false
+        paneModeButton.imagePosition = .imageOnly
+        paneModeButton.contentTintColor = NSColor.secondaryLabelColor
+        paneModeButton.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "切换到单窗口")
+        paneModeButton.toolTip = "切换到单窗口"
+        paneModeButton.target = self
+        paneModeButton.action = #selector(handlePaneModeToggle)
+        paneModeButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(paneModeButton)
+        NSLayoutConstraint.activate([
+            paneModeButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            paneModeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            paneModeButton.widthAnchor.constraint(equalToConstant: 24),
+            paneModeButton.heightAnchor.constraint(equalToConstant: 24),
         ])
 
         // v0.8.0 P1：「个人收藏」标题改为 outline 分区标题行（group row），不再用外置 label。
@@ -845,6 +868,22 @@ class SidebarView: NSView {
         let entry = FileEntry(path: path, name: name.isEmpty ? path : name, isDirectory: true)
         // 复用收藏导航通知：MainWindowController 收到后在活动面板打开该路径
         NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: self, userInfo: ["entry": entry])
+    }
+
+    // MARK: - 单/双窗口切换（2026-10-18 #3）
+
+    @objc private func handlePaneModeToggle() {
+        NotificationCenter.default.post(name: .sidebarDidTogglePaneMode, object: self)
+    }
+
+    /// 由 MainWindowController 在模式变化/启动恢复时回写按钮外观
+    func setSinglePaneMode(_ single: Bool) {
+        let symbol = single ? "rectangle" : "rectangle.split.2x1"
+        paneModeButton?.image = NSImage(
+            systemSymbolName: symbol,
+            accessibilityDescription: single ? "切换到双窗口" : "切换到单窗口"
+        )
+        paneModeButton?.toolTip = single ? "切换到双窗口" : "切换到单窗口"
     }
 
     @objc private func removeTag(_ sender: NSMenuItem?) {

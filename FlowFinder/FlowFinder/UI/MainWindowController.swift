@@ -15,6 +15,10 @@ private class FFSplitView: NSSplitView {
     /// 手动拖拽状态（dividerThickness=0 时 NSSplitView 内置拖拽不生效）
     private var isDragging = false
 
+    /// 当前可见子视图数。单窗口模式下另一侧 isHidden，此时不应响应分隔线拖拽
+    /// （否则可以把隐藏面板拖出来，与单窗状态冲突）
+    private var visibleSubviewCount: Int { subviews.filter { !$0.isHidden }.count }
+
     /// v0.6.9: divider 厚度为 0（移除可见分割线，间隙由卡片边距提供）
     override var dividerThickness: CGFloat {
         return 0
@@ -43,6 +47,7 @@ private class FFSplitView: NSSplitView {
 
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
+        guard visibleSubviewCount >= 2 else { hideGlow(); return }
         let loc = convert(event.locationInWindow, from: nil)
         let hovering = abs(loc.x - currentDividerX) <= FFDividerGlowMath.hotZoneRadius
         if hovering {
@@ -132,7 +137,7 @@ private class FFSplitView: NSSplitView {
     /// 命中热区（±6pt）：按下即对齐并进入拖拽；未命中：交给系统处理
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        guard subviews.count >= 2,
+        guard visibleSubviewCount >= 2,
               abs(point.x - currentDividerX) <= FFDividerGlowMath.hotZoneRadius else {
             super.mouseDown(with: event)
             return
@@ -145,7 +150,7 @@ private class FFSplitView: NSSplitView {
 
     /// 拖拽全程 1:1 跟随鼠标 X（绝对模型，无起点记账），亮点同时跟随鼠标 Y
     override func mouseDragged(with event: NSEvent) {
-        guard isDragging, subviews.count >= 2 else {
+        guard isDragging, visibleSubviewCount >= 2 else {
             super.mouseDragged(with: event)
             return
         }
@@ -200,6 +205,8 @@ public class MainWindowController: NSWindowController {
     static let sidebarMaxWidth: CGFloat = 280
     /// 侧栏宽度记忆键
     private static let sidebarWidthKey = "sidebar_width"
+    /// 2026-10-18 #3：单/双窗口模式记忆键
+    private static let singlePaneModeKey = "single_pane_mode"
 
     /// 读取上次拖拽记忆的侧栏宽度，落在 [min, max] 内才采用
     static func restoredSidebarWidth() -> CGFloat {
@@ -229,6 +236,11 @@ public class MainWindowController: NSWindowController {
     var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
+    /// #3：分栏两端的卡片包装视图（单窗模式靠 isHidden 收起一侧）
+    private var leftPaneWrapper: NSView!
+    private var rightPaneWrapper: NSView!
+    /// #3：当前是否单窗口模式（持久化到 single_pane_mode）
+    private var isSinglePaneMode = false
     /// v0.7.0: 工具浮动面板（3×3 网格大方块布局，覆盖在侧栏底部区域）
     private var toolPanelView: ToolPanelView?
     /// 1.2 活动面板描边（替代原 2pt 色条——色条被工具栏盖住，从未可见）
@@ -301,6 +313,10 @@ public class MainWindowController: NSWindowController {
         window.acceptsMouseMovedEvents = true
 
         setupUI()
+
+        // #3：恢复单/双窗口模式（须在 setupUI 创建完两栏包装视图之后）
+        isSinglePaneMode = UserDefaults.standard.bool(forKey: Self.singlePaneModeKey)
+        applyPaneMode()
 
         // 窗口距顶部保留 8pt 间距
         var frame = window.frame
@@ -401,8 +417,10 @@ public class MainWindowController: NSWindowController {
         paneSplitView.wantsLayer = true
         paneSplitView.layer?.backgroundColor = NSColor.clear.cgColor
         // 问题13修复：左右操作区用圆角卡片包裹，四周留 8pt 边距使圆角在所有边可见
-        paneSplitView.addArrangedSubview(makeCardWrapper(for: leftPaneContainer))
-        paneSplitView.addArrangedSubview(makeCardWrapper(for: rightPaneContainer))
+        leftPaneWrapper = makeCardWrapper(for: leftPaneContainer)
+        rightPaneWrapper = makeCardWrapper(for: rightPaneContainer)
+        paneSplitView.addArrangedSubview(leftPaneWrapper)
+        paneSplitView.addArrangedSubview(rightPaneWrapper)
 
         // Main Split View（侧边栏 + 操作区）
         // 2026-10-17：改用 FFSplitView，使侧栏宽度可拖（DESIGN-SPEC B-01 160–280）。
@@ -852,6 +870,11 @@ public class MainWindowController: NSWindowController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSidebarDirectorySelected(_:)),
             name: .sidebarDidSelectDirectory, object: nil
+        )
+        // #3：侧栏顶部单/双窗口切换按钮
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handlePaneModeToggle(_:)),
+            name: .sidebarDidTogglePaneMode, object: nil
         )
         // v0.8.0 P1: 收藏右键菜单的窗口级动作（新标签页 / 新窗口 / 显示简介）
         NotificationCenter.default.addObserver(
@@ -1607,6 +1630,47 @@ public class MainWindowController: NSWindowController {
         return nil
     }
 
+    // MARK: - 单/双窗口模式（2026-10-18 #3）
+
+    @objc private func handlePaneModeToggle(_ notification: Notification) {
+        // 多窗口：只响应本窗口侧边栏发出
+        if let source = notification.object as? AnyObject,
+           !(source === sidebarView), !(source === window) { return }
+        isSinglePaneMode.toggle()
+        UserDefaults.standard.set(isSinglePaneMode, forKey: Self.singlePaneModeKey)
+        applyPaneMode()
+    }
+
+    /// 应用单/双窗口布局：
+    /// - 单窗：隐藏非活动面板，活动面板占满操作区；最小宽度 760（侧栏 160 + 操作区 450 + 边距）
+    /// - 双窗：两栏可见，分隔线回到中线；最小宽度 1060（W-07）
+    /// 侧栏切换按钮图标同步更新。
+    private func applyPaneMode() {
+        let single = isSinglePaneMode
+        let showLeft = !single || activePane == .left
+        let showRight = !single || activePane == .right
+        leftPaneWrapper?.isHidden = !showLeft
+        rightPaneWrapper?.isHidden = !showRight
+
+        window?.minSize = single
+            ? NSSize(width: 760, height: 700)
+            : NSSize(width: 1060, height: 700)
+
+        if single, let window = window, window.frame.width < 760 {
+            var frame = window.frame
+            frame.size.width = 760
+            window.setFrame(frame, display: true)
+        }
+        if !single, let split = paneSplitView, split.bounds.width > 0 {
+            // 从单窗恢复时把分隔线放回中线（隐藏期间宽度曾被单侧占满）
+            DispatchQueue.main.async {
+                split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+            }
+        }
+        sidebarView?.setSinglePaneMode(single)
+        updateActivePaneVisual()
+    }
+
     private func updateActivePaneVisual() {
         // 1.2 修订：整块面板强调色描边（原 2pt 顶部色条被工具栏完全遮住，从未可见）
         leftActiveBorder?.isHidden = activePane != .left
@@ -1765,6 +1829,8 @@ public class MainWindowController: NSWindowController {
     func activatePane(_ side: PaneSide) {
         activePane = side
         updateActivePaneVisual()
+        // 单窗模式下切换活动面板 = 切换可见侧
+        if isSinglePaneMode { applyPaneMode() }
         // Wave2 P0-2：激活面板时同步键盘焦点到对应面板的列表/网格，消除
         // 「焦点面板 ≠ activePane」双真值源（menu 审计 §15：菜单操作按 activePane 执行，
         // 键盘按 firstResponder 分派，二者不一致时操作打到另一面板）

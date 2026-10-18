@@ -73,36 +73,63 @@ final class FFPanelView: NSView {
     }
 }
 
-// MARK: - 活动面板描边
+// MARK: - 活动面板描边（发光）
 
-/// 活动面板的强调色描边层。
+/// 活动面板的强调色发光边缘。
 ///
-/// 只在当前操作的面板上显示，用 1.5pt 强调色画一圈内描边——双面板下唯一的
-/// 「我现在在操作哪边」提示。视图不参与命中测试，鼠标事件全部穿透，
-/// 否则会把列表/工具栏的点击吃掉。
+/// 2026-10-18 #6：由 1.5pt 硬描边改为「发光」——由外到内叠三层不同宽度/透明度的
+/// 圆角描边模拟羽化光晕（7pt@10% / 3.5pt@20% / 1.2pt@55%），不再有单根硬线。
+/// 深色模式整体提高透明度，浅色模式略降；开启「增强对比度」时降级为 2pt 实线，
+/// 保证低视力用户仍能看清边界。
+/// 视图不参与命中测试，鼠标事件全部穿透，否则会把列表/工具栏的点击吃掉。
 final class FFActivePaneBorderView: NSView {
 
-    /// 描边颜色（随强调色设置变化）
+    /// 发光颜色（随强调色设置变化）
     var ringColor: NSColor = FFAccent.current {
-        didSet {
-            layer?.borderColor = ringColor.cgColor
-        }
+        didSet { needsDisplay = true }
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = 16
-        layer?.borderWidth = 1.5
-        layer?.borderColor = ringColor.cgColor
+        // 颜色由 draw(_:) 自行绘制，不使用 layer 边框
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override var isOpaque: Bool { false }
+
     /// 点击穿透：只做视觉提示，不参与事件分发
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    override var isOpaque: Bool { false }
+    override func draw(_ dirtyRect: NSRect) {
+        guard !isHidden else { return }
+        // 描边以路径为中心向两侧扩，最外层 7pt 会外扩 3.5pt，故内缩 3pt 防裁切
+        let rect = bounds.insetBy(dx: 3, dy: 3)
+        guard rect.width > 0, rect.height > 0 else { return }
+        let path = NSBezierPath(roundedRect: rect, xRadius: 16, yRadius: 16)
+
+        if NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast {
+            ringColor.setStroke()
+            path.lineWidth = 2
+            path.stroke()
+            return
+        }
+
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let boost: CGFloat = isDark ? 1.25 : 0.85
+        // (线宽, 透明度)：从外到内，外圈淡而宽，内圈亮而细
+        let strokes: [(CGFloat, CGFloat)] = [
+            (7.0, 0.10 * boost),
+            (3.5, 0.20 * boost),
+            (1.2, 0.55 * boost),
+        ]
+        for (width, alpha) in strokes {
+            ringColor.withAlphaComponent(min(alpha, 1)).setStroke()
+            path.lineWidth = width
+            path.stroke()
+        }
+    }
 }
