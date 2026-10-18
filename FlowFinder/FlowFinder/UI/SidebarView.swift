@@ -332,6 +332,11 @@ class SidebarView: NSView {
             toolBtn.centerYAnchor.constraint(equalTo: appNameView.centerYAnchor),
             settingsBtn.trailingAnchor.constraint(equalTo: toolBtn.leadingAnchor, constant: -2),
             settingsBtn.centerYAnchor.constraint(equalTo: appNameView.centerYAnchor),
+
+            // 侧栏拖窄时名称不得压到按钮下面（渐变文字按此宽度做尾部省略）
+            appNameView.trailingAnchor.constraint(lessThanOrEqualTo: settingsBtn.leadingAnchor, constant: -6),
+            // 版本号同样不越界
+            brandVersionLabel.trailingAnchor.constraint(lessThanOrEqualTo: brandView.trailingAnchor),
         ])
 
         // v0.8.0 P1：「个人收藏」标题改为 outline 分区标题行（group row），不再用外置 label。

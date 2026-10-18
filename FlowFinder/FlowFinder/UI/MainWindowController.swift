@@ -256,6 +256,8 @@ public class MainWindowController: NSWindowController {
     /// #5：上次真正应用的模式（nil = 还没完成过一次「带缩放」的切换）。
     /// 用它区分「双→单」的首次切换与「单窗内切活动面板」，避免反复缩放窗口。
     private var appliedSinglePaneMode: Bool?
+    /// 切模式导致的程序化窗口/分隔线变更期间为 true：此时不写 `sidebar_width`
+    private var isAdjustingPaneMode = false
     /// v0.7.0: 工具浮动面板（3×3 网格大方块布局，覆盖在侧栏底部区域）
     private var toolPanelView: ToolPanelView?
     /// 1.2 活动面板描边（替代原 2pt 色条——色条被工具栏盖住，从未可见）
@@ -622,8 +624,12 @@ public class MainWindowController: NSWindowController {
         FFDebug.log("KeyEvent monitor installed: \(keyEventMonitor != nil)")
 
         // Holding priorities
-        mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-        mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        // 2026-10-18 三次修订：侧栏改为「保住宽度」，操作区吸收窗口缩放。
+        // 原先是侧栏 .defaultLow，缩窗（含单窗模式按被收起侧宽度收窄）时 NSSplitView
+        // 先把侧栏压到最小 160 再动操作区，而 splitViewDidResizeSubviews 又会把 160
+        // 写进 sidebar_width —— 单窗切一次，侧栏宽度就被永久压窄。
+        mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
         paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
 
@@ -1730,7 +1736,7 @@ public class MainWindowController: NSWindowController {
                 var frame = window.frame
                 // origin 为左下角，X 不变即保持左边缘、向右收窄
                 frame.size.width = max(760, frame.width - hiddenWidth)
-                window.setFrame(frame, display: true, animate: true)
+                resizeWindowKeepingSidebar(frame)
                 appliedSinglePaneMode = true
             }
         } else {
@@ -1742,7 +1748,7 @@ public class MainWindowController: NSWindowController {
                 if abs(window.frame.width - target) > 1 {
                     var frame = window.frame
                     frame.size.width = target
-                    window.setFrame(frame, display: true, animate: true)
+                    resizeWindowKeepingSidebar(frame)
                 }
             }
             widthBeforeSinglePane = nil
@@ -1756,6 +1762,26 @@ public class MainWindowController: NSWindowController {
         }
         sidebarView?.setSinglePaneMode(single)
         updateActivePaneVisual()
+    }
+
+    /// 切模式时改窗口宽度：**保持侧栏宽度不变**，且不污染 `sidebar_width` 记忆。
+    ///
+    /// NSSplitView 在窗口变窄时会先挤压持有优先级低的一侧；即便侧栏已设为
+    /// .defaultHigh，窗口宽度突变的瞬间仍可能先把侧栏压小，并被
+    /// `splitViewDidResizeSubviews` 记进 `sidebar_width`（实测单窗切一次，
+    /// 侧栏宽度就从 220 掉到 165）。这里改为：记下切换前的侧栏宽度 →
+    /// 改窗口尺寸 → 下一拍把分隔线放回原宽度，全程不写记忆。
+    private func resizeWindowKeepingSidebar(_ frame: NSRect) {
+        guard let window = window else { return }
+        let sidebarWidth = max(MainWindowController.sidebarMinWidth,
+                               sidebarView?.frame.width ?? MainWindowController.restoredSidebarWidth())
+        isAdjustingPaneMode = true
+        window.setFrame(frame, display: true)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.mainSplitView?.setPosition(sidebarWidth, ofDividerAt: 0)
+            self.isAdjustingPaneMode = false
+        }
     }
 
     private func updateActivePaneVisual() {
@@ -2270,7 +2296,8 @@ extension MainWindowController: NSSplitViewDelegate {
         if let splitView = notification.object as? NSSplitView {
             splitView.window?.layoutIfNeeded()
             // DESIGN-SPEC B-01：侧栏宽度记忆（下一窗口/下次启动沿用）
-            if splitView === mainSplitView, let sidebar = splitView.subviews.first {
+            // 切模式期间的分隔线变更不算用户拖拽，不写记忆（2026-10-18 #5）
+            if splitView === mainSplitView, !isAdjustingPaneMode, let sidebar = splitView.subviews.first {
                 let width = sidebar.frame.width
                 if width >= MainWindowController.sidebarMinWidth,
                    width <= MainWindowController.sidebarMaxWidth {

@@ -306,10 +306,21 @@ final class FFGradientLabelView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let attr = attributed()
-        let line = CTLineCreateWithAttributedString(attr)
+        var line = CTLineCreateWithAttributedString(attr)
 
         var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
-        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        var width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+
+        // 侧栏被拖窄时名称会挤到设置/工具按钮下面。这里按可用宽度做尾部省略，
+        // 而不是让字顺着 frame 溢出（渐变文字是自绘的，不会自动截断）。
+        if width > bounds.width, bounds.width > 0 {
+            let ellipsis = NSAttributedString(string: "…", attributes: [.font: font])
+            let ellipsisLine = CTLineCreateWithAttributedString(ellipsis)
+            if let truncated = CTLineCreateTruncatedLine(line, Double(bounds.width), .end, ellipsisLine) {
+                line = truncated
+                width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+            }
+        }
         let baselineY = (bounds.height - (ascent + descent)) / 2 + descent
 
         let path = CGMutablePath()
