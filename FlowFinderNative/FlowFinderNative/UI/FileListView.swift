@@ -343,8 +343,12 @@ private class FFTableRowView: NSTableRowView {
         let color = isEmphasized
             ? FFAccent.current
             : NSColor.unemphasizedSelectedContentBackgroundColor
+        // 访达样式：左右各内缩 4pt + 5pt 圆角，不再满宽直角填充（此前与
+        // 分组标题行、窗格边界齐平相接，视觉上像一条色带而不是「选中框」；
+        // 几何与 FFTableRowView 的 Drop 高亮 insetBy(dx: 2)+圆角 5 同语言）
+        let rect = bounds.insetBy(dx: 4, dy: 0)
         color.setFill()
-        bounds.fill()
+        NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
     }
 }
 

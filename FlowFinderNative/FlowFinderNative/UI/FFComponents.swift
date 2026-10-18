@@ -72,3 +72,37 @@ final class FFPanelView: NSView {
         needsDisplay = true
     }
 }
+
+// MARK: - 活动面板描边
+
+/// 活动面板的强调色描边层。
+///
+/// 只在当前操作的面板上显示，用 1.5pt 强调色画一圈内描边——双面板下唯一的
+/// 「我现在在操作哪边」提示。视图不参与命中测试，鼠标事件全部穿透，
+/// 否则会把列表/工具栏的点击吃掉。
+final class FFActivePaneBorderView: NSView {
+
+    /// 描边颜色（随强调色设置变化）
+    var ringColor: NSColor = FFAccent.current {
+        didSet {
+            layer?.borderColor = ringColor.cgColor
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 16
+        layer?.borderWidth = 1.5
+        layer?.borderColor = ringColor.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// 点击穿透：只做视觉提示，不参与事件分发
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override var isOpaque: Bool { false }
+}

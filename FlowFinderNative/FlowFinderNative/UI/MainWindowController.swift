@@ -252,9 +252,9 @@ public class MainWindowController: NSWindowController {
     private let devicePanelRowHeight: CGFloat = 28
     /// 任务 F10-3: 设备浮层高度约束（折叠/展开时调整）
     private var devicePanelHeightConstraint: NSLayoutConstraint!
-    /// 1.2 活动面板顶部 accent 色条（替代 borderWidth 方案）
-    private var leftAccentBar: NSView!
-    private var rightAccentBar: NSView!
+    /// 1.2 活动面板描边（替代原 2pt 色条——色条被工具栏盖住，从未可见）
+    private var leftActiveBorder: FFActivePaneBorderView!
+    private var rightActiveBorder: FFActivePaneBorderView!
     private var leftDetailsBar: ExpandableDetailsBar!
     private var rightDetailsBar: ExpandableDetailsBar!
     var taskProgressBar: TaskProgressBar!
@@ -563,12 +563,20 @@ public class MainWindowController: NSWindowController {
             }
         }
 
-        // 诊断：监听所有鼠标按下事件
-        mouseEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-            let winTitle = event.window?.title ?? "nil"
-            let loc = event.locationInWindow
-            let hitView = event.window?.contentView?.hitTest(loc).map { String(describing: type(of: $0)) } ?? "nil"
-            FFDebug.log("EVENT leftMouseDown window=\(winTitle) loc=\(loc) hitView=\(hitView)")
+        // 鼠标按下 → 激活点击所在的操作面板（活动面板描边的数据源）。
+        // 不能依赖各视图的选中回调：NSTableView/NSCollectionView 只有「选中变化」
+        // 才触发 onActivatePane，点击空白区/已选中行/工具栏/详情栏都不会触发，
+        // 描边就停在旧面板上。改为在事件分发前按命中视图的归属判定面板。
+        // activatePane 内的焦点同步对文本编辑有保护（field editor 不抢焦点），
+        // 点搜索框/重命名框不会被夺走焦点。
+        mouseEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self = self,
+                  let win = event.window, win === self.window,
+                  let content = win.contentView,
+                  let hit = content.hitTest(event.locationInWindow) else { return event }
+            if let side = self.paneSideForHitView(hit), side != self.activePane {
+                self.activatePane(side)
+            }
             return event
         }
         FFDebug.log("NSEvent monitor installed: \(mouseEventMonitor != nil)")
@@ -685,13 +693,12 @@ public class MainWindowController: NSWindowController {
         // Wave4 Task 6（审计 §3 装饰降噪）：删除 v0.6.9 的 1px 边框——卡片已有
         // 4pt 边距 + 阴影 + 圆角分层，边框叠用显多余
 
-        // 1.2 活动面板顶部 accent 色条（2pt 高，初始隐藏，由 updateActivePaneVisual 切换）
-        let accentBar = NSView()
-        accentBar.wantsLayer = true
-        accentBar.layer?.backgroundColor = FFAccent.current.cgColor
-        accentBar.translatesAutoresizingMaskIntoConstraints = false
-        accentBar.isHidden = true  // 初始隐藏，仅活动面板显示
-        container.addSubview(accentBar)
+        // 1.2 活动面板描边（替代原 2pt accent 色条）
+        // 原色条贴在容器顶部，却先于工具栏 addSubview，被工具栏完全盖住——
+        // 结果「活动面板」在整个界面上没有任何可见反馈。改为整块描边并置于最上层。
+        let activeBorder = FFActivePaneBorderView()
+        activeBorder.translatesAutoresizingMaskIntoConstraints = false
+        activeBorder.isHidden = true  // 初始隐藏，仅活动面板显示
 
         // 任务 F3: 双行工具栏布局（v0.6.5）
         // Row1（32pt）= 后退/前进/上一级/刷新 + BreadcrumbBar（紧贴刷新）
@@ -751,13 +758,15 @@ public class MainWindowController: NSWindowController {
         container.addSubview(gridView)
         // v0.6.9: detailsBar 最后添加（视觉最上层），作为浮层覆盖
         container.addSubview(detailsBar)
+        // 描边最后添加：必须盖在工具栏/列表/详情栏之上，否则又被遮住
+        container.addSubview(activeBorder)
 
         NSLayoutConstraint.activate([
-            // accentBar 贴顶部
-            accentBar.topAnchor.constraint(equalTo: container.topAnchor),
-            accentBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            accentBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            accentBar.heightAnchor.constraint(equalToConstant: 2),
+            // 描边贴合容器四边（仅活动面板可见）
+            activeBorder.topAnchor.constraint(equalTo: container.topAnchor),
+            activeBorder.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            activeBorder.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            activeBorder.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
             // toolbar 占顶部
             toolbar.topAnchor.constraint(equalTo: container.topAnchor),
@@ -818,14 +827,14 @@ public class MainWindowController: NSWindowController {
             leftFileListView = listView
             leftFileGridView = gridView
             leftDetailsBar = detailsBar
-            leftAccentBar = accentBar
+            leftActiveBorder = activeBorder
         case .right:
             rightPaneToolbar = toolbar
             rightBreadcrumbBar = breadcrumbBar
             rightFileListView = listView
             rightFileGridView = gridView
             rightDetailsBar = detailsBar
-            rightAccentBar = accentBar
+            rightActiveBorder = activeBorder
         }
 
         return container
@@ -1792,11 +1801,26 @@ public class MainWindowController: NSWindowController {
         return nil
     }
 
+    /// 判定点击命中的视图属于哪个操作面板。
+    /// 归属范围 = 面板的工具栏（含面包屑/搜索/排序）/ 文件列表 / 网格 / 详情栏，
+    /// 命中任一即算操作该面板（与「用户在操作哪一侧」的直觉一致）。
+    private func paneSideForHitView(_ hit: NSView) -> PaneSide? {
+        let leftOwners: [NSView] = [leftPaneToolbar, leftFileListView, leftFileGridView, leftDetailsBar]
+            .compactMap { $0 as NSView? }
+        let rightOwners: [NSView] = [rightPaneToolbar, rightFileListView, rightFileGridView, rightDetailsBar]
+            .compactMap { $0 as NSView? }
+        func belongs(_ owner: NSView) -> Bool {
+            hit === owner || hit.isDescendant(of: owner)
+        }
+        if leftOwners.contains(where: belongs) { return .left }
+        if rightOwners.contains(where: belongs) { return .right }
+        return nil
+    }
+
     private func updateActivePaneVisual() {
-        // 1.2 新设计：顶部 2pt accent 色条（替代 borderWidth 方案）
-        // 注意：不覆盖 container 基础背景色（windowBackgroundColor），避免破坏面板底色
-        leftAccentBar?.isHidden = activePane != .left
-        rightAccentBar?.isHidden = activePane != .right
+        // 1.2 修订：整块面板强调色描边（原 2pt 顶部色条被工具栏完全遮住，从未可见）
+        leftActiveBorder?.isHidden = activePane != .left
+        rightActiveBorder?.isHidden = activePane != .right
     }
 
     func updateViewMode(side: PaneSide, mode: ViewMode) {
@@ -2024,6 +2048,9 @@ public class MainWindowController: NSWindowController {
         rightFileListView?.refreshAppearance()
         leftFileGridView?.refreshAppearance()
         rightFileGridView?.refreshAppearance()
+        // 活动面板描边跟随强调色（DESIGN-SPEC C-04）
+        leftActiveBorder?.ringColor = FFAccent.current
+        rightActiveBorder?.ringColor = FFAccent.current
     }
 
     @objc private func handleSidebarDirectorySelected(_ notification: Notification) {

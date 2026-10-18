@@ -1259,12 +1259,11 @@ class ExpandableDetailsBar: NSView {
         } else {
             compactNameField.stringValue = "未选择文件"
             compactSubField?.stringValue = ""
-            // v0.7.4 修订 4：未选中时显示当前所在文件夹的图标（而非通用占位图标）
-            if let dirPath = currentDirectoryPath {
-                setRealFileIcon(for: dirPath)
-            } else {
-                setPlaceholderIcon(symbol: "tray.full.fill")
-            }
+            // 2026-10-18：空态改用灰色文件夹符号，不再异步取当前目录的工作区图标。
+            // 此前 tray.full.fill + systemBlue 0.5 半透明托盘观感差；而工作区图标走
+            // 异步回调（setRealFileIcon），失败或未返回时永远残留上一个占位。
+            // 灰色 folder 与「未选择文件」占位文本同一视觉层级，且同步显示无空窗。
+            setPlaceholderIcon(symbol: "folder")
         }
 
         // expanded 字段：名称 / 种类 / 大小 / 位置 / 创建日期 / 修改日期
@@ -1483,9 +1482,9 @@ class ExpandableDetailsBar: NSView {
         smallIconView.image = image?.withSymbolConfiguration(config)
         bigIconView.image = image?.withSymbolConfiguration(bigConfig)
 
-        // 占位图标使用次级标签色（tertiaryLabelColor），与"未选择文件"等占位文本视觉一致
-        // 问题6: 改用 systemBlue 色 0.6 透明度，比纯灰色更有视觉层次
-        let tintColor = NSColor.systemBlue.withAlphaComponent(0.5)
+        // 占位图标使用次级标签色，与「未选择文件」等占位文本视觉一致。
+        // （曾改 systemBlue 0.5 透明度，实测半透明蓝托盘观感差，回归灰阶占位）
+        let tintColor = NSColor.secondaryLabelColor
         smallIconView.contentTintColor = tintColor
         bigIconView.contentTintColor = tintColor
     }
