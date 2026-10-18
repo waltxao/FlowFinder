@@ -139,6 +139,15 @@ class PaneToolbar: NSView {
         row1.detachesHiddenViews = false
         row1.translatesAutoresizingMaskIntoConstraints = false
         row1.setContentHuggingPriority(.defaultHigh, for: .vertical)
+
+        // 行尾弹性占位：剩余空白必须落在面包屑之后，面包屑才能紧贴刷新按钮（T-04）。
+        // 没有它时栈视图会把空白分给 hugging 最低的视图，面包屑被拉满整行。
+        let row1Spacer = NSView()
+        row1Spacer.translatesAutoresizingMaskIntoConstraints = false
+        row1Spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
+        row1Spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
+        row1.addArrangedSubview(row1Spacer)
+
         addSubview(row1)
 
         NSLayoutConstraint.activate([
@@ -156,10 +165,10 @@ class PaneToolbar: NSView {
     func setBreadcrumbBar(_ bar: BreadcrumbBar) {
         breadcrumbBar = bar
         bar.translatesAutoresizingMaskIntoConstraints = false
-        // 插入到 row1 的 refreshButton 之后（index 4）
+        // 插入到 row1 的 refreshButton 之后（index 4，位于行尾弹性占位之前）
         row1.insertArrangedSubview(bar, at: 4)
-        // 面包屑 flex 撑满 Row1 剩余空间
-        bar.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // 面包屑保持内容宽度（hugging 高于行尾占位），窗口变窄时可被压缩以触发省略号
+        bar.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         bar.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 

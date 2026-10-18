@@ -243,8 +243,25 @@ class BreadcrumbBar: NSView {
 
         // 延迟到下一轮布局后再计算溢出（此时 contentStack.intrinsicContentSize 已更新）
         DispatchQueue.main.async { [weak self] in
+            self?.invalidateIntrinsicContentSize()
             self?.updateOverflowState()
         }
+    }
+
+    // MARK: - 固有宽度
+
+    /// 按内容宽度参与布局，不吸收行内剩余空白。
+    /// Row1 是「导航组 → 面包屑 → 弹性空白」，面包屑必须紧贴刷新按钮（规格 T-04）；
+    /// 此前没有 intrinsicContentSize，栈视图只能靠 hugging 分配宽度，结果面包屑
+    /// 被拉满整行、内部又靠右对齐，视觉上飘到了行尾。
+    /// 被压缩到内容宽度以下时，clipContainer 变窄 → 触发溢出裁剪（左侧祖先段被裁，
+    /// 当前目录始终可见），行为与原来一致。
+    override var intrinsicContentSize: NSSize {
+        let width = contentStack.fittingSize.width
+        guard width > 0 else {
+            return NSSize(width: NSView.noIntrinsicMetric, height: 24)
+        }
+        return NSSize(width: width, height: 24)
     }
 
     // MARK: - 溢出检测
