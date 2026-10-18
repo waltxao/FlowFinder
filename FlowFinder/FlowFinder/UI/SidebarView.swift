@@ -198,11 +198,15 @@ private class FFSidebarRowView: NSTableRowView {
 class SidebarView: NSView {
     /// 任务 R3: 侧边栏顶部应用名称 + 版本号（红绿灯下方，2026-10-18 移除图标）
     private var brandView: NSView!
+    /// 2026-10-18 #7：应用名称改渐变绘制（取色自应用图标）
+    private var appNameView: FFGradientLabelView!
     /// 2026-10-18：应用名称下方的版本行
     private var brandVersionLabel: NSTextField!
-    /// 任务 T1: 工具栏行（夜间切换 + 设置 + 工具）
-    /// 任务 F10-3: 设备区域已移出侧边栏（浮动在窗口左下角），toolBarRow 现位于标签下方
-    private var toolBarRow: NSStackView!
+    /// 2026-10-18 #6/#7：顶部控制行（日间/夜间切换 + 单双窗口切换），与红绿灯同一水平带
+    private var topControlsRow: NSStackView!
+    private var topControlsTopConstraint: NSLayoutConstraint!
+    /// 2026-10-18 #7：设置按钮（从底部工具行移到名称后方）
+    private var settingsBtn: NSButton!
     /// 任务 T1: 主题切换按钮（用于切换图标）
     private var themeToggleBtn: NSButton!
 
@@ -257,61 +261,77 @@ class SidebarView: NSView {
         layer?.backgroundColor = NSColor.clear.cgColor
 
         // 任务 R3: 侧边栏顶部应用名称 + 版本号（红绿灯下方）
-        // 2026-10-18：移除 32pt 应用图标，仅保留名称，名称下方显示版本号
+        // 2026-10-18 #7：名称改蓝紫渐变（取色自应用图标），整体下移离开红绿灯，
+        // 版本号缩小到 10pt，设置与工具按钮从底部工具行移到名称后方（同一行）。
         brandView = NSView()
         brandView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(brandView)
 
-        let appNameLabel = NSTextField(labelWithString: "FlowFinder")
-        appNameLabel.font = NSFont.boldSystemFont(ofSize: 15)
-        appNameLabel.textColor = NSColor.labelColor
-        appNameLabel.translatesAutoresizingMaskIntoConstraints = false
-        brandView.addSubview(appNameLabel)
+        appNameView = FFGradientLabelView(text: "FlowFinder", font: FFDesign.Text.xl)
+        brandView.addSubview(appNameView)
 
         // 版本号：0.7.9 (7901)。打包进 .app 后读 Info.plist；测试宿主等无 bundle 场景回退占位
         let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
         let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
         brandVersionLabel = NSTextField(labelWithString: "\(shortVersion) (\(buildVersion))")
-        brandVersionLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        brandVersionLabel.font = FFDesign.Text.xs          // 10pt（原 11pt，2026-10-18 #7 缩小）
         brandVersionLabel.textColor = NSColor.secondaryLabelColor
         brandVersionLabel.translatesAutoresizingMaskIntoConstraints = false
         brandView.addSubview(brandVersionLabel)
 
-        // 点击 brandView 弹出关于对话框
-        let brandClick = NSClickGestureRecognizer(target: self, action: #selector(showAboutWindow))
-        brandView.addGestureRecognizer(brandClick)
+        // 设置 + 工具按钮：跟在程序名称后方（#7）
+        settingsBtn = makeSidebarIconButton(symbol: "gearshape", tooltip: "设置", action: #selector(openSettings))
+        toolBtn = makeSidebarIconButton(symbol: "hammer", tooltip: "工具", action: #selector(toggleToolPanel))
+        brandView.addSubview(settingsBtn)
+        brandView.addSubview(toolBtn)
 
+        // 点击名称区域弹出关于对话框（范围只限名称/版本，避免吃掉按钮点击）
+        let brandClick = NSClickGestureRecognizer(target: self, action: #selector(showAboutWindow))
+        appNameView.addGestureRecognizer(brandClick)
+        let versionClick = NSClickGestureRecognizer(target: self, action: #selector(showAboutWindow))
+        brandVersionLabel.addGestureRecognizer(versionClick)
+
+        // 2026-10-18 #6/#7：顶部控制行——日间/夜间切换 + 单双窗口切换，
+        // 与红绿灯同一水平带（具体 top 由 layout 里按红绿灯中心对齐，见 alignTopControlsWithTrafficLights）
+        themeToggleBtn = makeSidebarIconButton(
+            symbol: ThemeManager.shared.currentMode.iconName,
+            tooltip: "切换主题",
+            action: #selector(toggleTheme)
+        )
+        paneModeButton = makeSidebarIconButton(
+            symbol: "rectangle.split.2x1",
+            tooltip: "切换到单窗口",
+            action: #selector(handlePaneModeToggle)
+        )
+        topControlsRow = NSStackView(views: [themeToggleBtn, paneModeButton])
+        topControlsRow.orientation = .horizontal
+        topControlsRow.spacing = 2
+        topControlsRow.alignment = .centerY
+        topControlsRow.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(topControlsRow)
+
+        topControlsTopConstraint = topControlsRow.topAnchor.constraint(equalTo: topAnchor, constant: 8)
         NSLayoutConstraint.activate([
-            // 红绿灯下方（topAnchor 32pt 留给红绿灯）
-            brandView.topAnchor.constraint(equalTo: topAnchor, constant: 32),
+            topControlsTopConstraint,
+            topControlsRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            topControlsRow.heightAnchor.constraint(equalToConstant: 24),
+
+            brandView.topAnchor.constraint(equalTo: topControlsRow.bottomAnchor, constant: 6),
             brandView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             brandView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            brandView.heightAnchor.constraint(equalToConstant: 44),
+            brandView.heightAnchor.constraint(equalToConstant: 42),
 
-            appNameLabel.leadingAnchor.constraint(equalTo: brandView.leadingAnchor),
-            appNameLabel.topAnchor.constraint(equalTo: brandView.topAnchor, constant: 2),
+            appNameView.leadingAnchor.constraint(equalTo: brandView.leadingAnchor),
+            appNameView.topAnchor.constraint(equalTo: brandView.topAnchor, constant: 2),
 
-            brandVersionLabel.leadingAnchor.constraint(equalTo: brandView.leadingAnchor),
-            brandVersionLabel.topAnchor.constraint(equalTo: appNameLabel.bottomAnchor, constant: 2),
-        ])
+            brandVersionLabel.leadingAnchor.constraint(equalTo: brandView.leadingAnchor, constant: 1),
+            brandVersionLabel.topAnchor.constraint(equalTo: appNameView.bottomAnchor, constant: 0),
 
-        // 2026-10-18 #3：单/双窗口切换按钮——与红绿灯同一水平带，贴侧栏最右侧
-        paneModeButton = NSButton()
-        paneModeButton.bezelStyle = .inline
-        paneModeButton.isBordered = false
-        paneModeButton.imagePosition = .imageOnly
-        paneModeButton.contentTintColor = NSColor.secondaryLabelColor
-        paneModeButton.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "切换到单窗口")
-        paneModeButton.toolTip = "切换到单窗口"
-        paneModeButton.target = self
-        paneModeButton.action = #selector(handlePaneModeToggle)
-        paneModeButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(paneModeButton)
-        NSLayoutConstraint.activate([
-            paneModeButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            paneModeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            paneModeButton.widthAnchor.constraint(equalToConstant: 24),
-            paneModeButton.heightAnchor.constraint(equalToConstant: 24),
+            // 设置 + 工具：名称右侧、与名称行居中对齐
+            toolBtn.trailingAnchor.constraint(equalTo: brandView.trailingAnchor),
+            toolBtn.centerYAnchor.constraint(equalTo: appNameView.centerYAnchor),
+            settingsBtn.trailingAnchor.constraint(equalTo: toolBtn.leadingAnchor, constant: -2),
+            settingsBtn.centerYAnchor.constraint(equalTo: appNameView.centerYAnchor),
         ])
 
         // v0.8.0 P1：「个人收藏」标题改为 outline 分区标题行（group row），不再用外置 label。
@@ -344,47 +364,9 @@ class SidebarView: NSView {
         placesSectionView.spacing = 0
         placesSectionView.translatesAutoresizingMaskIntoConstraints = false
 
-        // 任务 T1: 工具栏行（夜间切换 + 设置 + 工具），位于标签下方
-        toolBarRow = NSStackView()
-        toolBarRow.orientation = .horizontal
-        toolBarRow.spacing = 8
-        toolBarRow.alignment = .centerY
-        toolBarRow.distribution = .fillEqually
-        toolBarRow.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(toolBarRow)
-
-        themeToggleBtn = NSButton()
-        themeToggleBtn.tag = 1001
-        themeToggleBtn.bezelStyle = .inline
-        themeToggleBtn.isBordered = false
-        themeToggleBtn.image = NSImage(systemSymbolName: ThemeManager.shared.currentMode.iconName, accessibilityDescription: "切换主题")
-        themeToggleBtn.contentTintColor = .secondaryLabelColor
-        themeToggleBtn.target = self
-        themeToggleBtn.action = #selector(toggleTheme)
-        themeToggleBtn.translatesAutoresizingMaskIntoConstraints = false
-        toolBarRow.addArrangedSubview(themeToggleBtn)
-
-        let settingsBtn = NSButton()
-        settingsBtn.bezelStyle = .inline
-        settingsBtn.isBordered = false
-        settingsBtn.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")
-        settingsBtn.contentTintColor = .secondaryLabelColor
-        settingsBtn.target = self
-        settingsBtn.action = #selector(openSettings)
-        settingsBtn.translatesAutoresizingMaskIntoConstraints = false
-        toolBarRow.addArrangedSubview(settingsBtn)
-
-        let toolBtn = NSButton()
-        toolBtn.bezelStyle = .inline
-        toolBtn.isBordered = false
-        toolBtn.image = NSImage(systemSymbolName: "hammer", accessibilityDescription: "工具")
-        toolBtn.contentTintColor = .secondaryLabelColor
-        toolBtn.target = self
-        toolBtn.action = #selector(toggleToolPanel)
-        toolBtn.translatesAutoresizingMaskIntoConstraints = false
-        toolBarRow.addArrangedSubview(toolBtn)
-        // 任务 F11-11: 保存引用以便切换激活态（C1）
-        self.toolBtn = toolBtn
+        // 2026-10-18 #6/#7：底部工具行已撤销——夜间切换并入顶部控制行，
+        // 设置与工具按钮移到程序名称后方，侧栏底部不再有悬浮按钮排。
+        // （toolBtn 由上方的 makeSidebarIconButton 创建并保存引用，供工具面板切换激活态）
 
         // v0.8.0 P1: 收藏分区——单一 outline 的分区模型（「个人收藏」group row + 收藏项）
         favoritesOutlineView = makeOutlineView()
@@ -468,17 +450,11 @@ class SidebarView: NSView {
             scrollContentStack.bottomAnchor.constraint(equalTo: scrollContainer.bottomAnchor, constant: -12),
             scrollContainer.widthAnchor.constraint(equalTo: sidebarScrollView.contentView.widthAnchor),
 
-            // 滚动区：品牌区下方 → 工具行上方
+            // 滚动区：品牌区下方 → 侧栏底部（底部按钮行已撤销，2026-10-18 #7）
             sidebarScrollView.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: 4),
             sidebarScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             sidebarScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            sidebarScrollView.bottomAnchor.constraint(equalTo: toolBarRow.topAnchor, constant: -6),
-
-            // 工具栏行（固定在底部，不随内容滚动）
-            toolBarRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            toolBarRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            toolBarRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
-            toolBarRow.heightAnchor.constraint(equalToConstant: 28),
+            sidebarScrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
 
         // 每个分区视图铺满滚动内容宽度。
@@ -533,6 +509,49 @@ class SidebarView: NSView {
     }
 
     // MARK: - Helpers
+
+    /// 统一的侧栏图标按钮：24×24、无边框、仅图标、灰色
+    /// （2026-10-18 #6/#7：顶部控制行与名称后方的设置/工具按钮共用一套样式）
+    private func makeSidebarIconButton(symbol: String, tooltip: String, action: Selector) -> NSButton {
+        let button = NSButton()
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.contentTintColor = .secondaryLabelColor
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
+        button.toolTip = tooltip
+        button.target = self
+        button.action = action
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 24),
+            button.heightAnchor.constraint(equalToConstant: 24),
+        ])
+        return button
+    }
+
+    /// #6：顶部控制行（日间切换 + 单双窗切换）与红绿灯垂直居中对齐。
+    ///
+    /// 红绿灯位置由系统按窗口类型决定（fullSizeContentView 与普通窗口不同），
+    /// 写死 top 常量在换机器 / 换系统版本后会错位，所以每次布局都按红绿灯的真实
+    /// 中心反算一次；只在与当前常量不同时才写回，避免布局循环。
+    private func alignTopControlsWithTrafficLights() {
+        guard let window = window,
+              let closeButton = window.standardWindowButton(.closeButton),
+              let buttonSuperview = closeButton.superview else { return }
+        let rectInWindow = buttonSuperview.convert(closeButton.frame, to: nil)
+        let centerInSelf = convert(NSPoint(x: rectInWindow.midX, y: rectInWindow.midY), from: nil)
+        let centerFromTop = bounds.height - centerInSelf.y
+        guard centerFromTop.isFinite, centerFromTop > 0 else { return }
+        let target = centerFromTop - 12   // 控制行高 24 → 半高 12；+2 让图标中心略低于红绿灯中心
+        guard abs(topControlsTopConstraint.constant - target) > 0.5 else { return }
+        topControlsTopConstraint.constant = target
+    }
+
+    override func layout() {
+        super.layout()
+        alignTopControlsWithTrafficLights()
+    }
 
     /// 创建外置标题 Label（灰色小字，访达风格）
     private func makeSectionTitleLabel(_ text: String) -> NSTextField {
@@ -1799,7 +1818,7 @@ class DeviceSidebarDataSource: SidebarDataSourceBase {
 // MARK: - DeviceCellView (B9: 设备行单行布局 + 悬停气泡)
 
 /// B9: 设备行自定义 cell
-/// - 单行布局：图标(16x16) + 设备名称(flex) + "X GB 可用"(灰色 10pt)
+/// - 单行布局：图标(20x20) + 设备名称（铺满剩余宽；2026-10-18 #4 移除行内「X GB 可用」）
 /// - 悬停 500ms 后显示 NSPopover 气泡（设备名、文件系统类型、挂载点、总容量、可用空间、使用率）
 /// - 鼠标移出后隐藏气泡
 /// 任务 F10-3: 改为 internal 可见性，供 MainWindowController 设备浮层复用（v0.6.6）
@@ -1810,7 +1829,6 @@ class DeviceCellView: NSTableCellView {
 
     private let iconView = NSImageView()
     private let nameField = NSTextField(labelWithString: "")
-    private let freeField = NSTextField(labelWithString: "")
 
     /// 当前设备名（供 tooltip 使用）
     private var deviceName: String = ""
@@ -1841,27 +1859,13 @@ class DeviceCellView: NSTableCellView {
         nameField.cell?.truncatesLastVisibleLine = true
         nameField.cell?.wraps = false
         nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        // 任务修复：nameField 低拥抱优先级，允许被压缩以优先满足 freeField 布局（问题2）
+        // 任务修复：nameField 低拥抱优先级，允许被压缩以适应窄侧栏（问题2）
         nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         nameField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(nameField)
 
-        // B9: "X GB 可用"文字（灰色 10pt）
-        freeField.font = NSFont.systemFont(ofSize: 11)
-        freeField.textColor = NSColor.secondaryLabelColor
-        freeField.lineBreakMode = .byTruncatingTail
-        freeField.cell?.truncatesLastVisibleLine = true
-        freeField.cell?.wraps = false
-        freeField.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        // 任务修复：freeField 高拥抱优先级，防止被拉伸导致与 nameField 文字重叠（问题2）
-        freeField.setContentHuggingPriority(.required, for: .horizontal)
-        freeField.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(freeField)
-
-        // 任务修复：nameField 尾部约束优先级降为 750，避免侧边栏变窄时与 widthAnchor>=30
-        // 及 freeField 约束冲突，Auto Layout 打破约束导致文字溢出重叠（问题2）
-        let nameTrailingConstraint = nameField.trailingAnchor.constraint(equalTo: freeField.leadingAnchor, constant: -4)
-        nameTrailingConstraint.priority = .defaultHigh  // 750
+        // 2026-10-18 #4：位置行不再显示「X GB 可用」——访达同构只留图标 + 名称，
+        // 容量信息保留在悬停气泡里（不占行宽、不打断扫读）。
 
         NSLayoutConstraint.activate([
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
@@ -1870,13 +1874,8 @@ class DeviceCellView: NSTableCellView {
             iconView.heightAnchor.constraint(equalToConstant: 20),
 
             nameField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            nameField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
             nameField.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            freeField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            freeField.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            nameTrailingConstraint,
-            // 防止 nameField 被压缩到 0
             nameField.widthAnchor.constraint(greaterThanOrEqualToConstant: 30),
         ])
     }
@@ -1904,16 +1903,7 @@ class DeviceCellView: NSTableCellView {
         }
         iconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "设备")
             ?? NSImage(systemSymbolName: "externaldrive", accessibilityDescription: nil)
-
-        // B9: 显示 "X GB 可用"（仅显示可用空间，不显示总容量）
-        if dev.totalSize > 0 {
-            let formatter = ByteCountFormatter()
-            formatter.allowedUnits = [.useGB, .useTB]
-            formatter.countStyle = .file
-            freeField.stringValue = "\(formatter.string(fromByteCount: Int64(dev.freeSize))) 可用"
-        } else {
-            freeField.stringValue = ""
-        }
+        // 2026-10-18 #4：行内不再显示「X GB 可用」，容量只在悬停气泡里出现
     }
 
     // MARK: - Tracking Area (悬停检测)

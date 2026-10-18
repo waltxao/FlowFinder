@@ -191,16 +191,27 @@ final class PaneTabItemView: NSView, NSDraggingSource {
     }
 
     private func updateAppearance() {
+        // 颜色必须在当前外观下解析：CALayer.backgroundColor 是静态 CGColor，
+        // 直接取 NSColor.controlBackgroundColor.cgColor 会定格在创建时的明暗模式上，
+        // 夜间模式下就成了「白底 + 白字」（2026-10-18 实测）。
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = isActive
+                ? NSColor.controlBackgroundColor.cgColor
+                : NSColor.clear.cgColor
+        }
         if isActive {
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
             titleLabel.textColor = NSColor.labelColor
             titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         } else {
-            layer?.backgroundColor = NSColor.clear.cgColor
             titleLabel.textColor = NSColor.secondaryLabelColor
             titleLabel.font = NSFont.systemFont(ofSize: 12)
         }
         closeButton.isHidden = !isActive
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
     }
 
     @objc private func handleClose() {

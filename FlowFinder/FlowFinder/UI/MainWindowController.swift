@@ -246,6 +246,16 @@ public class MainWindowController: NSWindowController {
     var rightTabStrip: PaneTabStripView?
     var leftTabsStore: PaneTabsStore?
     var rightTabsStore: PaneTabsStore?
+    /// #3：标签条高度约束（单标签时收到 0，工具栏顶到卡片顶部）
+    var leftTabStripHeight: NSLayoutConstraint?
+    var rightTabStripHeight: NSLayoutConstraint?
+    /// 标签条展开高度（DESIGN-SPEC T-10）
+    static let tabStripHeight: CGFloat = 32
+    /// #5：进入单窗口模式前的窗口宽度，切回双窗口时还原
+    private var widthBeforeSinglePane: CGFloat?
+    /// #5：上次真正应用的模式（nil = 还没完成过一次「带缩放」的切换）。
+    /// 用它区分「双→单」的首次切换与「单窗内切活动面板」，避免反复缩放窗口。
+    private var appliedSinglePaneMode: Bool?
     /// v0.7.0: 工具浮动面板（3×3 网格大方块布局，覆盖在侧栏底部区域）
     private var toolPanelView: ToolPanelView?
     /// 1.2 活动面板描边（替代原 2pt 色条——色条被工具栏盖住，从未可见）
@@ -342,6 +352,14 @@ public class MainWindowController: NSWindowController {
 
         // setupUI 完成后再显示窗口（此时透明设置已就绪）
         window.makeKeyAndOrderFront(nil)
+        // #5：启动即单窗模式时，上面那次 applyPaneMode 还没有真实布局宽度可用，
+        // 等首个布局周期结束后再补一次「收窄窗口」
+        if isSinglePaneMode {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.isSinglePaneMode, self.appliedSinglePaneMode != true else { return }
+                self.applyPaneMode()
+            }
+        }
         FFDebug.log("Window state: isKey=\(window.isKeyWindow) isMain=\(window.isMainWindow) isVisible=\(window.isVisible) frame=\(window.frame) ignoresMouseEvents=\(window.ignoresMouseEvents)")
         if let cv = window.contentView {
             FFDebug.log("contentView: type=\(type(of: cv)) frame=\(cv.frame) subviews=\(cv.subviews.map { "\(type(of: $0))" })")
@@ -426,8 +444,8 @@ public class MainWindowController: NSWindowController {
         paneSplitView.wantsLayer = true
         paneSplitView.layer?.backgroundColor = NSColor.clear.cgColor
         // 问题13修复：左右操作区用圆角卡片包裹，四周留 8pt 边距使圆角在所有边可见
-        leftPaneWrapper = makeCardWrapper(for: leftPaneContainer)
-        rightPaneWrapper = makeCardWrapper(for: rightPaneContainer)
+        leftPaneWrapper = makeCardWrapper(for: leftPaneContainer, side: .left)
+        rightPaneWrapper = makeCardWrapper(for: rightPaneContainer, side: .right)
         paneSplitView.addArrangedSubview(leftPaneWrapper)
         paneSplitView.addArrangedSubview(rightPaneWrapper)
 
@@ -514,7 +532,8 @@ public class MainWindowController: NSWindowController {
             mainContainer.addSubview(toolPanel)
             NSLayoutConstraint.activate([
                 toolPanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
-                toolPanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -44),
+                // 2026-10-18：侧栏底部按钮行撤销，工具面板不再为它让位（原 -44）
+                toolPanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -16),
                 toolPanel.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor, constant: -8),
                 // 修复问题 4：工具面板缺少高度约束，NSGridView 内容不足时面板塌缩到 0，
                 // 导致不可见/不可点。给定最小高度（关闭按钮 24 + 间距 + 2 行卡片 160 + 边距）。
@@ -651,24 +670,44 @@ public class MainWindowController: NSWindowController {
         TaskSchedulerManager.shared.startPolling()
     }
 
-    /// 问题13修复：为操作区创建带 8pt 边距的透明包裹视图
-    /// createPaneContainer 已设置 cornerRadius=8 + masksToBounds + 实体背景色，
-    /// 但此前容器直接铺满 split view，圆角紧贴窗口边缘不可见。
-    /// 此包裹视图在容器四周留出 8pt 透明边距，使圆角矩形在四个边均可见，形成独立卡片效果。
+    /// 为操作区创建包裹视图（卡片四周留白 + 活动面板发光层）。
+    ///
+    /// 2026-10-18 三次修订：发光必须出现在「操作区边缘」，而不是画在操作区内部。
+    /// 因此发光视图挂在包裹视图里、位于卡片**下层**，尺寸铺满包裹视图；卡片四周内缩
+    /// `FFActivePaneBorderView.edgeOutset`（8pt）——发光以卡片边界为中心线绘制，
+    /// 内半圈被卡片不透明背景盖住，外半圈留在 8pt 留白里向外发散。
+    /// 留白同时是发光的外扩空间：最外层描边 13pt（外扩 6.5pt）不会被包裹视图裁掉。
     /// 两个卡片之间经 split divider 分隔，视觉上呈现为左右两张独立圆角卡片。
-    private func makeCardWrapper(for content: NSView) -> NSView {
+    private func makeCardWrapper(for content: NSView, side: PaneSide) -> NSView {
         let wrapper = NSView()
         wrapper.wantsLayer = true
         wrapper.layer?.backgroundColor = NSColor.clear.cgColor
         wrapper.translatesAutoresizingMaskIntoConstraints = false
+
+        let glow = FFActivePaneBorderView()
+        glow.translatesAutoresizingMaskIntoConstraints = false
+        glow.isHidden = true
+        wrapper.addSubview(glow)
+
         content.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(content)
+        wrapper.addSubview(content)   // 后加入 → 盖住发光的向内半圈
+
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 4),
-            content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 4),
-            content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -4),
-            content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -4),
+            glow.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            glow.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            glow.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            glow.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+
+            content.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: FFActivePaneBorderView.edgeOutset),
+            content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: FFActivePaneBorderView.edgeOutset),
+            content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -FFActivePaneBorderView.edgeOutset),
+            content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -FFActivePaneBorderView.edgeOutset),
         ])
+
+        switch side {
+        case .left:  leftActiveBorder = glow
+        case .right: rightActiveBorder = glow
+        }
         return wrapper
     }
 
@@ -682,14 +721,10 @@ public class MainWindowController: NSWindowController {
         // v0.6.9: 操作区实体背景（日间#F5F5F5/夜间#2D2D2D，Wave4 Task 3 起走 FFDesign 令牌）
         container.layer?.backgroundColor = operationAreaBackgroundColor().cgColor
         // Wave4 Task 6（审计 §3 装饰降噪）：删除 v0.6.9 的 1px 边框——卡片已有
-        // 4pt 边距 + 阴影 + 圆角分层，边框叠用显多余
+        // 8pt 边距 + 阴影 + 圆角分层，边框叠用显多余
 
-        // 1.2 活动面板描边（替代原 2pt accent 色条）
-        // 原色条贴在容器顶部，却先于工具栏 addSubview，被工具栏完全盖住——
-        // 结果「活动面板」在整个界面上没有任何可见反馈。改为整块描边并置于最上层。
-        let activeBorder = FFActivePaneBorderView()
-        activeBorder.translatesAutoresizingMaskIntoConstraints = false
-        activeBorder.isHidden = true  // 初始隐藏，仅活动面板显示
+        // 2026-10-18 三次修订：活动面板发光层已上移到包裹视图（见 makeCardWrapper），
+        // 挂在容器内部会被 masksToBounds 裁掉外半圈，只能得到「操作区里面的描边」。
 
         // 任务 F3: 双行工具栏布局（v0.6.5）
         // Row1（32pt）= 后退/前进/上一级/刷新 + BreadcrumbBar（紧贴刷新）
@@ -757,21 +792,17 @@ public class MainWindowController: NSWindowController {
         container.addSubview(gridView)
         // v0.6.9: detailsBar 最后添加（视觉最上层），作为浮层覆盖
         container.addSubview(detailsBar)
-        // 描边最后添加：必须盖在工具栏/列表/详情栏之上，否则又被遮住
-        container.addSubview(activeBorder)
+
+        // #3（2026-10-18）：标签条高度可切换——只有一个标签时收起为 0，工具栏顶到卡片顶部
+        let tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: 32)
+        if side == .left { leftTabStripHeight = tabStripHeight } else { rightTabStripHeight = tabStripHeight }
 
         NSLayoutConstraint.activate([
-            // 描边贴合容器四边（仅活动面板可见）
-            activeBorder.topAnchor.constraint(equalTo: container.topAnchor),
-            activeBorder.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            activeBorder.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            activeBorder.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
             // #7：标签条贴顶，工具栏在其下方
             tabStrip.topAnchor.constraint(equalTo: container.topAnchor),
             tabStrip.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             tabStrip.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            tabStrip.heightAnchor.constraint(equalToConstant: 32),
+            tabStripHeight,
 
             // toolbar 位于标签条下方
             toolbar.topAnchor.constraint(equalTo: tabStrip.bottomAnchor),
@@ -832,14 +863,12 @@ public class MainWindowController: NSWindowController {
             leftFileListView = listView
             leftFileGridView = gridView
             leftDetailsBar = detailsBar
-            leftActiveBorder = activeBorder
         case .right:
             rightPaneToolbar = toolbar
             rightBreadcrumbBar = breadcrumbBar
             rightFileListView = listView
             rightFileGridView = gridView
             rightDetailsBar = detailsBar
-            rightActiveBorder = activeBorder
         }
 
         return container
@@ -1670,29 +1699,59 @@ public class MainWindowController: NSWindowController {
     }
 
     /// 应用单/双窗口布局：
-    /// - 单窗：隐藏非活动面板，活动面板占满操作区；最小宽度 760（侧栏 160 + 操作区 450 + 边距）
-    /// - 双窗：两栏可见，分隔线回到中线；最小宽度 1060（W-07）
+    /// - 单窗：收起非活动面板（只留活动面板占满操作区），窗口同步收窄被收起那一侧的宽度；
+    ///   最小宽度 760（侧栏 160 + 操作区 450 + 两侧留白）
+    /// - 双窗：两栏可见，窗口还原到进入单窗前的宽度（不低于 1060，W-07），分隔线回中线
     /// 侧栏切换按钮图标同步更新。
     private func applyPaneMode() {
         let single = isSinglePaneMode
         let showLeft = !single || activePane == .left
         let showRight = !single || activePane == .right
-        leftPaneWrapper?.isHidden = !showLeft
-        rightPaneWrapper?.isHidden = !showRight
 
-        window?.minSize = single
-            ? NSSize(width: 760, height: 700)
-            : NSSize(width: 1060, height: 700)
+        if single {
+            // 只有「双 → 单」这次切换才动窗口宽度；单窗内切换活动面板不再重复缩放
+            let enteringSingle = (appliedSinglePaneMode != true)
+            let hidingWrapper = showLeft ? rightPaneWrapper : leftPaneWrapper
+            var hiddenWidth: CGFloat = 0
+            if enteringSingle {
+                hiddenWidth = max(0, hidingWrapper?.frame.width ?? 0)
+                if hiddenWidth < 1 {
+                    // 启动即单窗 / 尚未完成布局：按操作区中线估一栏宽度
+                    hiddenWidth = max(0, (paneSplitView?.bounds.width ?? 0) / 2)
+                }
+                if hiddenWidth > 1 { widthBeforeSinglePane = window?.frame.width }
+            }
 
-        if single, let window = window, window.frame.width < 760 {
-            var frame = window.frame
-            frame.size.width = 760
-            window.setFrame(frame, display: true)
-        }
-        if !single, let split = paneSplitView, split.bounds.width > 0 {
-            // 从单窗恢复时把分隔线放回中线（隐藏期间宽度曾被单侧占满）
-            DispatchQueue.main.async {
-                split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+            setPaneVisible(showLeft, wrapper: leftPaneWrapper)
+            setPaneVisible(showRight, wrapper: rightPaneWrapper)
+            window?.minSize = NSSize(width: 760, height: 700)
+
+            if hiddenWidth > 1, let window = window {
+                var frame = window.frame
+                // origin 为左下角，X 不变即保持左边缘、向右收窄
+                frame.size.width = max(760, frame.width - hiddenWidth)
+                window.setFrame(frame, display: true, animate: true)
+                appliedSinglePaneMode = true
+            }
+        } else {
+            setPaneVisible(true, wrapper: leftPaneWrapper)
+            setPaneVisible(true, wrapper: rightPaneWrapper)
+            window?.minSize = NSSize(width: 1060, height: 700)
+            if let window = window, let saved = widthBeforeSinglePane {
+                let target = max(1060, saved)
+                if abs(window.frame.width - target) > 1 {
+                    var frame = window.frame
+                    frame.size.width = target
+                    window.setFrame(frame, display: true, animate: true)
+                }
+            }
+            widthBeforeSinglePane = nil
+            appliedSinglePaneMode = false
+            if let split = paneSplitView, split.bounds.width > 0 {
+                // 从单窗恢复时把分隔线放回中线（隐藏期间宽度曾被单侧占满）
+                DispatchQueue.main.async {
+                    split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+                }
             }
         }
         sidebarView?.setSinglePaneMode(single)
@@ -1703,6 +1762,35 @@ public class MainWindowController: NSWindowController {
         // 1.2 修订：整块面板强调色描边（原 2pt 顶部色条被工具栏完全遮住，从未可见）
         leftActiveBorder?.isHidden = activePane != .left
         rightActiveBorder?.isHidden = activePane != .right
+    }
+
+    /// 单窗模式下真正「关掉」一个操作区：把它从分栏里移除（而不是只 isHidden）。
+    ///
+    /// 2026-10-18 #5：NSSplitView 的 arranged subview 只设 isHidden 时，本工程里
+    /// 并没有被折叠——用户看到的是「两个操作区都在，窗口也没变小」。
+    /// 移除 subview 是确定性的做法：不在分栏里就不可能占宽度。
+    /// 重新显示时按左右顺序插回，并重建 holding priority。
+    private func setPaneVisible(_ visible: Bool, wrapper: NSView?) {
+        guard let wrapper = wrapper, let split = paneSplitView else { return }
+        if visible {
+            guard wrapper.superview == nil else { return }
+            wrapper.isHidden = false
+            wrapper.translatesAutoresizingMaskIntoConstraints = false
+            if wrapper === leftPaneWrapper {
+                split.insertArrangedSubview(wrapper, at: 0)
+            } else {
+                split.addArrangedSubview(wrapper)
+            }
+            // holding priority 按 subview 序号保存，重排后需重新设置
+            for (index, subview) in split.arrangedSubviews.enumerated() {
+                split.setHoldingPriority(index == 0 && split.arrangedSubviews.count > 1 ? .defaultLow : .defaultHigh,
+                                         forSubviewAt: index)
+            }
+        } else {
+            guard wrapper.superview != nil else { return }
+            split.removeArrangedSubview(wrapper)
+            wrapper.removeFromSuperview()
+        }
     }
 
     func updateViewMode(side: PaneSide, mode: ViewMode) {

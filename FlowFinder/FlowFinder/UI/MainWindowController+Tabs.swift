@@ -11,11 +11,25 @@ extension MainWindowController: PaneTabStripDelegate {
         guard leftTabsStore == nil else { return }
         leftTabsStore = PaneTabsStore(initial: PaneTabSession(state: leftPaneViewModel.captureSession()))
         rightTabsStore = PaneTabsStore(initial: PaneTabSession(state: rightPaneViewModel.captureSession()))
-        leftTabStrip?.refresh(sessions: leftTabsStore!.tabs, activeIndex: leftTabsStore!.activeIndex)
-        rightTabStrip?.refresh(sessions: rightTabsStore!.tabs, activeIndex: rightTabsStore!.activeIndex)
+        refreshTabStrip(side: .left)
+        refreshTabStrip(side: .right)
     }
 
     // MARK: 访问器
+
+    /// 刷新一侧的标签条：内容 + 可见性。
+    /// 2026-10-18 #3：只有一个标签时不显示标签条（高度收 0，工具栏顶到卡片顶部），
+    /// 第二个标签出现时再展开。新建标签入口保留在「文件 → 新建标签页 ⌘T」
+    /// 与侧栏右键「在新标签页中打开」。
+    func refreshTabStrip(side: PaneSide) {
+        guard let store = tabsStore(for: side) else { return }
+        let strip = tabStrip(for: side)
+        strip?.refresh(sessions: store.tabs, activeIndex: store.activeIndex)
+        let showsTabs = store.count > 1
+        strip?.isHidden = !showsTabs
+        let heightConstraint = (side == .left) ? leftTabStripHeight : rightTabStripHeight
+        heightConstraint?.constant = showsTabs ? MainWindowController.tabStripHeight : 0
+    }
 
     func viewModel(for side: PaneSide) -> PaneViewModel {
         side == .left ? leftPaneViewModel : rightPaneViewModel
@@ -33,7 +47,7 @@ extension MainWindowController: PaneTabStripDelegate {
     func syncTabStrip(side: PaneSide, state: PaneState) {
         guard let store = tabsStore(for: side) else { return }
         store.updateActiveState(state)
-        tabStrip(for: side)?.refresh(sessions: store.tabs, activeIndex: store.activeIndex)
+        refreshTabStrip(side: side)
     }
 
     // MARK: 标签操作
@@ -72,7 +86,7 @@ extension MainWindowController: PaneTabStripDelegate {
 
     func moveTab(side: PaneSide, from: Int, to: Int) {
         guard let store = tabsStore(for: side), store.move(from: from, to: to) else { return }
-        tabStrip(for: side)?.refresh(sessions: store.tabs, activeIndex: store.activeIndex)
+        refreshTabStrip(side: side)
     }
 
     /// 跨面板接收标签：先在源面板移除，再插入目标面板并激活
@@ -88,7 +102,7 @@ extension MainWindowController: PaneTabStripDelegate {
                     // 源面板激活标签被移走 → 载入它的新激活标签
                     loadActiveTab(side: sourceSide)
                 } else {
-                    tabStrip(for: sourceSide)?.refresh(sessions: sourceStore.tabs, activeIndex: sourceStore.activeIndex)
+                    refreshTabStrip(side: sourceSide)
                 }
             }
         }
@@ -102,7 +116,7 @@ extension MainWindowController: PaneTabStripDelegate {
         guard let store = tabsStore(for: side) else { return }
         let vm = viewModel(for: side)
         vm.restoreSession(store.active.state)
-        tabStrip(for: side)?.refresh(sessions: store.tabs, activeIndex: store.activeIndex)
+        refreshTabStrip(side: side)
     }
 
     // MARK: 菜单
