@@ -1020,3 +1020,55 @@ final class FFStartupPathTests: XCTestCase {
         )
     }
 }
+
+// MARK: - 路径栏分段
+
+/// 首段必须是「路径所属的卷」：挂载卷不能拼成「根卷 > Volumes > 卷名」
+final class FFBreadcrumbSegmentsTests: XCTestCase {
+
+    private func make(_ path: String, rootName: String = "Macintosh HD") -> [(String, String)] {
+        FFBreadcrumbSegments
+            .make(for: path, volumeName: { $0 == "/" ? rootName : ($0 as NSString).lastPathComponent })
+            .map { ($0.name, $0.path) }
+    }
+
+    func testVolumeRootDetection() {
+        XCTAssertEqual(FFBreadcrumbSegments.volumeRoot(of: "/"), "/")
+        XCTAssertEqual(FFBreadcrumbSegments.volumeRoot(of: "/Users/tester"), "/")
+        XCTAssertEqual(FFBreadcrumbSegments.volumeRoot(of: "/Volumes/Studio"), "/Volumes/Studio")
+        XCTAssertEqual(FFBreadcrumbSegments.volumeRoot(of: "/Volumes/Studio/Documents"), "/Volumes/Studio")
+        XCTAssertEqual(FFBreadcrumbSegments.volumeRoot(of: "/Volumes"), "/")
+    }
+
+    func testMountedVolumeDoesNotShowVolumesComponent() {
+        let segs = make("/Volumes/Studio/Documents")
+        XCTAssertEqual(segs.map { $0.0 }, ["Studio", "Documents"])
+        XCTAssertEqual(segs.map { $0.1 }, ["/Volumes/Studio", "/Volumes/Studio/Documents"])
+    }
+
+    func testMountedVolumeRootOnly() {
+        let segs = make("/Volumes/Studio")
+        XCTAssertEqual(segs.map { $0.0 }, ["Studio"])
+        XCTAssertEqual(segs.first?.1, "/Volumes/Studio")
+    }
+
+    func testBootVolumePathKeepsRootName() {
+        let segs = make("/Users/tester/Documents")
+        XCTAssertEqual(segs.map { $0.0 }, ["Macintosh HD", "Users", "tester", "Documents"])
+        XCTAssertEqual(segs.map { $0.1 }, ["/", "/Users", "/Users/tester", "/Users/tester/Documents"])
+    }
+
+    func testRootPathSingleSegment() {
+        let segs = make("/")
+        XCTAssertEqual(segs.map { $0.0 }, ["Macintosh HD"])
+        XCTAssertEqual(segs.map { $0.1 }, ["/"])
+    }
+
+    func testEmptyPathYieldsNoSegments() {
+        XCTAssertTrue(FFBreadcrumbSegments.make(for: "", volumeName: { _ in "x" }).isEmpty)
+    }
+
+    func testTrailingSlashIsStandardized() {
+        XCTAssertEqual(make("/Volumes/Studio/Documents/").map { $0.0 }, ["Studio", "Documents"])
+    }
+}

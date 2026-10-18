@@ -8,6 +8,52 @@ protocol BreadcrumbBarDelegate: AnyObject {
     func breadcrumbBar(_ bar: BreadcrumbBar, didSelectPath path: String)
 }
 
+// MARK: - 分段构建（纯函数）
+
+/// 路径栏分段构建。
+///
+/// 独立成纯函数的原因：首段必须是「路径所属的卷」而不是固定的根卷。
+/// 挂载卷 `/Volumes/Studio` 并不在根卷之下，此前一律把根卷名拼在最前面，
+/// 渲染成「Macintosh HD > Volumes > Studio」——既多出一层不存在的 `Volumes`，
+/// 又把根卷名挂到了外接盘路径上（Finder 只显示盘符本身）。
+enum FFBreadcrumbSegments {
+
+    struct Segment: Equatable {
+        let name: String
+        let path: String
+    }
+
+    /// 路径所属卷的挂载点：`/Volumes/<卷名>` 取该卷，其余归到 `/`。
+    static func volumeRoot(of path: String) -> String {
+        let prefix = "/Volumes/"
+        guard path.hasPrefix(prefix) else { return "/" }
+        guard let first = path.dropFirst(prefix.count).split(separator: "/").first else { return "/" }
+        return prefix + first
+    }
+
+    /// - Parameters:
+    ///   - absolutePath: 绝对路径
+    ///   - volumeName: 给定挂载点返回显示名（注入以便单测，不必真的读盘）
+    static func make(for absolutePath: String, volumeName: (String) -> String) -> [Segment] {
+        let standardized = (absolutePath as NSString).standardizingPath
+        guard !standardized.isEmpty else { return [] }
+
+        let root = volumeRoot(of: standardized)
+        var segments = [Segment(name: volumeName(root), path: root)]
+
+        let relative = root == "/" ? standardized : String(standardized.dropFirst(root.count))
+        let trimmed = relative.hasPrefix("/") ? String(relative.dropFirst()) : relative
+        guard !trimmed.isEmpty else { return segments }
+
+        var acc = root == "/" ? "" : root
+        for comp in trimmed.split(separator: "/").map(String.init) {
+            acc += "/" + comp
+            segments.append(Segment(name: comp, path: acc))
+        }
+        return segments
+    }
+}
+
 // MARK: - BreadcrumbBar
 
 /// 仿访达路径栏（任务 F11-4：完全重写，修复问题12）
@@ -135,41 +181,17 @@ class BreadcrumbBar: NSView {
     // MARK: - 路径分段构建
 
     /// 解析绝对路径为分段列表。
-    /// 对根 "/" 特殊处理：作为第一段显示为计算机图标 + 名称。
-    /// 每段 absolutePath 为该层级的绝对路径（以 "/" 开头，根为 "/"）。
+    /// 首段为路径所属的卷（根卷或挂载卷），每段 absolutePath 为该层级的绝对路径。
     private func parseSegments(from absolutePath: String) -> [(name: String, absolutePath: String)] {
-        guard !absolutePath.isEmpty else { return [] }
-
-        // 标准化路径
-        let standardized = (absolutePath as NSString).standardizingPath
-
-        // 特殊处理：根目录或路径本身就是 "/"
-        if standardized == "/" {
-            return [(name: computerName(), absolutePath: "/")]
-        }
-
-        var result: [(name: String, absolutePath: String)] = []
-        // 先加入根
-        result.append((name: computerName(), absolutePath: "/"))
-
-        // 标准化后去掉前导 "/"，按 "/" 拆分
-        let trimmed = standardized.hasPrefix("/") ? String(standardized.dropFirst()) : standardized
-        let components = trimmed.split(separator: "/").map(String.init)
-
-        var acc = ""
-        for comp in components {
-            acc += "/" + comp
-            // 显示名：用户主目录显示 "~" 等（此处保留原组件名）
-            result.append((name: comp, absolutePath: acc))
-        }
-        return result
+        FFBreadcrumbSegments
+            .make(for: absolutePath, volumeName: { self.volumeName(at: $0) })
+            .map { (name: $0.name, absolutePath: $0.path) }
     }
 
-    /// 计算机名称（用于根路径段显示）。
-    /// 优先使用根卷的 volumeName（如 "Macintosh HD"），回退到主机名，再回退到字面量。
-    private func computerName() -> String {
-        // 1. 优先读取根卷名称（与 Finder 侧边栏一致）
-        if let volName = try? URL(fileURLWithPath: "/")
+    /// 挂载点显示名：优先卷名（如 "Macintosh HD" / "Studio"），回退主机名，再回退字面量。
+    private func volumeName(at mountPoint: String) -> String {
+        // 1. 优先读取该挂载点的卷名（与 Finder 侧边栏一致）
+        if let volName = try? URL(fileURLWithPath: mountPoint)
             .resourceValues(forKeys: [.volumeNameKey]).volumeName,
            !volName.isEmpty {
             return volName
@@ -498,10 +520,10 @@ private class BreadcrumbSegmentButton: NSButton {
         ]
         self.attributedTitle = NSAttributedString(string: displayName, attributes: attrs)
 
-        // 根分段显示计算机图标
+        // 根分段显示图标：根卷用电脑图标，挂载卷用磁盘图标
         if isRoot {
-            // 优先用 "macpro" 图标，回退 "pc"
-            self.image = NSImage(systemSymbolName: "macpro.gen1", accessibilityDescription: "电脑")
+            let symbol = absolutePath == "/" ? "macpro.gen1" : "externaldrive"
+            self.image = NSImage(systemSymbolName: symbol, accessibilityDescription: absolutePath == "/" ? "电脑" : "磁盘")
                 ?? NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: "电脑")
             self.contentTintColor = color
         }
