@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>FlowFinderNative</string>
+    <string>FlowFinder</string>
     <key>CFBundleIdentifier</key>
     <string>com.flowfinder.native</string>
     <key>CFBundleInfoDictionaryVersion</key>

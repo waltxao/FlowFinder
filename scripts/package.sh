@@ -19,11 +19,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-XCODEPROJ="$PROJECT_DIR/FlowFinderNative/FlowFinderNative.xcodeproj"
-APP_NAME="FlowFinderNative"
+XCODEPROJ="$PROJECT_DIR/FlowFinder/FlowFinder.xcodeproj"
+APP_NAME="FlowFinder"
 DMG_NAME="FlowFinder"
-SCHEME_NAME="FlowFinderNative"
-TARGET_NAME="FlowFinderNative"
+SCHEME_NAME="FlowFinder"
+TARGET_NAME="FlowFinder"
 CONFIGURATION="Release"
 BUILD_DIR="$PROJECT_DIR/build"
 
@@ -38,7 +38,7 @@ DEVELOPER_ID="${DEVELOPER_ID:-}"
 
 # Entitlements file — applied at codesign time (Hardened Runtime requires it
 # to whitelist the self-built Rust dylib and unsigned-executable-memory usage).
-ENTITLEMENTS_PATH="$PROJECT_DIR/FlowFinderNative/FlowFinderNative/FlowFinderNative.entitlements"
+ENTITLEMENTS_PATH="$PROJECT_DIR/FlowFinder/FlowFinder/FlowFinder.entitlements"
 
 # Temp paths (populated later, declared here so trap can read them safely)
 TMP_DMG=""

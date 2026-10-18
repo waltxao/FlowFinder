@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "FF0000500000000000000050"
-               BuildableName = "FlowFinderNative.app"
-               BlueprintName = "FlowFinderNative"
-               ReferencedContainer = "container:FlowFinderNative.xcodeproj">
+               BuildableName = "FlowFinder.app"
+               BlueprintName = "FlowFinder"
+               ReferencedContainer = "container:FlowFinder.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
          <BuildActionEntry
@@ -29,9 +29,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "FF1000100000000000000010"
-               BuildableName = "FlowFinderNativeTests.xctest"
-               BlueprintName = "FlowFinderNativeTests"
-               ReferencedContainer = "container:FlowFinderNative.xcodeproj">
+               BuildableName = "FlowFinderTests.xctest"
+               BlueprintName = "FlowFinderTests"
+               ReferencedContainer = "container:FlowFinder.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -47,9 +47,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "FF1000100000000000000010"
-               BuildableName = "FlowFinderNativeTests.xctest"
-               BlueprintName = "FlowFinderNativeTests"
-               ReferencedContainer = "container:FlowFinderNative.xcodeproj">
+               BuildableName = "FlowFinderTests.xctest"
+               BlueprintName = "FlowFinderTests"
+               ReferencedContainer = "container:FlowFinder.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -76,9 +76,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "FF0000500000000000000050"
-            BuildableName = "FlowFinderNative.app"
-            BlueprintName = "FlowFinderNative"
-            ReferencedContainer = "container:FlowFinderNative.xcodeproj">
+            BuildableName = "FlowFinder.app"
+            BlueprintName = "FlowFinder"
+            ReferencedContainer = "container:FlowFinder.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -93,9 +93,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "FF0000500000000000000050"
-            BuildableName = "FlowFinderNative.app"
-            BlueprintName = "FlowFinderNative"
-            ReferencedContainer = "container:FlowFinderNative.xcodeproj">
+            BuildableName = "FlowFinder.app"
+            BlueprintName = "FlowFinder"
+            ReferencedContainer = "container:FlowFinder.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

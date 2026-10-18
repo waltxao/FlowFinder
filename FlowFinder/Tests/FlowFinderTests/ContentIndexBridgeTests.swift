@@ -1,5 +1,5 @@
 import XCTest
-@testable import FlowFinderNative
+@testable import FlowFinder
 
 /// Wave2 T7 — Content index bridge / FFI contract tests.
 ///

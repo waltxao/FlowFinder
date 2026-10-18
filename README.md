@@ -306,13 +306,13 @@ cd rust-core
 cargo build --release
 
 # 2. 构建 Swift 应用（-target 无需 shared scheme；若本地已有 shared scheme 也可用 -scheme）
-cd ../FlowFinderNative
+cd ../FlowFinder
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  xcodebuild -project FlowFinderNative.xcodeproj \
-             -target FlowFinderNative \
+  xcodebuild -project FlowFinder.xcodeproj \
+             -target FlowFinder \
              -configuration Release
 
-# 3. 产物位于 build/DerivedData/Build/Products/Release/FlowFinderNative.app
+# 3. 产物位于 build/DerivedData/Build/Products/Release/FlowFinder.app
 ```
 
 > `scripts/package.sh` 会同时生成 `build/FlowFinder-<版本>.dmg`；签名与公证参数见
@@ -339,13 +339,13 @@ bash scripts/benchmark.sh
 
 > ⚠️ Swift 单元测试是 **XCTest**，必须通过 `xcodebuild test` 运行（`swift test`
 > 无法运行 XCTest）。`make swift-test` 会自动定位 `/Applications/Xcode*.app`
-> 并调用 `xcodebuild test -scheme FlowFinderNativeTests`。手动等价命令：
+> 并调用 `xcodebuild test -scheme FlowFinderTests`。手动等价命令：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test \
-    -project FlowFinderNative/FlowFinderNative.xcodeproj \
-    -scheme FlowFinderNativeTests \
+    -project FlowFinder/FlowFinder.xcodeproj \
+    -scheme FlowFinderTests \
     -destination 'platform=macOS' \
     CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
 ```
@@ -377,8 +377,8 @@ FlowFinder/
 │   ├── include/
 │   │   └── ff_ffi.h              # C 头文件（FFI 接口）
 │   └── Cargo.toml
-├── FlowFinderNative/             # Swift Xcode 项目
-│   ├── FlowFinderNative/
+├── FlowFinder/             # Swift Xcode 项目
+│   ├── FlowFinder/
 │   │   ├── App/                  # 应用入口
 │   │   ├── Bridge/               # Swift ↔ Rust 桥接层
 │   │   ├── Model/                # 数据模型
@@ -391,7 +391,7 @@ FlowFinder/
 │   │   │   └── ...
 │   │   ├── Libraries/            # 编译后的 Rust 库
 │   │   └── Resources/            # Info.plist
-│   └── FlowFinderNative.xcodeproj
+│   └── FlowFinder.xcodeproj
 ├── docs/                         # 文档
 │   ├── images/                   # 官网截图
 │   ├── PRODUCT.md                # 产品定义与取舍顺序

@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 RUST_DIR="$PROJECT_ROOT/rust-core"
-OUTPUT_DIR="$PROJECT_ROOT/FlowFinderNative/FlowFinderNative/Libraries"
+OUTPUT_DIR="$PROJECT_ROOT/FlowFinder/FlowFinder/Libraries"
 
 # macOS deployment target — unified minimum supported macOS version.
 # Overrides are allowed via the environment; defaults to 11.0 (Big Sur).

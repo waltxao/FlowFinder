@@ -16,6 +16,8 @@
 
 ### 维护
 
+- **软件包全面改名 FlowFinder**：`.app`、Xcode target、Swift 模块、测试 target、工程目录、脚本、CI、文档里不再出现 `FlowFinderNative`。产物为 `FlowFinder.app` / 可执行 `FlowFinder` / 模块 `FlowFinder` / 测试 target `FlowFinderTests`；bundle id 保持 `com.flowfinder.native` 不变（避免用户偏好与 TCC 权限丢失）
+- **侧栏品牌区改版**：移除 32pt 应用图标，仅保留应用名称，名称下方显示版本号 `0.7.9 (7901)`；品牌区高度 56 → 44（规格 B-03）
 - **仓库整理**：删除 101 个失效跟踪文件（`.omo/`、`docs/superpowers/`、`MIGRATION_*`、`release-notes/`、旧验收/开发说明、误入库的 `libflowfinder_core_relinked.dylib`）与约 530MB 可再生构建缓存；仓库 2.3G → 1.8G。历史内容仍可在 Git 历史中追溯
 - **交接文档重写**（`docs/HANDOVER.md`）：按「大改前基线」重组，补代码地图、架构数据流、设计两类基准、构建/测试/发布三个环境事实、已知债务表与改造顺序建议
 
@@ -141,7 +143,7 @@
 - **FFDebug 门控**：仅 DEBUG 编译生效 + 常驻句柄
 
 ### 🧪 测试与工程
-- **可执行 Swift XCTest target**：`FlowFinderNativeTests` shared scheme，`make swift-test` 走 xcodebuild（65+ tests）
+- **可执行 Swift XCTest target**：`FlowFinderTests` shared scheme，`make swift-test` 走 xcodebuild（65+ tests）
 - **FFI ABI/所有权锁定**：布局断言、回调借用契约、符号三方对比
 - **任务生命周期测试**：提交→进度→取消→历史→清空全链路
 - **fsevents 测试并发隔离**（12 处测试锁）

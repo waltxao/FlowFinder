@@ -1,5 +1,5 @@
 import XCTest
-@testable import FlowFinderNative
+@testable import FlowFinder
 
 /// 任务 T10 (Wave3): PaneState 删除/撤销后台化 + 组合过滤 + 状态机。
 ///
@@ -10,7 +10,7 @@ import XCTest
 /// 4. 多目录缓存失效的父目录集合计算（纯函数）
 ///
 /// 运行方式：本文件需加入测试 target。当前 Package.swift 无 testTarget、
-/// 且 .xcodeproj 无测试 target（`FlowFinderNativeTests.swift` 为孤儿文件），
+/// 且 .xcodeproj 无测试 target（`FlowFinderTests.swift` 为孤儿文件），
 /// 完整运行需在 Xcode 中新建 unit test bundle（依赖已构建的 libflowfinder_core.dylib）。
 /// 其中纯函数测试（filterEntries / parentDirectories）与「失败保留」「非阻塞」
 /// 测试不依赖 dylib（通过 state.path 置空让 loadDirectory 短路为 no-op）。
@@ -150,7 +150,7 @@ final class PaneStateDeleteFilterTests: XCTestCase {
 // 5. 内容索引状态映射：unavailable/empty/ready/indexing/error/cancelled（纯函数）
 //
 // 说明：因 pbxproj 冻结（T11 已完成 target 接入），本任务测试扩展在本文件
-// （已挂入 FlowFinderNativeTests target 的既有文件）而非新建文件。
+// （已挂入 FlowFinderTests target 的既有文件）而非新建文件。
 
 final class FFPaneStateDescriptorTests: XCTestCase {
 

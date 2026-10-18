@@ -1,6 +1,6 @@
 //
 //  SidebarFavoritesStore.swift
-//  FlowFinderNative
+//  FlowFinder
 //
 //  v0.8.0 P1：侧边栏收藏数据层（存储 / 顺序 / 失效状态）。
 //

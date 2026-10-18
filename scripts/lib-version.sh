@@ -3,7 +3,7 @@
 # 版本号单一真源读取器
 # ============================================================================
 # 唯一真源是 Xcode 工程的 MARKETING_VERSION / CURRENT_PROJECT_VERSION
-# （即 FlowFinderNative.xcodeproj/project.pbxproj）。理由：
+# （即 FlowFinder.xcodeproj/project.pbxproj）。理由：
 #   - Xcode 图形界面改的就是这里，不需要人肉同步第二份
 #   - Info.plist 里 CFBundleShortVersionString = $(MARKETING_VERSION)，
 #     关于页读 Bundle，天然跟随
@@ -15,7 +15,7 @@
 # ============================================================================
 
 FF_PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FF_XCODEPROJ="$FF_PROJECT_DIR/FlowFinderNative/FlowFinderNative.xcodeproj"
+FF_XCODEPROJ="$FF_PROJECT_DIR/FlowFinder/FlowFinder.xcodeproj"
 
 if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode-beta.app/Contents/Developer ]]; then
     export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
@@ -23,7 +23,7 @@ fi
 
 _ff_read_settings() {
     xcodebuild -project "$FF_XCODEPROJ" \
-        -target FlowFinderNative \
+        -target FlowFinder \
         -configuration Release \
         -showBuildSettings 2>/dev/null
 }

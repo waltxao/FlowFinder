@@ -3,9 +3,9 @@
 # 一条命令覆盖日常：make build / make test / make demo / make beta
 
 RUST_DIR := rust-core
-SWIFT_DIR := FlowFinderNative
+SWIFT_DIR := FlowFinder
 SCRIPT_DIR := scripts
-XCODEPROJ := $(SWIFT_DIR)/FlowFinderNative.xcodeproj
+XCODEPROJ := $(SWIFT_DIR)/FlowFinder.xcodeproj
 BUILD_SCRIPT := $(SCRIPT_DIR)/build-rust.sh
 SETUP_SCRIPT := $(SCRIPT_DIR)/setup.sh
 
@@ -25,14 +25,14 @@ TEST_HOME := /tmp/flowfinder-test-home
 # 构建产物根目录
 # 注意 1：-target 模式不接受 -derivedDataPath（需 -scheme 才可用），改用 SYMROOT/OBJROOT
 # 注意 2：SYMROOT 必须用绝对路径——xcodebuild 会以 $(SRCROOT) 为基准解析相对路径，
-#         写成 build/Products 会落到 FlowFinderNative/build/Products 而不是仓库根
+#         写成 build/Products 会落到 FlowFinder/build/Products 而不是仓库根
 DERIVED := $(CURDIR)/build
-APP_DEBUG := $(DERIVED)/Products/Debug/FlowFinderNative.app
-APP_RELEASE := $(DERIVED)/Products/Release/FlowFinderNative.app
-DESKTOP_APP := $(HOME)/Desktop/FlowFinderNative.app
+APP_DEBUG := $(DERIVED)/Products/Debug/FlowFinder.app
+APP_RELEASE := $(DERIVED)/Products/Release/FlowFinder.app
+DESKTOP_APP := $(HOME)/Desktop/FlowFinder.app
 
 # 构建公共参数：本机 ad-hoc 签名，arm64
-XCB := xcodebuild -project $(XCODEPROJ) -target FlowFinderNative \
+XCB := xcodebuild -project $(XCODEPROJ) -target FlowFinder \
 	SYMROOT=$(DERIVED)/Products OBJROOT=$(DERIVED)/Intermediates \
 	ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
 	CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
@@ -102,8 +102,8 @@ rust-test:
 swift-test:
 	@echo "$(BLUE)Running Swift XCTest...$(NC)"
 	@mkdir -p "$(TEST_HOME)/Desktop" "$(TEST_HOME)/Documents"
-	@pkill -f "MacOS/FlowFinderNative" 2>/dev/null || true
-	@xcodebuild test -project $(XCODEPROJ) -scheme FlowFinderNativeTests \
+	@pkill -f "MacOS/FlowFinder" 2>/dev/null || true
+	@xcodebuild test -project $(XCODEPROJ) -scheme FlowFinderTests \
 		-destination 'platform=macOS' \
 		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO 2>&1 \
 		| grep -E "error:|Executed .* tests|TEST SUCCEEDED|TEST FAILED" | tail -8
@@ -138,8 +138,8 @@ clean:
 	@echo "$(BLUE)Cleaning...$(NC)"
 	@cd $(RUST_DIR) && cargo clean 2>/dev/null || true
 	@rm -rf build build-beta
-	@rm -f $(SWIFT_DIR)/FlowFinderNative/Libraries/*.dylib
-	@rm -f $(SWIFT_DIR)/FlowFinderNative/Libraries/*.a
+	@rm -f $(SWIFT_DIR)/FlowFinder/Libraries/*.dylib
+	@rm -f $(SWIFT_DIR)/FlowFinder/Libraries/*.a
 	@rm -rf $(XCODEPROJ)/project.xcworkspace $(XCODEPROJ)/xcuserdata
 	@echo "$(GREEN)✓ Clean completed$(NC)"
 

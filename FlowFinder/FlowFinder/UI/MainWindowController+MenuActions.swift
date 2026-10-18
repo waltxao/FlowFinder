@@ -1,6 +1,6 @@
 //
 //  MainWindowController+MenuActions.swift
-//  FlowFinderNative
+//  FlowFinder
 //
 //  T14: Menu Actions 扩展从 MainWindowController.swift 拆出（约 800 行）。
 //  跨文件扩展访问的类成员已改为 fileprivate（activePaneViewModel/ffUndoManager/

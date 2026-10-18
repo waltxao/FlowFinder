@@ -192,10 +192,10 @@ private class FFSidebarRowView: NSTableRowView {
 // MARK: - SidebarView
 
 class SidebarView: NSView {
-    /// 任务 R3: 侧边栏顶部应用图标 + FlowFinder 文字（红绿灯下方）
+    /// 任务 R3: 侧边栏顶部应用名称 + 版本号（红绿灯下方，2026-10-18 移除图标）
     private var brandView: NSView!
-    /// 任务 R3: 应用图标视图（用于点击弹出关于对话框）
-    private var brandIconView: NSImageView!
+    /// 2026-10-18：应用名称下方的版本行
+    private var brandVersionLabel: NSTextField!
     /// 任务 T1: 工具栏行（夜间切换 + 设置 + 工具）
     /// 任务 F10-3: 设备区域已移出侧边栏（浮动在窗口左下角），toolBarRow 现位于标签下方
     private var toolBarRow: NSStackView!
@@ -242,27 +242,26 @@ class SidebarView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // 任务 R3: 侧边栏顶部应用图标 + FlowFinder 文字（红绿灯下方）
+        // 任务 R3: 侧边栏顶部应用名称 + 版本号（红绿灯下方）
+        // 2026-10-18：移除 32pt 应用图标，仅保留名称，名称下方显示版本号
         brandView = NSView()
         brandView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(brandView)
-
-        brandIconView = NSImageView()
-        brandIconView.image = NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
-        brandIconView.imageScaling = .scaleProportionallyUpOrDown
-        brandIconView.translatesAutoresizingMaskIntoConstraints = false
-        // 任务 F6: 应用图标 8pt 圆角矩形包裹（v0.6.5），使用超椭圆
-        brandIconView.wantsLayer = true
-        brandIconView.applySquircleCornerRadius(8)
-        brandIconView.layer?.masksToBounds = true
-        brandIconView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        brandView.addSubview(brandIconView)
 
         let appNameLabel = NSTextField(labelWithString: "FlowFinder")
         appNameLabel.font = NSFont.boldSystemFont(ofSize: 15)
         appNameLabel.textColor = NSColor.labelColor
         appNameLabel.translatesAutoresizingMaskIntoConstraints = false
         brandView.addSubview(appNameLabel)
+
+        // 版本号：0.7.9 (7901)。打包进 .app 后读 Info.plist；测试宿主等无 bundle 场景回退占位
+        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        brandVersionLabel = NSTextField(labelWithString: "\(shortVersion) (\(buildVersion))")
+        brandVersionLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        brandVersionLabel.textColor = NSColor.secondaryLabelColor
+        brandVersionLabel.translatesAutoresizingMaskIntoConstraints = false
+        brandView.addSubview(brandVersionLabel)
 
         // 点击 brandView 弹出关于对话框
         let brandClick = NSClickGestureRecognizer(target: self, action: #selector(showAboutWindow))
@@ -273,15 +272,13 @@ class SidebarView: NSView {
             brandView.topAnchor.constraint(equalTo: topAnchor, constant: 32),
             brandView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             brandView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            brandView.heightAnchor.constraint(equalToConstant: 56),
+            brandView.heightAnchor.constraint(equalToConstant: 44),
 
-            brandIconView.leadingAnchor.constraint(equalTo: brandView.leadingAnchor),
-            brandIconView.centerYAnchor.constraint(equalTo: brandView.centerYAnchor),
-            brandIconView.widthAnchor.constraint(equalToConstant: 32),
-            brandIconView.heightAnchor.constraint(equalToConstant: 32),
+            appNameLabel.leadingAnchor.constraint(equalTo: brandView.leadingAnchor),
+            appNameLabel.topAnchor.constraint(equalTo: brandView.topAnchor, constant: 2),
 
-            appNameLabel.leadingAnchor.constraint(equalTo: brandIconView.trailingAnchor, constant: 8),
-            appNameLabel.centerYAnchor.constraint(equalTo: brandView.centerYAnchor),
+            brandVersionLabel.leadingAnchor.constraint(equalTo: brandView.leadingAnchor),
+            brandVersionLabel.topAnchor.constraint(equalTo: appNameLabel.bottomAnchor, constant: 2),
         ])
 
         // v0.8.0 P1：「个人收藏」标题改为 outline 分区标题行（group row），不再用外置 label。
@@ -477,9 +474,8 @@ class SidebarView: NSView {
         // 避免 isToolPanelExpanded 与实际显示状态不同步导致需点击两次才能重新打开
         NotificationCenter.default.addObserver(self, selector: #selector(handleToolPanelStateSync(_:)), name: NSNotification.Name("SidebarToolPanelDidToggle"), object: nil)
 
-        // 监听主题变更，更新品牌图标背景色
+        // 监听主题变更，更新主题切换按钮图标
         ThemeManager.shared.onModeChanged = { [weak self] _ in
-            self?.brandIconView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
             self?.themeToggleBtn.image = NSImage(systemSymbolName: ThemeManager.shared.currentMode.iconName, accessibilityDescription: "切换主题")
         }
 

@@ -1,6 +1,6 @@
 //
 //  SidebarFavoritesStoreTests.swift
-//  FlowFinderNativeTests
+//  FlowFinderTests
 //
 //  v0.8.0 P1：侧边栏收藏数据层回归测试。
 //  覆盖设计稿 §7 P1-6 要求的三类：顺序重排（含 group row 跳过语义）、
@@ -9,7 +9,7 @@
 
 import AppKit
 import XCTest
-@testable import FlowFinderNative
+@testable import FlowFinder
 
 final class SidebarFavoritesStoreTests: XCTestCase {
 

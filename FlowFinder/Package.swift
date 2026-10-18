@@ -4,27 +4,27 @@ import PackageDescription
 // NOTE: This manifest declares the app executable target only.
 //
 // Tests are NOT declared here on purpose. The project's unit tests are
-// XCTest and must run through the Xcode project — `FlowFinderNative.xcodeproj`
-// owns the `FlowFinderNativeTests` unit-test bundle and the shared
-// `FlowFinderNativeTests` scheme (`xcodebuild test -scheme FlowFinderNativeTests`).
+// XCTest and must run through the Xcode project — `FlowFinder.xcodeproj`
+// owns the `FlowFinderTests` unit-test bundle and the shared
+// `FlowFinderTests` scheme (`xcodebuild test -scheme FlowFinderTests`).
 // `swift test` cannot run XCTest, and SwiftPM has no `testTarget` for this
 // project by design (a fake one that does not compile/run would only mislead).
 let package = Package(
-    name: "FlowFinderNative",
+    name: "FlowFinder",
     platforms: [
         .macOS(.v13)
     ],
     products: [
         .executable(
-            name: "FlowFinderNative",
-            targets: ["FlowFinderNative"]
+            name: "FlowFinder",
+            targets: ["FlowFinder"]
         )
     ],
     dependencies: [],
     targets: [
         .executableTarget(
-            name: "FlowFinderNative",
-            path: "FlowFinderNative",
+            name: "FlowFinder",
+            path: "FlowFinder",
             exclude: ["Resources", "Libraries"],
             publicHeadersPath: "include",
             swiftSettings: [

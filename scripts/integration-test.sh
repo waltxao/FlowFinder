@@ -13,7 +13,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 RUST_DIR="$PROJECT_ROOT/rust-core"
-SWIFT_DIR="$PROJECT_ROOT/FlowFinderNative"
+SWIFT_DIR="$PROJECT_ROOT/FlowFinder"
 
 # Colors
 RED='\033[0;31m'

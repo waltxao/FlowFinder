@@ -39,16 +39,16 @@
 
 ```
 flowfinder-native/
-├── FlowFinderNative/                 # Xcode 工程
-│   ├── FlowFinderNative/             # 应用源码（64 文件 / 32,964 行）
+├── FlowFinder/                 # Xcode 工程
+│   ├── FlowFinder/             # 应用源码（64 文件 / 32,964 行）
 │   │   ├── App/                      # 入口、AppDelegate（2 文件）
 │   │   ├── Bridge/                   # Swift↔Rust 桥接（11 文件，CoreBridge 为主）
 │   │   ├── Model/                    # FileEntry / PaneState 等（6 文件）
 │   │   ├── UI/                       # 全部界面（45 文件 / 27,030 行）
 │   │   ├── Libraries/                # build-rust.sh 产物（.a/.dylib，不入库）
 │   │   └── Resources/                # Info.plist、图标
-│   ├── Tests/FlowFinderNativeTests/  # XCTest（1 个大文件 + 少量分文件）
-│   └── FlowFinderNative.xcodeproj
+│   ├── Tests/FlowFinderTests/  # XCTest（1 个大文件 + 少量分文件）
+│   └── FlowFinder.xcodeproj
 ├── rust-core/                        # Rust core（24 文件 / 13,529 行）
 │   ├── src/ffi/mod.rs                # FFI 入口（3,124 行）
 │   ├── src/ffi/tests.rs              # FFI 集成测试（1,768 行）
@@ -142,7 +142,7 @@ export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 | 命令 | 作用 |
 |---|---|
 | `make build` | Rust core + Debug app（产物 `build/Products/Debug/`） |
-| `make demo` | build 后复制到 `~/Desktop/FlowFinderNative.app`（**用户实测必做**） |
+| `make demo` | build 后复制到 `~/Desktop/FlowFinder.app`（**用户实测必做**） |
 | `make rust-test` | cargo test（200 项） |
 | `make swift-test` | xcodebuild test（144 个用例） |
 | `make beta` | `scripts/package-beta.sh` 出 DMG/ZIP 到 `build-beta/` |
@@ -150,9 +150,9 @@ export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 
 ### 6.3 三个必须知道的环境事实
 
-1. **工程没有 `FlowFinderNative` 共享 scheme**，只有 `FlowFinderNativeTests`。
+1. **工程没有 `FlowFinder` 共享 scheme**，只有 `FlowFinderTests`。
    Debug 构建走 `-target`（不支持 `-derivedDataPath`，用 `SYMROOT`/`OBJROOT` 绝对路径）。
-2. **跑 Swift 测试前先 `pkill -f "MacOS/FlowFinderNative"`**。单实例策略会让测试宿主秒退，
+2. **跑 Swift 测试前先 `pkill -f "MacOS/FlowFinder"`**。单实例策略会让测试宿主秒退，
    表现为 `test runner hung before establishing connection` 假故障。
 3. **当前该故障是真故障**（2026-10-18）：机器凌晨重启进 macOS 27.2 beta 后，
    即使杀掉实例、清 DerivedData，测试宿主仍 100% 连不上；sample 宿主显示主线程
@@ -262,7 +262,7 @@ export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 | 旧设计史 | `修改历史-2026-08-30-原生体验重设计.md` | 已被 DESIGN-SPEC 变更记录取代 |
 | 调试/备份 | `docs/ff-debug-20260806.log`、`REQUIREMENTS.md.bak_20261017` | 垃圾与备份 |
 | 误入库二进制 | `rust-core/libflowfinder_core_relinked.dylib`（2.9M） | 7/29 构建产物，全仓零引用 |
-| 构建缓存 | `FlowFinderNative/.build/`（124M）、`build/Intermediates`（249M）、`build-beta/DerivedData`（142M）、`build-beta/*.dmg/.zip`（7.2M） | 可再生；发布包已在 GitHub Release |
+| 构建缓存 | `FlowFinder/.build/`（124M）、`build/Intermediates`（249M）、`build-beta/DerivedData`（142M）、`build-beta/*.dmg/.zip`（7.2M） | 可再生；发布包已在 GitHub Release |
 | 其他 | `.superpowers/`（3.2M）、5 个 `.DS_Store`、`CONTINUE_DEV_PROMPT.md` | agent 工作目录与垃圾 |
 
 仓库体积 2.3G → 1.8G（剩余主要是 `rust-core/target` 1.4G，刻意保留以省重编时间）。
@@ -291,7 +291,7 @@ git show <commit>:docs/MIGRATION_LOG.md > /tmp/x.md
 1. 读本文件 → PRODUCT.md → DESIGN-SPEC.md §1（两类基准）→ ACCEPTANCE.md 三条旅程
 2. 验证构建：export DEVELOPER_DIR=... && make build && make demo
 3. 验证 Rust：make rust-test（应 200 passed）
-4. 验证 Swift：pkill -f "MacOS/FlowFinderNative" && make swift-test
+4. 验证 Swift：pkill -f "MacOS/FlowFinder" && make swift-test
    若报 test runner hung，先按 §9.1 排查，不要怀疑业务代码
 5. 跑一遍主旅程：双栏导航 / 跨栏复制 / 标签筛选 / 搜索 / Quick Look
 6. 大改前先做 §9.2：抽纯函数 + 补测试，再动结构

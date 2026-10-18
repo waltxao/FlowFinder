@@ -1,8 +1,8 @@
 import AppKit
 import XCTest
-@testable import FlowFinderNative
+@testable import FlowFinder
 
-final class FlowFinderNativeTests: XCTestCase {
+final class FlowFinderTests: XCTestCase {
 
     // MARK: - FFI Loading Tests
 
@@ -16,7 +16,7 @@ final class FlowFinderNativeTests: XCTestCase {
         var libraryExists = fileManager.fileExists(atPath: bundledPath)
 
         if !libraryExists {
-            let projectLibPath = "./FlowFinderNative/Libraries/libflowfinder_core.dylib"
+            let projectLibPath = "./FlowFinder/Libraries/libflowfinder_core.dylib"
             libraryExists = fileManager.fileExists(atPath: projectLibPath)
         }
 

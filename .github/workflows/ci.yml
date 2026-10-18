@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir -p /tmp/flowfinder-test-home/Desktop /tmp/flowfinder-test-home/Documents
           xcodebuild test \
-            -project FlowFinderNative/FlowFinderNative.xcodeproj \
-            -scheme FlowFinderNativeTests \
+            -project FlowFinder/FlowFinder.xcodeproj \
+            -scheme FlowFinderTests \
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
