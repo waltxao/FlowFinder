@@ -46,11 +46,13 @@ enum SidebarMetrics {
 /// 数据结构无需再改（设计稿 §3 单一 outline 分区模型）。
 enum SidebarSectionKind {
     case favorites
+    case places
     case tags
 
     var title: String {
         switch self {
         case .favorites: return "个人收藏"
+        case .places: return "位置"
         case .tags: return "标签"
         }
     }
@@ -216,6 +218,14 @@ class SidebarView: NSView {
     private var tagsTitleLabel: NSTextField!
     /// 标签标题旁"+"按钮
     private var tagsAddButton: NSButton!
+    /// 2026-10-18 #4：位置分区（设备从窗口左下角浮层迁回侧栏，排在标签上方）
+    private let placesDataSource = DeviceSidebarDataSource()
+    /// 位置分区容器（标题 + 设备行）
+    private var placesSectionView: NSStackView!
+    /// 设备行纵向 stack
+    private var placesRowsStack: NSStackView!
+    /// 位置分区标题行
+    private var placesHeaderView: NSView!
     /// v0.8.0 P1: 收藏数据层（顺序 / 失效状态 / 持久化）
     private let favoritesStore = SidebarFavoritesStore()
     private lazy var favoritesDataSource = FavoritesSidebarDataSource(store: favoritesStore)
@@ -282,10 +292,8 @@ class SidebarView: NSView {
         ])
 
         // v0.8.0 P1：「个人收藏」标题改为 outline 分区标题行（group row），不再用外置 label。
-        // 标签分区在 P2 并入 outline 前仍保留外置标题行，但改为随滚动内容整体移动。
-        tagsTitleLabel = makeSectionTitleLabel(SidebarSectionKind.tags.title)
-        tagsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
+        // 2026-10-18 #4/#5：位置与标签也用同一套分区标题视图——同字号、同缩进、同行高，
+        // 三个栏目标题因此严格对齐（此前标签标题比收藏标题少 6pt 缩进）。
         tagsAddButton = NSButton()
         tagsAddButton.bezelStyle = .inline
         tagsAddButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "添加标签")
@@ -296,23 +304,22 @@ class SidebarView: NSView {
         tagsAddButton.action = #selector(showCreateTagDialog)
         tagsAddButton.translatesAutoresizingMaskIntoConstraints = false
 
-        // 标签分区标题容器（标题 + "+" 按钮），作为滚动内容栈的一员
-        tagsHeaderView = NSView()
-        tagsHeaderView.translatesAutoresizingMaskIntoConstraints = false
-        tagsHeaderView.addSubview(tagsTitleLabel)
-        tagsHeaderView.addSubview(tagsAddButton)
-        NSLayoutConstraint.activate([
-            tagsHeaderView.heightAnchor.constraint(equalToConstant: 20),
-            tagsTitleLabel.leadingAnchor.constraint(equalTo: tagsHeaderView.leadingAnchor),
-            tagsTitleLabel.centerYAnchor.constraint(equalTo: tagsHeaderView.centerYAnchor),
-            tagsAddButton.centerYAnchor.constraint(equalTo: tagsHeaderView.centerYAnchor),
-            tagsAddButton.trailingAnchor.constraint(equalTo: tagsHeaderView.trailingAnchor, constant: -4),
-            tagsAddButton.widthAnchor.constraint(equalToConstant: 16),
-            tagsAddButton.heightAnchor.constraint(equalToConstant: 16),
-        ])
+        placesHeaderView = makeSidebarSectionHeader(SidebarSectionKind.places.title)
+        tagsHeaderView = makeSidebarSectionHeader(SidebarSectionKind.tags.title, accessory: tagsAddButton)
+        tagsTitleLabel = tagsHeaderView.subviews.compactMap { $0 as? NSTextField }.first
 
-        // 任务 F10-3: 设备区域已移出侧边栏，改为 MainWindowController 的浮动浮层（v0.6.6）
-        // 故 deviceMaskView 不再在此创建
+        // 位置分区：标题 + 设备行（设备数据由 DeviceSidebarDataSource 后台加载）
+        placesRowsStack = NSStackView()
+        placesRowsStack.orientation = .vertical
+        placesRowsStack.alignment = .leading
+        placesRowsStack.spacing = 0
+        placesRowsStack.translatesAutoresizingMaskIntoConstraints = false
+
+        placesSectionView = NSStackView(views: [placesHeaderView, placesRowsStack])
+        placesSectionView.orientation = .vertical
+        placesSectionView.alignment = .leading
+        placesSectionView.spacing = 0
+        placesSectionView.translatesAutoresizingMaskIntoConstraints = false
 
         // 任务 T1: 工具栏行（夜间切换 + 设置 + 工具），位于标签下方
         toolBarRow = NSStackView()
@@ -412,14 +419,15 @@ class SidebarView: NSView {
         sidebarScrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(sidebarScrollView)
 
-        scrollContentStack = NSStackView(views: [favoritesOutlineView, tagsHeaderView, tagFlowView])
+        scrollContentStack = NSStackView(views: [favoritesOutlineView, placesSectionView, tagsHeaderView, tagFlowView])
         scrollContentStack.orientation = .vertical
         scrollContentStack.alignment = .leading
         scrollContentStack.distribution = .fill
         scrollContentStack.spacing = 0
         scrollContentStack.translatesAutoresizingMaskIntoConstraints = false
-        // 分区之间留 16pt 区块间距（收藏区底部 → 标签标题）
+        // 三个分区之间留 16pt 区块间距（收藏 → 位置 → 标签），访达同构
         scrollContentStack.setCustomSpacing(16, after: favoritesOutlineView)
+        scrollContentStack.setCustomSpacing(16, after: placesSectionView)
 
         // 滚动文档视图：isFlipped=true，内容天然贴顶（非 flipped 会导致内容贴底/顶部空白）
         let scrollContainer = FlippedSidebarContainer()
@@ -461,6 +469,17 @@ class SidebarView: NSView {
             ])
         }
 
+        // 位置分区内部：标题与设备行铺满分区宽度（行内再按图标/名称/容量排布）
+        NSLayoutConstraint.activate([
+            placesHeaderView.leadingAnchor.constraint(equalTo: placesSectionView.leadingAnchor),
+            placesHeaderView.trailingAnchor.constraint(equalTo: placesSectionView.trailingAnchor),
+            placesRowsStack.leadingAnchor.constraint(equalTo: placesSectionView.leadingAnchor),
+            placesRowsStack.trailingAnchor.constraint(equalTo: placesSectionView.trailingAnchor),
+        ])
+
+        // 首次加载设备列表（后台采集，回调在主线程重建行）
+        refreshPlaces()
+
         // 任务 F10-3: 卷挂载/卸载监听已迁移至 MainWindowController（设备浮层负责刷新）（v0.6.6）
 
         // 首次布局：同步展开分区并同步内容高度（避免首帧收藏区高度为 0）；
@@ -499,6 +518,36 @@ class SidebarView: NSView {
         label.textColor = NSColor.secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
+    }
+
+    /// 统一的分区标题视图（2026-10-18 #5）
+    ///
+    /// 与「个人收藏」outline 组行逐项对齐：行高 22、11pt medium、secondaryLabel、
+    /// 相对行左缘 6pt、基线距底 2pt。位置 / 标签两个外置标题由此与收藏标题严格对齐，
+    /// 不再各写一套约束（此前标签标题少 6pt 缩进、行高 20）。
+    private func makeSidebarSectionHeader(_ title: String, accessory: NSView? = nil) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        let label = makeSectionTitleLabel(title)
+        container.addSubview(label)
+
+        var constraints: [NSLayoutConstraint] = [
+            container.heightAnchor.constraint(equalToConstant: SidebarMetrics.sectionHeaderHeight),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
+        ]
+        if let accessory = accessory {
+            accessory.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(accessory)
+            constraints += [
+                accessory.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+                accessory.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
+                accessory.widthAnchor.constraint(equalToConstant: 16),
+                accessory.heightAnchor.constraint(equalToConstant: 16),
+            ]
+        }
+        NSLayoutConstraint.activate(constraints)
+        return container
     }
 
     /// v0.8.0 P1：侧边栏滚动容器
@@ -756,6 +805,46 @@ class SidebarView: NSView {
     /// 卷挂载/卸载后重新校验（外置卷重插后失效收藏自动恢复，不删除）
     @objc private func handleVolumesChanged(_ notification: Notification) {
         validateFavoritesAvailability()
+        // 2026-10-18 #4：位置分区随卷变化刷新
+        refreshPlaces()
+    }
+
+    // MARK: - 位置分区（2026-10-18 #4）
+
+    /// 后台加载设备列表，回调在主线程重建行（采集期间保留上次结果，不闪烁）
+    private func refreshPlaces() {
+        placesDataSource.loadDevices { [weak self] in
+            self?.rebuildPlaceRows()
+        }
+    }
+
+    private func rebuildPlaceRows() {
+        placesRowsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for dev in placesDataSource.devices {
+            let row = makePlaceRow(dev)
+            placesRowsStack.addArrangedSubview(row)
+            NSLayoutConstraint.activate([
+                row.heightAnchor.constraint(equalToConstant: SidebarMetrics.rowHeight),
+                row.widthAnchor.constraint(equalTo: placesRowsStack.widthAnchor),
+            ])
+        }
+    }
+
+    /// 设备行复用 DeviceCellView（图标 + 名称 + 可用空间 + 悬停气泡），点击在活动面板打开该卷根目录
+    private func makePlaceRow(_ dev: DeviceItem) -> NSView {
+        let cell = DeviceCellView()
+        cell.configure(dev: dev, extInfo: placesDataSource.deviceExtendedInfo[dev.path])
+        cell.identifier = NSUserInterfaceItemIdentifier(dev.path)
+        cell.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(handlePlaceRowClick(_:))))
+        return cell
+    }
+
+    @objc private func handlePlaceRowClick(_ sender: NSClickGestureRecognizer) {
+        guard let path = sender.view?.identifier?.rawValue else { return }
+        let name = (path as NSString).lastPathComponent
+        let entry = FileEntry(path: path, name: name.isEmpty ? path : name, isDirectory: true)
+        // 复用收藏导航通知：MainWindowController 收到后在活动面板打开该路径
+        NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: self, userInfo: ["entry": entry])
     }
 
     @objc private func removeTag(_ sender: NSMenuItem?) {
@@ -1259,7 +1348,10 @@ private final class FavoritesSidebarDataSource: SidebarDataSourceBase {
         cell.textField = label
 
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            // NSOutlineView 会给组行额外 16pt 缩进（即使 indentationPerLevel=0），
+            // 组标题因此比普通行右移 16pt。这里用 -10 抵消（6 − 16），
+            // 使「个人收藏」与「位置」「标签」三个外置标题落在同一 x（实测均 290）。
+            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: -10),
             label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -6),
             label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -2),
         ])
@@ -1665,92 +1757,6 @@ class DeviceSidebarDataSource: SidebarDataSourceBase {
     }
 }
 
-// MARK: - DeviceHeaderView (B10: 设备栏头部 — 汇总信息 + 折叠箭头)
-
-/// B10: 设备栏自定义头部视图
-/// - 折叠态：显示汇总信息 "X GB 可用，共 Y GB" + 向上箭头
-/// - 展开态：显示汇总信息 + 向下箭头
-/// - 点击整块区域切换折叠/展开
-/// 任务 F10-3: 改为 internal 可见性，供 MainWindowController 设备浮层复用（v0.6.6）
-class DeviceHeaderView: NSView {
-    private let iconView = NSImageView()
-    private let summaryLabel = NSTextField(labelWithString: "")
-    private let arrowView = NSImageView()
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        setupUI()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setupUI()
-    }
-
-    private func setupUI() {
-        iconView.image = NSImage(systemSymbolName: "externaldrive", accessibilityDescription: "存储设备")
-        iconView.contentTintColor = NSColor.secondaryLabelColor
-        iconView.imageScaling = .scaleProportionallyDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(iconView)
-
-        summaryLabel.font = NSFont.systemFont(ofSize: 11)
-        summaryLabel.textColor = NSColor.secondaryLabelColor
-        summaryLabel.lineBreakMode = .byTruncatingTail
-        summaryLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(summaryLabel)
-
-        arrowView.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: nil)
-        arrowView.contentTintColor = NSColor.secondaryLabelColor
-        arrowView.imageScaling = .scaleProportionallyDown
-        arrowView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(arrowView)
-
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
-
-            summaryLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
-            summaryLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            arrowView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            arrowView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            arrowView.widthAnchor.constraint(equalToConstant: 12),
-            arrowView.heightAnchor.constraint(equalToConstant: 12),
-
-            summaryLabel.trailingAnchor.constraint(equalTo: arrowView.leadingAnchor, constant: -4),
-        ])
-    }
-
-    /// 更新汇总信息和箭头方向
-    /// - Parameters:
-    ///   - free: 总可用空间
-    ///   - total: 总容量
-    ///   - isCollapsed: 当前是否折叠
-    func updateSummary(free: UInt64, total: UInt64, isCollapsed: Bool) {
-        if total == 0 {
-            summaryLabel.stringValue = "无存储设备"
-        } else {
-            let formatter = ByteCountFormatter()
-            formatter.allowedUnits = [.useGB, .useTB]
-            formatter.countStyle = .file
-            let freeStr = formatter.string(fromByteCount: Int64(free))
-            let totalStr = formatter.string(fromByteCount: Int64(total))
-            // 紧凑格式：避免侧边栏宽度不足时截断
-            summaryLabel.stringValue = "\(freeStr) 可用 / \(totalStr)"
-        }
-        updateArrow(isCollapsed: isCollapsed)
-    }
-
-    /// 更新箭头方向（折叠=向上，展开=向下）
-    func updateArrow(isCollapsed: Bool) {
-        let arrowName = isCollapsed ? "chevron.up" : "chevron.down"
-        arrowView.image = NSImage(systemSymbolName: arrowName, accessibilityDescription: nil)
-    }
-}
-
 // MARK: - DeviceCellView (B9: 设备行单行布局 + 悬停气泡)
 
 /// B9: 设备行自定义 cell
@@ -1790,7 +1796,7 @@ class DeviceCellView: NSTableCellView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
 
-        nameField.font = NSFont.systemFont(ofSize: 11)
+        nameField.font = NSFont.systemFont(ofSize: 13)
         nameField.textColor = NSColor.labelColor
         nameField.lineBreakMode = .byTruncatingTail
         nameField.cell?.truncatesLastVisibleLine = true
@@ -1802,8 +1808,8 @@ class DeviceCellView: NSTableCellView {
         addSubview(nameField)
 
         // B9: "X GB 可用"文字（灰色 10pt）
-        freeField.font = NSFont.systemFont(ofSize: 10)
-        freeField.textColor = NSColor.tertiaryLabelColor
+        freeField.font = NSFont.systemFont(ofSize: 11)
+        freeField.textColor = NSColor.secondaryLabelColor
         freeField.lineBreakMode = .byTruncatingTail
         freeField.cell?.truncatesLastVisibleLine = true
         freeField.cell?.wraps = false
@@ -1821,10 +1827,10 @@ class DeviceCellView: NSTableCellView {
         NSLayoutConstraint.activate([
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
+            iconView.widthAnchor.constraint(equalToConstant: 20),
+            iconView.heightAnchor.constraint(equalToConstant: 20),
 
-            nameField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+            nameField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
             nameField.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             freeField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),

@@ -229,29 +229,8 @@ public class MainWindowController: NSWindowController {
     var sidebarView: SidebarView!
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
-    /// v0.7.0: 工具浮动面板（替代设备栏位置显示，3×3 网格大方块布局）
-    /// 与 devicePanel 同处侧边栏左下角区域，互斥显示（isHidden 切换）
+    /// v0.7.0: 工具浮动面板（3×3 网格大方块布局，覆盖在侧栏底部区域）
     private var toolPanelView: ToolPanelView?
-    /// 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
-    /// 与侧边栏收藏夹/标签模块视觉分离，展开时显示所有设备不需滚动条
-    /// 任务 4: 改用 FFGlassView 液态玻璃背景，与侧边栏玻璃质感统一
-    /// 设备浮层。V0.8.0 起改为实体卡片（用户 2026-10-17 裁定保留本轮方案），
-    /// 不再使用 FFGlassView 玻璃材质。
-    private var devicePanel: FFPanelView!
-    /// 任务 F10-3: 设备浮层头部（汇总信息 + 折叠箭头）
-    private var devicePanelHeader: DeviceHeaderView!
-    /// 任务 F10-3: 设备浮层内容 stack（设备行纵向排列，高度自适应）
-    private var devicePanelStack: NSStackView!
-    /// 任务 F10-3: 设备数据源（迁移自 SidebarView，负责 statfs 读取磁盘容量、过滤隐藏卷）
-    private let deviceDataSource = DeviceSidebarDataSource()
-    /// 任务 F10-3: 设备浮层折叠状态（默认折叠，仅显示汇总头部）
-    private var isDevicePanelCollapsed = true
-    /// 任务 F10-3: 设备浮层折叠态高度（头部 32pt + 上下 padding 8pt = 48pt）
-    private let devicePanelCollapsedHeight: CGFloat = 48
-    /// 任务 F10-3: 设备行单行高度
-    private let devicePanelRowHeight: CGFloat = 28
-    /// 任务 F10-3: 设备浮层高度约束（折叠/展开时调整）
-    private var devicePanelHeightConstraint: NSLayoutConstraint!
     /// 1.2 活动面板描边（替代原 2pt 色条——色条被工具栏盖住，从未可见）
     private var leftActiveBorder: FFActivePaneBorderView!
     private var rightActiveBorder: FFActivePaneBorderView!
@@ -495,23 +474,11 @@ public class MainWindowController: NSWindowController {
         ])
         mainContainerView = mainContainer
 
-        // 任务 F10-3: 创建设备浮层并浮动到窗口左下角（v0.6.6）
-        // 设备区域从侧边栏内部移出，改为独立卡片样式，与收藏夹/标签模块视觉分离
-        devicePanel = createDevicePanel()
-        mainContainer.addSubview(devicePanel)
-        devicePanelHeightConstraint = devicePanel.heightAnchor.constraint(equalToConstant: devicePanelCollapsedHeight)
-        devicePanelHeightConstraint.priority = .required
-        NSLayoutConstraint.activate([
-            // 贴 mainContainer 左下角：leading +8pt
-            // 底部上移 36pt，为工具栏按钮（主题/设置/工具）留出空间
-            devicePanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
-            devicePanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -44),
-            devicePanel.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor, constant: -8),
-            devicePanelHeightConstraint,
-        ])
+        // 2026-10-18 #4：设备不再以浮动卡片形式挂在这里，改由 SidebarView 的「位置」分区承担
+        // （访达同构：个人收藏 / 位置 / 标签 三区）。原有 devicePanel 相关属性与构建代码已删除。
 
-        // v0.7.0: 创建工具浮动面板（与 devicePanel 同位置，互斥显示）
-        // 点击侧边栏工具按钮时隐藏设备栏、显示此面板；再次点击或 ❌ 关闭时反向切换
+        // v0.7.0: 创建工具浮动面板（覆盖在侧栏底部区域）
+        // 点击侧边栏工具按钮展开；再次点击或 ❌ 关闭时收起
         toolPanelView = createToolPanel()
         toolPanelView?.translatesAutoresizingMaskIntoConstraints = false
         // 任务 4: 液态玻璃背景由 ToolPanelView.setupUI 内部 FFGlassView 提供
@@ -519,7 +486,6 @@ public class MainWindowController: NSWindowController {
         if let toolPanel = toolPanelView {
             mainContainer.addSubview(toolPanel)
             NSLayoutConstraint.activate([
-                // 与 devicePanel 完全相同的位置约束
                 toolPanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
                 toolPanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -44),
                 toolPanel.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor, constant: -8),
@@ -529,12 +495,7 @@ public class MainWindowController: NSWindowController {
             ])
         }
 
-        // 任务 F10-3: 监听卷挂载/卸载通知，刷新设备浮层（迁移自 SidebarView）
-        let workspaceNC = NSWorkspace.shared.notificationCenter
-        workspaceNC.addObserver(self, selector: #selector(handleVolumeMount(_:)),
-                                name: NSWorkspace.didMountNotification, object: nil)
-        workspaceNC.addObserver(self, selector: #selector(handleVolumeUnmount(_:)),
-                                name: NSWorkspace.didUnmountNotification, object: nil)
+        // 2026-10-18 #4：卷挂载/卸载监听改由 SidebarView 统一处理（它已监听并刷新「位置」分区）
 
         window.contentView = visualEffectView
 
@@ -654,7 +615,7 @@ public class MainWindowController: NSWindowController {
             // 任务 F10-3 / Wave1 P0-3: 初始化设备浮层——设备数据已改为后台加载
             // （DeviceSidebarDataSource.init 不再同步 loadDevices），经
             // refreshDevicePanel 触发首次加载，数据就绪后主线程回调重建行 + 更新汇总
-            self.refreshDevicePanel()
+            // 2026-10-18 #4：设备区已迁入 SidebarView「位置」分区，此处不再初始化浮层
         }
 
         TaskSchedulerManager.shared.startPolling()
@@ -856,169 +817,7 @@ public class MainWindowController: NSWindowController {
         let bgColor = operationAreaBackgroundColor().cgColor
         leftPaneContainer?.layer?.backgroundColor = bgColor
         rightPaneContainer?.layer?.backgroundColor = bgColor
-        // 任务 F11-1: 设备栏浮层同步改为实体背景（与操作区一致）
-        refreshDevicePanelBackground()
     }
-
-    /// 任务 F11-1: 创建设备浮层
-    /// - 浮动在窗口左下角，与侧边栏收藏夹/标签模块视觉分离（独立卡片样式）
-    /// - 折叠时仅显示汇总头部；展开时显示所有设备，高度自适应，不需滚动条
-    /// - 设备数据获取逻辑（statfs 读取磁盘容量、过滤隐藏卷）迁移自 SidebarView.DeviceSidebarDataSource
-    private func createDevicePanel() -> FFPanelView {
-        // Wave4 Task 2：圆角 8→面板级默认 10（浮层圆角收敛两档：容器 16 / 浮层 10）
-        // V0.8.0：FFGlassView → FFPanelView(.card) 实体卡片。
-        // 理由（用户裁定）：设备名与容量数字在半透明材质上可读性差，实体底更清楚。
-        // FFPanelView 自带 updateLayer 主题刷新，深浅色切换自动跟随。
-        let panel = FFPanelView(tone: .card, cornerRadius: FFDesign.Glass.cornerRadiusPanel)
-        panel.translatesAutoresizingMaskIntoConstraints = false
-
-        // 设备栏头部（汇总信息 + 折叠箭头，复用 SidebarView 的 DeviceHeaderView）
-        devicePanelHeader = DeviceHeaderView()
-        devicePanelHeader.translatesAutoresizingMaskIntoConstraints = false
-        // 点击头部切换折叠/展开
-        let headerClick = NSClickGestureRecognizer(target: self, action: #selector(toggleDevicePanelExpanded))
-        devicePanelHeader.addGestureRecognizer(headerClick)
-        panel.addSubview(devicePanelHeader)
-
-        // 设备列表（纵向 stack，根据设备数量自适应高度，不需滚动条）
-        devicePanelStack = NSStackView()
-        devicePanelStack.orientation = .vertical
-        devicePanelStack.alignment = .leading
-        devicePanelStack.spacing = 0
-        devicePanelStack.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(devicePanelStack)
-
-        NSLayoutConstraint.activate([
-            // 头部固定在 panel 顶部（高度 32pt，左右内边距 8pt）
-            devicePanelHeader.topAnchor.constraint(equalTo: panel.topAnchor, constant: 8),
-            devicePanelHeader.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
-            devicePanelHeader.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -8),
-            devicePanelHeader.heightAnchor.constraint(equalToConstant: 32),
-
-            // 设备 stack 位于头部下方，填满剩余空间
-            // 折叠时 stack 已隐藏（detachesHiddenViews），panel 高度 48 仅容头部
-            devicePanelStack.topAnchor.constraint(equalTo: devicePanelHeader.bottomAnchor, constant: 0),
-            devicePanelStack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
-            devicePanelStack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -8),
-            devicePanelStack.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -8),
-        ])
-
-        return panel
-    }
-
-    /// 任务 F10-3: 重建设备浮层的所有设备行
-    /// 迁移自 SidebarView.DeviceSidebarDataSource.outlineView(_:viewFor:) 的 DeviceCellView 构建逻辑
-    /// 每个设备行：图标 + 名称 + "X GB 可用"（复用 DeviceCellView，含悬停气泡）
-    private func rebuildDevicePanelRows() {
-        // 清空旧设备行
-        devicePanelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-
-        // 折叠态不保留任何行：行高 28 为 required，与折叠高度 48（8+32+8）无解；
-        // AppKit 中隐藏视图的约束仍参与求解，必须整体移除
-        guard !isDevicePanelCollapsed else { return }
-
-        // 遍历设备数据源，为每个设备创建一行
-        for dev in deviceDataSource.devices {
-            let row = makeDeviceRow(dev: dev)
-            devicePanelStack.addArrangedSubview(row)
-            // 让行撑满 stack 宽度
-            row.leadingAnchor.constraint(equalTo: devicePanelStack.leadingAnchor).isActive = true
-            row.trailingAnchor.constraint(equalTo: devicePanelStack.trailingAnchor).isActive = true
-            row.heightAnchor.constraint(equalToConstant: devicePanelRowHeight).isActive = true
-        }
-    }
-
-    /// 任务 F10-3: 创建单个设备行视图（复用 DeviceCellView，附带点击导航）
-    /// 迁移自 SidebarView.DeviceSidebarDataSource 的 DeviceCellView 配置逻辑
-    private func makeDeviceRow(dev: DeviceItem) -> NSView {
-        // 复用 SidebarView 的 DeviceCellView（含图标 + 名称 + 可用空间 + 悬停气泡）
-        let cell = DeviceCellView()
-        let extInfo = deviceDataSource.deviceExtendedInfo[dev.path]
-        cell.configure(dev: dev, extInfo: extInfo)
-
-        // 点击设备行切换到该卷（保留设备点击导航功能）
-        let click = NSClickGestureRecognizer(target: self, action: #selector(handleDeviceRowClick(_:)))
-        cell.identifier = NSUserInterfaceItemIdentifier(dev.path)
-        cell.addGestureRecognizer(click)
-        return cell
-    }
-
-    /// 任务 F10-3: 点击设备行 -> 切换活动面板到该卷路径
-    @objc private func handleDeviceRowClick(_ sender: NSClickGestureRecognizer) {
-        guard let path = sender.view?.identifier?.rawValue else { return }
-        let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
-        vm.navigate(to: path)
-    }
-
-    /// 任务 F10-3: 切换设备浮层折叠/展开状态（带 200ms 动画）
-    /// 迁移自 SidebarView.toggleDeviceExpanded
-    @objc private func toggleDevicePanelExpanded() {
-        isDevicePanelCollapsed.toggle()
-        // 折叠/展开先重建行（折叠态不保留任何行），再动画到目标高度
-        rebuildDevicePanelRows()
-        let targetHeight: CGFloat
-        if isDevicePanelCollapsed {
-            targetHeight = devicePanelCollapsedHeight
-        } else {
-            // 展开态：折叠高度 + 设备数量 * 行高（高度自适应，不需滚动条）
-            targetHeight = devicePanelCollapsedHeight + CGFloat(deviceDataSource.deviceCount) * devicePanelRowHeight
-        }
-
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = FFMotion.animationDuration(0.2)
-            context.allowsImplicitAnimation = true
-            devicePanelHeightConstraint.animator().constant = targetHeight
-            devicePanel.layoutSubtreeIfNeeded()
-        }, completionHandler: nil)
-
-        // 更新箭头方向
-        devicePanelHeader.updateArrow(isCollapsed: isDevicePanelCollapsed)
-    }
-
-    /// 任务 F10-3: 更新设备浮层头部汇总信息（所有设备的可用空间和总容量之和）
-    /// 迁移自 SidebarView.updateDeviceHeaderSummary
-    private func updateDevicePanelSummary() {
-        let (totalFree, totalTotal) = deviceDataSource.totalSpaceSummary()
-        devicePanelHeader.updateSummary(free: totalFree, total: totalTotal, isCollapsed: isDevicePanelCollapsed)
-    }
-
-    /// 任务 F10-3: 卷挂载通知 -> 刷新设备浮层
-    /// 迁移自 SidebarView.handleVolumeMount
-    @objc private func handleVolumeMount(_ notification: Notification) {
-        DispatchQueue.main.async { [weak self] in
-            self?.refreshDevicePanel()
-        }
-    }
-
-    /// 任务 F10-3: 卷卸载通知 -> 刷新设备浮层
-    /// 迁移自 SidebarView.handleVolumeUnmount
-    @objc private func handleVolumeUnmount(_ notification: Notification) {
-        DispatchQueue.main.async { [weak self] in
-            self?.refreshDevicePanel()
-        }
-    }
-
-    /// 任务 F10-3: 刷新设备浮层（重新加载设备数据 + 重建行 + 更新汇总 + 调整高度）
-    /// 迁移自 SidebarView.refreshDevices
-    /// Wave1 P0-3：loadDevices 已后台化（listVolumes/statfs 不再阻塞主线程），
-    /// 数据就绪后经主线程回调重建浮层 UI；采集期间保留上次数据（不闪烁）
-    private func refreshDevicePanel() {
-        deviceDataSource.loadDevices { [weak self] in
-            guard let self = self else { return }
-            self.rebuildDevicePanelRows()
-            self.updateDevicePanelSummary()
-            // 若当前展开态，根据新设备数量调整高度（高度自适应，不需滚动条）
-            if !self.isDevicePanelCollapsed {
-                let targetHeight = self.devicePanelCollapsedHeight + CGFloat(self.deviceDataSource.deviceCount) * self.devicePanelRowHeight
-                self.devicePanelHeightConstraint.constant = targetHeight
-            }
-        }
-    }
-
-    /// 任务 F11-1: 刷新设备栏浮层背景色（主题切换时调用，v0.6.7）
-    /// 任务 4: 设备/工具面板背景由 FFGlassView 自动响应主题，此方法保留为空
-    /// （调用点仍存在，避免改通知回调链；FFGlassView 内部已处理深浅色刷新）
-    private func refreshDevicePanelBackground() {}
 
     deinit {
         // Bug 6 修复：移除所有 NotificationCenter observer，防止悬空回调
@@ -1183,21 +982,12 @@ public class MainWindowController: NSWindowController {
         SettingsWindowController.shared.showWindow()
     }
 
-    /// v0.7.0: 工具面板展开时隐藏设备浮层并显示工具面板，收起时反向切换
-    /// 工具面板与设备浮层同处侧边栏左下角区域，互斥显示（isHidden 切换）
+    /// v0.7.0: 工具面板展开/收起（2026-10-18 #4 起不再与设备浮层互斥——设备已迁入侧栏）
     @objc private func handleToolPanelToggle(_ notification: Notification) {
         // Wave2 P0-4（多窗口）：仅响应本窗口发出（object=本窗口侧边栏或本窗口）的通知
         if let source = notification.object as? AnyObject, !(source === sidebarView), !(source === window) { return }
         guard let isExpanded = notification.userInfo?["isExpanded"] as? Bool else { return }
-        if isExpanded {
-            // 展开：隐藏设备栏，显示工具面板
-            devicePanel?.isHidden = true
-            toolPanelView?.isHidden = false
-        } else {
-            // 收起：隐藏工具面板，恢复设备栏
-            toolPanelView?.isHidden = true
-            devicePanel?.isHidden = false
-        }
+        toolPanelView?.isHidden = !isExpanded
     }
 
     // MARK: - v0.7.0: 工具浮动面板
