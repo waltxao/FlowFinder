@@ -199,6 +199,15 @@ if [[ -z "$RELINK_SYSROOT" ]]; then
     log_warn "Could not determine macOS sysroot; relink may fail"
 fi
 
+# 2026-10-18：重链接默认关闭。
+# 症状：relink 产物能加载、Mach-O 校验通过，但 ff_list_dir 等调用在应用内 10s 超时
+# （独立集成测试却通过）；换回 cargo 原始 dylib 立即恢复。判定为 relink 引入的
+# 运行时问题（-force_load 把全部 object 打进去，怀疑重复初始化）。
+# 需要验证 LINKEDIT 对齐时用 FF_RELINK=1 显式开启。
+if [[ "${FF_RELINK:-0}" != "1" ]]; then
+    cp "$DYLIB_PATH" "$OUTPUT_DIR/"
+    log_success "Copied cargo-built dylib (relink disabled; set FF_RELINK=1 to relink)"
+else
 log_info "Relinking dylib from static library using Xcode ld ($RELINK_LD)..."
 RELINK_LDFLAGS=(
     -arch "$RELINK_ARCH"
@@ -235,6 +244,7 @@ elif [[ -f "$OUTPUT_DIR/$DYLIB_NAME" ]]; then
 else
     die "Relink produced no output and no error was detected"
 fi
+fi  # FF_RELINK
 
 # Copy static library (optional, useful for debugging)
 if cp "$STATICLIB_PATH" "$OUTPUT_DIR/" 2>/dev/null; then

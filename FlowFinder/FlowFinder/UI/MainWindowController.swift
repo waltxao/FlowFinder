@@ -241,6 +241,11 @@ public class MainWindowController: NSWindowController {
     private var rightPaneWrapper: NSView!
     /// #3：当前是否单窗口模式（持久化到 single_pane_mode）
     private var isSinglePaneMode = false
+    /// #7：每个操作区顶部标签条与标签集合
+    var leftTabStrip: PaneTabStripView?
+    var rightTabStrip: PaneTabStripView?
+    var leftTabsStore: PaneTabsStore?
+    var rightTabsStore: PaneTabsStore?
     /// v0.7.0: 工具浮动面板（3×3 网格大方块布局，覆盖在侧栏底部区域）
     private var toolPanelView: ToolPanelView?
     /// 1.2 活动面板描边（替代原 2pt 色条——色条被工具栏盖住，从未可见）
@@ -294,6 +299,8 @@ public class MainWindowController: NSWindowController {
             defer: false
         )
         window.title = "FlowFinder"
+        // #7：改用应用内标签条，关闭系统窗口标签，避免两套标签并存
+        window.tabbingMode = .disallowed
         // 最小尺寸按「侧栏最小 160 + 两个操作区各 450」推导 = 1060（DESIGN-SPEC W-07）。
         // 原值 1000 与 pane 的 450 保底自相矛盾：1000 − 160 = 840，两个 pane 各 420，
         // 会触发 NSSplitView 约束冲突并把工具栏控件挤重叠。
@@ -392,6 +399,8 @@ public class MainWindowController: NSWindowController {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.title = "FlowFinder"
+        // #7：改用应用内标签条，关闭系统窗口标签，避免两套标签并存
+        window.tabbingMode = .disallowed
 
         // 任务 F10-1: 设置 window.delegate，使 windowDidBecomeKey 等回调生效（v0.6.6）
         // 虽然 NSWindowController 父类在 ObjC 层已声明 <NSWindowDelegate>，
@@ -636,6 +645,9 @@ public class MainWindowController: NSWindowController {
             // 2026-10-18 #4：设备区已迁入 SidebarView「位置」分区，此处不再初始化浮层
         }
 
+        // #7：两侧面板就绪后建立初始标签
+        installTabStrips()
+
         TaskSchedulerManager.shared.startPolling()
     }
 
@@ -731,6 +743,14 @@ public class MainWindowController: NSWindowController {
         let detailsBar = ExpandableDetailsBar()
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
 
+        // #7：操作区顶部标签条（浏览器式，位于工具栏上方 32pt）
+        let tabStrip = PaneTabStripView()
+        tabStrip.side = side
+        tabStrip.delegate = self
+        tabStrip.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(tabStrip)
+        if side == .left { leftTabStrip = tabStrip } else { rightTabStrip = tabStrip }
+
         // 添加到容器
         container.addSubview(toolbar)
         container.addSubview(listView)
@@ -747,8 +767,14 @@ public class MainWindowController: NSWindowController {
             activeBorder.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             activeBorder.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            // toolbar 占顶部
-            toolbar.topAnchor.constraint(equalTo: container.topAnchor),
+            // #7：标签条贴顶，工具栏在其下方
+            tabStrip.topAnchor.constraint(equalTo: container.topAnchor),
+            tabStrip.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tabStrip.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tabStrip.heightAnchor.constraint(equalToConstant: 32),
+
+            // toolbar 位于标签条下方
+            toolbar.topAnchor.constraint(equalTo: tabStrip.bottomAnchor),
             toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
@@ -1556,6 +1582,8 @@ public class MainWindowController: NSWindowController {
         let diskFree = getDiskFreeSpace(forPath: state.path)
         // v0.7.4 修订 4：传入当前目录路径（未选中时详情栏显示该文件夹图标）
         detailsBar?.updateStatus(itemCount: itemCount, diskFree: diskFree, currentDirectoryPath: state.path)
+        // #7：导航 / 排序 / 筛选变化后同步标签标题与激活态
+        syncTabStrip(side: side, state: state)
 
         // 任务 F11-8: 状态变化时同步侧边栏标签高亮（导航清除 tagFilter / 切换活动面板时高亮需跟随）
         if side == activePane {
@@ -1947,6 +1975,11 @@ public class MainWindowController: NSWindowController {
     /// 窗口创建/持有归 MainWindowController（AppDelegate.extras 强引用），
     /// SidebarView 仅发意图通知，不直接建窗——保持多窗口簿记单点。
     private func openDirectoryInNewWindow(path: String, asTab: Bool) {
+        // #7：新标签页 = 当前活动面板新增一个标签，不再使用系统窗口标签
+        if asTab {
+            newTab(in: activePane, path: path)
+            return
+        }
         let controller = MainWindowController()
         if let reference = window {
             let origin = reference.frame.origin

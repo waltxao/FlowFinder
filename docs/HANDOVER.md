@@ -220,7 +220,8 @@ export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 | 功能 | P-08 AI 整理卡未接线 | 设计稿有，UI 是禁用占位 |
 | 功能 | X-05 标签缺重命名 | 新建/改色已有 |
 | 功能 | X-08 连接服务器两个无效控件 | 记住密码 / 自动连接 |
-| 测试 | **Swift 测试宿主连不上（当前阻塞）** | 见 §6.3；大改前必须先解决，否则没有回归护栏 |
+| 测试 | **Swift 测试宿主连不上（当前阻塞）** | 根因已定位为 `DevToolsSecurity` = disabled（系统升级重置）。需管理员执行 `sudo DevToolsSecurity -enable` 与 `sudo xcode-select -s /Applications/Xcode-beta.app/Contents/Developer`；启用前 `build-for-testing` 可作编译级验证 |
+| 构建 | Rust dylib 重链接产物不可用 | `build-rust.sh` 的 ld 重链接会让 FFI 调用在应用内超时；已默认关闭（`FF_RELINK=1` 才启用），直接用 cargo 产物 |
 | 测试 | 逻辑单测覆盖集中在少数纯函数 | `FFBreadcrumbSegments` / `FFStartupPath` / `FFErrorText` / `SidebarFavoritesStore` 是正例，可作模板 |
 | 发布 | 公证未接、Release 工具链坏 | 只能出 ad-hoc 预发布包 |
 | 发布 | 官网下载直链写死 tag | 每次发版手改 `docs/index.html` |

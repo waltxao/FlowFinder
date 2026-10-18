@@ -106,8 +106,8 @@ final class FFActivePaneBorderView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard !isHidden else { return }
-        // 描边以路径为中心向两侧扩，最外层 7pt 会外扩 3.5pt，故内缩 3pt 防裁切
-        let rect = bounds.insetBy(dx: 3, dy: 3)
+        // 描边以路径为中心向两侧扩，最外层 13pt 会外扩 6.5pt，故内缩 7pt 防裁切
+        let rect = bounds.insetBy(dx: 7, dy: 7)
         guard rect.width > 0, rect.height > 0 else { return }
         let path = NSBezierPath(roundedRect: rect, xRadius: 16, yRadius: 16)
 
@@ -119,15 +119,14 @@ final class FFActivePaneBorderView: NSView {
         }
 
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let boost: CGFloat = isDark ? 1.25 : 0.85
-        // (线宽, 透明度)：从外到内，外圈淡而宽，内圈亮而细
-        let strokes: [(CGFloat, CGFloat)] = [
-            (7.0, 0.10 * boost),
-            (3.5, 0.20 * boost),
-            (1.2, 0.55 * boost),
-        ]
-        for (width, alpha) in strokes {
-            ringColor.withAlphaComponent(min(alpha, 1)).setStroke()
+        let boost: CGFloat = isDark ? 1.2 : 0.9
+        // 12 层同心描边逐级变宽变淡：叠出的边缘是连续衰减，没有单根实线（2026-10-18 二次调软）
+        let steps = 12
+        for i in 0..<steps {
+            let t = CGFloat(i) / CGFloat(steps - 1)     // 0 = 最内层
+            let width = 1.5 + t * 11.5                   // 1.5 → 13pt
+            let alpha = 0.030 * boost * (1 - t * 0.75)   // 叠加上限约 0.30~0.36
+            ringColor.withAlphaComponent(alpha).setStroke()
             path.lineWidth = width
             path.stroke()
         }

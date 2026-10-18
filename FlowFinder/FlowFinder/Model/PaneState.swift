@@ -208,6 +208,18 @@ public class PaneViewModel: ObservableObject {
         loadDirectory()
     }
 
+    // MARK: - 标签页会话（2026-10-18 #7）
+
+    /// 捕获当前完整浏览状态（路径 / 前进后退历史 / 排序 / 视图模式 / 分组 / 标签筛选）
+    func captureSession() -> PaneState { state }
+
+    /// 恢复一个标签的浏览状态：整体替换 state 后重新列举当前路径。
+    /// 不清空 history——标签页切换要保留各自的返回栈。
+    func restoreSession(_ session: PaneState) {
+        state = session
+        refresh()
+    }
+
     // MARK: - Selection (有序数组)
 
     func selectFile(_ file: FileEntry, multi: Bool = false, shiftKey: Bool = false) {

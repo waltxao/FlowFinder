@@ -13,6 +13,8 @@
 		FF0000A0000000000000000A /* ConflictResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000B0000000000000000B; };
 		FF0000050000000000000005 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000150000000000000015; };
 		FF0000060000000000000006 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000160000000000000016; };
+		FF7400020000000000000002 /* PaneTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7400010000000000000001; };
+		FF7400040000000000000004 /* MainWindowController+Tabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7400030000000000000003; };
 		FF0000070000000000000007 /* FileEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000170000000000000017; };
 		FF0000090000000000000009 /* CoreBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000190000000000000019; };
 		FF00000A000000000000000A /* FFIFunctions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00001A000000000000001A; };
@@ -88,6 +90,8 @@
 		FF0000B0000000000000000B /* ConflictResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConflictResolver.swift; sourceTree = "<group>"; };
 		FF0000150000000000000015 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		FF0000160000000000000016 /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
+		FF7400010000000000000001 /* PaneTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneTabs.swift; sourceTree = "<group>"; };
+		FF7400030000000000000003 /* MainWindowController+Tabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MainWindowController+Tabs.swift"; sourceTree = "<group>"; };
 		FF0000170000000000000017 /* FileEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileEntry.swift; sourceTree = "<group>"; };
 		FF0000190000000000000019 /* CoreBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreBridge.swift; sourceTree = "<group>"; };
 		FF00001A000000000000001A /* FFIFunctions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFIFunctions.swift; sourceTree = "<group>"; };
@@ -224,6 +228,8 @@
 				FF000000000000000020005C /* AboutWindowController.swift */,
 				FF000000000000000020003E /* BatchRenameWindowController.swift */,
 				FF0000160000000000000016 /* MainWindowController.swift */,
+				FF7400010000000000000001 /* PaneTabs.swift */,
+				FF7400030000000000000003 /* MainWindowController+Tabs.swift */,
 							FF000000000000000020001C /* AppearanceSettingsView.swift */,
 				FF000000000000000020003C /* ExpandableDetailsBar.swift */,
 				FF00000000000000002000A2 /* FFMiniThumbnailStackView.swift */,
@@ -472,6 +478,8 @@
 				FF0000A0000000000000000A /* ConflictResolver.swift in Sources */,
 				FF0000050000000000000005 /* SidebarView.swift in Sources */,
 				FF0000060000000000000006 /* MainWindowController.swift in Sources */,
+				FF7400020000000000000002 /* PaneTabs.swift in Sources */,
+				FF7400040000000000000004 /* MainWindowController+Tabs.swift in Sources */,
 				FF0000070000000000000007 /* FileEntry.swift in Sources */,
 				FF0000090000000000000009 /* CoreBridge.swift in Sources */,
 				FF00000A000000000000000A /* FFIFunctions.swift in Sources */,

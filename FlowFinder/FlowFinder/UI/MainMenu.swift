@@ -30,13 +30,17 @@ class MainMenu {
         let fileMenu = NSMenu(title: "文件")
         fileMenuItem.submenu = fileMenu
         fileMenu.addItem(withTitle: "新建文件夹", action: #selector(MainWindowController.menuNewFolder(_:)), keyEquivalent: "n")
+        // #7：应用内标签页（⌘T 新建 / ⌘W 关闭标签，最后一个标签时退回关窗）
+        fileMenu.addItem(withTitle: "新建标签页", action: #selector(MainWindowController.menuNewTab(_:)), keyEquivalent: "t")
         // Wave2 P0-4：⌘⇧N 新窗口接通真多窗口实现（原 action: nil 永久禁用）
         let newWindow = fileMenu.addItem(withTitle: "新窗口", action: #selector(MainWindowController.menuNewWindow(_:)), keyEquivalent: "n")
         newWindow.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "打开", action: #selector(MainWindowController.menuOpen(_:)), keyEquivalent: "o")
         fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileMenu.addItem(withTitle: "关闭标签页", action: #selector(MainWindowController.menuCloseTab(_:)), keyEquivalent: "w")
+        let closeWindow = fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        closeWindow.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "移动到废纸篓", action: #selector(MainWindowController.menuMoveToTrash(_:)), keyEquivalent: "\u{8}")
         fileMenu.addItem(.separator())
