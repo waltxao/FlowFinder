@@ -12,7 +12,7 @@
 ![Rust](https://img.shields.io/badge/Rust-2021+-DEA584)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
-🌐 [官方网站](https://waltxao.github.io/FlowFinder/) · 📦 [下载最新版](https://github.com/waltxao/FlowFinder/releases) · 📖 [开发者文档](docs/DEVELOPMENT.md) · 📝 [重构日志](docs/MIGRATION_LOG.md)
+🌐 [官方网站](https://waltxao.github.io/FlowFinder/) · 📦 [下载最新版](https://github.com/waltxao/FlowFinder/releases) · 📖 [交接文档](docs/HANDOVER.md) · 📝 [变更日志](CHANGELOG.md)
 
 </div>
 
@@ -393,10 +393,12 @@ FlowFinder/
 │   │   └── Resources/            # Info.plist
 │   └── FlowFinderNative.xcodeproj
 ├── docs/                         # 文档
-│   ├── images/                   # 截图 / mockup
-│   ├── MIGRATION_LOG.md          # 完整重构日志
-│   ├── MIGRATION_PLAN.md         # 迁移计划
-│   └── VERIFICATION.md           # 验证清单
+│   ├── images/                   # 官网截图
+│   ├── PRODUCT.md                # 产品定义与取舍顺序
+│   ├── DESIGN-SPEC.md            # 视觉唯一规格
+│   ├── ACCEPTANCE.md             # 验收口径
+│   ├── REQUIREMENTS.md           # 按旅程组织的功能清单
+│   └── HANDOVER.md               # 交接文档（先读这篇）
 ├── Makefile                      # 构建自动化
 └── README.md
 ```
@@ -468,7 +470,7 @@ A: Rust 提供更高效的系统级编程能力（BLAKE3、rayon 并行、零成
 A: Rust 编译为 cdylib 动态库，通过 C ABI（FFI）暴露函数接口。Swift 侧通过 Bridging Header 调用。详见 `rust-core/include/ff_ffi.h`。
 
 **Q: 如何参与开发？**
-A: 参阅上方「贡献指南」，或查看 [迁移计划](docs/MIGRATION_PLAN.md) 了解待完成子项目。
+A: 先读 [交接文档](docs/HANDOVER.md)，里面写了架构地图、构建流程与已知债务。
 
 ---
 
@@ -489,9 +491,9 @@ A: 参阅上方「贡献指南」，或查看 [迁移计划](docs/MIGRATION_PLAN
 
 详见 [CHANGELOG.md](CHANGELOG.md)。
 
-## 重构日志
+## 重构历史
 
-从 Tauri + React 到 Swift & AppKit 的完整重构历史，详见 [重构日志](docs/MIGRATION_LOG.md)。
+从 Tauri + React 到 Swift & AppKit 的重构过程记录在 Git 历史与 [CHANGELOG.md](CHANGELOG.md) 中。
 
 ## 从原版迁移
 
@@ -507,7 +509,7 @@ MIT License — 详见 [LICENSE](LICENSE) 文件。
 
 <div align="center">
 
-**[🌐 官方网站](https://waltxao.github.io/FlowFinder/)** · **[📦 下载](https://github.com/waltxao/FlowFinder/releases)** · **[📖 文档](docs/DEVELOPMENT.md)** · **[🐛 报告问题](https://github.com/waltxao/FlowFinder/issues)**
+**[🌐 官方网站](https://waltxao.github.io/FlowFinder/)** · **[📦 下载](https://github.com/waltxao/FlowFinder/releases)** · **[📖 文档](docs/HANDOVER.md)** · **[🐛 报告问题](https://github.com/waltxao/FlowFinder/issues)**
 
 Made with ❤️ for macOS
 

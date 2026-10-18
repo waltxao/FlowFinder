@@ -18,7 +18,7 @@
 | `docs/DESIGN-SPEC.md` | 视觉与交互的规格本体 |
 | `docs/ACCEPTANCE.md` | 什么算做对了 |
 | 本文件 | 当前版本要交付的需求清单与优先级 |
-| `docs/superpowers/specs/*` | 历史稿，仅作追溯 |
+| `docs/HANDOVER.md` | 接手/大改前必读：架构、流程、已知债务 |
 
 **冲突处理**：与本文件或上表前三份冲突时，以本文件为准。
 
