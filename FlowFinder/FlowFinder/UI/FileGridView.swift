@@ -32,13 +32,30 @@ private final class FFDropHighlightBorderView: NSView {
     }
 }
 
+// MARK: - FFPassthroughView
+
+/// 纯装饰层：只负责画底色，绝不参与事件路由。
+///
+/// 2026-10-19 #11：网格选中改成「图标背板 + 文件名胶囊」两块分开的色块，
+/// 这两个色块铺在缩略图与文件名下方。若不穿透命中，它们会吃掉 item 的点击，
+/// 导致点图标位置选不中、双击打不开（NSView 默认 hitTest 返回自身）。
+private final class FFPassthroughView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 // MARK: - FileGridCollectionViewItem
 
 class FileGridCollectionViewItem: NSCollectionViewItem {
     private var thumbnailImageView: NSImageView!
+    /// 2026-10-19 #11：图标背板（缩略图下层，选中时填强调色，四周各露出 7pt）
+    private var iconBackdropView: FFPassthroughView!
+    /// 2026-10-19 #11：文件名胶囊（文件名下层，选中时填强调色，文字反白）
+    private var nameCapsuleView: FFPassthroughView!
     /// 缩略图宽/高约束（动态重建：按图片原始比例，最长边随 thumbnailMaxEdge——Finder 风格，替代固定方形）
     private var thumbWidthConstraint: NSLayoutConstraint!
     private var thumbHeightConstraint: NSLayoutConstraint!
+    /// 2026-10-19 #11：文件名胶囊宽度约束（按文字实测宽度更新，见 updateNameCapsuleWidth）
+    private var capsuleWidthConstraint: NSLayoutConstraint!
     /// 名称标签：内联重命名时需设为可编辑并获取焦点（与 FileListView 一致）。
     /// 设为 internal 以便 FileGridView.beginInlineRename() 访问。
     var nameLabel: NSTextField!
@@ -81,13 +98,14 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             if entry.isDirectory {
                 // 任务 F10-9: 目录不加载缩略图，清除路径标记避免旧回调误覆盖目录图标
                 currentPath = nil
-                // 任务 F11-7: 目录图标也走缓存（避免每次都构造 SF Symbol）
-                if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: entry.path, pointSize: 48) {
+                // 2026-10-19 #11b：标准位置目录优先用语义色合成图标（48pt 网格基准），
+                // 未命中走 NSWorkspace 图标缓存
+                if let spec = FFStandardLocationIcon.spec(forPath: entry.path) {
+                    setThumbnail(FFStandardLocationIcon.makeIcon(spec: spec, side: 48))
+                } else if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: entry.path, pointSize: 48) {
                     setThumbnail(cached)
                 } else {
-                    let placeholder = NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
-                        ?? NSImage(named: NSImage.folderName)
-                    setThumbnail(placeholder)
+                    setThumbnail(FFIcon.image(.folder, size: 48, color: .secondaryLabelColor))
                     ThumbnailManager.shared.fetchWorkspaceIcon(for: entry.path, pointSize: 48) { [weak self] image in
                         guard let self = self, self.currentPath == nil else { return }
                         if let image = image { self.setThumbnail(image) }
@@ -111,8 +129,7 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 if let cachedIcon = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: placeholderPointSize) {
                     setThumbnail(cachedIcon)
                 } else {
-                    setThumbnail(NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
-                        ?? NSImage(named: NSImage.multipleDocumentsName))
+                    setThumbnail(FFIcon.image(.file, size: 48, color: .secondaryLabelColor))
                     // 后台异步获取真实工作区图标作为过渡（缩略图返回前先显示真实类型图标）
                     ThumbnailManager.shared.fetchWorkspaceIcon(for: path, pointSize: placeholderPointSize) { [weak self] image in
                         guard let self = self, self.currentPath == path else { return }
@@ -134,8 +151,7 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                     if let image = image {
                         self.setThumbnail(image)
                     } else {
-                        self.setThumbnail(NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
-                            ?? NSImage(named: NSImage.multipleDocumentsName))
+                        self.setThumbnail(FFIcon.image(.file, size: 48, color: .secondaryLabelColor))
                     }
                 }
             }
@@ -145,6 +161,9 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
 
             // 配置标签药丸（文件名下方）
             configureTagPills()
+
+            // 2026-10-19 #11：文件名变了要重算胶囊宽度（viewDidLayout 里按文字实测宽计算）
+            view.needsLayout = true
         }
     }
 
@@ -166,6 +185,9 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         setThumbnail(nil)
         // 重置选中背景（防止复用 item 残留选中样式）
         view.layer?.backgroundColor = NSColor.clear.cgColor
+        // 2026-10-19 #11：两块选中色块同步复位
+        iconBackdropView?.layer?.backgroundColor = NSColor.clear.cgColor
+        nameCapsuleView?.layer?.backgroundColor = NSColor.clear.cgColor
         // squircle 圆角：0 时自动移除 mask（SquircleMaskedView）
         (view as? SquircleMaskedView)?.squircleRadius = 0
         // 清除旧标签药丸
@@ -223,6 +245,19 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         let view = SquircleMaskedView(frame: NSRect(x: 0, y: 0, width: 120, height: 140))
         view.wantsLayer = true
 
+        // 2026-10-19 #11：两块装饰色块，必须在各自内容之下，且命中穿透
+        iconBackdropView = FFPassthroughView()
+        iconBackdropView.wantsLayer = true
+        iconBackdropView.layer?.backgroundColor = NSColor.clear.cgColor
+        iconBackdropView.layer?.cornerRadius = 8
+        iconBackdropView.translatesAutoresizingMaskIntoConstraints = false
+
+        nameCapsuleView = FFPassthroughView()
+        nameCapsuleView.wantsLayer = true
+        nameCapsuleView.layer?.backgroundColor = NSColor.clear.cgColor
+        nameCapsuleView.layer?.cornerRadius = 5
+        nameCapsuleView.translatesAutoresizingMaskIntoConstraints = false
+
         thumbnailImageView = NSImageView()
         thumbnailImageView.imageScaling = .scaleProportionallyDown
         thumbnailImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -245,7 +280,10 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         tagPillContainer.spacing = 4
         tagPillContainer.translatesAutoresizingMaskIntoConstraints = false
 
+        // z 序即 addSubview 顺序：背板 → 缩略图 → 胶囊 → 文件名 …
+        view.addSubview(iconBackdropView)
         view.addSubview(thumbnailImageView)
+        view.addSubview(nameCapsuleView)
         view.addSubview(nameLabel)
         view.addSubview(pathLabel)
         view.addSubview(tagPillContainer)
@@ -259,16 +297,37 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             thumbnailImageView.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
             thumbnailImageView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
 
-            nameLabel.topAnchor.constraint(equalTo: thumbnailImageView.bottomAnchor, constant: 4),
+            // 2026-10-19 #11：图标背板以缩略图为中心、四周各外扩 5pt。
+            // 用相对约束而不是固定尺寸，缩略图按原图比例重建宽高时背板自动跟随。
+            // 外扩量取 5 而不是更大值：缩略图框 88pt 时背板 98pt，与 item 112pt 之间
+            // 仍留 7pt 呼吸位；再大会变成「整块色板」，读不出是图标底色。
+            iconBackdropView.centerXAnchor.constraint(equalTo: thumbnailImageView.centerXAnchor),
+            iconBackdropView.centerYAnchor.constraint(equalTo: thumbnailImageView.centerYAnchor),
+            iconBackdropView.widthAnchor.constraint(equalTo: thumbnailImageView.widthAnchor, constant: 10),
+            iconBackdropView.heightAnchor.constraint(equalTo: thumbnailImageView.heightAnchor, constant: 10),
+
+            // 2026-10-19 #11：文件名距缩略图 10pt（原 4pt）。
+            // 图标背板向缩略图外扩 7pt，若保持 4pt 间距，文件名胶囊会压进背板下沿，
+            // 两块色块黏成一片，与规格「两块分开」不符。10pt 留出 2pt 净间隙。
+            nameLabel.topAnchor.constraint(equalTo: thumbnailImageView.bottomAnchor, constant: 10),
             nameLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
             nameLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+
+            // 2026-10-19 #11：文件名胶囊跟随文件名垂直居中，高度=文字高度+2。
+            // 宽度由 updateNameCapsuleWidth() 按文字实测宽度算（见 viewDidLayout），
+            // 这里只给约束占位，避免胶囊在双行文件名下被撑成整条 item 宽。
+            nameCapsuleView.centerXAnchor.constraint(equalTo: nameLabel.centerXAnchor),
+            nameCapsuleView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            nameCapsuleView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor, constant: 2),
 
             // 标签药丸位于文件名下方 4pt，水平居中
             tagPillContainer.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
             tagPillContainer.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 4),
             tagPillContainer.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -4),
             tagPillContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            tagPillContainer.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -4),
+            // 双行文件名时名称下移了 6pt，标签行贴底余量相应收紧（-4 → -1），
+            // 否则「双行名称 + 标签」组合会与 item 底边冲突、把标签挤掉。
+            tagPillContainer.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -1),
 
             // Drop 高亮描边铺满整个 item
             dropBorderView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -276,6 +335,9 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             dropBorderView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             dropBorderView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+        // 胶囊宽度约束单独持有：文本变化后需要改 constant
+        capsuleWidthConstraint = nameCapsuleView.widthAnchor.constraint(equalToConstant: 40)
+        capsuleWidthConstraint.isActive = true
         // 缩略图尺寸约束动态管理（setThumbnail 时按图片比例重建）：
         // 初始 64×64 占位（与默认 thumbnailMaxEdge 一致），图片到达后按原始宽高比重建，Finder 风格
         thumbWidthConstraint = thumbnailImageView.widthAnchor.constraint(equalToConstant: thumbnailMaxEdge)
@@ -284,6 +346,31 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
         thumbHeightConstraint.isActive = true
 
         self.view = view
+    }
+
+    // MARK: - 文件名胶囊宽度（2026-10-19 #11）
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updateNameCapsuleWidth()
+    }
+
+    /// 按文件名实测宽度更新胶囊宽度。
+    ///
+    /// 胶囊不能直接跟随 nameLabel 的宽度约束：那个约束是撑满 item 左右、且只在
+    /// 双行换行时才真正起作用，跟着它会得到一条横贯整个 item 的色带。
+    /// 这里取「文字单行宽 + 8」，并以 nameLabel 的实际宽度为上限，
+    /// 这样短文件名得到短胶囊，长文件名（含双行）仍被完整包住。
+    private func updateNameCapsuleWidth() {
+        guard let label = nameLabel, let capsuleWidthConstraint = capsuleWidthConstraint else { return }
+        let text = label.stringValue
+        guard !text.isEmpty else { return }
+        let font = label.font ?? NSFont.systemFont(ofSize: 11)
+        let measured = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 8
+        let maxWidth = max(label.bounds.width, 24)
+        let target = min(max(measured, 24), maxWidth)
+        guard abs(capsuleWidthConstraint.constant - target) > 0.5 else { return }
+        capsuleWidthConstraint.constant = target
     }
 
     /// Wave3 Task 1: Drop 目标高亮（拖到文件夹 item 上时由 FileGridView 置位）。
@@ -303,20 +390,22 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
     }
 
     /// Wave3 Task 1: 统一应用选中态 + Drop 高亮态视觉。
-    /// - 选中：实心强调色 + 白字（DESIGN-SPEC G-04；与列表 NSTableRowView 的
-    ///   系统蓝实底 + 白字保持同一语义，此前用 25% 透明底配黑字，与列表选中完全不同）
-    /// - Drop 高亮：accent 8% 底 + 1.5pt accent 圆角描边 + 圆角 8
-    /// 两者可并存（描边叠加在选中底色之上）。
+    /// - 选中（2026-10-19 #11 改版）：**两块分开**——图标背板填强调色（缩略图盖在上面，
+    ///   四周露出 7pt 一圈），文件名单独一个强调色胶囊、文字反白。item 自身不再刷实底。
+    /// - Drop 高亮：accent 8% 整块底 + 1.5pt accent 圆角描边 + 圆角 8（拖拽目标语义，
+    ///   与选中不同层，可叠加）。
     private func applyVisualState() {
-        if isDropTarget {
-            view.layer?.backgroundColor = FFAccent.current.withAlphaComponent(0.08).cgColor
-            (view as? SquircleMaskedView)?.squircleRadius = 8
-        } else {
-            view.layer?.backgroundColor = isSelected
-                ? FFAccent.current.cgColor
-                : NSColor.clear.cgColor
-            (view as? SquircleMaskedView)?.squircleRadius = isSelected ? 8 : 0
-        }
+        // item 自身只承载 Drop 淡底；选中不再整块上色
+        view.layer?.backgroundColor = isDropTarget
+            ? FFAccent.current.withAlphaComponent(0.08).cgColor
+            : NSColor.clear.cgColor
+        (view as? SquircleMaskedView)?.squircleRadius = isDropTarget ? 8 : 0
+
+        // 选中态的两块色：图标背板 + 文件名胶囊
+        let selectionFill = isSelected ? FFAccent.current.cgColor : NSColor.clear.cgColor
+        iconBackdropView.layer?.backgroundColor = selectionFill
+        nameCapsuleView.layer?.backgroundColor = selectionFill
+
         dropBorderView.isHighlighted = isDropTarget
         applyLabelColor()
     }
@@ -715,15 +804,17 @@ public class FileGridView: NSView {
         clampIconSize(CGFloat(UserDefaults.standard.double(forKey: FFUserDefaultsKeys.gridIconSize)))
     }
 
-    /// 夹紧图标大小到合法范围；未保存过（0）时回退默认 120
+    /// 夹紧图标大小到合法范围；未保存过（0）时回退默认 112（2026-10-19 #8：112×124 / 缩略图 88）。
+    /// 旧默认 120 一次性迁移到 112（120 从未暴露过自定义入口之外的意义，视为出厂值）。
     private static func clampIconSize(_ value: CGFloat) -> CGFloat {
-        guard value > 0 else { return 120 }
-        return min(gridIconSizeRange.upperBound, max(gridIconSizeRange.lowerBound, value))
+        guard value > 0 else { return 112 }
+        let migrated = (value == 120) ? 112 : value
+        return min(gridIconSizeRange.upperBound, max(gridIconSizeRange.lowerBound, migrated))
     }
 
-    /// 当前缩略图最长边：120pt 基准对应 64pt（既有视觉基准），随 itemSize 等比联动
+    /// 当前缩略图最长边：112pt 基准对应 88pt（2026-10-19 #8），随 itemSize 等比联动
     private var currentThumbnailMaxEdge: CGFloat {
-        round(gridIconSize * 64.0 / 120.0)
+        round(gridIconSize * 88.0 / 112.0)
     }
 
     public var viewModel: PaneViewModel? {
@@ -896,8 +987,8 @@ public class FileGridView: NSView {
         // NSCollectionViewGridLayout 不支持补充视图，无法渲染分组标题。
         // FlowLayout 横向排列填满一行后换行，与网格视觉效果一致，且支持 headerReferenceSize。
         let layout = NSCollectionViewFlowLayout()
-        // Wave4 Task 4: itemSize 由图标大小状态驱动（默认 120×140，范围 80–200）
-        layout.itemSize = NSSize(width: gridIconSize, height: gridIconSize + 20)
+        // Wave4 Task 4: itemSize 由图标大小状态驱动（2026-10-19 #8：默认 112×124，范围 80–200）
+        layout.itemSize = NSSize(width: gridIconSize, height: gridIconSize + 12)
         layout.minimumInteritemSpacing = 8
         layout.minimumLineSpacing = 8
         layout.sectionInset = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)

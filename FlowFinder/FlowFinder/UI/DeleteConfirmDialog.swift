@@ -51,8 +51,7 @@ class DeleteConfirmDialog: FFModalSheet {
     private func setupBody(bodyView: NSView, checkbox: NSButton, message: String?) {
         // 警告图标（黄色三角）
         let warningIcon = NSImageView()
-        warningIcon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
-                                    accessibilityDescription: "警告")
+        warningIcon.image = FFIcon.image(.triangleAlert, size: 26, color: .systemYellow)
         warningIcon.contentTintColor = .systemYellow
         warningIcon.imageScaling = .scaleProportionallyDown
         warningIcon.translatesAutoresizingMaskIntoConstraints = false

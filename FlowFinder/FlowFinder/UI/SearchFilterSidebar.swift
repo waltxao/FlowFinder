@@ -23,14 +23,15 @@ enum FileTypeFilter: String, CaseIterable {
     case audio = "音频"
     case other = "其他"
 
-    var iconName: String {
+    /// 类型图标（Lucide）
+    var icon: FFIconName {
         switch self {
-        case .pdf:      return "doc.richtext"
-        case .image:    return "photo"
-        case .video:    return "film"
-        case .document: return "doc.text"
-        case .audio:    return "music.note"
-        case .other:    return "doc"
+        case .pdf:      return .fileText
+        case .image:    return .image
+        case .video:    return .film
+        case .document: return .file
+        case .audio:    return .music
+        case .other:    return .box
         }
     }
 }
@@ -128,7 +129,7 @@ class SearchFilterSidebar: NSView {
         for type in FileTypeFilter.allCases {
             let row = makeCheckRow(
                 title: type.rawValue,
-                icon: type.iconName,
+                icon: type.icon,
                 state: config.enabledTypes.contains(type)
             ) { [weak self] on in
                 if on {
@@ -195,16 +196,16 @@ class SearchFilterSidebar: NSView {
 
     /// 创建复选框行（26pt 高，圆角 6pt，左侧 14x14 复选框 + 标签 + 可选计数药丸）
     private func makeCheckRow(title: String,
-                              icon: String? = nil,
+                              icon: FFIconName? = nil,
                               colorHex: String? = nil,
                               count: Int? = nil,
                               state: Bool,
                               action: @escaping (Bool) -> Void) -> SettingsRowView {
         // 左侧图标区（可选：SF Symbol 或彩色圆点）
         var leftView: NSView?
-        if let iconName = icon {
+        if let icon = icon {
             let iconView = NSImageView()
-            iconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: title)
+            iconView.image = FFIcon.template(icon, size: 14)
             iconView.contentTintColor = NSColor.secondaryLabelColor
             iconView.imageScaling = .scaleProportionallyDown
             iconView.translatesAutoresizingMaskIntoConstraints = false

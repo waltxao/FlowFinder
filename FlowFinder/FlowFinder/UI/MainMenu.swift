@@ -22,6 +22,14 @@ class MainMenu {
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "偏好设置...", action: #selector(MainWindowController.menuSettings(_:)), keyEquivalent: ",")
         appMenu.addItem(.separator())
+        // 需求 #3：文件访问权限是文件管理器的前置条件，给一个可反复触发的入口
+        appMenu.addItem(withTitle: "检查文件访问权限…",
+                        action: #selector(MainWindowController.menuCheckFileAccess(_:)),
+                        keyEquivalent: "")
+        appMenu.addItem(withTitle: "打开「完全磁盘访问」设置…",
+                        action: #selector(MainWindowController.menuOpenFullDiskAccess(_:)),
+                        keyEquivalent: "")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "退出 FlowFinder", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         // File menu
@@ -92,6 +100,13 @@ class MainMenu {
         viewMenu.addItem(withTitle: "图标视图", action: #selector(MainWindowController.menuGridView(_:)), keyEquivalent: "2")
         viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: "显示隐藏文件", action: #selector(MainWindowController.menuToggleHiddenFiles(_:)), keyEquivalent: "")
+        // 2026-10-19 #10：⌥⌘S 显示/隐藏侧边栏（与侧栏顶部按钮、左上角浮动开关同一入口）
+        let sidebarItem = viewMenu.addItem(
+            withTitle: "显示/隐藏侧边栏",
+            action: #selector(MainWindowController.toggleSidebar(_:)),
+            keyEquivalent: "s"
+        )
+        sidebarItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: "刷新", action: #selector(MainWindowController.menuRefresh(_:)), keyEquivalent: "r")
 

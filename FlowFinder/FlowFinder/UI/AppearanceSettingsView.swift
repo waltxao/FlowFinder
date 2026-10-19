@@ -42,21 +42,21 @@ public class AppearanceSettingsView: NSView {
         // 浅色按钮
         lightButton = createThemeButton(
             title: AppearanceMode.light.title,
-            icon: AppearanceMode.light.iconName,
+            icon: AppearanceMode.light.icon,
             mode: .light
         )
 
         // 深色按钮
         darkButton = createThemeButton(
             title: AppearanceMode.dark.title,
-            icon: AppearanceMode.dark.iconName,
+            icon: AppearanceMode.dark.icon,
             mode: .dark
         )
 
         // 自动跟随系统按钮（任务 F11-3: 恢复三态）
         systemButton = createThemeButton(
             title: AppearanceMode.system.title,
-            icon: AppearanceMode.system.iconName,
+            icon: AppearanceMode.system.icon,
             mode: .system
         )
 
@@ -111,12 +111,12 @@ public class AppearanceSettingsView: NSView {
         updateSelection()
     }
 
-    private func createThemeButton(title: String, icon: String, mode: AppearanceMode) -> NSButton {
+    private func createThemeButton(title: String, icon: FFIconName, mode: AppearanceMode) -> NSButton {
         let button = NSButton()
         button.bezelStyle = .regularSquare
         button.isBordered = true
         button.title = ""
-        button.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
+        button.image = FFIcon.template(icon, size: 40)
         button.imagePosition = .imageAbove
         button.font = NSFont.systemFont(ofSize: 12)
         button.toolTip = title
@@ -129,7 +129,6 @@ public class AppearanceSettingsView: NSView {
             string: title,
             attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
         )
-        button.image?.size = NSSize(width: 40, height: 40)
         return button
     }
 

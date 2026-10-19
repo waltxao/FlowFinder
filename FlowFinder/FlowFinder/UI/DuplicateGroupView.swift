@@ -71,7 +71,7 @@ class DuplicateGroupView: NSView {
         chevron.identifier = NSUserInterfaceItemIdentifier("chevron")
 
         let groupIcon = NSImageView()
-        groupIcon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "重复组")
+        groupIcon.image = FFIcon.template(.copy, size: 16)
         groupIcon.contentTintColor = NSColor.systemBlue
         groupIcon.imageScaling = .scaleProportionallyDown
         groupIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -278,7 +278,7 @@ private class DuplicateFileRow: NSView {
         radioView.addGestureRecognizer(radioClick)
 
         // 文件图标
-        fileIcon.image = NSImage(systemSymbolName: "doc", accessibilityDescription: file.name)
+        fileIcon.image = FFIcon.template(.file, size: 14)
         fileIcon.contentTintColor = NSColor.secondaryLabelColor
         fileIcon.imageScaling = .scaleProportionallyDown
         fileIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -304,7 +304,7 @@ private class DuplicateFileRow: NSView {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // 删除切换按钮（X 图标）
-        deleteToggleButton.image = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "切换删除")
+        deleteToggleButton.image = FFIcon.template(.circleX, size: 15)
         deleteToggleButton.contentTintColor = NSColor.secondaryLabelColor
         deleteToggleButton.isBordered = false
         deleteToggleButton.target = self
@@ -364,11 +364,11 @@ private class DuplicateFileRow: NSView {
             statusLabel.stringValue = "删除"
             statusLabel.textColor = NSColor.systemRed
             deleteToggleButton.contentTintColor = NSColor.systemRed
-            deleteToggleButton.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "已标记删除")
+            deleteToggleButton.image = FFIcon.image(.circleCheck, size: 15, color: .systemBlue)
         } else if !isKeep {
             statusLabel.stringValue = ""
             deleteToggleButton.contentTintColor = NSColor.secondaryLabelColor
-            deleteToggleButton.image = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "切换删除")
+            deleteToggleButton.image = FFIcon.template(.circleX, size: 15)
         }
     }
 }

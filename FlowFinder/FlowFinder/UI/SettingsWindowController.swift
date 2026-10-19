@@ -40,15 +40,16 @@ enum SettingsSection: Int, CaseIterable {
         }
     }
 
-    var iconName: String {
+    /// 侧栏分区图标（Lucide）
+    var icon: FFIconName {
         switch self {
-        case .general:      return "gearshape"
-        case .appearance:   return "paintbrush"
-        case .fileManage:   return "folder"
-        case .tagManage:    return "tag"
-        case .smb:          return "network"
-        case .shortcuts:    return "keyboard"
-        case .about:        return "info.circle"
+        case .general:      return .settings
+        case .appearance:   return .palette
+        case .fileManage:   return .folder
+        case .tagManage:    return .tag
+        case .smb:          return .network
+        case .shortcuts:    return .listChecks
+        case .about:        return .info
         }
     }
 }
@@ -399,7 +400,7 @@ public class SettingsWindowController: NSWindowController {
         let container = makeScrollContainer()
 
         // 启动 section
-        let startupSection = SettingsSectionView(title: "启动", iconName: "power")
+        let startupSection = SettingsSectionView(title: "启动", icon: .monitor)
         let startupRow = SettingsRowView.popupRow(
             title: "启动时打开",
             desc: "应用启动时显示的初始位置",
@@ -422,7 +423,7 @@ public class SettingsWindowController: NSWindowController {
         registerForSearch(startupSection, rows: [startupRow, checkUpdateRow])
 
         // 文件操作 section
-        let fileOpsSection = SettingsSectionView(title: "文件操作", iconName: "doc.on.doc")
+        let fileOpsSection = SettingsSectionView(title: "文件操作", icon: .copy)
         let defaultViewRow = SettingsRowView.segmentedRow(
             title: "默认视图",
             desc: "新窗口的默认文件展示方式",
@@ -492,7 +493,7 @@ public class SettingsWindowController: NSWindowController {
         // 运行时 LAYOUT-DIAG 显示主题卡片塌缩为 286pt（正常应全宽 531），按钮溢出。
         // 而关于页/标签列表走 addRow + setFullWidthContent 通道实测全宽正常（531）。
         // 故改为同一已验证通道：用 SettingsRowView 包住 appearanceView 再 addRow。
-        let themeSection = SettingsSectionView(title: "主题", iconName: "circle.lefthalf.filled")
+        let themeSection = SettingsSectionView(title: "主题", icon: .moon)
         let appearanceView = AppearanceSettingsView(frame: .zero)
         let themeRow = SettingsRowView(title: "", desc: "")
         themeRow.setFullWidthContent(appearanceView)
@@ -500,7 +501,7 @@ public class SettingsWindowController: NSWindowController {
         registerForSearch(themeSection, rows: [themeRow])
 
         // 强调色 section
-        let accentSection = SettingsSectionView(title: "强调色", iconName: "paintpalette")
+        let accentSection = SettingsSectionView(title: "强调色", icon: .palette)
         let accentColors = ["#0a84ff", "#bf5af2", "#ff375f", "#ff453a", "#ff9f0a", "#30d158", "#8e8e93"]
         let accentRow = SettingsRowView.colorRow(
             title: "强调色",
@@ -518,7 +519,7 @@ public class SettingsWindowController: NSWindowController {
         // Wave4 Task 4: 密度与缩放 section（列表密度三档 + 网格图标大小滑杆）。
         // 与网格 ⌘+滚轮/捏合手势双入口共用 UserDefaults 键，变更经通知广播全窗口即时生效，
         // 值跨会话记忆。
-        let densitySection = SettingsSectionView(title: "密度与缩放", iconName: "square.grid.2x2")
+        let densitySection = SettingsSectionView(title: "密度与缩放", icon: .layoutGrid)
         let listDensityRow = SettingsRowView.segmentedRow(
             title: "列表密度",
             desc: "列表视图行高：紧凑 / 标准 / 宽松",
@@ -561,7 +562,7 @@ public class SettingsWindowController: NSWindowController {
         let container = makeScrollContainer()
 
         // 排序与显示 section
-        let sortSection = SettingsSectionView(title: "排序与显示", iconName: "arrow.up.arrow.down")
+        let sortSection = SettingsSectionView(title: "排序与显示", icon: .arrowUpDown)
         let folderFirstRow = SettingsRowView.toggleRow(
             title: "智能排序",
             desc: "文件夹自动置顶",
@@ -599,7 +600,7 @@ public class SettingsWindowController: NSWindowController {
     private func buildTagManageSection() -> NSView {
         let container = makeScrollContainer()
 
-        let tagSection = SettingsSectionView(title: "标签列表", iconName: "tag")
+        let tagSection = SettingsSectionView(title: "标签列表", icon: .tag)
         let tagListRow = TagManagementRowView()
         tagSection.addRow(tagListRow)
         registerForSearch(tagSection, rows: [tagListRow])
@@ -621,7 +622,7 @@ public class SettingsWindowController: NSWindowController {
         let container = makeScrollContainer()
 
         // SMB 配置 section
-        let configSection = SettingsSectionView(title: "SMB 配置", iconName: "gearshape.2")
+        let configSection = SettingsSectionView(title: "SMB 配置", icon: .server)
         let domainRow = SettingsRowView.textFieldRow(
             title: "默认域",
             desc: "SMB 连接时使用的默认域",
@@ -711,7 +712,7 @@ public class SettingsWindowController: NSWindowController {
         ]
 
         // 文件操作快捷键 section
-        let fileShortcutSection = SettingsSectionView(title: "文件操作", iconName: "doc.on.doc")
+        let fileShortcutSection = SettingsSectionView(title: "文件操作", icon: .copy)
         var fileRows: [SettingsRowView] = []
         let fileShortcuts = shortcuts.filter { item in
             [FFUserDefaultsKeys.shortcutNewFolder, FFUserDefaultsKeys.shortcutOpenFile, FFUserDefaultsKeys.shortcutCopy, FFUserDefaultsKeys.shortcutCut, FFUserDefaultsKeys.shortcutPaste, FFUserDefaultsKeys.shortcutTrash, FFUserDefaultsKeys.shortcutDuplicate].contains(item.2)
@@ -727,7 +728,7 @@ public class SettingsWindowController: NSWindowController {
         registerForSearch(fileShortcutSection, rows: fileRows)
 
         // 窗口与视图快捷键 section
-        let viewShortcutSection = SettingsSectionView(title: "窗口与视图", iconName: "rectangle.3.group")
+        let viewShortcutSection = SettingsSectionView(title: "窗口与视图", icon: .columns2)
         var viewRows: [SettingsRowView] = []
         let viewShortcuts = shortcuts.filter { item in
             [FFUserDefaultsKeys.shortcutCloseWindow, FFUserDefaultsKeys.shortcutListView, FFUserDefaultsKeys.shortcutGridView, FFUserDefaultsKeys.shortcutRefresh, FFUserDefaultsKeys.shortcutQuicklook, FFUserDefaultsKeys.shortcutTaskPanel].contains(item.2)
@@ -743,7 +744,7 @@ public class SettingsWindowController: NSWindowController {
         registerForSearch(viewShortcutSection, rows: viewRows)
 
         // 其他快捷键 section
-        let otherShortcutSection = SettingsSectionView(title: "其他", iconName: "ellipsis.circle")
+        let otherShortcutSection = SettingsSectionView(title: "其他", icon: .ellipsis)
         var otherRows: [SettingsRowView] = []
         let otherShortcuts = shortcuts.filter { item in
             [FFUserDefaultsKeys.shortcutSelectAll, FFUserDefaultsKeys.shortcutUndo, FFUserDefaultsKeys.shortcutRedo, FFUserDefaultsKeys.shortcutSearch, FFUserDefaultsKeys.shortcutDuplicateScan, FFUserDefaultsKeys.shortcutConnectServer, FFUserDefaultsKeys.shortcutPreferences].contains(item.2)
@@ -787,11 +788,11 @@ public class SettingsWindowController: NSWindowController {
     private func buildAboutSection() -> NSView {
         let container = makeScrollContainer()
 
-        let aboutSection = SettingsSectionView(title: "关于 FlowFinder", iconName: "info.circle")
+        let aboutSection = SettingsSectionView(title: "关于 FlowFinder", icon: .info)
 
         // 应用图标（64x64pt）
         let appIcon = NSImageView()
-        appIcon.image = NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
+        appIcon.image = NSImage(named: "AppIcon") ?? FFIcon.image(.box, size: 64, color: .secondaryLabelColor)
         appIcon.imageScaling = .scaleProportionallyDown
         appIcon.translatesAutoresizingMaskIntoConstraints = false
         appIcon.widthAnchor.constraint(equalToConstant: 64).isActive = true
@@ -935,6 +936,13 @@ public class SettingsWindowController: NSWindowController {
         showWindow()
         selectSection(.shortcuts)
     }
+
+    /// 2026-10-19 #7：点击侧栏程序名称 / 发现功能里的「关于」——
+    /// 设置窗口不再有独立的关于窗，统一落到这里的「关于」分区。
+    public func showAboutSection() {
+        showWindow()
+        selectSection(.about)
+    }
 }
 
 // MARK: - NSTableViewDataSource / Delegate
@@ -966,7 +974,7 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
         selectionBackground.identifier = NSUserInterfaceItemIdentifier("selectionBg")
 
         let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: section.iconName, accessibilityDescription: section.title)
+        icon.image = FFIcon.template(section.icon, size: 14)
         icon.contentTintColor = NSColor.secondaryLabelColor
         icon.imageScaling = .scaleProportionallyDown
         icon.translatesAutoresizingMaskIntoConstraints = false
@@ -1283,7 +1291,7 @@ class TagManagementRowView: SettingsRowView {
 
         // 编辑颜色按钮
         let editButton = NSButton()
-        editButton.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "编辑颜色")
+        editButton.image = FFIcon.template(.palette, size: 13)
         editButton.contentTintColor = .secondaryLabelColor
         editButton.isBordered = false
         editButton.controlSize = .small
@@ -1295,7 +1303,7 @@ class TagManagementRowView: SettingsRowView {
 
         // 删除按钮
         let deleteButton = NSButton()
-        deleteButton.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "删除标签")
+        deleteButton.image = FFIcon.template(.trash2, size: 13)
         deleteButton.contentTintColor = .secondaryLabelColor
         deleteButton.isBordered = false
         deleteButton.controlSize = .small

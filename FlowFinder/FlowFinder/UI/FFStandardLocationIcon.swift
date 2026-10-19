@@ -14,8 +14,8 @@ enum FFStandardLocationIcon {
     // MARK: - 规格
 
     struct Spec: Equatable {
-        /// SF Symbol 名
-        let symbol: String
+        /// 图标（Lucide）
+        let icon: FFIconName
         /// 容器填充色（语义色，不随深浅色反转，与访达的彩色位置图标一致）
         let color: NSColor
     }
@@ -25,14 +25,14 @@ enum FFStandardLocationIcon {
     private static func specs() -> [(path: String, spec: Spec)] {
         let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
         return [
-            (normalize("\(home)/Desktop"), Spec(symbol: "display", color: color("#4A90D9"))),
-            (normalize("\(home)/Documents"), Spec(symbol: "doc.text", color: color("#5B7FB8"))),
-            (normalize("\(home)/Downloads"), Spec(symbol: "arrow.down", color: color("#3E9BC4"))),
-            (normalize("/Applications"), Spec(symbol: "square.grid.2x2.fill", color: color("#7E6BC4"))),
-            (normalize("\(home)/Pictures"), Spec(symbol: "photo", color: color("#E0A33A"))),
-            (normalize("\(home)/Movies"), Spec(symbol: "film", color: color("#D4683C"))),
-            (normalize("\(home)/Music"), Spec(symbol: "music.note", color: color("#C2564E"))),
-            (normalize(home), Spec(symbol: "house", color: color("#4A90D9"))),
+            (normalize("\(home)/Desktop"), Spec(icon: .monitor, color: color("#4A90D9"))),
+            (normalize("\(home)/Documents"), Spec(icon: .fileText, color: color("#5B7FB8"))),
+            (normalize("\(home)/Downloads"), Spec(icon: .download, color: color("#3E9BC4"))),
+            (normalize("/Applications"), Spec(icon: .grid2x2, color: color("#7E6BC4"))),
+            (normalize("\(home)/Pictures"), Spec(icon: .image, color: color("#E0A33A"))),
+            (normalize("\(home)/Movies"), Spec(icon: .film, color: color("#D4683C"))),
+            (normalize("\(home)/Music"), Spec(icon: .music, color: color("#C2564E"))),
+            (normalize(home), Spec(icon: .folder, color: color("#4A90D9"))),
         ]
     }
 
@@ -94,14 +94,9 @@ enum FFStandardLocationIcon {
             spec.color.setFill()
             background.fill()
 
-            // 符号白色：用 paletteColors 而非 template，避免依赖绘制上下文当前色
+            // 图标白色：FFIcon 直接渲染色值，不依赖绘制上下文当前色
             let pointSize = container.width * 0.62
-            let base = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
-            let white = NSImage.SymbolConfiguration(paletteColors: [.white])
-            guard let symbol = NSImage(systemSymbolName: spec.symbol, accessibilityDescription: nil)?
-                .withSymbolConfiguration(base.applying(white)) else {
-                return true
-            }
+            let symbol = FFIcon.image(spec.icon, size: pointSize, color: .white)
 
             // 按符号实际比例缩放到容器的 56%，避免宽符号（如 display）溢出容器
             let maxSide = container.width * 0.56

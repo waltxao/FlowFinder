@@ -32,8 +32,12 @@ extension PaneToolbarDelegate {
 
 // MARK: - PaneToolbar
 
-class PaneToolbar: NSView {
+class PaneToolbar: NSView, NSDraggingSource {
     weak var delegate: PaneToolbarDelegate?
+
+    // B5 #5b：整面板合并拖拽——拖工具栏空白处把整个面板拖到对侧
+    var side: PaneSide = .left
+    private var mergeDragStart: NSPoint?
 
     // Row 1: Navigation
     private var backButton: NSButton!
@@ -60,6 +64,20 @@ class PaneToolbar: NSView {
     // 任务 F3: BreadcrumbBar 嵌入 Row1（刷新按钮后），紧贴刷新按钮
     private var breadcrumbBar: BreadcrumbBar?
 
+    // 2026-10-19 #10：两行内容的左边缘约束
+    private var row1LeadingConstraint: NSLayoutConstraint!
+    private var row2LeadingConstraint: NSLayoutConstraint!
+
+    /// 左边缘缩进。侧栏隐藏后这一栏顶到窗口最左，红绿灯与「显示侧栏」浮动按钮会压在
+    /// 导航按钮上，所以窗口会把这里推到它们右侧；侧栏可见时回到常规 8pt。
+    var leadingInset: CGFloat = 8 {
+        didSet {
+            guard abs(leadingInset - oldValue) > 0.5 else { return }
+            row1LeadingConstraint?.constant = leadingInset
+            row2LeadingConstraint?.constant = leadingInset
+        }
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupUI()
@@ -73,6 +91,78 @@ class PaneToolbar: NSView {
     deinit {
         // 移除主题刷新观察者，防止悬空回调
         NotificationCenter.default.removeObserver(self, name: .appearanceChanged, object: nil)
+    }
+
+    // MARK: - B5 #5b 整面板合并拖拽（拖工具栏空白处）
+
+    /// 点在按钮 / 搜索框 / 面包屑上时命中被子视图吃掉，走不到这里；
+    /// 能收到 mouseDown 的就是工具栏空白。
+    override func mouseDown(with event: NSEvent) {
+        mergeDragStart = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        mergeDragStart = nil
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = mergeDragStart else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x - start.x, point.y - start.y) > 4 else { return }
+        mergeDragStart = nil
+
+        PaneTabDragContext.shared.session = nil
+        PaneTabDragContext.shared.isGroupMerge = true
+        PaneTabDragContext.shared.sourceSide = side
+        PaneTabDragContext.shared.sourceIndex = nil
+
+        let item = NSPasteboardItem()
+        item.setString("merge", forType: PaneTabDragContext.pasteboardType)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        let frame = NSRect(x: 0, y: 0, width: 76, height: 52)
+        dragItem.setDraggingFrame(frame, contents: Self.mergeDragImage())
+        beginDraggingSession(with: [dragItem], event: event, source: self)
+    }
+
+    /// 拖动跟随图像：一张小卡片示意「整个面板」
+    private static func mergeDragImage() -> NSImage {
+        let size = NSSize(width: 76, height: 52)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let rect = NSRect(x: 2, y: 2, width: 72, height: 48)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        NSColor.controlBackgroundColor.withAlphaComponent(0.92).setFill()
+        path.fill()
+        NSColor.controlAccentColor.withAlphaComponent(0.8).setStroke()
+        path.lineWidth = 2
+        path.stroke()
+        // 面板示意：三条横线
+        NSColor.secondaryLabelColor.setStroke()
+        for (i, w) in [40.0, 52.0, 30.0].enumerated() {
+            let y = rect.minY + 12 + CGFloat(i) * 10
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: rect.minX + 10, y: y))
+            line.line(to: NSPoint(x: rect.minX + 10 + w, y: y))
+            line.lineWidth = 3
+            line.lineCapStyle = .round
+            line.stroke()
+        }
+        image.unlockFocus()
+        return image
+    }
+
+    // NSDraggingSource
+
+    func draggingSession(_ session: NSDraggingSession,
+                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .move
+    }
+
+    /// 拖拽结束（取消/无效落点）必须清上下文，否则窗口级接收器永久吞点击
+    func draggingSession(_ session: NSDraggingSession,
+                         endedAt screenPoint: NSPoint,
+                         operation: NSDragOperation) {
+        PaneTabDragContext.shared.clear()
     }
 
     private func setupUI() {
@@ -127,10 +217,10 @@ class PaneToolbar: NSView {
     // MARK: - Row 1: Navigation
 
     private func setupRow1() {
-        backButton = createNavButton(systemSymbol: "chevron.backward", action: #selector(backClicked), label: "返回")
-        forwardButton = createNavButton(systemSymbol: "chevron.forward", action: #selector(forwardClicked), label: "前进")
-        upButton = createNavButton(systemSymbol: "chevron.up", action: #selector(upClicked), label: "上级目录")
-        refreshButton = createNavButton(systemSymbol: "arrow.clockwise", action: #selector(refreshClicked), label: "刷新")
+        backButton = createNavButton(icon: .chevronLeft, action: #selector(backClicked), label: "返回")
+        forwardButton = createNavButton(icon: .chevronRight, action: #selector(forwardClicked), label: "前进")
+        upButton = createNavButton(icon: .chevronUp, action: #selector(upClicked), label: "上级目录")
+        refreshButton = createNavButton(icon: .refreshCw, action: #selector(refreshClicked), label: "刷新")
 
         row1 = NSStackView(views: [backButton, forwardButton, upButton, refreshButton])
         row1.orientation = .horizontal
@@ -150,9 +240,10 @@ class PaneToolbar: NSView {
 
         addSubview(row1)
 
+        row1LeadingConstraint = row1.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8)
         NSLayoutConstraint.activate([
             row1.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            row1.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            row1LeadingConstraint,
             row1.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             row1.heightAnchor.constraint(equalToConstant: 32),
         ])
@@ -188,7 +279,7 @@ class PaneToolbar: NSView {
         searchContainer.translatesAutoresizingMaskIntoConstraints = false
 
         let searchIcon = NSImageView()
-        searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")
+        searchIcon.image = FFIcon.template(.search, size: 13)
         searchIcon.contentTintColor = NSColor.secondaryLabelColor
         searchIcon.imageScaling = .scaleProportionallyDown
         searchIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -256,9 +347,9 @@ class PaneToolbar: NSView {
         sortPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 740), for: .horizontal)
         groupPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 730), for: .horizontal)
 
-        listViewButton = createViewButton(systemSymbol: "list.bullet", action: #selector(listViewClicked), label: "列表视图",
+        listViewButton = createViewButton(icon: .list, action: #selector(listViewClicked), label: "列表视图",
                                           compressionPriority: NSLayoutConstraint.Priority(rawValue: 720))
-        gridViewButton = createViewButton(systemSymbol: "square.grid.2x2", action: #selector(gridViewClicked), label: "网格视图",
+        gridViewButton = createViewButton(icon: .grid2x2, action: #selector(gridViewClicked), label: "网格视图",
                                           compressionPriority: NSLayoutConstraint.Priority(rawValue: 720))
 
         updateViewModeHighlight(.list)
@@ -272,14 +363,14 @@ class PaneToolbar: NSView {
         // v0.6.9+: 文件夹显示配置按钮，使用系统 SF Symbol「slider.horizontal.3」
         // 模板色自动适配浅/深色，与其他导航按钮视觉统一
         // Wave4 Task 6：溢出分级 700——窗口缩窄时最先让位的图标按钮
-        toolsButton = createNavButton(systemSymbol: "slider.horizontal.3", action: #selector(showFolderOptionsMenu), label: "文件夹选项",
+        toolsButton = createNavButton(icon: .settings, action: #selector(showFolderOptionsMenu), label: "文件夹选项",
                                       compressionPriority: NSLayoutConstraint.Priority(rawValue: 700))
 
         // v0.7.4 项 2 + 项 6 合并（v0.7.4 修订）：单一「新建文件夹」按钮。
         // - 未选中任何项目：点击创建空文件夹（默认名"新建文件夹"，重名自动加序号）
         // - 选中 2 个及以上：点击自动"用所选 N 个项目新建文件夹"
         // - 悬停提示随选中状态动态变化（由 setFolderSelectionCount 更新）
-        newFolderButton = createNavButton(systemSymbol: "folder.badge.plus", action: #selector(newFolderClicked), label: "新建文件夹",
+        newFolderButton = createNavButton(icon: .folderPlus, action: #selector(newFolderClicked), label: "新建文件夹",
                                           compressionPriority: NSLayoutConstraint.Priority(rawValue: 710))
         newFolderButton.toolTip = "新建文件夹"
         newFolderButton.isEnabled = true
@@ -306,9 +397,10 @@ class PaneToolbar: NSView {
         row2.setContentHuggingPriority(.defaultHigh, for: .vertical)
         addSubview(row2)
 
+        row2LeadingConstraint = row2.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8)
         NSLayoutConstraint.activate([
             row2.topAnchor.constraint(equalTo: row1.bottomAnchor, constant: 4),
-            row2.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            row2LeadingConstraint,
             row2.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             row2.heightAnchor.constraint(equalToConstant: 32),
         ])
@@ -320,9 +412,9 @@ class PaneToolbar: NSView {
     /// - compressionPriority: Wave4 Task 6 溢出分级——非 nil 时按钮的固定 28pt 宽度约束
     ///   与横向抗压缩优先级同步降为该值（图标按钮才可能在窗口缩窄时按分级让位/截断；
     ///   required 宽度约束会让抗压缩分级形同虚设）。Row1 导航按钮不传（保持固定不压缩）。
-    private func createNavButton(systemSymbol: String, action: Selector, label: String, compressionPriority: NSLayoutConstraint.Priority? = nil) -> NSButton {
+    private func createNavButton(icon: FFIconName, action: Selector, label: String, compressionPriority: NSLayoutConstraint.Priority? = nil) -> NSButton {
         let button = NSButton()
-        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: label)
+        button.image = FFIcon.template(icon, size: 14)
         button.bezelStyle = .accessoryBarAction
         button.controlSize = .small
         button.imagePosition = .imageOnly
@@ -342,9 +434,9 @@ class PaneToolbar: NSView {
 
     /// 创建视图切换按钮（访达风格圆形药丸）
     /// - compressionPriority: 同 createNavButton（Wave4 Task 6 溢出分级）
-    private func createViewButton(systemSymbol: String, action: Selector, label: String, compressionPriority: NSLayoutConstraint.Priority? = nil) -> NSButton {
+    private func createViewButton(icon: FFIconName, action: Selector, label: String, compressionPriority: NSLayoutConstraint.Priority? = nil) -> NSButton {
         let button = NSButton()
-        button.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: label)
+        button.image = FFIcon.template(icon, size: 14)
         button.bezelStyle = .accessoryBarAction
         button.controlSize = .small
         button.imagePosition = .imageOnly

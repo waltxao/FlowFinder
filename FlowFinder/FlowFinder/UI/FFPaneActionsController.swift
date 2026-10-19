@@ -249,6 +249,13 @@ final class FFPaneActionsController: NSObject {
                                         userInfo: ["side": sideString(), "path": entry.path])
     }
 
+    /// B7 #4：文件夹右键「在新标签页中打开」——当前面板组末尾新建并激活
+    @objc func openInNewTab(_ sender: Any?) {
+        guard let entry = host?.clickedEntry else { return }
+        NotificationCenter.default.post(name: .fileListDidOpenInNewTab, object: host,
+                                        userInfo: ["side": sideString(), "path": entry.path])
+    }
+
     // MARK: - 键盘操作
 
     /// 统一键盘入口（MainWindowController 全局 keyDown monitor / 面板视图 keyDown 调用）：
@@ -619,8 +626,8 @@ extension FFPaneActionsController: NSMenuDelegate {
         // "打开"项图标：文件夹用 folder，文件用 doc
         if let openItem = menu.items.first(where: { $0.title == "打开" }) {
             let isOpenFolder = host?.clickedEntry?.isDirectory == true
-            openItem.image = NSImage(systemSymbolName: isOpenFolder ? "folder" : "doc",
-                                     accessibilityDescription: "打开")
+            openItem.image = FFIcon.template(isOpenFolder ? .folder : .file,
+                                            size: FFIcon.Metrics.menu)
         }
 
         // "标签"项：仅当选中单个文件或右键单击时显示
@@ -634,17 +641,30 @@ extension FFPaneActionsController: NSMenuDelegate {
         // "移动/复制到另一面板"箭头方向
         let left = isLeftPane
         if let moveItem = menu.items.first(where: { $0.title == "移动到另一面板" }) {
-            moveItem.image = NSImage(systemSymbolName: left ? "arrow.right" : "arrow.left",
-                                     accessibilityDescription: "移动到另一面板")
+            moveItem.image = FFIcon.template(left ? .arrowRight : .arrowLeft,
+                                             size: FFIcon.Metrics.menu)
         }
         if let copyOtherItem = menu.items.first(where: { $0.title == "复制到另一面板" }) {
-            copyOtherItem.image = NSImage(systemSymbolName: left ? "arrow.right.square" : "arrow.left.square",
-                                          accessibilityDescription: "复制到另一面板")
+            copyOtherItem.image = FFIcon.template(.copy, size: FFIcon.Metrics.menu)
         }
 
         // "在对侧面板打开"仅当右键点击项为文件夹时显示
         if let openOtherItem = menu.items.first(where: { $0.title == "在对侧面板打开" }) {
             openOtherItem.isHidden = !(host?.clickedEntry?.isDirectory ?? false)
+        }
+
+        // B7 #6：单面板（另一面板收起）时隐藏全部跨面板项
+        let isSinglePane = (host?.hostWindow?.windowController as? MainWindowController)?.isSinglePaneMode ?? false
+        if isSinglePane {
+            for title in ["移动到另一面板", "复制到另一面板", "在对侧面板打开"] {
+                menu.items.first(where: { $0.title == title })?.isHidden = true
+            }
+        }
+
+        // B7 #4：「在新标签页中打开」仅对单个文件夹显示
+        if let newTabItem = menu.items.first(where: { $0.title == "在新标签页中打开" }) {
+            let single = (host?.selectedEntries.count ?? 0) <= 1
+            newTabItem.isHidden = !(single && (host?.clickedEntry?.isDirectory ?? false))
         }
 
         // v0.7.4 项 6："用所选 X 个项目新建文件夹" 动态标题与显隐
@@ -698,7 +718,7 @@ extension FFPaneActionsController: NSMenuDelegate {
         guard let entry = targetEntry else {
             let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
             createItem.target = self
-            createItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
+            createItem.image = FFIcon.template(.plus, size: FFIcon.Metrics.menu)
             menu.addItem(createItem)
             return
         }
@@ -726,7 +746,7 @@ extension FFPaneActionsController: NSMenuDelegate {
 
         let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
         createItem.target = self
-        createItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
+        createItem.image = FFIcon.template(.plus, size: FFIcon.Metrics.menu)
         menu.addItem(createItem)
     }
 
@@ -769,7 +789,7 @@ extension FFPaneActionsController {
               let tagId = info["tagId"],
               let tagName = info["tagName"],
               let path = info["path"] else { return }
-        let tagColor = info["tagColor"] ?? "#007AFF"
+        let tagColor = info["tagColor"] ?? FFTagColorPalette.defaultHex
 
         let currentTags = TagBridge.shared.getTags(path: path)
         if currentTags.contains(where: { $0.id == tagId || $0.name == tagName }) {

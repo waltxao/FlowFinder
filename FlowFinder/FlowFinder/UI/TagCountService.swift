@@ -45,7 +45,11 @@ final class TagCountService {
 
                 var local: [String: Int] = [:]
                 for path in paths[start..<end] {
-                    for tag in TagBridge.shared.getTags(path: path) {
+                    let tags = TagBridge.shared.getTags(path: path)
+                    // 顺带填充标签倒排索引：用户浏览到的目录就是索引的采集面，
+                    // 不需要额外的全盘扫描，删除标签时才有反查依据。
+                    TagIndexStore.shared.record(tags: tags, path: path)
+                    for tag in tags {
                         local[tag.name, default: 0] += 1
                     }
                 }

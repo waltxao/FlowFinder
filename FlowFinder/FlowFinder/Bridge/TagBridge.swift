@@ -3,10 +3,11 @@ import Foundation
 /// xattr 标签读写桥接
 ///
 /// 标签同时存储在两个扩展属性中，实现与 macOS Finder 的双向同步：
-/// - `com.flowfinder.tags`：自有格式，JSON 数组（含 id 与 hex 颜色）
+/// - `com.flowfinder.tags`：自有格式，JSON 数组（含 id 与任意 hex 颜色），App 内以此为准
 /// - `com.apple.metadata:_kMDItemUserTags`：macOS 原生标签，Finder 可见
-///   格式为换行分隔字符串，每项为 "标签名" 或 "标签名\n颜色索引"
+///   **必须是 binary plist 的字符串数组**，每项为 "标签名\n颜色索引"
 ///   （颜色索引 0=无色, 1=红, 2=橙, 3=黄, 4=绿, 5=蓝, 6=紫, 7=灰）
+///   写成纯文本换行串时 Finder 不显示、Spotlight 也不索引，因此写入只能走 plist。
 public final class TagBridge {
     public static let shared = TagBridge()
 
@@ -99,6 +100,12 @@ public final class TagBridge {
         // 失效缓存（写入后旧缓存不再有效）
         cache.removeObject(forKey: NSString(string: path))
 
+        // 3. 同步标签倒排索引（删除标签时靠它反查所有受影响文件）。
+        //    只在写入成功时记录，避免索引里出现「其实没打上」的路径。
+        if ownOK || nativeOK {
+            TagIndexStore.shared.record(tags: tags, path: path)
+        }
+
         // 任一成功即视为成功（避免某一方写入失败导致整体不可用）
         return ownOK || nativeOK
     }
@@ -153,16 +160,29 @@ public final class TagBridge {
             return nil
         }
 
-        // 尝试作为 plist 解析（NSArray）
+        // 1. 标准格式：binary plist 字符串数组，每项 "标签名\n颜色索引"
         if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
            let array = plist as? [Any] {
-            return parseNativeEntries(array.map { String(describing: $0) })
+            return array.compactMap { entry -> Tag? in
+                let text = (entry as? String) ?? String(describing: entry)
+                // 单项内部自带换行：拆出名称与颜色索引
+                let parts = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+                guard let rawName = parts.first else { return nil }
+                let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return nil }
+                var colorIndex = 0
+                for extra in parts.dropFirst() {
+                    if let idx = Int(extra.trimmingCharacters(in: .whitespacesAndNewlines)), (0...7).contains(idx) {
+                        colorIndex = idx
+                        break
+                    }
+                }
+                return Tag(name: name, color: macOSColorIndexToHex(colorIndex))
+            }
         }
 
-        // 退化为字符串解析（换行分隔）
+        // 2. 兼容旧数据：早期误写成纯文本换行串，按两两配对解析
         guard let raw = String(data: data, encoding: .utf8) else { return nil }
-        // 原生格式中每项可能包含内嵌换行（"标签名\n颜色索引"），
-        // 项之间也以换行分隔，因此先按换行拆分后两两配对
         let lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         return parseNativeEntries(lines)
     }
@@ -186,7 +206,7 @@ public final class TagBridge {
                 continue
             }
 
-            var name = line
+            let name = line
             var colorIndex = 0
             // 下一行若为 0-7 的数字，视为颜色索引
             if i + 1 < entries.count {
@@ -208,22 +228,22 @@ public final class TagBridge {
     }
 
     /// 写入 macOS 原生标签
-    /// 采用换行分隔字符串格式："标签名\n颜色索引\n标签名\n颜色索引..."
+    /// 系统要求 `_kMDItemUserTags` 为 binary plist 的字符串数组，每项 "标签名\n颜色索引"。
+    /// App 的标签色可以是任意 hex，写入原生时取最接近的 7 个系统色之一。
     private func writeNativeTags(_ tags: [Tag], path: String) -> Bool {
         // 空标签列表时移除原生 xattr，避免残留空标签
         if tags.isEmpty {
             return removeExtendedAttribute(path: path, name: nativeXattrName)
         }
 
-        // 构建换行分隔字符串
-        var lines: [String] = []
-        for tag in tags {
-            let index = hexToMacOSColorIndex(tag.color)
-            // 每项为 "标签名\n颜色索引"，项之间以换行分隔
-            lines.append("\(tag.name)\n\(index)")
+        let entries: [String] = tags.map { tag in
+            "\(tag.name)\n\(hexToMacOSColorIndex(tag.color))"
         }
-        let raw = lines.joined(separator: "\n")
-        guard let data = raw.data(using: .utf8) else { return false }
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: entries,
+                                                             format: .binary,
+                                                             options: 0) else {
+            return false
+        }
         return setExtendedAttribute(path: path, name: nativeXattrName, data: data)
     }
 
@@ -242,12 +262,46 @@ public final class TagBridge {
         4: "#30D158", 5: "#0A84FF", 6: "#BF5AF2", 7: "#8E8E93",
     ]
 
-    /// hex 颜色字符串 -> macOS 颜色索引（0 表示无色/未识别）
+    /// hex 颜色字符串 -> macOS 颜色索引（1–7）
+    /// App 允许任意色，原生只认 7 种，取最接近的一个；无法解析时回退蓝色（5）
     private func hexToMacOSColorIndex(_ hex: String) -> Int {
-        let normalized = hex.lowercased().trimmingCharacters(in: .whitespaces)
-        // 去掉可能的 0x 前缀或多余空格
-        let cleaned = normalized.hasPrefix("#") ? normalized : "#" + normalized
-        return Self.hexToIndexMap[cleaned] ?? 0
+        let cleaned = Self.normalizedHex(hex)
+        if let exact = Self.hexToIndexMap[cleaned] { return exact }
+
+        guard let target = Self.rgbComponents(cleaned) else { return 5 }
+        var bestIndex = 5
+        var bestDistance = Double.greatestFiniteMagnitude
+        for (index, hexText) in Self.indexToHexMap where index != 0 {
+            guard let candidate = Self.rgbComponents(Self.normalizedHex(hexText)) else { continue }
+            // 按人眼敏感度加权，避免橙色被误判成红色
+            let dr = target.r - candidate.r
+            let dg = target.g - candidate.g
+            let db = target.b - candidate.b
+            let distance = 0.30 * dr * dr + 0.59 * dg * dg + 0.11 * db * db
+            if distance < bestDistance {
+                bestDistance = distance
+                bestIndex = index
+            }
+        }
+        return bestIndex
+    }
+
+    /// 统一为 "#rrggbb" 小写形式，支持 #abc / abc / #AABBCC
+    private static func normalizedHex(_ hex: String) -> String {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if s.hasPrefix("0x") { s.removeFirst(2) }
+        if s.hasPrefix("#") { s.removeFirst() }
+        if s.count == 3 { s = s.map { "\($0)\($0)" }.joined() }
+        return "#" + s
+    }
+
+    private static func rgbComponents(_ hex: String) -> (r: Double, g: Double, b: Double)? {
+        var s = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        if s.count == 3 { s = s.map { "\($0)\($0)" }.joined() }
+        guard s.count == 6, let value = UInt32(s, radix: 16) else { return nil }
+        return (Double((value >> 16) & 0xFF) / 255,
+                Double((value >> 8) & 0xFF) / 255,
+                Double(value & 0xFF) / 255)
     }
 
     /// macOS 颜色索引 -> hex 颜色字符串

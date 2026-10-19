@@ -20,10 +20,8 @@ import Cocoa
 /// - 「...」按钮：点击向下展开第二行，显示更多颜色；再点收起
 enum FFCreateTagDialog {
 
-    /// 默认色板（与访达标签色接近的 8 色），用于补足不足 8 个的情况
-    static let presetColors: [String] = [
-        "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#AF52DE", "#8E8E93", "#FF2D55"
-    ]
+    /// 默认色板：直接引用 App 统一色板，保证侧栏、文件、选色器三处同色
+    static var presetColors: [String] { FFTagColorPalette.paletteHexes }
 
     /// 弹出新建标签弹窗（sheet 形式）。
     /// - Parameters:
@@ -137,7 +135,7 @@ final class FFTagColorPickerView: NSView {
     /// 第一行最多显示 8 个色块（不含 + 和 ... 按钮）
     private let firstRowCount = 8
 
-    init(frame: NSRect, initialHex: String = "#FF3B30") {
+    init(frame: NSRect, initialHex: String = FFTagColorPalette.defaultHex) {
         self.selectedHex = initialHex
         super.init(frame: frame)
         rebuildColorList()
@@ -145,7 +143,7 @@ final class FFTagColorPickerView: NSView {
     }
 
     required init?(coder: NSCoder) {
-        self.selectedHex = "#FF3B30"
+        self.selectedHex = FFTagColorPalette.defaultHex
         super.init(coder: coder)
         rebuildColorList()
         setupUI()
@@ -213,13 +211,13 @@ final class FFTagColorPickerView: NSView {
             x = addDot(hex: allHexes[i], x: x, y: y)
         }
         // 「+」号按钮（第一行末尾，与色块同尺寸同外观：纯视图圆形 + 手势）
-        let addView = makeControlDot(symbol: "plus", tooltip: "添加颜色", action: #selector(addColorClicked(_:)))
+        let addView = makeControlDot(icon: .plus, tooltip: "添加颜色", action: #selector(addColorClicked(_:)))
         addView.frame = NSRect(x: x + 2, y: row1Y, width: dotSize, height: dotSize)
         addSubview(addView)
         x += dotSize + spacing
 
         // 「...」按钮（第一行末尾，展开/收起第二行，与色块同尺寸同外观）
-        let moreView = makeControlDot(symbol: "ellipsis", tooltip: isExpanded ? "收起" : "更多颜色", action: #selector(moreClicked(_:)))
+        let moreView = makeControlDot(icon: .ellipsis, tooltip: isExpanded ? "收起" : "更多颜色", action: #selector(moreClicked(_:)))
         moreView.frame = NSRect(x: x + 2, y: row1Y, width: dotSize, height: dotSize)
         addSubview(moreView)
     }
@@ -243,7 +241,7 @@ final class FFTagColorPickerView: NSView {
     /// 创建「+」/「...」控制按钮：纯视图圆形（与色块完全同尺寸同外观），
     /// 中央绘制 SF Symbol 图标，点击手势触发。避免 NSButton.circular 在
     /// macOS 26 上渲染尺寸/样式与色块不一致的问题。
-    private func makeControlDot(symbol: String, tooltip: String, action: Selector) -> NSView {
+    private func makeControlDot(icon: FFIconName, tooltip: String, action: Selector) -> NSView {
         let dot = NSView(frame: NSRect(x: 0, y: 0, width: dotSize, height: dotSize))
         dot.wantsLayer = true
         // 浅灰底 + 细边框，与色块轮廓一致，突出"按钮"性质
@@ -252,18 +250,18 @@ final class FFTagColorPickerView: NSView {
         dot.layer?.borderColor = NSColor.separatorColor.cgColor
         dot.layer?.borderWidth = 1
 
-        // 中央图标（SF Symbol，模板色）
-        let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
-        icon.contentTintColor = NSColor.labelColor
-        icon.imageScaling = .scaleProportionallyDown
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        dot.addSubview(icon)
+        // 中央图标（Lucide 模板图，跟随 contentTintColor）
+        let iconView = NSImageView()
+        iconView.image = FFIcon.template(icon, size: 13)
+        iconView.contentTintColor = NSColor.labelColor
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        dot.addSubview(iconView)
         NSLayoutConstraint.activate([
-            icon.centerXAnchor.constraint(equalTo: dot.centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 13),
-            icon.heightAnchor.constraint(equalToConstant: 13),
+            iconView.centerXAnchor.constraint(equalTo: dot.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 13),
+            iconView.heightAnchor.constraint(equalToConstant: 13),
         ])
 
         let click = NSClickGestureRecognizer(target: self, action: action)
@@ -281,20 +279,22 @@ final class FFTagColorPickerView: NSView {
         select(hex: allHexes[idx])
     }
 
-    /// 点「+」：弹系统颜色选择器，选色后插入色板首位并选中（原色右移）
+    /// 点「+」：弹出统一选色器（App 色板 + 任意色），选色后插入色板首位并选中
     @objc private func addColorClicked(_ sender: NSClickGestureRecognizer) {
-        let panel = NSColorPanel.shared
-        panel.setTarget(self)
-        panel.setAction(#selector(colorPanelChanged(_:)))
-        panel.color = NSColor(hex: selectedHex) ?? .systemBlue
-        panel.makeKeyAndOrderFront(nil)
+        guard let anchor = sender.view else { return }
+        FFTagColorPalette.present(from: anchor, currentHex: selectedHex) { [weak self] hex in
+            guard let self else { return }
+            if !self.allHexes.contains(where: { $0.lowercased() == hex.lowercased() }) {
+                self.allHexes.insert(hex.uppercased(), at: 0)
+            }
+            self.select(hex: hex)
+            self.rebuildDots()
+        }
     }
 
     deinit {
-        // F3: dialog 关闭后清理 NSColorPanel.shared 的 target，避免 panel 保留
-        // 指向已释放视图的悬空指针，用户再改色时崩溃。
-        // 注意：NSColorPanel 无 target getter，只能在面板仍可见时无条件清理
-        //（面板关闭时 target 已被系统重置，直接 setTarget(nil) 无副作用）。
+        // 选色器改为独立 popover 后不再占用 NSColorPanel.shared，
+        // 但若历史调用路径仍打开过系统色盘，这里顺手清掉悬空 target。
         if NSColorPanel.shared.isVisible {
             NSColorPanel.shared.setTarget(nil)
         }

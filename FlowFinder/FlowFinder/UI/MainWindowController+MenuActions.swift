@@ -760,6 +760,12 @@ extension MainWindowController {
         switch action {
         case #selector(menuBatchRename(_:)):
             return activePaneViewModel.selectedFiles.count >= 2
+        // B7 #6：单面板（另一面板收起）时主菜单跨面板项禁用
+        // （文件右键菜单的同类项由 FFPaneActionsController.updateMainMenu 隐藏）
+        case #selector(menuCopyToOther(_:)),
+             #selector(menuMoveToOther(_:)),
+             #selector(menuOpenInOther(_:)):
+            return !isSinglePaneMode
         // Wave2 P0-4：「显示隐藏文件」菜单项展示当前开关状态（对勾）
         case #selector(menuToggleHiddenFiles(_:)):
             item.state = UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.showHiddenFiles) ? .on : .off
@@ -903,6 +909,34 @@ extension MainWindowController {
 
     @objc func menuSettings(_ sender: Any?) {
         SettingsWindowController.shared.showWindow()
+    }
+
+    /// 需求 #3：手动复查文件访问权限（拒绝后可在系统设置里勾选，再回来点这个）
+    @objc func menuCheckFileAccess(_ sender: Any?) {
+        FFPermissionGate.shared.recheck { [weak self] report in
+            guard let self = self else { return }
+            if report.needsAttention {
+                FFPermissionGate.shared.presentGuidanceIfNeeded(report, in: self.window)
+            } else {
+                // 授权到位：把两侧面板按当前路径重新列一遍
+                self.leftPaneViewModel.refresh()
+                self.rightPaneViewModel.refresh()
+                let alert = NSAlert()
+                alert.messageText = "文件访问权限已就绪"
+                alert.informativeText = "桌面、文稿、下载与外置磁盘均可访问。"
+                alert.addButton(withTitle: "好")
+                if let window = self.window {
+                    alert.beginSheetModal(for: window, completionHandler: nil)
+                } else {
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    /// 需求 #3：完全磁盘访问权限是「一次授权覆盖所有位置」的唯一途径
+    @objc func menuOpenFullDiskAccess(_ sender: Any?) {
+        FFPermissionGate.openPrivacySettings(pane: "Privacy_AllFiles")
     }
 
     /// Wave2 P1：帮助菜单「FlowFinder 帮助」——打开项目主页

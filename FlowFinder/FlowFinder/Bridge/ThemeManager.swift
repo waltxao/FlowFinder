@@ -17,11 +17,15 @@ public enum AppearanceMode: Int, CaseIterable {
         }
     }
 
-    public var iconName: String {
+    /// 模式图标（Lucide）
+    ///
+    /// 不标 public：FFIconName 是模块内类型，public 属性不能引用 internal 类型。
+    /// 设置页在同一模块内调用，internal 足够。
+    var icon: FFIconName {
         switch self {
-        case .light: return "sun.max"
-        case .dark: return "moon"
-        case .system: return "circle.lefthalf.filled"
+        case .light: return .sun
+        case .dark: return .moon
+        case .system: return .circleDot
         }
     }
 

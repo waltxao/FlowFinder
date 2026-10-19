@@ -534,7 +534,7 @@ class ExpandableDetailsBar: NSView {
         tagsContainer.heightAnchor.constraint(equalToConstant: 18).isActive = true
 
         // v0.7.4 项 4：标签行编辑按钮（铅笔图标），点击弹出标签选择弹窗
-        tagsEditButton.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "编辑标签")
+        tagsEditButton.image = FFIcon.template(.pencil, size: 12)
         tagsEditButton.contentTintColor = NSColor.secondaryLabelColor
         tagsEditButton.isBordered = false
         tagsEditButton.controlSize = .small
@@ -694,7 +694,7 @@ class ExpandableDetailsBar: NSView {
         chevronButton.contentTintColor = NSColor.secondaryLabelColor
         chevronButton.target = self
         chevronButton.action = #selector(toggleExpanded)
-        chevronButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "展开")
+        chevronButton.image = FFIcon.template(.chevronUp, size: 11)
         chevronButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(chevronButton)
 
@@ -1186,9 +1186,8 @@ class ExpandableDetailsBar: NSView {
         compactView.isHidden = isExpanded
         expandedView.isHidden = !isExpanded
 
-        let symbol = isExpanded ? "chevron.down" : "chevron.up"
-        chevronButton.image = NSImage(systemSymbolName: symbol,
-                                      accessibilityDescription: isExpanded ? "收起" : "展开")
+        let chevron: FFIconName = isExpanded ? .chevronDown : .chevronUp
+        chevronButton.image = FFIcon.template(chevron, size: 11)
 
         if isExpanded { loadThumbnail() }
 
@@ -1250,7 +1249,7 @@ class ExpandableDetailsBar: NSView {
         if selectedCount > 1 {
             compactNameField.stringValue = "已选中 \(selectedCount) 项"
             compactSubField?.stringValue = ""
-            setPlaceholderIcon(symbol: "doc.on.doc")
+            setPlaceholderIcon(icon: .copy)
         } else if let entry = entry {
             compactNameField.stringValue = entry.name
             compactSubField?.stringValue = "\(entry.formattedSize) · \(entry.kindDescription)"
@@ -1263,7 +1262,7 @@ class ExpandableDetailsBar: NSView {
             // 此前 tray.full.fill + systemBlue 0.5 半透明托盘观感差；而工作区图标走
             // 异步回调（setRealFileIcon），失败或未返回时永远残留上一个占位。
             // 灰色 folder 与「未选择文件」占位文本同一视觉层级，且同步显示无空窗。
-            setPlaceholderIcon(symbol: "folder")
+            setPlaceholderIcon(icon: .folder)
         }
 
         // expanded 字段：名称 / 种类 / 大小 / 位置 / 创建日期 / 修改日期
@@ -1473,20 +1472,13 @@ class ExpandableDetailsBar: NSView {
     /// 任务 F11-6: 设置占位 SF Symbol 图标（compact 与 expanded 同步）
     /// SF Symbol 默认为模板图像，通过 contentTintColor 染为灰色（tertiaryLabelColor）
     /// - Parameter symbol: SF Symbol 名称（如 "folder" / "doc.on.doc"）
-    private func setPlaceholderIcon(symbol: String) {
-        // 小图标(24pt)与大图标(64pt light)视觉协调，适配 96×96 展开态图标视图
-        let config = NSImage.SymbolConfiguration(pointSize: 24, weight: .regular)
-        let bigConfig = NSImage.SymbolConfiguration(pointSize: 64, weight: .light)
-
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        smallIconView.image = image?.withSymbolConfiguration(config)
-        bigIconView.image = image?.withSymbolConfiguration(bigConfig)
+    private func setPlaceholderIcon(icon: FFIconName) {
 
         // 占位图标使用次级标签色，与「未选择文件」等占位文本视觉一致。
         // （曾改 systemBlue 0.5 透明度，实测半透明蓝托盘观感差，回归灰阶占位）
         let tintColor = NSColor.secondaryLabelColor
-        smallIconView.contentTintColor = tintColor
-        bigIconView.contentTintColor = tintColor
+        smallIconView.image = FFIcon.image(icon, size: 24, color: tintColor)
+        bigIconView.image = FFIcon.image(icon, size: 64, color: tintColor)
     }
 
     /// 任务 F11-6: 设置真实文件图标（compact 与 expanded 同步）
@@ -1763,7 +1755,7 @@ class ExpandableDetailsBar: NSView {
 
         let createItem = NSMenuItem(title: "新建标签...", action: #selector(createTagFromDetailsBar(_:)), keyEquivalent: "")
         createItem.target = self
-        createItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
+        createItem.image = FFIcon.template(.plus, size: FFIcon.Metrics.menu)
         menu.addItem(createItem)
 
         // v0.7.4 修订：菜单从按钮右下角弹出。

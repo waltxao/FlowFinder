@@ -100,6 +100,19 @@ public struct FileEntry: Identifiable, Equatable, Hashable {
         return FFFormat.date(creationDate)
     }
 
+    /// 列表元信息行：`1.2 MB · 10月18日 14:32`
+    ///
+    /// 规格见 `docs/PLAN-2026-10-19.md` §3.7：固定两项「大小 · 修改时间」。
+    /// 目录没有有意义的字节数（`formattedSize` 返回 `--`），此情况下只显示修改时间，
+    /// 避免出现 `-- · 10月18日 14:32` 这种看起来像数据缺失的写法。
+    public var formattedMetaLine: String {
+        let date = FFFormat.dateCompact(modificationDate)
+        guard !isDirectory else { return date }
+        let size = formattedSize
+        guard size != "--" else { return date }
+        return "\(size) · \(date)"
+    }
+
     /// Sort-friendly name (directories first, then alphabetically)
     public var sortName: String {
         return isDirectory ? "0_\(name.lowercased())" : "1_\(name.lowercased())"

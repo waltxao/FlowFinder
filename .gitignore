@@ -13,6 +13,7 @@ xcuserdata/
 *.xcuserstate
 build/
 build-beta/
+build_stale_*/
 DerivedData/
 *.ipa
 *.dSYM.zip
@@ -52,6 +53,7 @@ FlowFinderNative/FlowFinderNative/Libraries/*.dylib
 # Agent 工作目录（审计/头脑风暴临时产物）
 .superpowers/
 .omo/
+.workbuddy/
 
 # 误入库的构建产物（2026-10-18 清理时移除，禁止再提交）
 rust-core/*relinked*.dylib

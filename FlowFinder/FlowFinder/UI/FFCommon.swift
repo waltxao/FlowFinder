@@ -19,6 +19,8 @@ class FFOpaqueContainerView: NSView {
 extension Notification.Name {
     // 窗口/视图相关
     static let openSettings = Notification.Name("OpenSettings")
+    /// 2026-10-19 #10：侧栏显隐（侧栏按钮或 ⌥⌘S 发出，窗口统一执行动画）
+    static let sidebarDidToggleVisibility = Notification.Name("FFSidebarDidToggleVisibility")
     static let refreshHiddenFiles = Notification.Name("refreshHiddenFiles")
     static let appearanceChanged = Notification.Name("AppearanceChanged")
     // v0.6.9: 文件夹显示配置变更通知
@@ -134,19 +136,19 @@ enum FFListDensity: String, CaseIterable {
     case standard = "standard"
     case relaxed = "relaxed"
 
-    /// 基础行高（无标签文件行）
+    /// 基础行高（无标签文件行）。2026-10-19 #11：标准档 30pt 单行
     var baseRowHeight: CGFloat {
         switch self {
-        case .compact: return 22
-        case .standard: return 26
-        case .relaxed: return 32
+        case .compact: return 26
+        case .standard: return 30
+        case .relaxed: return 36
         }
     }
 
     /// 带标签行高（文件名行 + 标签药丸行，随档位联动）
     var taggedRowHeight: CGFloat {
         switch self {
-        case .compact: return 42
+        case .compact: return 44
         case .standard: return 48
         case .relaxed: return 56
         }
@@ -372,60 +374,64 @@ enum FFPaneMenuBuilder {
         // 标题动态更新为"撤销 X"/"重做 X"，如"撤销删除"、"重做删除"
         // tag 100=撤销, 101=重做（用 tag 识别避免标题变化后匹配失败）
         let undoItem = menu.addItem(withTitle: "撤销", action: #selector(FFPaneActionsController.undoFromMenu(_:)), keyEquivalent: "z")
-        undoItem.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "撤销")
+        undoItem.image = FFIcon.template(.undo2, size: FFIcon.Metrics.menu)
         undoItem.isHidden = true
         undoItem.tag = 100
         let redoItem = menu.addItem(withTitle: "重做", action: #selector(FFPaneActionsController.redoFromMenu(_:)), keyEquivalent: "Z")
-        redoItem.image = NSImage(systemSymbolName: "arrow.uturn.forward", accessibilityDescription: "重做")
+        redoItem.image = FFIcon.template(.redo2, size: FFIcon.Metrics.menu)
         redoItem.isHidden = true
         redoItem.tag = 101
         menu.addItem(.separator())
 
         // 1. 打开
         menu.addItem(withTitle: "打开", action: #selector(FFPaneActionsController.openSelected(_:)), keyEquivalent: "")
+        // B7 #4：在新标签页中打开（仅单个文件夹时显示，由 menuNeedsUpdate 控制）
+        let newTabItem = menu.addItem(withTitle: "在新标签页中打开",
+                                      action: #selector(FFPaneActionsController.openInNewTab(_:)),
+                                      keyEquivalent: "")
+        newTabItem.image = FFIcon.template(.externalLink, size: FFIcon.Metrics.menu)
+        newTabItem.isHidden = true
         // 2. 分隔线
         menu.addItem(.separator())
         // 3. 复制
         let copyItem = menu.addItem(withTitle: "复制", action: #selector(FFPaneActionsController.copySelected(_:)), keyEquivalent: "c")
-        copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制")
+        copyItem.image = FFIcon.template(.copy, size: FFIcon.Metrics.menu)
         // 4. 剪切
         let cutItem = menu.addItem(withTitle: "剪切", action: #selector(FFPaneActionsController.cutSelected(_:)), keyEquivalent: "x")
-        cutItem.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "剪切")
+        cutItem.image = FFIcon.template(.scissors, size: FFIcon.Metrics.menu)
         // 5. 粘贴
         let pasteItem = menu.addItem(withTitle: "粘贴", action: #selector(FFPaneActionsController.pasteSelected(_:)), keyEquivalent: "v")
-        pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "粘贴")
+        pasteItem.image = FFIcon.template(.clipboardPaste, size: FFIcon.Metrics.menu)
         // Wave2 P1：拷贝路径（多选时每行一个路径，写入系统剪贴板）
         let copyPathItem = menu.addItem(withTitle: "拷贝路径", action: #selector(FFPaneActionsController.copyPathsSelected(_:)), keyEquivalent: "")
-        copyPathItem.image = NSImage(systemSymbolName: "link", accessibilityDescription: "拷贝路径")
+        copyPathItem.image = FFIcon.template(.link, size: FFIcon.Metrics.menu)
         // 6. 分隔线
         menu.addItem(.separator())
         // 7. 移动到另一面板（箭头方向随面板）
         let moveItem = menu.addItem(withTitle: "移动到另一面板", action: #selector(FFPaneActionsController.moveToOtherPane(_:)), keyEquivalent: "")
-        moveItem.image = NSImage(systemSymbolName: isLeft ? "arrow.right" : "arrow.left",
-                                 accessibilityDescription: "移动到另一面板")
+        moveItem.image = FFIcon.template(isLeft ? .arrowRight : .arrowLeft, size: FFIcon.Metrics.menu)
         // 8. 复制到另一面板
         let copyOtherItem = menu.addItem(withTitle: "复制到另一面板", action: #selector(FFPaneActionsController.copyToOtherPane(_:)), keyEquivalent: "")
-        copyOtherItem.image = NSImage(systemSymbolName: isLeft ? "arrow.right.square" : "arrow.left.square",
-                                      accessibilityDescription: "复制到另一面板")
+        copyOtherItem.image = FFIcon.template(.copy, size: FFIcon.Metrics.menu)
         // 9. 在对侧面板打开（仅文件夹，由 menuNeedsUpdate 动态显示）
         let openOtherItem = menu.addItem(withTitle: "在对侧面板打开", action: #selector(FFPaneActionsController.openInOtherPane(_:)), keyEquivalent: "")
-        openOtherItem.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "在对侧面板打开")
+        openOtherItem.image = FFIcon.template(.columns2, size: FFIcon.Metrics.menu)
         openOtherItem.isHidden = true
         // 10. 分隔线
         menu.addItem(.separator())
         // 11. 重命名
         let renameItem = menu.addItem(withTitle: "重命名", action: #selector(FFPaneActionsController.renameSelected(_:)), keyEquivalent: "")
-        renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "重命名")
+        renameItem.image = FFIcon.template(.pencil, size: FFIcon.Metrics.menu)
         // 12. 移到废纸篓（红色文字）
         let deleteItem = menu.addItem(withTitle: "移到废纸篓", action: #selector(FFPaneActionsController.deleteSelected(_:)), keyEquivalent: "\u{7F}")
-        deleteItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "移到废纸篓")
+        deleteItem.image = FFIcon.template(.trash2, size: FFIcon.Metrics.menu)
         let redAttrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.systemRed]
         deleteItem.attributedTitle = NSAttributedString(string: "移到废纸篓", attributes: redAttrs)
         // 13. 分隔线
         menu.addItem(.separator())
         // 14. 新建文件夹
         let newFolderItem = menu.addItem(withTitle: "新建文件夹", action: #selector(FFPaneActionsController.createDirectory(_:)), keyEquivalent: "n")
-        newFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "新建文件夹")
+        newFolderItem.image = FFIcon.template(.folderPlus, size: FFIcon.Metrics.menu)
         // 15. 用所选项目新建文件夹（选中数量在 menuNeedsUpdate 中动态更新标题）
         // v0.7.4 项 6：标题 "用所选 X 个项目新建文件夹"，X 由 updateMainMenu 填充
         let folderFromSelectionItem = menu.addItem(
@@ -433,30 +439,30 @@ enum FFPaneMenuBuilder {
             action: #selector(FFPaneActionsController.createFolderFromSelection(_:)),
             keyEquivalent: ""
         )
-        folderFromSelectionItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "用所选项目新建文件夹")
+        folderFromSelectionItem.image = FFIcon.template(.folderPlus, size: FFIcon.Metrics.menu)
         folderFromSelectionItem.isHidden = true  // 无选中时隐藏，由 updateMainMenu 控制
         // 16. 分隔线
         menu.addItem(.separator())
         // 17. 添加到我的收藏
         let favItem = menu.addItem(withTitle: "添加到我的收藏", action: #selector(FFPaneActionsController.addToFavorites(_:)), keyEquivalent: "")
-        favItem.image = NSImage(systemSymbolName: "star", accessibilityDescription: "添加到我的收藏")
+        favItem.image = FFIcon.template(.star, size: FFIcon.Metrics.menu)
         // 18. 标签（二级菜单）
         if let tagsSubmenu = tagsSubmenu {
             let tagsItem = menu.addItem(withTitle: "标签", action: nil, keyEquivalent: "")
-            tagsItem.image = NSImage(systemSymbolName: "tag", accessibilityDescription: "标签")
+            tagsItem.image = FFIcon.template(.tag, size: FFIcon.Metrics.menu)
             tagsItem.submenu = tagsSubmenu
         }
         // 19. AI 自动打标签
         let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: #selector(FFPaneActionsController.generateAITags(_:)), keyEquivalent: "")
-        aiTagItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI 自动打标签")
+        aiTagItem.image = FFIcon.template(.sparkles, size: FFIcon.Metrics.menu)
         // 20. 查重扫描
         let dupItem = menu.addItem(withTitle: "查重扫描", action: #selector(FFPaneActionsController.duplicateScan(_:)), keyEquivalent: "")
-        dupItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "查重扫描")
+        dupItem.image = FFIcon.template(.scanSearch, size: FFIcon.Metrics.menu)
         // 21. 分隔线
         menu.addItem(.separator())
         // 22. 显示简介
         let infoItem = menu.addItem(withTitle: "显示简介", action: #selector(FFPaneActionsController.showInfoMenu(_:)), keyEquivalent: "i")
-        infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "显示简介")
+        infoItem.image = FFIcon.template(.info, size: FFIcon.Metrics.menu)
 
         // 设置 target 与快捷键修饰键（与访达一致：⌘N 新建文件夹用 ⇧⌘N）
         for item in menu.items where item.action != nil {
@@ -490,10 +496,15 @@ enum FFPaneRetryKind: Equatable {
 }
 
 /// 面板状态 → 呈现描述（纯函数，由 PaneState 真值驱动，不复制业务状态）。
+// B7 #4：文件夹右键「在新标签页中打开」
+extension Notification.Name {
+    static let fileListDidOpenInNewTab = Notification.Name("fileListDidOpenInNewTab")
+}
+
 struct FFPaneStateDescriptor: Equatable {
     let mode: FFPaneOverlayMode
     let isFullScreen: Bool
-    let iconName: String
+    let icon: FFIconName?
     let title: String
     let subtitle: String
     let showsSpinner: Bool
@@ -513,7 +524,7 @@ struct FFPaneStateDescriptor: Equatable {
             let count = state.selectedFiles.count
             return FFPaneStateDescriptor(
                 mode: .operation, isFullScreen: false,
-                iconName: "arrow.triangle.2.circlepath",
+                icon: .refreshCw,
                 title: count > 0 ? "正在删除 \(count) 个项目…" : "正在处理文件操作…",
                 subtitle: "操作在后台执行，完成后列表自动更新",
                 showsSpinner: true, showsRetry: false, retryKind: .none
@@ -526,7 +537,7 @@ struct FFPaneStateDescriptor: Equatable {
             if state.files.isEmpty {
                 let retryKind: FFPaneRetryKind = state.deleteFailedPaths.isEmpty ? .reload : .deleteRetry
                 return FFPaneStateDescriptor(
-                    mode: .error, isFullScreen: true, iconName: "exclamationmark.triangle",
+                    mode: .error, isFullScreen: true, icon: .triangleAlert,
                     title: msg.title,
                     subtitle: msg.detail.isEmpty ? "点「重试」再试一次。" : msg.detail,
                     showsSpinner: false, showsRetry: true, retryKind: retryKind,
@@ -535,7 +546,7 @@ struct FFPaneStateDescriptor: Equatable {
             }
             let failedCount = state.deleteFailedPaths.count
             return FFPaneStateDescriptor(
-                mode: .error, isFullScreen: false, iconName: "exclamationmark.triangle",
+                mode: .error, isFullScreen: false, icon: .triangleAlert,
                 title: failedCount > 0 ? "\(failedCount) 个项目删除失败" : msg.title,
                 subtitle: msg.detail.isEmpty ? "点「重试」再试一次。" : msg.detail,
                 showsSpinner: false, showsRetry: true,
@@ -546,7 +557,7 @@ struct FFPaneStateDescriptor: Equatable {
 
         if state.isLoading && state.files.isEmpty {
             return FFPaneStateDescriptor(
-                mode: .loading, isFullScreen: true, iconName: "",
+                mode: .loading, isFullScreen: true, icon: nil,
                 title: "正在加载…", subtitle: "",
                 showsSpinner: true, showsRetry: false, retryKind: .none
             )
@@ -555,7 +566,7 @@ struct FFPaneStateDescriptor: Equatable {
         if state.files.isEmpty {
             if state.path.isEmpty {
                 return FFPaneStateDescriptor(
-                    mode: .empty, isFullScreen: true, iconName: "sidebar.left",
+                    mode: .empty, isFullScreen: true, icon: .panelLeft,
                     title: "打开一个文件夹",
                     subtitle: "在侧边栏选择一个文件夹开始浏览",
                     showsSpinner: false, showsRetry: false, retryKind: .none
@@ -563,7 +574,7 @@ struct FFPaneStateDescriptor: Equatable {
             }
             if !state.searchQuery.isEmpty {
                 return FFPaneStateDescriptor(
-                    mode: .empty, isFullScreen: true, iconName: "magnifyingglass",
+                    mode: .empty, isFullScreen: true, icon: .search,
                     title: "未找到匹配项",
                     subtitle: "没有名称与「\(state.searchQuery)」匹配的项目",
                     showsSpinner: false, showsRetry: false, retryKind: .none
@@ -571,14 +582,14 @@ struct FFPaneStateDescriptor: Equatable {
             }
             if state.tagFilter != nil {
                 return FFPaneStateDescriptor(
-                    mode: .empty, isFullScreen: true, iconName: "tag",
+                    mode: .empty, isFullScreen: true, icon: .tag,
                     title: "没有符合所选标签的项目",
                     subtitle: "移除标签筛选或选择其他标签",
                     showsSpinner: false, showsRetry: false, retryKind: .none
                 )
             }
             return FFPaneStateDescriptor(
-                mode: .empty, isFullScreen: true, iconName: "folder",
+                mode: .empty, isFullScreen: true, icon: .folder,
                 title: "此文件夹为空",
                 subtitle: "将文件拖到这里开始整理",
                 showsSpinner: false, showsRetry: false, retryKind: .none
@@ -586,7 +597,7 @@ struct FFPaneStateDescriptor: Equatable {
         }
 
         return FFPaneStateDescriptor(
-            mode: .content, isFullScreen: false, iconName: "",
+            mode: .content, isFullScreen: false, icon: nil,
             title: "", subtitle: "",
             showsSpinner: false, showsRetry: false, retryKind: .none
         )
@@ -787,7 +798,9 @@ final class FFPaneStateOverlayView: NSView {
                 fullSpinner.isHidden = true
                 fullSpinner.stopAnimation(nil)
                 iconView.isHidden = false
-                iconView.image = NSImage(systemSymbolName: descriptor.iconName, accessibilityDescription: descriptor.title)
+                iconView.image = descriptor.icon.map {
+                    FFIcon.image($0, size: 44, color: .secondaryLabelColor)
+                }
                 subtitleLabel.isHidden = descriptor.subtitle.isEmpty
                 subtitleLabel.stringValue = descriptor.subtitle
                 retryButton.isHidden = !descriptor.showsRetry
@@ -812,7 +825,9 @@ final class FFPaneStateOverlayView: NSView {
                 bannerSpinner.isHidden = true
                 bannerSpinner.stopAnimation(nil)
                 bannerIcon.isHidden = false
-                bannerIcon.image = NSImage(systemSymbolName: descriptor.iconName, accessibilityDescription: descriptor.title)
+                bannerIcon.image = descriptor.icon.map {
+                    FFIcon.image($0, size: 14, color: .secondaryLabelColor)
+                }
             }
         } else {
             bannerSpinner.stopAnimation(nil)

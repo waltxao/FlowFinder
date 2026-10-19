@@ -26,7 +26,13 @@ TEST_HOME := /tmp/flowfinder-test-home
 # 注意 1：-target 模式不接受 -derivedDataPath（需 -scheme 才可用），改用 SYMROOT/OBJROOT
 # 注意 2：SYMROOT 必须用绝对路径——xcodebuild 会以 $(SRCROOT) 为基准解析相对路径，
 #         写成 build/Products 会落到 FlowFinder/build/Products 而不是仓库根
-DERIVED := $(CURDIR)/build
+# 注意 3（2026-10-20 实测）：仓库放在外置卷（/Volumes/...）时，llbuild 的
+#         BuildEngine 会卡在 condition_variable 上永不返回，xcodebuild 挂死——
+#         现象是 "Building Swift (Debug)..." 之后几分钟无任何输出、无 swift-frontend 进程，
+#         采样 SWBBuildService 可见主线程与全部 Lane 线程都停在 condition_variable::wait。
+#         换到内置卷同一仓库立即 55 秒全新构建通过，因此默认产物目录放到内置卷缓存。
+#         需要改回项目内：make DERIVED=$(CURDIR)/build build
+DERIVED ?= $(HOME)/Library/Caches/FlowFinderBuild
 APP_DEBUG := $(DERIVED)/Products/Debug/FlowFinder.app
 APP_RELEASE := $(DERIVED)/Products/Release/FlowFinder.app
 DESKTOP_APP := $(HOME)/Desktop/FlowFinder.app

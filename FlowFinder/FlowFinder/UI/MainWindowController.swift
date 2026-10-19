@@ -186,6 +186,71 @@ private class FFSplitView: NSSplitView {
 // FFOpaqueContainerView 已提取到 FFCommon.swift（统一实体背景容器）
 // 原 OpaqueContainerView 已由 FFOpaqueContainerView 替代
 
+// MARK: - FFSidebarRevealHost
+
+/// 侧栏隐藏后窗口左上角的「显示侧栏」开关（2026-10-19 #10）。
+///
+/// 铺满整个内容区，但只有按钮本身接收点击（`hitTest` 对非按钮区域返回 nil），
+/// 因此不会挡住文件列表。按钮位置在 `layout()` 里按红绿灯的真实位置反算——
+/// 写死坐标在换机器 / 全屏切换后会错位。
+final class FFSidebarRevealHost: NSView {
+
+    let button = NSButton()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    private func setup() {
+        translatesAutoresizingMaskIntoConstraints = false
+
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.image = FFIcon.template(.panelLeftOpen, size: 16)
+        button.contentTintColor = .secondaryLabelColor
+        button.toolTip = "显示侧边栏 (⌥⌘S)"
+        addSubview(button)
+    }
+
+    /// 除按钮外不吃事件：文件列表的点击/拖拽要能穿透过去
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
+    }
+
+    override func layout() {
+        super.layout()
+        let size: CGFloat = 24
+        var x: CGFloat = 12
+        var centerFromTop: CGFloat = 26
+
+        if let window,
+           !window.styleMask.contains(.fullScreen),
+           let close = window.standardWindowButton(.zoomButton) ?? window.standardWindowButton(.closeButton),
+           let closeSuperview = close.superview {
+            let rectInWindow = closeSuperview.convert(close.frame, to: nil)
+            let maxX = convert(NSPoint(x: rectInWindow.maxX, y: 0), from: nil).x
+            let center = convert(NSPoint(x: rectInWindow.midX, y: rectInWindow.midY), from: nil)
+            if maxX.isFinite, center.y.isFinite {
+                x = maxX + 8
+                centerFromTop = bounds.height - center.y
+            }
+        }
+
+        button.frame = NSRect(x: x,
+                              y: bounds.height - centerFromTop - size / 2,
+                              width: size,
+                              height: size)
+    }
+}
+
 // MARK: - MainWindowController
 
 public class MainWindowController: NSWindowController {
@@ -206,7 +271,12 @@ public class MainWindowController: NSWindowController {
     /// 侧栏宽度记忆键
     private static let sidebarWidthKey = "sidebar_width"
     /// 2026-10-18 #3：单/双窗口模式记忆键
-    private static let singlePaneModeKey = "single_pane_mode"
+    static let singlePaneModeKey = "single_pane_mode"
+    /// 2026-10-19 #10：侧栏隐藏状态记忆键
+    private static let sidebarHiddenKey = "sidebar_hidden"
+
+    /// 2026-10-19 #10：侧栏隐藏动画时长（DESIGN-SPEC：0.18s 滑出）
+    private static let sidebarAnimationDuration: TimeInterval = 0.18
 
     /// 读取上次拖拽记忆的侧栏宽度，落在 [min, max] 内才采用
     static func restoredSidebarWidth() -> CGFloat {
@@ -237,10 +307,10 @@ public class MainWindowController: NSWindowController {
     private var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
     /// #3：分栏两端的卡片包装视图（单窗模式靠 isHidden 收起一侧）
-    private var leftPaneWrapper: NSView!
-    private var rightPaneWrapper: NSView!
+    var leftPaneWrapper: NSView!
+    var rightPaneWrapper: NSView!
     /// #3：当前是否单窗口模式（持久化到 single_pane_mode）
-    private var isSinglePaneMode = false
+    var isSinglePaneMode = false
     /// #7：每个操作区顶部标签条与标签集合
     var leftTabStrip: PaneTabStripView?
     var rightTabStrip: PaneTabStripView?
@@ -258,8 +328,16 @@ public class MainWindowController: NSWindowController {
     private var appliedSinglePaneMode: Bool?
     /// 切模式导致的程序化窗口/分隔线变更期间为 true：此时不写 `sidebar_width`
     private var isAdjustingPaneMode = false
-    /// v0.7.0: 工具浮动面板（3×3 网格大方块布局，覆盖在侧栏底部区域）
-    private var toolPanelView: ToolPanelView?
+    /// 2026-10-19 #10：侧栏是否可见（隐藏后窗口左上角留一个开关按钮）
+    private var isSidebarVisible = true
+    /// 主分栏左侧最小宽度覆盖值：侧栏收起 / 动画期间为 0（默认取 sidebarMinWidth）
+    private var sidebarMinWidthOverride: CGFloat?
+    /// 隐藏前记住的侧栏宽度（分隔线归零后 frame 宽度就取不到了）
+    private var savedSidebarWidthWhileHidden: CGFloat?
+    /// 侧栏显隐动画定时器（按 0.18s 插值 divider 位置）
+    private var sidebarAnimationTimer: Timer?
+    /// 侧栏隐藏后左上角的「显示侧栏」开关
+    private var sidebarRevealHost: FFSidebarRevealHost?
     /// 1.2 活动面板描边（替代原 2pt 色条——色条被工具栏盖住，从未可见）
     private var leftActiveBorder: FFActivePaneBorderView!
     private var rightActiveBorder: FFActivePaneBorderView!
@@ -354,6 +432,15 @@ public class MainWindowController: NSWindowController {
 
         // setupUI 完成后再显示窗口（此时透明设置已就绪）
         window.makeKeyAndOrderFront(nil)
+
+        #if DEBUG
+        // 拖放落点自检：仅当以 FF_SELFTEST=1 启动时运行，结果写入 /tmp/ff-debug.log
+        if ProcessInfo.processInfo.environment["FF_SELFTEST"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.runDragSelfTest()
+            }
+        }
+        #endif
         // #5：启动即单窗模式时，上面那次 applyPaneMode 还没有真实布局宽度可用，
         // 等首个布局周期结束后再补一次「收窄窗口」
         if isSinglePaneMode {
@@ -401,6 +488,34 @@ public class MainWindowController: NSWindowController {
     /// 首窗口不在数组内移除为空操作），避免已关闭窗口的控制器残留
     public func windowWillClose(_ notification: Notification) {
         (NSApp.delegate as? AppDelegate)?.unregisterWindowController(self)
+        sidebarAnimationTimer?.invalidate()
+        sidebarAnimationTimer = nil
+    }
+
+    // MARK: B6 #3 全屏进出（侧栏宽度固定 + 顶部重排 + 退出恢复宽度）
+
+    /// 进入全屏：侧栏宽度由 holdingPriority 锁定（260 > 240），增量全进操作区；
+    /// 顶部三图标与名称区的对齐在 SidebarView.layout() 里按红绿灯反算，随重排自动生效。
+    public func windowDidEnterFullScreen(_ notification: Notification) {
+        guard sidebarView != nil else { return }
+        sidebarView.needsLayout = true
+        sidebarView.layoutSubtreeIfNeeded()
+    }
+
+    /// 退出全屏：窗口回到原 frame。保险起见把侧栏位置钉回记忆宽度，
+    /// 防止某些系统版本 divider 漂移把侧栏带歪；动画期间不写 sidebar_width。
+    /// 侧栏处于隐藏态时不动作（divider 应保持 0）。
+    public func windowDidExitFullScreen(_ notification: Notification) {
+        guard let split = mainSplitView, sidebarView != nil else { return }
+        if isSidebarVisible {
+            let remembered = max(MainWindowController.sidebarMinWidth,
+                                 MainWindowController.restoredSidebarWidth())
+            isAdjustingPaneMode = true
+            split.setPosition(remembered, ofDividerAt: 0)
+            isAdjustingPaneMode = false
+        }
+        sidebarView.needsLayout = true
+        sidebarView.layoutSubtreeIfNeeded()
     }
 
     // MARK: - UI Setup
@@ -524,26 +639,45 @@ public class MainWindowController: NSWindowController {
         // 2026-10-18 #4：设备不再以浮动卡片形式挂在这里，改由 SidebarView 的「位置」分区承担
         // （访达同构：个人收藏 / 位置 / 标签 三区）。原有 devicePanel 相关属性与构建代码已删除。
 
-        // v0.7.0: 创建工具浮动面板（覆盖在侧栏底部区域）
-        // 点击侧边栏工具按钮展开；再次点击或 ❌ 关闭时收起
-        toolPanelView = createToolPanel()
-        toolPanelView?.translatesAutoresizingMaskIntoConstraints = false
-        // 任务 4: 液态玻璃背景由 ToolPanelView.setupUI 内部 FFGlassView 提供
-        toolPanelView?.isHidden = true
-        if let toolPanel = toolPanelView {
-            mainContainer.addSubview(toolPanel)
-            NSLayoutConstraint.activate([
-                toolPanel.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 8),
-                // 2026-10-18：侧栏底部按钮行撤销，工具面板不再为它让位（原 -44）
-                toolPanel.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor, constant: -16),
-                toolPanel.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor, constant: -8),
-                // 修复问题 4：工具面板缺少高度约束，NSGridView 内容不足时面板塌缩到 0，
-                // 导致不可见/不可点。给定最小高度（关闭按钮 24 + 间距 + 2 行卡片 160 + 边距）。
-                toolPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 196),
-            ])
-        }
+        // 2026-10-19 #9：工具浮动面板已移除——查重 / 批量重命名 / AI 工具改由
+        // 程序名称旁的「发现功能」药丸弹出，不再常驻一块会挡住侧栏底部的卡片。
 
         // 2026-10-18 #4：卷挂载/卸载监听改由 SidebarView 统一处理（它已监听并刷新「位置」分区）
+
+        // 2026-10-19 #10：侧栏隐藏后左上角留一个开关（不展开侧栏，只负责唤回）。
+        // 覆盖在内容区之上，除按钮本身外不吃鼠标事件。
+        let revealHost = FFSidebarRevealHost()
+        revealHost.isHidden = true
+        revealHost.button.target = self
+        revealHost.button.action = #selector(toggleSidebar(_:))
+        mainContainer.addSubview(revealHost)
+        NSLayoutConstraint.activate([
+            revealHost.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            revealHost.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            revealHost.topAnchor.constraint(equalTo: mainContainer.topAnchor),
+            revealHost.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
+        ])
+        sidebarRevealHost = revealHost
+
+        // B5：窗口级标签拖放接收器（最上层）——所有标签落点都由它判定：
+        // 标签条内 = 组内重排 / 跨组接收；面板主体 = 并入最近侧；单窗另一半 = 拆分。
+        // 平时 hitTest 穿透，不影响文件拖放与点击。
+        let tabDropReceiver = PaneTabDropReceiver()
+        tabDropReceiver.registerForDraggedTypes([PaneTabDragContext.pasteboardType])
+        tabDropReceiver.translatesAutoresizingMaskIntoConstraints = false
+        mainContainer.addSubview(tabDropReceiver, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            tabDropReceiver.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
+            tabDropReceiver.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            tabDropReceiver.topAnchor.constraint(equalTo: mainContainer.topAnchor),
+            tabDropReceiver.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
+        ])
+        tabDropReceiver.onReceive = { [weak self] location in
+            self?.handleTabDrop(atWindowPoint: location)
+        }
+        tabDropReceiver.dropZoneRectProvider = { [weak self] location in
+            self?.splitDropZone(forWindowX: location.x)
+        }
 
         window.contentView = visualEffectView
 
@@ -628,11 +762,15 @@ public class MainWindowController: NSWindowController {
         // 原先是侧栏 .defaultLow，缩窗（含单窗模式按被收起侧宽度收窄）时 NSSplitView
         // 先把侧栏压到最小 160 再动操作区，而 splitViewDidResizeSubviews 又会把 160
         // 写进 sidebar_width —— 单窗切一次，侧栏宽度就被永久压窄。
+
         mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
         paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
-
+        mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        paneSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
         updateActivePaneVisual()
 
         // 注入 UndoManager 到各 PaneViewModel
@@ -663,6 +801,10 @@ public class MainWindowController: NSWindowController {
             let totalWidth = self.paneSplitView.bounds.width
             if totalWidth > 0 {
                 self.paneSplitView.setPosition(totalWidth / 2, ofDividerAt: 0)
+            }
+            // 2026-10-19 #10：还原上次退出时的侧栏显隐状态（不播动画，避免启动闪一下）
+            if UserDefaults.standard.bool(forKey: MainWindowController.sidebarHiddenKey) {
+                self.setSidebarVisible(false, animated: false)
             }
             // 任务 F10-3 / Wave1 P0-3: 初始化设备浮层——设备数据已改为后台加载
             // （DeviceSidebarDataSource.init 不再同步 loadDevices），经
@@ -740,6 +882,7 @@ public class MainWindowController: NSWindowController {
         // 工具栏（内含双行 + BreadcrumbBar）
         let toolbar = PaneToolbar()
         toolbar.delegate = self
+        toolbar.side = side
         toolbar.translatesAutoresizingMaskIntoConstraints = false
 
         // 面包屑导航栏（嵌入 PaneToolbar Row1）
@@ -937,6 +1080,11 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handlePaneModeToggle(_:)),
             name: .sidebarDidTogglePaneMode, object: nil
         )
+        // 2026-10-19 #10：侧栏显隐（侧栏顶部按钮发出）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSidebarToggleVisibility(_:)),
+            name: .sidebarDidToggleVisibility, object: nil
+        )
         // v0.8.0 P1: 收藏右键菜单的窗口级动作（新标签页 / 新窗口 / 显示简介）
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSidebarOpenInNewTab(_:)),
@@ -1005,6 +1153,11 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleOpenSettings(_:)),
             name: .openSettings, object: nil
         )
+        // B7 #4：文件夹右键「在新标签页中打开」（当前面板组末尾新建并激活）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListOpenInNewTab(_:)),
+            name: .fileListDidOpenInNewTab, object: nil
+        )
         // 任务 F11-11: 注册侧边栏工具面板入口通知（C1）
         // 查重 -> 打开 DuplicateScanWindowController；批量重命名 -> 转发 menuBatchRename；
         // AI 工具 -> 调用活动面板视图 triggerAITagGeneration
@@ -1019,12 +1172,6 @@ public class MainWindowController: NSWindowController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSidebarAITools(_:)),
             name: .sidebarDidRequestAITools, object: nil
-        )
-        // 问题3续修复：监听侧边栏工具面板展开/收起，联动设备浮层显隐
-        // SidebarView 已发送 SidebarToolPanelDidToggle 通知，但此前无观察者，导致设备浮层不隐藏
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleToolPanelToggle(_:)),
-            name: NSNotification.Name("SidebarToolPanelDidToggle"), object: nil
         )
         // v0.6.9: 文件夹显示配置变更通知
         // 隐藏文件 / 系统文件切换需重新过滤文件列表（数据层）
@@ -1063,94 +1210,22 @@ public class MainWindowController: NSWindowController {
 
     /// 任务 F10-10: 处理 OpenSettings 通知，弹出设置窗口（修复问题3）
     @objc private func handleOpenSettings(_ notification: Notification) {
-        SettingsWindowController.shared.showWindow()
+        if let section = notification.userInfo?["section"] as? String, section == "about" {
+            SettingsWindowController.shared.showAboutSection()
+        } else {
+            SettingsWindowController.shared.showWindow()
+        }
     }
 
-    /// v0.7.0: 工具面板展开/收起（2026-10-18 #4 起不再与设备浮层互斥——设备已迁入侧栏）
-    @objc private func handleToolPanelToggle(_ notification: Notification) {
-        // Wave2 P0-4（多窗口）：仅响应本窗口发出（object=本窗口侧边栏或本窗口）的通知
-        if let source = notification.object as? AnyObject, !(source === sidebarView), !(source === window) { return }
-        guard let isExpanded = notification.userInfo?["isExpanded"] as? Bool else { return }
-        toolPanelView?.isHidden = !isExpanded
+    /// B7 #4：文件夹「在新标签页中打开」→ 当前面板组末尾新建并激活
+    @objc private func handleFileListOpenInNewTab(_ notification: Notification) {
+        guard let sideName = notification.userInfo?["side"] as? String,
+              let path = notification.userInfo?["path"] as? String else { return }
+        let side: PaneSide = sideName == "left" ? .left : .right
+        newTab(in: side, path: path)
     }
 
     // MARK: - v0.7.0: 工具浮动面板
-
-    /// 创建工具浮动面板（3×3 网格大方块布局）
-    /// 包含 4 个工具项，点击工具或 ❌ 时通过 onClose 回调关闭面板并恢复设备栏
-    private func createToolPanel() -> ToolPanelView {
-        let tools: [ToolOverlayView.ToolItem] = [
-            ToolOverlayView.ToolItem(
-                icon: "doc.on.doc",
-                title: "查重扫描",
-                description: "扫描当前目录中的重复文件",
-                isEnabled: true,
-                action: { [weak self] in
-                    guard let self = self else { return }
-                    let wc = DuplicateScanWindowController.shared
-                    wc.showWindow()
-                    wc.window?.makeKeyAndOrderFront(nil)
-                    if #available(macOS 14.0, *) {
-                        NSApp.activate()
-                    } else {
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
-                }
-            ),
-            ToolOverlayView.ToolItem(
-                icon: "pencil.line",
-                title: "批量重命名",
-                description: "批量重命名选中文件",
-                isEnabled: true,
-                action: { [weak self] in
-                    guard let self = self else { return }
-                    let selected = self.activePaneViewModel.selectedFiles
-                    guard selected.count >= 2 else {
-                        // 与侧边栏/工具栏入口一致：选中不足 2 个时明确提示，不再静默无反应
-                        let alert = NSAlert()
-                        alert.messageText = "批量重命名"
-                        alert.informativeText = "请至少选中 2 个文件后再使用批量重命名。"
-                        alert.alertStyle = .informational
-                        alert.addButton(withTitle: "好")
-                        if let window = self.window { alert.beginSheetModal(for: window) { _ in } }
-                        return
-                    }
-                    self.menuBatchRename(nil)
-                    // 确保批量重命名窗口置前（menuBatchRename 内部 showWindow 后可能未置前）
-                    if let batchWindow = BatchRenameWindowController.shared.window {
-                        batchWindow.makeKeyAndOrderFront(nil)
-                    }
-                }
-            ),
-            ToolOverlayView.ToolItem(
-                icon: "sparkles",
-                title: "AI 打标 Beta",
-                description: "自动为文件生成标签",
-                isEnabled: false,
-                action: nil
-            ),
-            ToolOverlayView.ToolItem(
-                icon: "tray.full",
-                title: "AI 整理 Beta",
-                description: "自动整理文件到子文件夹",
-                isEnabled: false,
-                action: nil
-            ),
-        ]
-
-        let panel = ToolPanelView(tools: tools)
-        panel.onClose = { [weak self] in
-            // 通过通知触发 handleToolPanelToggle 隐藏工具面板并恢复设备栏
-            // 同时同步复位侧边栏工具按钮状态
-            // Wave2 P0-4（多窗口）：object 携带本窗口身份，接收方据此过滤
-            NotificationCenter.default.post(
-                name: NSNotification.Name("SidebarToolPanelDidToggle"),
-                object: self?.window,
-                userInfo: ["isExpanded": false]
-            )
-        }
-        return panel
-    }
 
     // MARK: - v0.6.9: 文件夹显示配置变更处理
 
@@ -1393,16 +1468,6 @@ public class MainWindowController: NSWindowController {
 
     public override func keyDown(with event: NSEvent) {
         // v0.7.0: Escape 关闭工具浮动面板
-        if event.keyCode == 53, let panel = toolPanelView, !panel.isHidden {
-            // Wave2 P0-4（多窗口）：object 携带本窗口身份，接收方据此过滤
-            NotificationCenter.default.post(
-                name: NSNotification.Name("SidebarToolPanelDidToggle"),
-                object: window,
-                userInfo: ["isExpanded": false]
-            )
-            return
-        }
-
         // Wave2 P0-3：以下键位统一经 ShortcutCenter 读取设置（默认值 = 原硬编码行为）。
         // 修饰键判定为「精确匹配」——替换原 contains(.command) 的过松判定（⌘⇧1 不再误触 ⌘1）。
 
@@ -1693,6 +1758,112 @@ public class MainWindowController: NSWindowController {
         return nil
     }
 
+    // MARK: - 侧栏显隐（2026-10-19 #10）
+
+    /// 侧栏显隐的窗口级入口：侧栏顶部按钮、⌥⌘S 菜单项、左上角浮层开关都走这里。
+    @objc func toggleSidebar(_ sender: Any?) {
+        setSidebarVisible(!isSidebarVisible, animated: true)
+    }
+
+    @objc private func handleSidebarToggleVisibility(_ notification: Notification) {
+        // 多窗口：只响应本窗口侧边栏发出
+        if let source = notification.object as? AnyObject,
+           !(source === sidebarView), !(source === window) { return }
+        toggleSidebar(notification.object)
+    }
+
+    /// 显隐侧栏。
+    ///
+    /// 收起 = 把主分栏分隔线推到 0（不是 removeFromSuperview）：侧栏上挂着工具面板等
+    /// 一批跨视图约束，从层级里摘掉会让它们全部失效。动画结束后才 `isHidden = true`，
+    /// 免得动画期间侧栏内容被压到 0 宽反复重排。
+    func setSidebarVisible(_ visible: Bool, animated: Bool) {
+        guard visible != isSidebarVisible,
+              let split = mainSplitView, let sidebar = sidebarView else { return }
+
+        // 分隔线归零后 frame 宽度就取不到了，隐藏前先记下来
+        if !visible, sidebar.frame.width >= MainWindowController.sidebarMinWidth {
+            savedSidebarWidthWhileHidden = sidebar.frame.width
+        }
+
+        isSidebarVisible = visible
+        UserDefaults.standard.set(!visible, forKey: Self.sidebarHiddenKey)
+        sidebarRevealHost?.isHidden = visible
+        sidebar.setSidebarVisible(visible)
+        applySidebarHiddenToolbarInset()
+
+        // 动画期间放开最小宽度：0 宽是「收起」的合法状态
+        sidebarMinWidthOverride = 0
+        (mainSplitView as? FFSplitView)?.leadingMinWidth = 0
+        if visible { sidebar.isHidden = false }
+
+        let target = visible
+            ? max(MainWindowController.sidebarMinWidth,
+                  savedSidebarWidthWhileHidden ?? MainWindowController.restoredSidebarWidth())
+            : 0
+
+        animateMainDivider(to: target, animated: animated) { [weak self] in
+            guard let self else { return }
+            if visible {
+                self.sidebarMinWidthOverride = nil
+                (self.mainSplitView as? FFSplitView)?.leadingMinWidth = MainWindowController.sidebarMinWidth
+            } else {
+                self.sidebarView?.isHidden = true
+                self.mainSplitView?.setPosition(0, ofDividerAt: 0)
+                (self.mainSplitView as? FFSplitView)?.leadingMinWidth = 0
+            }
+        }
+    }
+
+    /// 主分栏分隔线动画：60fps 定时器按 ease-in-out 插值，0.18s 收放。
+    /// `isAdjustingPaneMode` 全程为真，禁止把动画中间的宽度写进 `sidebar_width`。
+    private func animateMainDivider(to target: CGFloat, animated: Bool, completion: @escaping () -> Void) {
+        guard let split = mainSplitView else { completion(); return }
+        sidebarAnimationTimer?.invalidate()
+        sidebarAnimationTimer = nil
+
+        let start = split.arrangedSubviews.first?.frame.width ?? 0
+        let duration = animated ? FFMotion.animationDuration(MainWindowController.sidebarAnimationDuration) : 0
+        guard duration > 0, abs(target - start) > 0.5 else {
+            isAdjustingPaneMode = true
+            split.setPosition(target, ofDividerAt: 0)
+            isAdjustingPaneMode = false
+            completion()
+            return
+        }
+
+        isAdjustingPaneMode = true
+        let startTime = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self, let split = self.mainSplitView else { timer.invalidate(); return }
+            let progress = min(1, (CACurrentMediaTime() - startTime) / duration)
+            // easeInOutQuad：两端慢、中间快，和系统侧栏动画的手感一致
+            let eased = progress < 0.5
+                ? 2 * progress * progress
+                : 1 - pow(-2 * progress + 2, 2) / 2
+            split.setPosition(start + (target - start) * CGFloat(eased), ofDividerAt: 0)
+            if progress >= 1 {
+                timer.invalidate()
+                self.sidebarAnimationTimer = nil
+                split.setPosition(target, ofDividerAt: 0)
+                self.isAdjustingPaneMode = false
+                completion()
+            }
+        }
+        sidebarAnimationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// 侧栏收起后，最左那一栏顶到窗口最左边，工具栏要让开红绿灯与「显示侧栏」开关。
+    /// 双栏时最左恒为左栏；单栏时要看当前留在哪一侧。
+    private func applySidebarHiddenToolbarInset() {
+        // 红绿灯到 64pt，浮动开关 72–96，导航按钮从 104 起，互不重叠
+        let inset: CGFloat = isSidebarVisible ? 8 : 106
+        let leftmostIsLeft = !isSinglePaneMode || activePane == .left
+        leftPaneToolbar?.leadingInset = leftmostIsLeft ? inset : 8
+        rightPaneToolbar?.leadingInset = leftmostIsLeft ? 8 : inset
+    }
+
     // MARK: - 单/双窗口模式（2026-10-18 #3）
 
     @objc private func handlePaneModeToggle(_ notification: Notification) {
@@ -1709,7 +1880,7 @@ public class MainWindowController: NSWindowController {
     ///   最小宽度 760（侧栏 160 + 操作区 450 + 两侧留白）
     /// - 双窗：两栏可见，窗口还原到进入单窗前的宽度（不低于 1060，W-07），分隔线回中线
     /// 侧栏切换按钮图标同步更新。
-    private func applyPaneMode() {
+    func applyPaneMode() {
         let single = isSinglePaneMode
         let showLeft = !single || activePane == .left
         let showRight = !single || activePane == .right
@@ -1761,6 +1932,8 @@ public class MainWindowController: NSWindowController {
             }
         }
         sidebarView?.setSinglePaneMode(single)
+        // 侧栏收起时，最左那一栏随单双窗切换而变，工具栏让位要跟着重算（2026-10-19 #10）
+        applySidebarHiddenToolbarInset()
         updateActivePaneVisual()
     }
 
@@ -1916,8 +2089,14 @@ public class MainWindowController: NSWindowController {
         // 首启按「默认视图」设置切到网格时，初始焦点改挂当前可见视图的落点
         refreshInitialFirstResponder()
 
-        leftPaneViewModel.refresh()
-        rightPaneViewModel.refresh()
+        // 权限集中请求完成后再刷新两侧面板：
+        // 直接 refresh 会让目录列举撞上 TCC 授权对话框（系统调用阻塞 → 10s 后误报超时），
+        // 而且用户体感是「每打开一个文件夹被问一次」。
+        FFPermissionGate.shared.prepareBeforeInitialLoad(window: window) { [weak self] in
+            guard let self = self else { return }
+            self.leftPaneViewModel.refresh()
+            self.rightPaneViewModel.refresh()
+        }
     }
 
     // MARK: - Actions
@@ -2266,8 +2445,9 @@ extension MainWindowController: NSSplitViewDelegate {
     /// 限制每个面板的最小坐标，防止工具栏元素重叠
     public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
         // 主 split view（sidebar + panes）：sidebar 最小 160（DESIGN-SPEC B-01）
+        // 侧栏收起时放开到 0，否则分隔线推不到底（2026-10-19 #10）
         if splitView === mainSplitView {
-            return MainWindowController.sidebarMinWidth
+            return sidebarMinWidthOverride ?? MainWindowController.sidebarMinWidth
         }
         // pane split view（left + right panes）：每个面板最小 450
         if splitView === paneSplitView {

@@ -61,7 +61,7 @@ public class SMBManagerPanel: NSView {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         refreshButton = NSButton()
-        refreshButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "刷新")
+        refreshButton.image = FFIcon.template(.refreshCw, size: 13)
         refreshButton.contentTintColor = .secondaryLabelColor
         refreshButton.isBordered = false
         refreshButton.toolTip = "刷新列表"
@@ -188,7 +188,7 @@ public class SMBManagerPanel: NSView {
         container.layer?.cornerRadius = 8
 
         let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: "network.slash", accessibilityDescription: nil)
+        icon.image = FFIcon.template(.wifiOff, size: 28)
         icon.contentTintColor = .tertiaryLabelColor
         icon.imageScaling = .scaleProportionallyDown
         icon.translatesAutoresizingMaskIntoConstraints = false
@@ -238,7 +238,7 @@ public class SMBManagerPanel: NSView {
 
         // 服务器图标
         let serverIcon = NSImageView()
-        serverIcon.image = NSImage(systemSymbolName: "externaldrive.connected.to.line.below", accessibilityDescription: volume.name)
+        serverIcon.image = FFIcon.template(.server, size: 16)
         serverIcon.contentTintColor = .secondaryLabelColor
         serverIcon.imageScaling = .scaleProportionallyDown
         serverIcon.translatesAutoresizingMaskIntoConstraints = false

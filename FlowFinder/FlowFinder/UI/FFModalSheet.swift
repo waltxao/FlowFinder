@@ -138,8 +138,7 @@ class FFModalSheet: NSWindow {
         closeButton = NSButton()
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.bezelStyle = .inline
-        closeButton.image = NSImage(systemSymbolName: "xmark",
-                                    accessibilityDescription: "关闭")
+        closeButton.image = FFIcon.template(.x, size: 12)
         closeButton.setAccessibilityLabel("关闭")
         closeButton.imagePosition = .imageOnly
         closeButton.contentTintColor = .secondaryLabelColor

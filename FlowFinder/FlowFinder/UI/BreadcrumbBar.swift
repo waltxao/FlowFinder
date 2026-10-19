@@ -426,24 +426,24 @@ class BreadcrumbBar: NSView {
         let menu = NSMenu()
 
         let copyItem = NSMenuItem(title: "复制路径", action: #selector(copyPathToClipboard), keyEquivalent: "")
-        copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+        copyItem.image = FFIcon.template(.copy, size: FFIcon.Metrics.menu)
         copyItem.target = self
         menu.addItem(copyItem)
 
         let pasteItem = NSMenuItem(title: "粘贴路径跳转", action: #selector(pastePathAndNavigate), keyEquivalent: "")
-        pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil)
+        pasteItem.image = FFIcon.template(.clipboardPaste, size: FFIcon.Metrics.menu)
         pasteItem.target = self
         menu.addItem(pasteItem)
 
         menu.addItem(.separator())
 
         let finderItem = NSMenuItem(title: "在访达中打开", action: #selector(openInFinder), keyEquivalent: "")
-        finderItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+        finderItem.image = FFIcon.template(.folder, size: FFIcon.Metrics.menu)
         finderItem.target = self
         menu.addItem(finderItem)
 
         let terminalItem = NSMenuItem(title: "在终端中打开", action: #selector(openInTerminal), keyEquivalent: "")
-        terminalItem.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
+        terminalItem.image = FFIcon.template(.terminal, size: FFIcon.Metrics.menu)
         terminalItem.target = self
         menu.addItem(terminalItem)
 
@@ -539,9 +539,9 @@ private class BreadcrumbSegmentButton: NSButton {
 
         // 根分段显示图标：根卷用电脑图标，挂载卷用磁盘图标
         if isRoot {
-            let symbol = absolutePath == "/" ? "macpro.gen1" : "externaldrive"
-            self.image = NSImage(systemSymbolName: symbol, accessibilityDescription: absolutePath == "/" ? "电脑" : "磁盘")
-                ?? NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: "电脑")
+            // 根卷用显示器、挂载卷用硬盘：Lucide 模板图，contentTintColor 负责染色
+            let icon: FFIconName = absolutePath == "/" ? .monitor : .hardDrive
+            self.image = FFIcon.template(icon, size: 13)
             self.contentTintColor = color
         }
     }
@@ -622,7 +622,7 @@ private class BreadcrumbChevronButton: NSButton {
         // Wave2 P0-3：恢复默认焦点环（原 .none 致键盘焦点完全不可见——审计焦点环 §4）
         self.focusRingType = .default
         self.contentTintColor = NSColor.tertiaryLabelColor
-        self.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "同级目录")
+        self.image = FFIcon.template(.chevronRight, size: 12)
         self.toolTip = "点击查看同级目录"
 
         // 固定尺寸（14x14，略大于原 12 以提高点击命中率）
@@ -689,7 +689,7 @@ private class BreadcrumbOverflowButton: NSButton {
         self.focusRingType = .default
         self.contentTintColor = NSColor.secondaryLabelColor
         // 使用 ellipsis 图标（...）
-        self.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "更多路径")
+        self.image = FFIcon.template(.ellipsis, size: 14)
         self.toolTip = "点击查看完整路径"
 
         self.widthAnchor.constraint(equalToConstant: 20).isActive = true

@@ -222,15 +222,10 @@ private final class FFPillHeaderCell: NSTableHeaderCell {
         // 仅绘制主排序（priority == 0）
         guard priority == 0 else { return }
         let arrowRect = self.sortIndicatorRect(forBounds: cellFrame)
-        let symbolName = ascending ? "chevron.up" : "chevron.down"
-        if let arrow = NSImage(systemSymbolName: symbolName, accessibilityDescription: ascending ? "升序" : "降序") {
-            // 配置符号权重与大小
-            let config = NSImage.SymbolConfiguration(pointSize: arrowSize, weight: .regular)
-            let configured = arrow.withSymbolConfiguration(config) ?? arrow
-            // 次级标签色（与文字协调）
-            NSColor.secondaryLabelColor.set()
-            configured.draw(in: arrowRect)
-        }
+        // 2026-10-19 #11：列头箭头改用 Lucide（原 SF Symbol chevron.up/down）
+        let iconName = ascending ? FFIconName.chevronUp : FFIconName.chevronDown
+        let arrow = FFIcon.image(iconName, size: arrowSize, color: .secondaryLabelColor)
+        arrow.draw(in: arrowRect)
     }
 
     /// 排序指示器位置：列头右侧，垂直居中
@@ -257,7 +252,8 @@ private final class FFPillHeaderCell: NSTableHeaderCell {
         let matched: Bool
         switch key {
         case "name": matched = identifier == "name"
-        case "modifiedAt": matched = identifier == "modifiedAt"
+        // 元信息列（identifier "meta"）的排序语义就是修改时间
+        case "modifiedAt": matched = identifier == "modifiedAt" || identifier == "meta"
         case "type": matched = identifier == "type"
         case "size": matched = identifier == "size"
         default: matched = false
@@ -763,8 +759,11 @@ public class FileListView: NSView {
         switch vm.state.sortField {
         case .name: key = "name"
         case .modifiedAt: key = "modifiedAt"
-        case .type: key = "type"
-        case .size: key = "size"
+        // 2026-10-19 #11：大小 / 类型没有独立列头（四列合二），用不存在的 key
+        // 让 NSTableView 找不到匹配列而不画箭头——否则箭头会画在元信息列上，
+        // 看起来像「按修改时间排」，与真实排序状态不符。
+        case .size: key = "__sort_size__"
+        case .type: key = "__sort_type__"
         }
         let ascending = vm.state.sortAscending
         let current = tableView.sortDescriptors
@@ -783,10 +782,9 @@ public class FileListView: NSView {
     public var onActivatePane: (() -> Void)?
 
     // Reuse identifiers
-    private let nameCellID = NSUserInterfaceItemIdentifier("NameCell")
-    private let modifiedCellID = NSUserInterfaceItemIdentifier("ModifiedCell")
-    private let typeCellID = NSUserInterfaceItemIdentifier("TypeCell")
-    private let sizeCellID = NSUserInterfaceItemIdentifier("SizeCell")
+    // 2026-10-19 #11：四列合二后，类型 / 大小 / 修改日期三列的 cell 复用标识一并删除。
+    // 文件行的 cell 标识由 viewFor 直接取列 identifier（"name" / "meta"）动态生成，
+    // 复用池按 identifier 隔离，不再需要单独的常量。
     // 任务 F10-8: 分组标题行复用标识符
     private let sectionHeaderCellID = NSUserInterfaceItemIdentifier("SectionHeaderCell")
 
@@ -805,16 +803,6 @@ public class FileListView: NSView {
         let menu = NSMenu()
         menu.delegate = actionsController
         return menu
-    }()
-
-    // Icons
-    private lazy var folderIcon: NSImage? = {
-        NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹")
-            ?? NSImage(named: NSImage.folderName)
-    }()
-    private lazy var fileIcon: NSImage? = {
-        NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
-            ?? NSImage(named: NSImage.multipleDocumentsName)
     }()
 
     public override init(frame frameRect: NSRect) {
@@ -935,55 +923,39 @@ public class FileListView: NSView {
         tableView.dataSource = self
         tableView.delegate = self
 
-        // 四列按比例伸缩：任何窗口宽度下列宽总和 = 操作区可用宽，永不出现横向滚动条。
-        // 名称列初始占比最大（240/540 ≈ 44%），窗口变化时获得最多增量，视觉上名称列弹性最大（仿访达）。
+        // 2026-10-19 #11：四列合并为两列（名称 + 元信息）。
+        // 元信息固定两项「大小 · 修改时间」，11pt secondary 右对齐，见
+        // docs/PLAN-2026-10-19.md §3.7；类型列按规格裁掉（规格未列入必须项）。
+        // 列宽策略：名称列吃掉全部弹性增量，元信息列固定不收缩——
+        // 面板变窄时先省略名称，元信息始终完整（用户已确认：点元信息列头按修改时间排序）。
         tableView.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
 
-        // 列顺序：名称 → 修改日期 → 类型 → 大小（匹配 macOS Finder）
-        // 名称列（带图标）— 用户可手动拖宽
+        // 名称列（带图标）— 唯一弹性列
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         nameCol.title = "名称"
         nameCol.headerCell = FFPillHeaderCell()
         nameCol.headerCell.stringValue = "名称"
-        nameCol.width = 240
+        nameCol.width = 280
         nameCol.minWidth = 80
         nameCol.maxWidth = 2000
         nameCol.resizingMask = [.userResizingMask, .autoresizingMask]
         nameCol.sortDescriptorPrototype = NSSortDescriptor(key: "name", ascending: true)
         tableView.addTableColumn(nameCol)
 
-        // 修改日期列（设计稿 130px）
-        let modifiedCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("modifiedAt"))
-        modifiedCol.title = "修改日期"
-        modifiedCol.headerCell = FFPillHeaderCell()
-        modifiedCol.headerCell.stringValue = "修改日期"
-        modifiedCol.width = 130
-        modifiedCol.minWidth = 80
-        modifiedCol.resizingMask = [.userResizingMask, .autoresizingMask]
-        modifiedCol.sortDescriptorPrototype = NSSortDescriptor(key: "modifiedAt", ascending: true)
-        tableView.addTableColumn(modifiedCol)
-
-        // 类型列（设计稿 100px）
-        let typeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("type"))
-        typeCol.title = "类型"
-        typeCol.headerCell = FFPillHeaderCell()
-        typeCol.headerCell.stringValue = "类型"
-        typeCol.width = 100
-        typeCol.minWidth = 50
-        typeCol.resizingMask = [.userResizingMask, .autoresizingMask]
-        typeCol.sortDescriptorPrototype = NSSortDescriptor(key: "type", ascending: true)
-        tableView.addTableColumn(typeCol)
-
-        // 大小列（设计稿 70px，右对齐）
-        let sizeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
-        sizeCol.title = "大小"
-        sizeCol.headerCell = FFPillHeaderCell()
-        sizeCol.headerCell.stringValue = "大小"
-        sizeCol.width = 70
-        sizeCol.minWidth = 40
-        sizeCol.resizingMask = [.userResizingMask, .autoresizingMask]
-        sizeCol.sortDescriptorPrototype = NSSortDescriptor(key: "size", ascending: true)
-        tableView.addTableColumn(sizeCol)
+        // 元信息列（大小 · 修改时间）— 定宽，不参与缩放
+        // 180pt 是「1.2 MB · 10月18日 14:32」在当前字号下的实测宽度上界，
+        // 留 8pt 冗余避免尾部省略号。resizingMask 为空表示既不自动缩放也不可手动拖宽。
+        let metaCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("meta"))
+        metaCol.title = "修改日期"
+        metaCol.headerCell = FFPillHeaderCell()
+        metaCol.headerCell.stringValue = "修改日期"
+        metaCol.width = 180
+        metaCol.minWidth = 180
+        metaCol.maxWidth = 180
+        metaCol.resizingMask = []
+        // 排序语义固定为修改时间；按大小 / 按类型改走工具栏排序菜单。
+        metaCol.sortDescriptorPrototype = NSSortDescriptor(key: "modifiedAt", ascending: true)
+        tableView.addTableColumn(metaCol)
 
         // C12: 标签列已移除，改为在名称列内联显示标签药丸
 
@@ -1251,12 +1223,11 @@ public class FileListView: NSView {
             stack.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             cellView.addSubview(stack)
             NSLayoutConstraint.activate([
-                // 药丸与文件名左对齐（紧跟图标之后）
-                stack.leadingAnchor.constraint(equalTo: textField.leadingAnchor),
-                // 允许药丸溢出到后续列
-                stack.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: -4),
-                // 药丸位于文件名下方 4pt
-                stack.topAnchor.constraint(equalTo: textField.bottomAnchor, constant: 4),
+                // 色点靠名称列右缘、垂直居中（需求 #11：单行 30pt，标签不撑高行）
+                stack.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                stack.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                // 名称过长时先省略名称，色点不被挤压
+                stack.leadingAnchor.constraint(greaterThanOrEqualTo: textField.trailingAnchor, constant: 6),
             ])
             pillContainer = stack
         }
@@ -1271,7 +1242,7 @@ public class FileListView: NSView {
         } else {
             pillContainer?.isHidden = false
             // 最多显示 3 个药丸，超出显示 "+N"
-            for tag in tags.prefix(3) {
+            for tag in tags.prefix(4) {
                 if let pill = makeTagPill(tag: tag) {
                     // 每个药丸独立右键菜单：右键任意位置 → "移除标签"（仅移除该文件的此标签）
                     let menu = NSMenu()
@@ -1284,89 +1255,34 @@ public class FileListView: NSView {
                     pillContainer?.addArrangedSubview(pill)
                 }
             }
-            if tags.count > 3 {
-                if let countPill = makeCountPill(count: tags.count - 3) {
+            if tags.count > 4 {
+                if let countPill = makeCountPill(count: tags.count - 4) {
                     pillContainer?.addArrangedSubview(countPill)
                 }
             }
         }
     }
 
-    /// 创建单个标签药丸（参考设计稿 ff-pill-tag）
-    /// - 高度 18pt，圆角 9（胶囊形）
-    /// - 8x8 圆点（颜色来自 tag.color）
-    /// - 文字 11pt
-    /// - 左右内边距 8pt，圆点与文字间距 4pt
+    /// 需求 #11：名称后最多 4 个 6pt 色点（不再用药丸，也不撑高行）
     private func makeTagPill(tag: Tag) -> NSView? {
-        let pill = SquircleMaskedView()
-        pill.wantsLayer = true
-        // 任务 F5: 药丸背景带标签色浅色，提高对比度
-        let tagColor = NSColor(hex: tag.color) ?? .systemBlue
-        pill.layer?.backgroundColor = tagColor.withAlphaComponent(0.15).cgColor
-        pill.squircleRadius = 9
-        pill.translatesAutoresizingMaskIntoConstraints = false
-        // 设置最小宽度约束，保证至少显示 4 个字符（防止药丸在空间不足时塌缩）
-        pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
-
         let dot = NSView()
         dot.wantsLayer = true
         dot.layer?.backgroundColor = (NSColor(hex: tag.color) ?? .systemBlue).cgColor
-        dot.layer?.cornerRadius = 4
+        dot.layer?.cornerRadius = 3
         dot.translatesAutoresizingMaskIntoConstraints = false
-        pill.addSubview(dot)
-
-        // 标签名完整显示，由 label 的 truncation 和药丸最小宽度约束自动处理
-        // 空间不足时 label 会截断显示，但药丸最小宽度 40pt 保证至少显示 4 个字符
-        let label = NSTextField(labelWithString: tag.name)
-        label.font = NSFont.systemFont(ofSize: 11)
-        label.lineBreakMode = .byTruncatingTail
-        // 禁止文本换行，确保截断而非换行；末尾可见行截断
-        label.cell?.wraps = false
-        label.cell?.truncatesLastVisibleLine = true
-        label.translatesAutoresizingMaskIntoConstraints = false
-        // 设置 hugging 优先级：让 label 保持自然宽度，空间不足时才截断
-        label.setContentHuggingPriority(.required, for: .horizontal)
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        pill.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            pill.heightAnchor.constraint(equalToConstant: 18),
-            dot.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 8),
-            dot.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 8),
-            dot.heightAnchor.constraint(equalToConstant: 8),
-            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 4),
-            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -8),
-            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
-        ])
-        return pill
+        dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
+        dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+        dot.toolTip = tag.name
+        return dot
     }
 
-    /// 创建 "+N" 计数药丸（无圆点，仅文字）
+    /// 超出 4 个时右侧的 "+N"（11pt secondary，不占行高）
     private func makeCountPill(count: Int) -> NSView? {
-        let pill = SquircleMaskedView()
-        pill.wantsLayer = true
-        // 任务 F5: 计数药丸背景用次级填充色（macOS 14+），旧系统回退 controlBackgroundColor
-        if #available(macOS 14.0, *) {
-            pill.layer?.backgroundColor = NSColor.secondarySystemFill.cgColor
-        } else {
-            pill.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        }
-        pill.squircleRadius = 9
-        pill.translatesAutoresizingMaskIntoConstraints = false
-
         let label = NSTextField(labelWithString: "+\(count)")
-        label.font = NSFont.systemFont(ofSize: 11)
+        label.font = NSFont.systemFont(ofSize: 10)
+        label.textColor = NSColor.secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
-        pill.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            pill.heightAnchor.constraint(equalToConstant: 18),
-            label.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 8),
-            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -8),
-            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
-        ])
-        return pill
+        return label
     }
 
     /// 任务 F10-8 / F11-5: 创建分组标题行的 cell。
@@ -1589,7 +1505,11 @@ extension FileListView: NSTableViewDataSource {
         case "modifiedAt": field = .modifiedAt
         case "type": field = .type
         case "size": field = .size
-        default: field = .name
+        default:
+            // 2026-10-19 #11：四列合二后，大小 / 类型排序没有自己的列头，
+            // applySortDescriptorsFromViewModel 会塞一个占位 key 抑制列头箭头。
+            // 那种 key 回到这里时不能回落成 .name，否则排序会被悄悄改掉——直接忽略。
+            return
         }
         // G3: 显式 reloadData 删除——setSortField → applySort → state.files @Published
         // sink 已触发 reloadData，保留此处会每次排序双重全量 reload。
@@ -1710,14 +1630,19 @@ extension FileListView: NSTableViewDelegate {
             // 先更新 iconPath 标记并复位缩略图标志（cell 重新绑定文件）
             cellView.iconPath = path
             cellView.didReceiveThumbnail = false
-            if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: iconPointSize) {
+            // 需求 #11b：标准位置目录（桌面/下载/文稿/…）按语义色合成图标，
+            // 其余目录与文件仍走 NSWorkspace 真实图标 + 缩略图。
+            if entry.isDirectory, let standardIcon = FFStandardLocationIcon.icon(forPath: path) {
+                cellView.imageView?.image = standardIcon
+            } else if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: iconPointSize) {
                 cellView.imageView?.image = cached
             } else {
                 // 占位图标：目录用 folder，文件用 doc（缩略图返回前先显示）
-                let placeholder = entry.isDirectory
-                    ? (NSImage(systemSymbolName: "folder", accessibilityDescription: "文件夹") ?? NSImage(named: NSImage.folderName))
-                    : (NSImage(systemSymbolName: "doc", accessibilityDescription: "文件") ?? NSImage(named: NSImage.multipleDocumentsName))
-                placeholder?.size = NSSize(width: iconPointSize, height: iconPointSize)
+                // 占位图标走 Lucide（真实图标由 NSWorkspace 异步补上）
+                let placeholderName: FFIconName = entry.isDirectory ? .folder : .file
+                let placeholder = FFIcon.image(placeholderName,
+                                               size: iconPointSize,
+                                               color: .secondaryLabelColor)
                 cellView.imageView?.image = placeholder
 
                 // 后台异步获取真实工作区图标
@@ -1767,14 +1692,18 @@ extension FileListView: NSTableViewDelegate {
             // 名称列 cell 结构：[文件图标] [文件名] [标签药丸容器]
             configureInlineTagPills(in: cellView, entry: entry)
 
-        case "modifiedAt":
-            cellView.textField?.stringValue = entry.formattedModificationDate
-
-        case "type":
-            cellView.textField?.stringValue = entry.kindDescription
-
-        case "size":
-            cellView.textField?.stringValue = entry.formattedSize
+        case "meta":
+            // 2026-10-19 #11：元信息列，固定两项「大小 · 修改时间」，11pt secondary 右对齐。
+            // 目录没有有意义字节数，`formattedMetaLine` 内部只给日期。
+            if let tf = cellView.textField {
+                tf.font = FFDesign.Text.sm
+                tf.alignment = .right
+                tf.stringValue = entry.formattedMetaLine
+                // 隐藏文件用 tertiary 与名称列语义保持一致
+                tf.textColor = entry.isHidden
+                    ? NSColor.tertiaryLabelColor
+                    : NSColor.secondaryLabelColor
+            }
 
         default:
             break
@@ -1785,16 +1714,12 @@ extension FileListView: NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         // 任务 F10-8 / F11-5: 分组标题行高度 24（仿访达，留出标题+计数徽章+底部分隔线空间）
-        // 双行布局：有标签的文件行高度随密度档位（42/48/56），无标签 22/26/32（Wave4 Task 4）
+        // 需求 #11：标签改为名称后的色点，不再撑高行——所有文件行统一走密度档位（26/30/36）
         let density = FFListDensity.current
         guard row < displayRows.count else { return density.baseRowHeight }
         let displayRow = displayRows[row]
         if displayRow.isHeader { return 24 }
-        // v0.6.9: 使用预计算的 hasTags 避免高频 TagBridge I/O
-        // 若关闭标签显示，始终使用单行高度
-        let showTags = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
-        if !showTags { return density.baseRowHeight }
-        return displayRow.hasTags ? density.taggedRowHeight : density.baseRowHeight
+        return density.baseRowHeight
     }
 
     // MARK: - Wave4 Task 4: 列表密度切换

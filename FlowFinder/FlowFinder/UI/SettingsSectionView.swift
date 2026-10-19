@@ -195,12 +195,12 @@ class SettingsSectionView: NSView {
     /// 内容容器（在背景之上，提供 16pt 内边距）
     private let contentContainer = NSView()
 
-    init(title: String, iconName: String? = nil) {
+    init(title: String, icon: FFIconName? = nil) {
         super.init(frame: .zero)
         setupUI()
         titleLabel.stringValue = title
-        if let iconName = iconName {
-            iconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: title)
+        if let icon = icon {
+            iconView.image = FFIcon.template(icon, size: 13)
             iconView.contentTintColor = NSColor.secondaryLabelColor
             iconView.isHidden = false
         }

@@ -7,6 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FFC000020000000000000002 /* FFDiscoverPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC000010000000000000001; };
+		FFC100020000000000000002 /* FFPermissionGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC100010000000000000001; };
+		FFB000020000000000000002 /* FFTagRemovalSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFB000010000000000000001; };
+		FFA200010000000000000001 /* TagIndexStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100010000000000000001; };
+		FFA200020000000000000002 /* FFTagColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100020000000000000002; };
+		FFA200030000000000000003 /* ColorPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100030000000000000003; };
+		FFA200040000000000000004 /* ColorPickerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100040000000000000004; };
+		FFA200050000000000000005 /* ColorCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100050000000000000005; };
+		FFA200060000000000000006 /* ColorButtonCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100060000000000000006; };
+		FFA200070000000000000007 /* NSColor+Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100070000000000000007; };
+		FF8000020000000000000002 /* Icons in Resources */ = {isa = PBXBuildFile; fileRef = FF8000010000000000000001; };
+		FF8000040000000000000004 /* FFIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF8000030000000000000003; };
 		FF0C0D0E0000000000000001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0C0D0E0000000000000011; };
 		FF0000020000000000000002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000120000000000000012; };
 		FF0000040000000000000004 /* FileListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000140000000000000014; };
@@ -48,7 +60,6 @@
 		FF00000000000000002000A1 /* FFMiniThumbnailStackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00000000000000002000A2; };
 		FF0000000000000000200061 /* FileInfoWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200060; };
 		FF0000000000000000200059 /* FFScroller.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020005A; };
-		FF000000000000000020005B /* AboutWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020005C; };
 		FF000000000000000020003D /* BatchRenameWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020003E; };
 		FF0000000000000000200041 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200042; };
 		FF0000000000000000200043 /* FFGlassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200044; };
@@ -71,7 +82,6 @@
 		FF6000010000000000000001 /* TagCountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF6000020000000000000002; };
 		FF3000010000000000000001 /* FFComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3000020000000000000002; };
 		FF0000000000000000200067 /* SquircleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000000000000000200068; };
-		FF0000000000000000200069 /* ToolOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006A; };
 		FF000000000000000020006B /* FFFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF000000000000000020006C; };
 		FF10002A000000000000002A /* ContentIndexBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000290000000000000029; };
 		FF1000310000000000000031 /* MainWindowController+MenuActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000300000000000000030; };
@@ -83,6 +93,18 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		FFC000010000000000000001 /* FFDiscoverPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDiscoverPanel.swift; sourceTree = "<group>"; };
+		FFC100010000000000000001 /* FFPermissionGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPermissionGate.swift; sourceTree = "<group>"; };
+		FFB000010000000000000001 /* FFTagRemovalSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTagRemovalSheet.swift; sourceTree = "<group>"; };
+		FFA100010000000000000001 /* TagIndexStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagIndexStore.swift; sourceTree = "<group>"; };
+		FFA100020000000000000002 /* FFTagColorPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTagColorPalette.swift; sourceTree = "<group>"; };
+		FFA100030000000000000003 /* ColorPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorPicker.swift; sourceTree = "<group>"; };
+		FFA100040000000000000004 /* ColorPickerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorPickerViewController.swift; sourceTree = "<group>"; };
+		FFA100050000000000000005 /* ColorCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorCell.swift; sourceTree = "<group>"; };
+		FFA100060000000000000006 /* ColorButtonCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorButtonCell.swift; sourceTree = "<group>"; };
+		FFA100070000000000000007 /* NSColor+Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSColor+Colors.swift"; sourceTree = "<group>"; };
+		FF8000010000000000000001 /* Icons */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Icons; sourceTree = "<group>"; };
+		FF8000030000000000000003 /* FFIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFIcon.swift; sourceTree = "<group>"; };
 		FF0000100000000000000010 /* FlowFinder */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = FlowFinder; sourceTree = BUILT_PRODUCTS_DIR; };
 		FF0C0D0E0000000000000011 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		FF0000120000000000000012 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -125,7 +147,6 @@
 		FF000000000000000020003C /* ExpandableDetailsBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpandableDetailsBar.swift; sourceTree = "<group>"; };
 		FF0000000000000000200060 /* FileInfoWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileInfoWindowController.swift; sourceTree = "<group>"; };
 		FF000000000000000020005A /* FFScroller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFScroller.swift; sourceTree = "<group>"; };
-		FF000000000000000020005C /* AboutWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutWindowController.swift; sourceTree = "<group>"; };
 		FF000000000000000020003E /* BatchRenameWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchRenameWindowController.swift; sourceTree = "<group>"; };
 		FF0000000000000000200042 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		FF0000000000000000200044 /* FFGlassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFGlassView.swift; sourceTree = "<group>"; };
@@ -148,7 +169,6 @@
 		FF6000020000000000000002 /* TagCountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagCountService.swift; sourceTree = "<group>"; };
 		FF3000020000000000000002 /* FFComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFComponents.swift; sourceTree = "<group>"; };
 		FF0000000000000000200068 /* SquircleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquircleView.swift; sourceTree = "<group>"; };
-		FF000000000000000020006A /* ToolOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOverlayView.swift; sourceTree = "<group>"; };
 		FF000000000000000020006C /* FFFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFFormat.swift; sourceTree = "<group>"; };
 		FF00000000000000002000A2 /* FFMiniThumbnailStackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFMiniThumbnailStackView.swift; sourceTree = "<group>"; };
 		FF1000290000000000000029 /* ContentIndexBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentIndexBridge.swift; sourceTree = "<group>"; };
@@ -203,6 +223,7 @@
 				FF0000430000000000000043 /* Model */,
 				FF0000440000000000000044 /* Bridge */,
 				FF0000450000000000000045 /* Resources */,
+				FFA000010000000000000001 /* Libraries */,
 				FF0000000000000000300001 /* Assets.xcassets */,
 			);
 			path = FlowFinder;
@@ -225,7 +246,6 @@
 				FF0000150000000000000015 /* SidebarView.swift */,
 				FF000000000000000020003A /* BreadcrumbBar.swift */,
 				FF000000000000000020005A /* FFScroller.swift */,
-				FF000000000000000020005C /* AboutWindowController.swift */,
 				FF000000000000000020003E /* BatchRenameWindowController.swift */,
 				FF0000160000000000000016 /* MainWindowController.swift */,
 				FF7400010000000000000001 /* PaneTabs.swift */,
@@ -264,9 +284,13 @@
 				FF6000020000000000000002 /* TagCountService.swift */,
 				FF3000020000000000000002 /* FFComponents.swift */,
 				FF0000000000000000200068 /* SquircleView.swift */,
-				FF000000000000000020006A /* ToolOverlayView.swift */,
 				FF000000000000000020006C /* FFFormat.swift */,
 				FF1000300000000000000030 /* MainWindowController+MenuActions.swift */,
+				FF8000030000000000000003 /* FFIcon.swift */,
+				FFA100020000000000000002 /* FFTagColorPalette.swift */,
+				FFC000010000000000000001 /* FFDiscoverPanel.swift */,
+				FFC100010000000000000001 /* FFPermissionGate.swift */,
+				FFB000010000000000000001 /* FFTagRemovalSheet.swift */,
 		);
 		path = UI;
 		sourceTree = "<group>";
@@ -280,6 +304,7 @@
 				FF0000000000000000200016 /* Tag.swift */,
 				FF0000000000000000200018 /* TaskInfo.swift */,
 				FF000000000000000020001A /* VolumeInfo.swift */,
+				FFA100010000000000000001 /* TagIndexStore.swift */,
 );
 			path = Model;
 			sourceTree = "<group>";
@@ -307,8 +332,29 @@
 			isa = PBXGroup;
 			children = (
 				FF00001B000000000000001B /* Info.plist */,
+				FF8000010000000000000001 /* Icons */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		FFA000010000000000000001 /* Libraries */ = {
+			isa = PBXGroup;
+			children = (
+				FFA000020000000000000002 /* macColorPicker */,
+			);
+			path = Libraries;
+			sourceTree = "<group>";
+		};
+		FFA000020000000000000002 /* macColorPicker */ = {
+			isa = PBXGroup;
+			children = (
+				FFA100030000000000000003 /* ColorPicker.swift */,
+				FFA100040000000000000004 /* ColorPickerViewController.swift */,
+				FFA100050000000000000005 /* ColorCell.swift */,
+				FFA100060000000000000006 /* ColorButtonCell.swift */,
+				FFA100070000000000000007 /* NSColor+Colors.swift */,
+			);
+			path = macColorPicker;
 			sourceTree = "<group>";
 		};
 		FF0000620000000000000062 /* Products */ = {
@@ -418,6 +464,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FF0000000000000000300002 /* Assets.xcassets in Resources */,
+				FF8000020000000000000002 /* Icons in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -473,6 +520,17 @@
 			buildActionMask = 2147483647;
 			files = (
 				FF0C0D0E0000000000000001 /* main.swift in Sources */,
+				FF8000040000000000000004 /* FFIcon.swift in Sources */,
+				FFC000020000000000000002 /* FFDiscoverPanel.swift in Sources */,
+				FFC100020000000000000002 /* FFPermissionGate.swift in Sources */,
+				FFA200010000000000000001 /* TagIndexStore.swift in Sources */,
+				FFA200020000000000000002 /* FFTagColorPalette.swift in Sources */,
+				FFA200030000000000000003 /* ColorPicker.swift in Sources */,
+				FFA200040000000000000004 /* ColorPickerViewController.swift in Sources */,
+				FFA200050000000000000005 /* ColorCell.swift in Sources */,
+				FFA200060000000000000006 /* ColorButtonCell.swift in Sources */,
+				FFA200070000000000000007 /* NSColor+Colors.swift in Sources */,
+				FFB000020000000000000002 /* FFTagRemovalSheet.swift in Sources */,
 				FF0000020000000000000002 /* AppDelegate.swift in Sources */,
 				FF0000040000000000000004 /* FileListView.swift in Sources */,
 				FF0000A0000000000000000A /* ConflictResolver.swift in Sources */,
@@ -508,7 +566,6 @@
 				FF0000000000000000200035 /* TaskProgressBar.swift in Sources */,
 				FF0000000000000000200039 /* BreadcrumbBar.swift in Sources */,
 				FF0000000000000000200059 /* FFScroller.swift in Sources */,
-				FF000000000000000020005B /* AboutWindowController.swift in Sources */,
 				FF000000000000000020003B /* ExpandableDetailsBar.swift in Sources */,
 				FF00000000000000002000A1 /* FFMiniThumbnailStackView.swift in Sources */,
 				FF0000000000000000200061 /* FileInfoWindowController.swift in Sources */,
@@ -536,7 +593,6 @@
 				FF0000000000000000200067 /* SquircleView.swift in Sources */,
 				FF10002A000000000000002A /* ContentIndexBridge.swift in Sources */,
 				FF1000310000000000000031 /* MainWindowController+MenuActions.swift in Sources */,
-				FF0000000000000000200069 /* ToolOverlayView.swift in Sources */,
 				FF000000000000000020006B /* FFFormat.swift in Sources */,
 		);
 		runOnlyForDeploymentPostprocessing = 0;

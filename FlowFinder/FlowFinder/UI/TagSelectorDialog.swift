@@ -275,7 +275,7 @@ class TagSelectorDialog: FFModalSheet {
         label.translatesAutoresizingMaskIntoConstraints = false
 
         let removeBtn = NSButton()
-        removeBtn.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "移除")
+        removeBtn.image = FFIcon.template(.circleX, size: 13)
         removeBtn.contentTintColor = .secondaryLabelColor
         removeBtn.isBordered = false
         removeBtn.imagePosition = .imageOnly

@@ -5,7 +5,7 @@ public struct Tag: Identifiable, Equatable, Hashable, Codable {
     public var name: String
     public var color: String  // hex color, e.g. "#FF0000"
 
-    public init(id: String = UUID().uuidString, name: String, color: String = "#007AFF") {
+    public init(id: String = UUID().uuidString, name: String, color: String = "#0a84ff") {
         self.id = id
         self.name = name
         self.color = color

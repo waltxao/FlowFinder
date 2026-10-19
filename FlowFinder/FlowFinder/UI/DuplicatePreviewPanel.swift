@@ -31,7 +31,7 @@ class DuplicatePreviewPanel: NSView {
         wantsLayer = true
 
         // 大图标（56x56）
-        previewBox.image = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
+        previewBox.image = FFIcon.template(.file, size: 64)
         previewBox.contentTintColor = NSColor.secondaryLabelColor
         previewBox.imageScaling = .scaleProportionallyDown
         previewBox.translatesAutoresizingMaskIntoConstraints = false
@@ -106,7 +106,8 @@ class DuplicatePreviewPanel: NSView {
         guard let firstFile = group.files.first else { return }
 
         // 大图标 + 文件名
-        previewBox.image = NSImage(systemSymbolName: iconForFile(firstFile.name), accessibilityDescription: firstFile.name)
+        previewBox.image = FFIcon.image(iconForFile(firstFile.name), size: 64,
+                                        color: .secondaryLabelColor)
         fileNameLabel.stringValue = firstFile.name
 
         // 元数据网格
@@ -201,14 +202,14 @@ class DuplicatePreviewPanel: NSView {
         return (name as NSString).pathExtension
     }
 
-    private func iconForFile(_ name: String) -> String {
+    private func iconForFile(_ name: String) -> FFIconName {
         let ext = extOf(name).lowercased()
         let imageExts: Set<String> = ["jpg", "jpeg", "png", "gif", "heic", "tiff", "bmp", "webp", "svg"]
         let videoExts: Set<String> = ["mp4", "mov", "avi", "mkv", "m4v"]
-        if ext == "pdf" { return "doc.richtext" }
-        if imageExts.contains(ext) { return "photo" }
-        if videoExts.contains(ext) { return "film" }
-        return "doc"
+        if ext == "pdf" { return .fileText }
+        if imageExts.contains(ext) { return .image }
+        if videoExts.contains(ext) { return .film }
+        return .file
     }
 
     private func colorForFile(_ name: String) -> NSColor {

@@ -53,4 +53,32 @@ public enum FFFormat {
     public static func dateOnly(_ date: Date) -> String {
         return dateOnlyFormatter.string(from: date)
     }
+
+    /// 当年紧凑格式：10月18日 14:32
+    private static let compactSameYearFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 HH:mm"
+        return f
+    }()
+
+    /// 跨年紧凑格式：2025年10月18日
+    private static let compactOtherYearFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日"
+        return f
+    }()
+
+    /// 格式化日期（紧凑：当年省略年份并保留时间，跨年保留年份省略时间）
+    ///
+    /// 用途：列表「大小 · 修改时间」元信息列（`docs/PLAN-2026-10-19.md` §3.7）。
+    /// 该列宽度有限且面板变窄时不收缩，因此必须比 `date(_:)` 更短。
+    public static func dateCompact(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: Date())
+        return sameYear
+            ? compactSameYearFormatter.string(from: date)
+            : compactOtherYearFormatter.string(from: date)
+    }
 }
