@@ -140,35 +140,9 @@ final class PaneTabsStore {
     }
 }
 
-// MARK: - 跨面板拖动上下文
-
-/// 标签拖动期间的临时上下文。
-/// 会话对象本身不进 pasteboard（PaneState 含文件数组，序列化成本高），
-/// pasteboard 只承担拖拽类型与命中，真实数据从这里取。
-final class PaneTabDragContext {
-    static let shared = PaneTabDragContext()
-    static let pasteboardType = NSPasteboard.PasteboardType("com.flowfinder.panetab")
-
-    var session: PaneTabSession?
-    var sourceSide: PaneSide?
-    var sourceIndex: Int?
-    /// B5 #5b：true = 拖的是工具栏空白（整个面板合并），此时 session 无意义
-    var isGroupMerge = false
-    /// 2026-10-20 #1：true = 拖的是「操作面板」——语义上等于拖当前那个标签
-    var isPaneDrag = false
-
-    func clear() {
-        session = nil
-        sourceSide = nil
-        sourceIndex = nil
-        isGroupMerge = false
-        isPaneDrag = false
-    }
-}
-
 // MARK: - 单个标签
 
-final class PaneTabItemView: NSView, NSDraggingSource {
+final class PaneTabItemView: NSView {
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
@@ -178,6 +152,8 @@ final class PaneTabItemView: NSView, NSDraggingSource {
     var index: Int
     /// 所在标签条的面板侧（拖拽时写入上下文，供跨面板移交判定）
     var side: PaneSide = .left
+    /// 所在标签条（2026-10-20 #1：拖动统一由窗口级控制器处理，需要反查标签条）
+    weak var strip: PaneTabStripView?
     /// B5：源面板只剩 1 个标签时禁止拖出（拖走了面板就没有会话可显示）。
     /// 由标签条在每次 refresh 时按当前数量写入。
     var canDragOut: Bool = true
@@ -219,7 +195,9 @@ final class PaneTabItemView: NSView, NSDraggingSource {
         addSubview(closeButton)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 26),
+            // 2026-10-20 #1：标签条提到窗口顶部那一行（与红绿灯同高 28pt），
+            // 胶囊相应压到 22pt，垂直中心仍与红绿灯对齐。
+            heightAnchor.constraint(equalToConstant: 22),
             widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
             widthAnchor.constraint(lessThanOrEqualToConstant: 200),
 
@@ -284,65 +262,12 @@ final class PaneTabItemView: NSView, NSDraggingSource {
         return self
     }
 
-    override func mouseDown(with event: NSEvent) {
-        mouseDownPoint = convert(event.locationInWindow, from: nil)
-        FFDebug.log("[TAB] mouseDown index=\(index) side=\(side) local=\(mouseDownPoint ?? .zero) frame=\(frame)")
-        onSelect?()
-    }
-
+    /// 点击选中由窗口级拖拽控制器在 mouseUp 时统一派发（这里不再自己处理 mouseDown，
+    /// 否则会与「拖标签」的判定抢事件）。
     override func mouseUp(with event: NSEvent) {
         mouseDownPoint = nil
     }
 
-    override func mouseDragged(with event: NSEvent) {
-        guard let start = mouseDownPoint else { return }
-        // B5：面板最后一个标签不允许拖出（拖到别的面板会导致源面板无会话）
-        guard canDragOut else {
-            FFDebug.log("[TAB] mouseDragged blocked: canDragOut=false index=\(index)")
-            return
-        }
-        let point = convert(event.locationInWindow, from: nil)
-        guard hypot(point.x - start.x, point.y - start.y) > 4 else { return }
-        mouseDownPoint = nil
-        FFDebug.log("[TAB] drag start index=\(index) side=\(side)")
-
-        PaneTabDragContext.shared.session = tabSession
-        PaneTabDragContext.shared.isGroupMerge = false
-        PaneTabDragContext.shared.sourceSide = side
-        PaneTabDragContext.shared.sourceIndex = index
-
-        let pasteboardItem = NSPasteboardItem()
-        pasteboardItem.setString(tabSession.id.uuidString, forType: PaneTabDragContext.pasteboardType)
-        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
-        draggingItem.setDraggingFrame(bounds, contents: snapshot())
-        beginDraggingSession(with: [draggingItem], event: event, source: self)
-    }
-
-    private func snapshot() -> NSImage {
-        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else {
-            return NSImage(size: bounds.size)
-        }
-        cacheDisplay(in: bounds, to: rep)
-        let image = NSImage(size: bounds.size)
-        image.addRepresentation(rep)
-        return image
-    }
-
-    // MARK: NSDraggingSource
-
-    func draggingSession(_ session: NSDraggingSession,
-                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        .move
-    }
-
-    /// 拖拽结束（无论落点有效、被取消还是 Esc）都必须清掉上下文——
-    /// PaneTabDropReceiver 以 `session != nil` 判定是否参与命中，
-    /// 残留会让窗口级接收器永久吞掉点击。
-    func draggingSession(_ session: NSDraggingSession,
-                         endedAt screenPoint: NSPoint,
-                         operation: NSDragOperation) {
-        PaneTabDragContext.shared.clear()
-    }
 }
 
 // MARK: - 标签条
@@ -355,8 +280,8 @@ protocol PaneTabStripDelegate: AnyObject {
     func tabStrip(_ strip: PaneTabStripView, didReceive session: PaneTabSession, at index: Int)
 }
 
-/// 操作区顶部的浏览器式标签条（高 32pt）
-final class PaneTabStripView: NSView, FFPaneDragSource {
+/// 操作区顶部的浏览器式标签条（2026-10-20 #1：提到窗口顶部那一行，高 28pt，常显）
+final class PaneTabStripView: NSView {
 
     weak var delegate: PaneTabStripDelegate?
     var side: PaneSide = .left
@@ -368,13 +293,11 @@ final class PaneTabStripView: NSView, FFPaneDragSource {
     private var activeIndex: Int = 0
 
     // MARK: - 面板拖拽（2026-10-20 #1）
-
-
-    /// 被拖起的面板卡片（由 MainWindowController 注入）
-    var paneCard: NSView?
-
-    /// 标签条只在「标签数 ≥ 2」时出现，永远有第二个标签可搬，不会退化成拖窗口
-    var dragsWindowInstead: Bool { false }
+    //
+    // 标签条现在在窗口顶部那一行（与红绿灯同高）：
+    //   - 标签条空白 → 拖窗口（性质等同系统标题栏）
+    //   - 标签本身   → 拖动由窗口级 FFPaneDragController 统一处理
+    //   空白处必须能被识别成「标签条自己」，因此这里把空白归并到标签条视图上。
 
     /// 标签条不参与窗口拖动：空白处起手的是「拖面板」
     override var mouseDownCanMoveWindow: Bool { false }
@@ -463,6 +386,7 @@ final class PaneTabStripView: NSView, FFPaneDragSource {
         for (i, session) in sessions.enumerated() {
             let item = PaneTabItemView(session: session, index: i)
             item.side = side
+            item.strip = self
             item.isActive = (i == activeIndex)
             item.canDragOut = sessions.count > 1
             item.onSelect = { [weak self] in
@@ -487,6 +411,44 @@ final class PaneTabStripView: NSView, FFPaneDragSource {
         return stack.convert(local, to: nil)
     }
 
+    /// 标签重排的插入指示线
+    private var insertionIndicator: FFTabInsertionIndicator?
+
+    /// 在指定插入位置显示一条竖线指示
+    func showInsertionIndicator(atIndex index: Int) {
+        guard let x = insertionIndicatorX(forIndex: index) else { return }
+        if insertionIndicator == nil {
+            let view = FFTabInsertionIndicator()
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+            NSLayoutConstraint.activate([
+                view.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+                view.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+                view.widthAnchor.constraint(equalToConstant: 2),
+                view.centerXAnchor.constraint(equalTo: leadingAnchor, constant: x),
+            ])
+            insertionIndicator = view
+        } else if let view = insertionIndicator {
+            for c in view.constraints where c.firstAttribute == .centerX {
+                c.constant = x
+            }
+        }
+    }
+
+    /// 移除插入指示线
+    func hideInsertionIndicator() {
+        insertionIndicator?.removeFromSuperview()
+        insertionIndicator = nil
+    }
+
+    /// 插入指示线的 x（相对本视图左缘）
+    private func insertionIndicatorX(forIndex index: Int) -> CGFloat? {
+        guard !items.isEmpty else { return 8 }
+        if index <= 0 { return items[0].frame.minX }
+        if index >= items.count { return items.last!.frame.maxX }
+        return items[index].frame.minX
+    }
+
     /// 把窗口坐标点换算成插入索引；返回 nil 表示该点不在本标签条内。
     /// 标签条本身不再注册为拖拽目标——统一由 `PaneTabDropReceiver` 判定，
     /// 避免「叠在最上层的接收器抢走本该落到标签条上的 drop」。
@@ -504,93 +466,5 @@ final class PaneTabStripView: NSView, FFPaneDragSource {
         }
         FFDebug.log("[TAB] strip hit side=\(side) index=\(items.count) (append) stackX=\(stackPoint.x)")
         return items.count
-    }
-}
-
-// MARK: - 面板合并拖放接收器（B5）
-
-/// 承接「拖到面板内容区 / 标签条 / 窗口边缘」的标签落点。
-/// 铺满内容层、置于最上层；仅在标签拖动会话期间参与命中
-/// （平时 hitTest 返回 nil 完全穿透，不干扰文件拖放与点击）。
-///
-/// 标签条**不再**单独注册拖拽类型：落点判定统一在这里做，
-/// 由挂载方按坐标决定「组内重排 / 跨组接收 / 拆分 / 整组合并」。
-final class PaneTabDropReceiver: NSView {
-
-    /// 参数为 window 坐标（draggingLocation 原样透传）
-    var onReceive: ((NSPoint) -> Void)?
-    /// B5 拆分投放区提示：由挂载方根据当前模式算出应高亮的区域（window 坐标）；
-    /// 返回 nil 表示该落点不拆分（如拖在自己半区），不高亮。
-    var dropZoneRectProvider: ((NSPoint) -> NSRect?)?
-    private var highlightRect: NSRect?
-
-    override var isFlipped: Bool { true }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard let rect = highlightRect else { return }
-        let local = convert(rect, from: nil)
-        let path = NSBezierPath(roundedRect: local.insetBy(dx: 10, dy: 10), xRadius: 12, yRadius: 12)
-        NSColor.controlAccentColor.withAlphaComponent(0.08).setFill()
-        path.fill()
-        NSColor.controlAccentColor.withAlphaComponent(0.55).setStroke()
-        path.lineWidth = 2
-        path.setLineDash([6, 4], count: 2, phase: 0)
-        path.stroke()
-    }
-
-    private func refreshHighlight(at windowPoint: NSPoint) {
-        let rect = dropZoneRectProvider?(windowPoint)
-        if rect != highlightRect {
-            highlightRect = rect
-            needsDisplay = true
-        }
-    }
-
-    private func clearHighlight() {
-        if highlightRect != nil {
-            highlightRect = nil
-            needsDisplay = true
-        }
-    }
-
-    /// 标签拖动进行中（单标签或整组合并均算）
-    static var isTabDragActive: Bool {
-        PaneTabDragContext.shared.session != nil
-            || PaneTabDragContext.shared.isGroupMerge
-            || PaneTabDragContext.shared.isPaneDrag
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // 拖动标签/整组期间完全接管命中：保证 drop 一定落到本接收器，
-        // 由 onReceive 按坐标分流（标签条内的精确插入也由它算）。
-        Self.isTabDragActive ? self : nil
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        sender.draggingPasteboard.availableType(from: [PaneTabDragContext.pasteboardType]) != nil ? .move : []
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let op = draggingEntered(sender)
-        if op.isEmpty { clearHighlight() } else { refreshHighlight(at: sender.draggingLocation) }
-        return op
-    }
-
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        clearHighlight()
-    }
-
-    override func draggingEnded(_ sender: NSDraggingInfo) {
-        clearHighlight()
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        clearHighlight()
-        guard Self.isTabDragActive,
-              sender.draggingPasteboard.availableType(from: [PaneTabDragContext.pasteboardType]) != nil else {
-            return false
-        }
-        onReceive?(sender.draggingLocation)
-        return true
     }
 }

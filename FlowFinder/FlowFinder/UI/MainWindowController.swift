@@ -280,7 +280,8 @@ public class MainWindowController: NSWindowController {
     var leftTabStripHeight: NSLayoutConstraint?
     var rightTabStripHeight: NSLayoutConstraint?
     /// 标签条展开高度（DESIGN-SPEC T-10）
-    static let tabStripHeight: CGFloat = 32
+    /// 2026-10-20 #1：标签条提到窗口顶部那一行，与红绿灯同高 28pt
+    static let tabStripHeight: CGFloat = 28
     /// #5：进入单窗口模式前的窗口宽度，切回双窗口时还原
     private var widthBeforeSinglePane: CGFloat?
     /// #5：上次真正应用的模式（nil = 还没完成过一次「带缩放」的切换）。
@@ -647,45 +648,13 @@ public class MainWindowController: NSWindowController {
         ])
         sidebarRevealHost = revealHost
 
-        // B5：窗口级标签拖放接收器（最上层）——所有标签落点都由它判定：
-        // 标签条内 = 组内重排 / 跨组接收；面板主体 = 并入最近侧；单窗另一半 = 拆分。
-        // 平时 hitTest 穿透，不影响文件拖放与点击。
-        let tabDropReceiver = PaneTabDropReceiver()
-        tabDropReceiver.registerForDraggedTypes([PaneTabDragContext.pasteboardType])
-        tabDropReceiver.translatesAutoresizingMaskIntoConstraints = false
-        mainContainer.addSubview(tabDropReceiver, positioned: .above, relativeTo: nil)
-        NSLayoutConstraint.activate([
-            tabDropReceiver.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
-            tabDropReceiver.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            tabDropReceiver.topAnchor.constraint(equalTo: mainContainer.topAnchor),
-            tabDropReceiver.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
-        ])
-        tabDropReceiver.onReceive = { [weak self] location in
-            self?.handleTabDrop(atWindowPoint: location)
-        }
-        tabDropReceiver.dropZoneRectProvider = { [weak self] location in
-            self?.splitDropZone(forWindowX: location.x)
-        }
-
         window.contentView = visualEffectView
 
         // 2026-10-20 #1：窗口级面板拖拽控制器。
         // 窗口顶部 28pt 是系统标题栏的拖动区，会先于内容视图吃掉 mouseDown；
         // 这里在事件分发之前接管工具栏/标签条空白，把「拖面板」和「拖窗口」彻底分开。
         let paneDrag = FFPaneDragController.shared
-        paneDrag.onDropInside = { [weak self] windowPoint in
-            guard let self else { return }
-            let ctx = PaneTabDragContext.shared
-            ctx.isPaneDrag = true
-            ctx.isGroupMerge = false
-            ctx.session = nil
-            self.handleTabDrop(atWindowPoint: windowPoint)
-        }
-        paneDrag.onDropOutside = { [weak self] screenPoint in
-            guard let self else { return }
-            let side = PaneTabDragContext.shared.sourceSide ?? self.activePane
-            self.handlePaneDragEnded(atScreenPoint: screenPoint, side: side)
-        }
+        paneDrag.owner = self
         paneDrag.install(for: window)
 
         // 窗口外观跟随 ThemeManager 设置（不强制 nil，否则夜间模式无法生效）
@@ -847,6 +816,8 @@ public class MainWindowController: NSWindowController {
 
         let glow = FFActivePaneBorderView()
         glow.translatesAutoresizingMaskIntoConstraints = false
+        // 卡片顶部没有留白（标签条占了窗口顶部那一行），发光沿卡片顶边画、不外扩
+        glow.topEdgeOutset = 0
         glow.isHidden = true
         wrapper.addSubview(glow)
 
@@ -859,7 +830,9 @@ public class MainWindowController: NSWindowController {
             glow.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
             glow.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
 
-            content.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: FFActivePaneBorderView.edgeOutset),
+            // 2026-10-20 #1：卡片顶边贴到窗口上沿（标签条提到顶部那一行，
+            // 与红绿灯同高），顶部不再留 8pt，因此发光的顶边也不外扩。
+            content.topAnchor.constraint(equalTo: wrapper.topAnchor),
             content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: FFActivePaneBorderView.edgeOutset),
             content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -FFActivePaneBorderView.edgeOutset),
             content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -FFActivePaneBorderView.edgeOutset),
@@ -900,8 +873,6 @@ public class MainWindowController: NSWindowController {
         toolbar.delegate = self
         toolbar.side = side
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        // 2026-10-20 #1：工具栏空白 = 拖面板（= 拖当前标签）
-        toolbar.paneCard = container
 
         // 面包屑导航栏（嵌入 PaneToolbar Row1）
         let breadcrumbBar = BreadcrumbBar()
@@ -950,8 +921,6 @@ public class MainWindowController: NSWindowController {
         tabStrip.side = side
         tabStrip.delegate = self
         tabStrip.translatesAutoresizingMaskIntoConstraints = false
-        // 2026-10-20 #1：标签条空白 = 拖面板（= 拖当前标签）
-        tabStrip.paneCard = container
         container.addSubview(tabStrip)
         if side == .left { leftTabStrip = tabStrip } else { rightTabStrip = tabStrip }
 
@@ -963,7 +932,7 @@ public class MainWindowController: NSWindowController {
         container.addSubview(detailsBar)
 
         // #3（2026-10-18）：标签条高度可切换——只有一个标签时收起为 0，工具栏顶到卡片顶部
-        let tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: 32)
+        let tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: MainWindowController.tabStripHeight)
         if side == .left { leftTabStripHeight = tabStripHeight } else { rightTabStripHeight = tabStripHeight }
 
         NSLayoutConstraint.activate([
@@ -1043,6 +1012,14 @@ public class MainWindowController: NSWindowController {
         return container
     }
 
+    /// 取某个槽位的面板卡片（拖影快照用）
+    func paneCard(for side: PaneSide) -> NSView? {
+        switch side {
+        case .left: return leftPaneContainer
+        case .right: return rightPaneContainer
+        }
+    }
+
     /// 吐出关键面板几何（窗口坐标），供自动化拖拽测试定位起手点
     func logPaneGeometry(_ tag: String = "") {
         guard let cv = window?.contentView else { return }
@@ -1051,7 +1028,7 @@ public class MainWindowController: NSWindowController {
             let r = cv.convert(v.frame, from: sp)
             return "x=\(Int(r.minX))..\(Int(r.maxX)) y=\(Int(r.minY))..\(Int(r.maxY))"
         }
-        FFDebug.log("[GEO]\(tag) 窗口=\(Int(window?.frame.width ?? 0))x\(Int(window?.frame.height ?? 0)) 侧栏=\(frame(sidebarView)) 左卡片=\(frame(leftPaneToolbar?.superview)) 左工具栏=\(frame(leftPaneToolbar)) 右工具栏=\(frame(rightPaneToolbar))")
+        FFDebug.log("[GEO]\(tag) 窗口=\(Int(window?.frame.width ?? 0))x\(Int(window?.frame.height ?? 0)) 侧栏=\(frame(sidebarView)) 左卡片=\(frame(leftPaneToolbar?.superview)) 左工具栏=\(frame(leftPaneToolbar)) 右工具栏=\(frame(rightPaneToolbar)) 左标签条=\(frame(leftTabStrip)) 右标签条=\(frame(rightTabStrip))")
     }
 
     // MARK: - 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）

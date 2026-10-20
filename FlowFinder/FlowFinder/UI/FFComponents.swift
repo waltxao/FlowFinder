@@ -99,6 +99,13 @@ final class FFActivePaneBorderView: NSView {
     /// 卡片圆角（与 SquircleView 的 16pt 对应，发光路径沿用同半径）
     static let cornerRadius: CGFloat = 16
 
+    /// 卡片顶边的额外内缩（2026-10-20 #1 重做）。
+    ///
+    /// 标签条被提到窗口顶部（与红绿灯同一行）后，卡片顶边就贴到了窗口上沿，
+    /// 顶部不再有 8pt 留白可供发光外扩——顶部内缩因此单独给一个值，
+    /// 卡片顶部往上没有留白时设为 0（发光沿卡片顶边画，不外扩）。
+    var topEdgeOutset: CGFloat = FFActivePaneBorderView.edgeOutset
+
     /// 发光颜色（随强调色设置变化）
     var ringColor: NSColor = FFAccent.current {
         didSet { needsDisplay = true }
@@ -121,12 +128,29 @@ final class FFActivePaneBorderView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard !isHidden else { return }
-        // 中心线 = 卡片边缘；描边向两侧各扩一半，内侧被卡片盖住
-        let rect = bounds.insetBy(dx: Self.edgeOutset, dy: Self.edgeOutset)
+        // 中心线 = 卡片边缘；描边向两侧各扩一半，内侧被卡片盖住。
+        // 顶边单独用 topEdgeOutset（标签条提到窗口顶部后，卡片顶边没有留白可外扩）。
+        let r = Self.cornerRadius
+        let rect = NSRect(x: Self.edgeOutset,
+                          y: Self.edgeOutset,
+                          width: bounds.width - Self.edgeOutset * 2,
+                          height: bounds.height - Self.edgeOutset - topEdgeOutset)
         guard rect.width > 0, rect.height > 0 else { return }
-        let path = NSBezierPath(roundedRect: rect,
-                                xRadius: Self.cornerRadius,
-                                yRadius: Self.cornerRadius)
+
+        // 顶边是直的（标签条盖在上面），底部两角走圆角
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: rect.minX, y: rect.maxY))
+        path.line(to: NSPoint(x: rect.maxX - r, y: rect.maxY))
+        path.appendArc(withCenter: NSPoint(x: rect.maxX - r, y: rect.maxY - r),
+                       radius: r, startAngle: 0, endAngle: 90, clockwise: true)
+        path.line(to: NSPoint(x: rect.maxX, y: rect.minY + r))
+        path.appendArc(withCenter: NSPoint(x: rect.maxX - r, y: rect.minY + r),
+                       radius: r, startAngle: 0, endAngle: -90, clockwise: true)
+        path.line(to: NSPoint(x: rect.minX + r, y: rect.minY))
+        path.appendArc(withCenter: NSPoint(x: rect.minX + r, y: rect.minY + r),
+                       radius: r, startAngle: -90, endAngle: -180, clockwise: true)
+        path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+        path.close()
 
         if NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast {
             ringColor.setStroke()

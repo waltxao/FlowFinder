@@ -32,14 +32,13 @@ extension PaneToolbarDelegate {
 
 // MARK: - PaneToolbar
 
-class PaneToolbar: NSView, FFPaneDragSource {
+class PaneToolbar: NSView {
     weak var delegate: PaneToolbarDelegate?
 
     // 2026-10-20 #1：拖工具栏空白 = 拖操作面板（语义上等于拖当前那个标签）
     var side: PaneSide = .left
 
-    /// 被拖起的面板卡片（由 MainWindowController 注入）
-    var paneCard: NSView?
+
 
     /// 单面板且只有一个标签时，拖面板没有第二个标签可搬，
     /// 退化为「拖窗口」（SPEC-2026-10-20 §1.4 第 1 行）。由 MainWindowController 写入。
