@@ -35,9 +35,13 @@ class FFNonDragStackView: NSStackView {
 /// 卡片本体命中的是里面的面板内容，不会走到这里。
 class FFCardWrapperView: NSView, FFRegionAware {
 
-    /// 卡片四周的 8pt 留白属于窗口区：按住可拖动窗口。
-    /// 卡片本体命中的是里面的面板内容，不会走到这里。
-    var ffRegion: FFRegion { .window }
+    /// 卡片四周的 8pt 留白。
+    ///
+    /// 2026-10-20 第五轮 C：**不再属于拖窗口白名单**。
+    /// 留白上的调宽把手（中缝 / 侧栏缝 ±6pt）由决策表的
+    /// 「把手→调宽」规则优先接管；留白的其余部分（如卡片底部）改为按压反馈、
+    /// 不产生任何拖动——第五轮裁定的「拖窗口只剩侧栏空白 + 标签条空白」。
+    var ffRegion: FFRegion { .panel }
 }
 
 // MARK: - 应用自管的窗口拖动（2026-10-20 #1）

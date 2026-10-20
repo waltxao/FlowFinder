@@ -146,13 +146,27 @@ extension MainWindowController: PaneTabStripDelegate {
     }
 
     /// 拖动落点处理：把源面板的标签送到目标窗口的落点
+    ///
+    /// 2026-10-20 第五轮 C：**源面板被搬空 → 面板消失**（用户裁定）。
+    ///   · 跨窗口：源窗口整个关掉（原有语义）
+    ///   · 同窗口双栏：空面板折叠，窗口变单栏（此前空占位会留在原地）
+    /// 注意 sourceEmpty 必须在 acceptTab **之后**计算——
+    /// 同窗口拖回自己面板（重排）时，store 会先空再被填回，先算会误折叠。
     func transferTab(side: PaneSide, index: Int, to target: FFDropTarget) {
         guard let session = takeTabOut(side: side, index: index) else { return }
-        let sourceEmpty = isPaneEmpty(side: side)
         target.window.acceptTab(session, into: target)
-        // 源面板空了 → 源窗口关掉（但如果标签去了本窗口，就不能关）
-        if sourceEmpty && target.window !== self {
+        guard isPaneEmpty(side: side) else { return }
+        if target.window !== self {
             closeSelfAfterEmptyPane()
+        } else if !isSinglePaneMode {
+            // 同窗口双栏：折叠空面板，显示另一侧
+            let revealed: PaneSide = side == .left ? .right : .left
+            activePane = revealed
+            isSinglePaneMode = true
+            UserDefaults.standard.set(true, forKey: Self.singlePaneModeKey)
+            applyPaneMode()
+            loadActiveTab(side: revealed)
+            FFDebug.log("[TABDRAG] 源面板搬空 → 面板折叠，窗口变单栏（\(revealed)）")
         }
     }
 
@@ -170,23 +184,27 @@ extension MainWindowController: PaneTabStripDelegate {
     }
 
     /// 落在操作区：单栏 → 拆出第二块面板；双栏 → 并入那一侧
+    ///
+    /// 2026-10-20 第五轮 C：单栏时**新面板出现在落点那一侧**（拖右出右、拖左出左），
+    /// 原面板挪到另一侧——旧实现固定出在活动面板对侧，与落点语义相反。
     private func acceptTabIntoPane(_ session: PaneTabSession, side: PaneSide) {
         if isSinglePaneMode {
-            // 单栏：新面板出现在「另一侧」，原面板留在原位
-            let newSide: PaneSide = activePane == .left ? .right : .left
-            guard let store = tabsStore(for: newSide) else { return }
-            if store.tabs.allSatisfy({ $0.isPlaceholder }) {
-                // 只有占位 → 直接替换
-                store.replaceAll([session])
-            } else {
-                // 该侧还留着旧标签（切单栏前的），保留它们，只追加这一个
-                store.insert(session, at: store.count)
-            }
+            // 单栏：新面板 = 落点侧；原面板 = 另一侧
+            let newSide = side
+            let originalSide: PaneSide = side == .left ? .right : .left
+            guard let newStore = tabsStore(for: newSide),
+                  let originalStore = tabsStore(for: originalSide) else { return }
+            // 原面板的标签（非占位）挪到另一侧
+            let originalTabs = originalStore.tabs.filter { !$0.isPlaceholder }
+            newStore.replaceAll([session])
+            originalStore.replaceAll(originalTabs.isEmpty
+                                     ? [placeholderSession()]
+                                     : originalTabs)
             isSinglePaneMode = false
             UserDefaults.standard.set(false, forKey: Self.singlePaneModeKey)
+            activePane = newSide
             applyPaneMode()
             widenWindowForSecondPane(newSide: newSide)
-            activatePane(newSide)
             loadActiveTab(side: newSide)
         } else {
             guard let store = tabsStore(for: side) else { return }
@@ -197,22 +215,42 @@ extension MainWindowController: PaneTabStripDelegate {
         }
     }
 
-    /// 窗口加宽到能放下第二块面板（侧栏宽度与原面板宽度都不变）
+    /// 窗口加宽到能放下第二块面板（2026-10-20 第五轮 C 重写）
+    ///
+    /// 旧实现的坑：单栏时 `paneSplitView.bounds.width` 是**整块操作区宽**
+    /// （面板本来就占满），拿来当「新增面板宽」会把窗口加宽到 ~2000pt；
+    /// 高度也可能被殃及。新实现：
+    ///   目标宽 = 侧栏宽 + 操作区宽 × 2 + 卡片留白，**钳制到屏幕可视宽度**；
+    ///   只改宽度与对应侧 origin，高度绝不动；向左加宽时左缘贴屏幕边保护。
     private func widenWindowForSecondPane(newSide: PaneSide) {
-        guard let window else { return }
-        let paneWidth = max(450, paneSplitView?.bounds.width ?? 450)
+        guard let window, let screen = window.screen else { return }
+        let sidebarWidth = sidebarView?.frame.width ?? 0
+        let opWidth = max(FFDividerGlowMath.minPaneWidth, paneSplitView?.bounds.width ?? 0)
+        let visibleW = screen.visibleFrame.width
+        // 理想：侧栏 + 两倍操作区 + 两侧卡片留白
+        var target = sidebarWidth + opWidth * 2 + FFActivePaneBorderView.edgeOutset * 2
+        target = max(1060, min(target, visibleW))
+        // 钳制后操作区可能小于理想值，交由 NSSplitView 自行分配（两侧各保最小宽）
+
         var frame = window.frame
-        let target = max(1060, frame.width + paneWidth)
         let delta = target - frame.width
         if newSide == .left {
-            // 新面板在左 → 窗口向左加宽（右边缘不动）
-            frame.origin.x -= delta
+            // 新面板在左 → 窗口向左加宽（右缘不动），左缘贴屏幕边保护
+            frame.origin.x = max(screen.visibleFrame.minX, frame.origin.x - delta)
+            frame.size.width = min(target, frame.maxX - frame.origin.x)
+        } else {
+            // 新面板在右 → 窗口向右加宽（左缘不动），右缘不超出屏幕
+            let maxW = screen.visibleFrame.maxX - frame.origin.x
+            frame.size.width = min(target, maxW)
         }
-        frame.size.width = target
+        guard abs(frame.width - window.frame.width) > 0.5 else { return }
         resizeWindowKeepingSidebar(frame)
     }
 
     /// 标签被拖出窗口 → 独立成新窗口
+    ///
+    /// 2026-10-20 第五轮 C：双栏窗口里搬空**一块**面板时，只折叠该面板
+    /// （另一块还有标签，整窗关掉会连它一起丢）——仅当两块都空才关窗。
     func detachTabToNewWindow(side: PaneSide, index: Int, atScreenPoint point: NSPoint) {
         guard let session = takeTabOut(side: side, index: index) else { return }
         let sourceEmpty = isPaneEmpty(side: side)
@@ -228,7 +266,18 @@ extension MainWindowController: PaneTabStripDelegate {
         controller.loadActiveTab(side: .left)
         FFDebug.log("[TABDRAG] 标签拖出成独立窗口 title=\(session.title)")
 
-        if sourceEmpty {
+        guard sourceEmpty else { return }
+        // 另一块面板还有标签 → 只折叠空的那块（变单栏显示另一侧）
+        let otherSide: PaneSide = side == .left ? .right : .left
+        let otherHasContent = !(tabsStore(for: otherSide)?.tabs.allSatisfy { $0.isPlaceholder } ?? true)
+        if otherHasContent && !isSinglePaneMode {
+            activePane = otherSide
+            isSinglePaneMode = true
+            UserDefaults.standard.set(true, forKey: Self.singlePaneModeKey)
+            applyPaneMode()
+            loadActiveTab(side: otherSide)
+            FFDebug.log("[TABDRAG] 双栏中搬空一块 → 折叠该面板，窗口变单栏")
+        } else {
             closeSelfAfterEmptyPane()
         }
     }
@@ -343,22 +392,22 @@ extension MainWindowController {
         let mergeOK = rightStore.count == rightBefore + 1
         FFDebug.log("[SELFTEST] ② 并入右面板标签条 \(mergeOK ? "PASS" : "FAIL") 右=\(rightStore.count) 期望=\(rightBefore + 1)")
 
-        // ③ 拖到操作区：单栏窗口应拆出第二块面板（窗口变双栏）
+        // ③ 单栏拖到「右半区」→ 新面板出现在右（落点侧），原面板标签留在左
+        // （2026-10-20 第五轮 C：新面板按落点侧，不再固定在活动面板对侧）
         isSinglePaneMode = true
         UserDefaults.standard.set(true, forKey: Self.singlePaneModeKey)
+        activePane = .left
         applyPaneMode()
-        let singleSide = activePane
-        let otherSide: PaneSide = singleSide == .left ? .right : .left
-        let otherStore = tabsStore(for: otherSide)
-        let otherWasPlaceholderOnly = (otherStore?.tabs.allSatisfy { $0.isPlaceholder } ?? true)
-        let otherCountBefore = otherStore?.count ?? 0
+        let leftCountBefore3 = leftStore.count
         if let session = rightStore.tabs.last {
-            acceptTab(session, into: .paneContent(window: self, side: otherSide))
+            acceptTab(session, into: .paneContent(window: self, side: .right))
         }
-        let expectedOther = otherWasPlaceholderOnly ? 1 : otherCountBefore + 1
+        // 落点侧（右）= 只有拖入的这一个标签；原面板标签留在左
         let splitOK = !isSinglePaneMode
-            && (tabsStore(for: otherSide)?.count ?? 0) == expectedOther
-        FFDebug.log("[SELFTEST] ③ 拖到操作区拆出第二面板 \(splitOK ? "PASS" : "FAIL") 单栏=\(isSinglePaneMode) 另一侧=\(tabsStore(for: otherSide)?.count ?? -1) 期望=\(otherCountBefore + 1)")
+            && activePane == .right
+            && rightStore.count == 1
+            && leftStore.count == leftCountBefore3
+        FFDebug.log("[SELFTEST] ③ 拖到右半→新面板在右 \(splitOK ? "PASS" : "FAIL") 单栏=\(isSinglePaneMode) 右=\(rightStore.count) 期望=1 左=\(leftStore.count) 期望=\(leftCountBefore3)")
 
         // ④ 面板被搬空 → 应判定为「空」（用于关窗）
         let emptyProbe = tabsStore(for: .left)
@@ -369,6 +418,22 @@ extension MainWindowController {
             emptyProbe.replaceAll(saved)
             FFDebug.log("[SELFTEST] ④ 面板搬空判定 \(emptyOK ? "PASS" : "FAIL")")
         }
+
+        // ⑤ 双栏：把左面板唯一的标签拖到右面板操作区 → 源面板搬空折叠，窗口变单栏
+        // （2026-10-20 第五轮 C：搬空的面板消失，不留空占位）
+        while leftStore.count > 1 { leftStore.close(at: leftStore.count - 1) }
+        if leftStore.tabs.allSatisfy({ $0.isPlaceholder }) {
+            _ = newTab(in: .left)
+        }
+        window?.contentView?.layoutSubtreeIfNeeded()
+        if let session = leftStore.tabs.first {
+            transferTab(side: .left, index: 0,
+                        to: .paneContent(window: self, side: .right))
+        }
+        let collapseOK = isSinglePaneMode
+            && activePane == .right
+            && rightStore.count == 2
+        FFDebug.log("[SELFTEST] ⑤ 搬空源面板折叠 \(collapseOK ? "PASS" : "FAIL") 单栏=\(isSinglePaneMode) 活动侧=\(activePane) 右=\(rightStore.count) 期望=2")
 
         // 复原到双栏
         isSinglePaneMode = false
@@ -513,7 +578,7 @@ extension MainWindowController {
 
         // 卡片四周 8pt 留白（wrapper 左缘）
         if let wrapper = leftPaneWrapper, let frame = wrapper.superview?.convert(wrapper.frame, to: contentView) {
-            expect(NSPoint(x: frame.minX + 3, y: frame.midY), .window, "卡片左缘留白")
+            expect(NSPoint(x: frame.minX + 3, y: frame.midY), .panel, "卡片左缘留白（第五轮 C：不再拖窗口）")
         }
 
         // ⑥ 调宽把手的 Y 排除：标题带（顶部 36pt）内的缝隙 X 不算把手
