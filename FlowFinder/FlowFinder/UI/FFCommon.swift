@@ -77,6 +77,9 @@ enum FFWindowDrag {
 /// 消除散布在各文件中的字符串字面量
 /// 注意：fileList* 系列通知定义在 FileListView.swift 的 extension 中，此处仅补充未定义的
 extension Notification.Name {
+
+    /// 标签缓存预热完成（2026-10-20 #4）——列表据此刷新标签色点
+    static let ffTagCacheWarmed = Notification.Name("FFTagCacheWarmed")
     // 窗口/视图相关
     static let openSettings = Notification.Name("OpenSettings")
     /// 2026-10-19 #10：侧栏显隐（侧栏按钮或 ⌥⌘S 发出，窗口统一执行动画）

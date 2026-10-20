@@ -31,17 +31,19 @@
 
 ## 1. 十项需求逐条台账
 
-### R-01 面板拖动模型
+### R-01 拖动模型（标签级 · 支持跨窗口）
 
 | 项 | 内容 |
 |---|---|
-| 需求原文 | 按住操作面板拖动时，不能拖走窗口；拖面板应等于搬面板 |
-| 最终语义 | 只有标签能拖面板：条内 20pt 缓冲 = 重排标签，出缓冲 = 搬整块面板（1:1 浮层 + 原位虚线占位） |
-| 落点规则 | 空槽 → 挪过去、窗口收窄；已占槽 → 两块合并（标签并集）变单栏；窗口外 → 整块面板独立成新窗；其它 → 回原位 |
-| 实现位置 | `UI/FFPaneDrag.swift`（`FFPaneDragController`：窗口级 local monitor → 快照浮层 → 落点判定）<br>`UI/MainWindowController+Tabs.swift`（`handlePanelMove` / `movePaneToSlot` / `mergePanes` / `detachPaneToNewWindow`）<br>`UI/PaneTabs.swift`（标签条、插入指示线） |
-| 关键决策 | 不用 `NSDraggingSession`：标签条在标题栏带内，那带的 mouseDown 会被系统标题栏先于内容视图抢走，而 NSDraggingSession 要求拖拽源就是收到 mouseDown 的视图 |
-| 验证 | 落点状态机 4 项断言 + 合成拖拽实测（拖右面板到左面板 → 窗口 1400→794；拖影 1:1 跟随） |
-| 状态 | 已完成 |
+| 需求原文 | 按住操作面板拖动不能拖走窗口；拖面板 = 搬面板；单窗口多标签时标签拖出、再拖入应变成双窗口 |
+| 拖的对象 | **标签**（2026-10-20 第四轮改）。拖标签 = 搬这个标签，跟手的是 1:1 标签浮层（不再是整块面板快照） |
+| 落点分流 | 落在标签条 → 并入那个面板；落在操作区 → 单栏窗口**拆出第二块面板**（窗口自动加宽）、双栏窗口并入该侧；落在窗口外 → 独立成新窗口 |
+| 跨窗口 | 拖动中按屏幕坐标遍历已注册窗口判定落点，目标窗口显示半透明落点高亮 |
+| 源窗口 | 面板被搬空就自动关窗；还有标签就留着 |
+| 作废的旧裁定 | 「拖拽永远不会增加栏数」作废；「拖面板 = 搬整块面板」作废 |
+| 实现位置 | `UI/FFPaneDrag.swift`（`FFPaneDragController` + `FFDropTarget` + `FFDropHighlightView`）<br>`UI/MainWindowController+Tabs.swift`（`takeTabOut` / `transferTab` / `acceptTab` / `acceptTabIntoPane` / `detachTabToNewWindow` / `closeSelfAfterEmptyPane`） |
+| 验证 | 落点状态机 4 项断言（摘标签 / 并入标签条 / 拆出第二面板 / 搬空判定）全 PASS；**物理拖拽的跨窗口落点尚未在本机端到端验证**（合成事件受限于坐标口径与授权） |
+| 状态 | 已完成（物理跨窗口拖拽待人工验收） |
 
 ### R-02 单双面板切换动画
 
@@ -51,7 +53,8 @@
 | 落地 | 0.36s、`CAMediaTimingFunction(0.32,1.28,0.48,1)`；窗口宽度用 `NSAnimationContext` 同曲线插值；contentView 叠一层 opacity 关键帧（1→0.72→1）做「推挤 + 回弹」观感 |
 | 实现位置 | `UI/FFPaneModeAnimator.swift`；`MainWindowController.handlePaneModeToggle` + `resizeWindowKeepingSidebar`（`isAnimatingPaneMode` 分支） |
 | 验证 | 断言时长常量 0.36s；实机切换观察窗口宽度过渡 |
-| 未做到的 | **面板本身没有位移动画**。面板显隐是 `NSSplitView` 的 arranged subview 增删，NSSplitView 不参与隐式动画。要做「面板滑出」必须放弃 NSSplitView 自己排布局 |
+| 未做到的 | **面板本身没有位移动画**。面板显隐是 `NSSplitView` 的 arranged subview 增删，NSSplitView 不参与隐式动画 |
+| 本轮裁定 | 用户选了「**真位移（自管布局）**」：放弃 NSSplitView 自己排两块面板的 frame，拖边调宽与宽度记忆一并重写。**本轮未实施**（改动面覆盖整个分栏体系，单独一轮做） |
 | 状态 | 部分完成 |
 
 ### R-03 列表四列与可选列
@@ -103,10 +106,10 @@
 | 项 | 内容 |
 |---|---|
 | 需求原文 | 隐藏侧栏 / 主题 / 单双窗三个图标 16pt，右缘距侧栏右边 12pt |
-| 实际做法 | 图标 15 → **16pt**；水平位置**保持**「紧跟红绿灯之后」（`alignTopControlsWithTrafficLights` 按 zoomButton 右缘 + 10 反算），未改右对齐 |
-| 未改原因 | 2026-10-19 #10 已明确裁定「三个图标排在红绿灯后面，而不是靠右对齐」，代码注释也写着这条。本轮只按需求改了尺寸，位置留给你确认是否要改成右缘 12 |
-| 验证 | 截图：三图标中心与红绿灯中心同高 |
-| 状态 | 部分完成（尺寸已完成；「右缘 12」未实施，待确认） |
+| 实际做法 | 图标 15 → **16pt**；位置**拆成两组**（第四轮裁定）：隐藏侧栏紧跟红绿灯（与窗口控制同组），主题与单双窗靠侧栏右缘（右缘距 12） |
+| 实现位置 | `UI/SidebarView.swift`：`topControlsRow` 只放隐藏侧栏按钮；新增 `rightControlsRow`（主题 + 单双窗），trailing −12，与控制行垂直居中 |
+| 验证 | 截图核对两组图标位置与红绿灯的垂直关系 |
+| 状态 | 已完成 |
 
 ### R-08 移除分隔发光条 + 面板边缘调宽
 
@@ -137,6 +140,30 @@
 | 验证 | 自检断言 `usesSharedRowMidline`；截图看图标与文字、各列数值同一中线 |
 | 状态 | 已完成 |
 
+### R-11 点击失效修复（2026-10-20 第四轮，最高优先）
+
+| 项 | 内容 |
+|---|---|
+| 症状 | ① 应用内点文件、点工具栏按钮、点侧栏行全没反应；② **切到别的 App 也点不动**，要再点一下才恢复 |
+| 根因 1 | `.pressFeedback` 意图在 `handleDown` 里 **返回 nil**，把 mouseDown / mouseUp 都吞了。决策表把「工具栏 / 文件列表 / 侧栏行」全映射到 pressFeedback → 所有控件点击失效 |
+| 根因 2 | 同上：press 模式下每一次点击的 mouseDown 都被吞。指针拖出窗口外松手时 mouseUp 不回到本应用 → 系统认为鼠标仍按着 → 整个系统的点击都被当作拖拽续接 |
+| 根因 3 | `FFPaneDragController` 是全局单例但 `install(for:)` 由每个窗口调用 → 第二个窗口把 `self.window` 覆盖，只有最后创建的窗口被接管，其余窗口的点击与拖动全部失灵 |
+| 修法 | press 反馈**不再消费事件**（视觉下沉照做，事件原样放行）；事件按 `event.window` 路由到对应宿主（单一 app 级 monitor）；拖动**不消费 mouseDown**，保住 AppKit 的鼠标归属，mouseUp 一定回来；监听 `didResignActive` 复位拖拽状态并补发 mouseUp |
+| 为什么不能靠全局监视器 | `NSEvent.addGlobalMonitorForEvents` 需要辅助功能权限，本机未授予 → 事件根本收不到（已实测）。因此改走「不消费 mouseDown」这条路 |
+| 验证 | 点击能触发 `selectionDidChange`（修复前无此响应）；拖拽起手日志正常；自检 0 失败 |
+| 状态 | 已完成 |
+
+### R-12 启动卡顿（渲染不等标签）
+
+| 项 | 内容 |
+|---|---|
+| 症状 | 应用启动后列表长时间空白（主线程卡在 `getxattr` 1–2 分钟，`sample` 实测） |
+| 根因 | `warmCache` 已在后台预热标签，但**渲染与预热抢跑**：渲染时缓存还没热，`getTags` 退化成同步 xattr I/O，22 个条目就能把主线程堵住 |
+| 修法 | 渲染路径改用 `TagBridge.cachedTags(path:)`（只读缓存、不做 I/O）；预热完成后发 `.ffTagCacheWarmed` 通知，列表据此整表刷新一次（此时全部命中缓存） |
+| 代价 | 标签色点晚一帧出现 |
+| 实现位置 | `Bridge/TagBridge.swift`（`cachedTags` / `warmCache(paths:completion:)`）、`Model/PaneState.swift`（预热完成广播）、`UI/FileListView.swift`（`tagCacheWarmed`） |
+| 状态 | 已完成 |
+
 ---
 
 ## 2. 已知限制与技术债
@@ -148,6 +175,8 @@
 | 启动期 I/O 卡顿 | `rebuildDisplayRows` 里同步 `TagBridge.getTags` → `getxattr`，在 22 个条目上可阻塞 1–2 分钟（sample 可见主线程卡在 `getxattr`） | **未修**。应改成异步/缓存预取；本轮只记录，避免与列改动混在一起 |
 | 面板切换无位移动画 | `NSSplitView` 不参与隐式动画 | 见 R-02 |
 | 说明列依赖 Spotlight | `kMDItemFinderComment` 需 CoreServices | 缓存 + 后台补 |
+| 跨窗口物理拖拽未端到端验证 | 合成事件受限于坐标口径（本环境 CGEvent 的 y 是**屏幕顶部**原点，与 CGWindowList 的窗口坐标差一整屏）与 TCC 弹窗抢事件 | 已用应用内几何日志 + 模型级断言覆盖；物理拖拽请人工验收 |
+| 面板切换真位移未做 | 用户已裁定走「自管布局」，但改动覆盖整个分栏体系 | 单独一轮做，不与其它改动混 |
 
 ---
 
@@ -157,3 +186,4 @@
 |---|---|
 | 2026-10-20 | 建台账；A/B/C/D 四批逐条回填实现位置与验证手段 |
 | 2026-10-20 | B 批：四列 + 可选列 + 三个入口 + 垂直中线；C/D 批：窗口连续曲率圆角、图标尺寸、切换动画 |
+| 2026-10-20 | 第四轮：R-11 点击失效修复（press 不吞事件 + 事件按窗口路由 + 不消费 mouseDown）、R-01 改标签级跨窗口模型、R-12 渲染不等标签、R-07 三图标拆成两组 |

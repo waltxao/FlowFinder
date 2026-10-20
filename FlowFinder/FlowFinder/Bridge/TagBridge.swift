@@ -58,6 +58,15 @@ public final class TagBridge {
         return result
     }
 
+    /// **只读缓存**的标签（不触发 I/O）。
+    ///
+    /// 2026-10-20 #4：渲染路径必须用它，不能用 `getTags`——后者在缓存未命中时
+    /// 会同步做 getxattr，主线程在 22 个条目上就能卡 1–2 分钟（`sample` 抓到
+    /// 主线程卡在 getxattr）。渲染先按「无标签」出，预热完成后由通知刷新。
+    public func cachedTags(path: String) -> [Tag] {
+        cache.object(forKey: NSString(string: path)) as? [Tag] ?? []
+    }
+
     /// 失效指定路径的标签缓存（FSEvents 检测到文件变更时调用）
     public func invalidateCache(path: String) {
         cache.removeObject(forKey: NSString(string: path))
@@ -75,11 +84,17 @@ public final class TagBridge {
     /// 预热只会让该路径更快命中，不改变其行为。
     /// 取舍：预热完成后不补发刷新通知——若渲染早于预热命中，该批条目在渲染时已同步
     /// 读到标签并填充缓存，视觉结果一致，无需二次 reload。
-    public func warmCache(paths: [String]) {
-        guard !paths.isEmpty else { return }
+    public func warmCache(paths: [String], completion: (() -> Void)? = nil) {
+        guard !paths.isEmpty else {
+            completion?()
+            return
+        }
         DispatchQueue.global(qos: .utility).async {
             for path in paths {
                 _ = self.getTags(path: path)
+            }
+            DispatchQueue.main.async {
+                completion?()
             }
         }
     }

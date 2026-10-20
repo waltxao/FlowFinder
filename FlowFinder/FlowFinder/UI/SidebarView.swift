@@ -221,6 +221,8 @@ class SidebarView: NSView, FFRegionAware {
     private var brandVersionLabel: NSTextField!
     /// 2026-10-19 #10：顶部控制行（隐藏侧栏 / 日间夜间 / 单双窗口），紧跟在红绿灯右侧
     private var topControlsRow: NSStackView!
+    /// 右缘控制组（主题 / 单双窗）——2026-10-20 #4
+    private var rightControlsRow: NSStackView!
     private var topControlsTopConstraint: NSLayoutConstraint!
     private var topControlsLeadingConstraint: NSLayoutConstraint!
     /// 2026-10-19 #10：隐藏侧栏按钮（图标随显隐状态切换）
@@ -326,12 +328,22 @@ class SidebarView: NSView, FFRegionAware {
             tooltip: "切换到单窗口",
             action: #selector(handlePaneModeToggle)
         )
-        topControlsRow = NSStackView(views: [sidebarToggleBtn, themeToggleBtn, paneModeButton])
+        // 2026-10-20 #4：控制图标拆成两组（推翻 2026-10-19 #10 的「三者都紧跟红绿灯」）
+        //   - 隐藏侧栏：与红绿灯同组，紧跟缩放键之后（位置由 alignTopControlsWithTrafficLights 反算）
+        //   - 主题 / 单双窗：视图类操作，靠侧栏右缘（右缘距 12）
+        topControlsRow = NSStackView(views: [sidebarToggleBtn])
         topControlsRow.orientation = .horizontal
         topControlsRow.spacing = 2
         topControlsRow.alignment = .centerY
         topControlsRow.translatesAutoresizingMaskIntoConstraints = false
         addSubview(topControlsRow)
+
+        rightControlsRow = NSStackView(views: [themeToggleBtn, paneModeButton])
+        rightControlsRow.orientation = .horizontal
+        rightControlsRow.spacing = 2
+        rightControlsRow.alignment = .centerY
+        rightControlsRow.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(rightControlsRow)
 
         topControlsTopConstraint = topControlsRow.topAnchor.constraint(equalTo: topAnchor, constant: 8)
         topControlsLeadingConstraint = topControlsRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 78)
@@ -339,6 +351,11 @@ class SidebarView: NSView, FFRegionAware {
             topControlsTopConstraint,
             topControlsLeadingConstraint,
             topControlsRow.heightAnchor.constraint(equalToConstant: 24),
+
+            // 右缘组：与控制行垂直居中，右缘距侧栏右边 12
+            rightControlsRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            rightControlsRow.centerYAnchor.constraint(equalTo: topControlsRow.centerYAnchor),
+            rightControlsRow.heightAnchor.constraint(equalToConstant: 24),
 
             // 品牌区排在控制行下方（访达同构：标题在工具栏下方，不再与红绿灯同行）
             brandView.topAnchor.constraint(equalTo: topControlsRow.bottomAnchor, constant: 8),

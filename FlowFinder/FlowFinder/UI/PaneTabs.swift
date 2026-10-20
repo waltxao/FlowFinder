@@ -7,6 +7,9 @@ import Cocoa
 struct PaneTabSession {
     let id: UUID
     var state: PaneState
+    /// 2026-10-20 #4：占位标签标记。面板被搬空后只剩占位，
+    /// 用它判断「这个面板空了 → 该关窗」。
+    var isPlaceholder: Bool = false
 
     init(id: UUID = UUID(), state: PaneState) {
         self.id = id
@@ -143,6 +146,9 @@ final class PaneTabsStore {
 // MARK: - 单个标签
 
 final class PaneTabItemView: NSView, FFRegionAware {
+
+    /// 标签标题（诊断用）
+    var titleText: String { titleLabel.stringValue }
 
     /// 标签本体：唯一能拖面板的把手（条内重排 / 出缓冲搬整块面板）
     var ffRegion: FFRegion { .tab }
@@ -438,6 +444,11 @@ final class PaneTabStripView: NSView, FFRegionAware {
     /// 背板填充色 = 面板卡片背景色（由控制器注入，跟随主题）
     func setBackdropColor(_ color: NSColor) {
         backdrop.fillColor = color
+    }
+
+    /// 取第 index 个标签的视图（拖动浮层用）
+    func itemView(at index: Int) -> PaneTabItemView? {
+        items.indices.contains(index) ? items[index] : nil
     }
 
     /// 当前所有标签项（自检用）

@@ -1,44 +1,26 @@
 import Cocoa
 
-// MARK: - 面板拖拽（2026-10-20 #1 重做）
+// MARK: - 标签拖动（2026-10-20 #4 重做）
 //
-// 规格见 docs/SPEC-2026-10-20.md §1.8。三件事彻底分开：
+// 规格见 docs/SPEC-2026-10-20.md §1.12。
 //
-//   拖窗口：侧栏空白 / 面板卡片四周 8pt 留白 / 标签条空白
-//   拖面板：只有标签条上的「标签」能触发
-//           条内（含 20pt 缓冲）= 重排标签
-//           出缓冲 = 搬整块面板（1:1 浮层跟随）
-//   不拖：  工具栏、文件列表（给按压反馈，但不产生任何拖动）
+// 本轮把拖动对象从「整块面板」改成「标签」，并支持跨窗口：
+//
+//   拖标签（出缓冲）→ 带着这个标签走（1:1 标签浮层）
+//   落点            → 决定这个标签去哪：
+//                      · 某个窗口的标签条   → 并入那个面板
+//                      · 某个窗口的操作区   → 单栏窗口拆出第二块面板 / 双栏窗口并入该侧
+//                      · 窗口外             → 独立成新窗口
+//   标签条空白      → 拖窗口（性质等同系统标题栏）
+//   工具栏 / 列表   → 不产生拖动（只给按压反馈，且**不消费事件**）
 //
 // 为什么全部自管、不用 NSDraggingSession：
 // 标签条在窗口顶部那一行（与红绿灯同高），那一带的 mouseDown 会被系统标题栏
 // 先于内容视图抢走；NSDraggingSession 要求拖拽源就是收到 mouseDown 的视图，
 // 根本做不到。窗口级 local monitor 在事件分发之前就能拦下来。
 //
-// 落点（整块面板的移动）：
-//   同一窗口的空槽（单栏时的右半区）→ 面板挪过去，原槽空掉，窗口收窄
-//   已被占用的槽（对面面板）        → 两块合并成一个（标签并集），窗口变单栏
-//   窗口外                          → 拆成独立新窗口
-//   其它                            → 回原位
-
-/// 原位置占位框：面板被拖起时留在原处的虚线轮廓
-final class FFPanePlaceholderView: NSView {
-
-    override var isOpaque: Bool { false }
-
-    /// 只做视觉提示，不参与事件分发（否则会吃掉面板内的点击）
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 0.75, dy: 0.75)
-        guard rect.width > 0, rect.height > 0 else { return }
-        let path = NSBezierPath(roundedRect: rect, xRadius: 16, yRadius: 16)
-        path.lineWidth = 1.5
-        path.setLineDash([5, 4], count: 2, phase: 0)
-        FFAccent.current.withAlphaComponent(0.5).setStroke()
-        path.stroke()
-    }
-}
+// 跨窗口：local monitor 是 app 级的，能收到本应用所有窗口的事件；
+// 拖动中按屏幕坐标遍历已注册窗口做命中判定，即可知道落在哪个窗口的哪块区域。
 
 /// 标签重排时的插入指示线（竖线）
 final class FFTabInsertionIndicator: NSView {
@@ -53,25 +35,58 @@ final class FFTabInsertionIndicator: NSView {
     }
 }
 
+/// 跨窗口拖动时的落点高亮（半透明色块）
+final class FFDropHighlightView: NSView {
+
+    override var isOpaque: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 12, yRadius: 12)
+        FFAccent.current.withAlphaComponent(0.18).setFill()
+        path.fill()
+        FFAccent.current.withAlphaComponent(0.55).setStroke()
+        path.lineWidth = 1.5
+        path.setLineDash([5, 4], count: 2, phase: 0)
+        path.stroke()
+    }
+}
+
+/// 一次拖动的落点
+enum FFDropTarget {
+
+    /// 落在某个窗口某侧面板的标签条上（index = nil 表示并到末尾）
+    case tabStrip(window: MainWindowController, side: PaneSide, index: Int?)
+
+    /// 落在某个窗口的操作区（单栏 = 拆出第二块面板；双栏 = 并入该侧面板）
+    case paneContent(window: MainWindowController, side: PaneSide)
+
+    /// 落点所属的窗口
+    var window: MainWindowController {
+        switch self {
+        case .tabStrip(let w, _, _): return w
+        case .paneContent(let w, _): return w
+        }
+    }
+}
+
 /// 面板拖拽的工具方法
 enum FFPaneDrag {
-
-    private static let placeholderID = NSUserInterfaceItemIdentifier("ff.pane.placeholder")
 
     /// 拖起阈值：移动超过 4pt 才算拖动，否则视为点击
     static let threshold: CGFloat = 4
 
     /// 标签条矩形外扩的缓冲：
-    /// 指针在标签条矩形外扩 20pt 内仍算「条内重排」，出了才算拖出搬面板。
-    /// 标签条只有 28pt 高，无缓冲会导致垂直抖动误触发、重排几乎无法完成。
+    /// 指针在标签条矩形外扩 20pt 内仍算「条内重排」，出了才算拖出。
+    /// 标签条只有 36pt 高，无缓冲会导致垂直抖动误触发、重排几乎无法完成。
     static let stripBuffer: CGFloat = 20
 
-    /// 面板卡片快照：1:1 尺寸、0.55 不透明度
-    static func snapshot(of card: NSView) -> NSImage? {
-        let size = card.bounds.size
+    /// 标签快照：1:1 尺寸、0.55 不透明度
+    static func snapshot(of view: NSView) -> NSImage? {
+        let size = view.bounds.size
         guard size.width > 1, size.height > 1,
-              let rep = card.bitmapImageRepForCachingDisplay(in: card.bounds) else { return nil }
-        card.cacheDisplay(in: card.bounds, to: rep)
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
 
         let opaque = NSImage(size: size)
         opaque.addRepresentation(rep)
@@ -85,48 +100,33 @@ enum FFPaneDrag {
         faded.unlockFocus()
         return faded
     }
-
-    /// 在原位置显示虚线占位框
-    static func showPlaceholder(in card: NSView) {
-        guard placeholder(in: card) == nil else { return }
-        let view = FFPanePlaceholderView()
-        view.identifier = placeholderID
-        view.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.topAnchor.constraint(equalTo: card.topAnchor),
-            view.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            view.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-        ])
-    }
-
-    /// 移除占位框
-    static func hidePlaceholder(in card: NSView) {
-        placeholder(in: card)?.removeFromSuperview()
-    }
-
-    private static func placeholder(in card: NSView) -> FFPanePlaceholderView? {
-        card.subviews.first { $0.identifier == placeholderID } as? FFPanePlaceholderView
-    }
 }
 
-// MARK: - 窗口级面板拖拽控制器
+// MARK: - 窗口级标签拖动控制器
 
-/// 面板拖拽的窗口级控制器。
+/// 标签拖动的窗口级控制器。
 ///
 /// 靠 `NSEvent.addLocalMonitorForEvents` 在事件分发**之前**接管 mouseDown：
-/// 窗口顶部 28pt 是系统标题栏的拖动区，会先于内容视图吃掉事件，
+/// 窗口顶部 36pt 是系统标题栏的拖动区，会先于内容视图吃掉事件，
 /// 只有在分发前拦下来，才能把「拖标签 / 拖窗口 / 按压无反应」三者分开。
 final class FFPaneDragController {
 
     static let shared = FFPaneDragController()
 
-    /// 宿主窗口控制器（提供面板卡片、标签组等数据）
-    weak var owner: MainWindowController?
+    /// 已注册的窗口宿主（弱引用，窗口关掉自动失效）
+    ///
+    /// 2026-10-20 #4：原先只有一个 `owner` + 一个 `window`，而 `install(for:)` 由每个
+    /// 窗口调用——第二个窗口创建时把 `self.window` 覆盖掉，于是只有最后创建的窗口
+    /// 会被接管，其余窗口的点击与拖动全部失灵。改为按 `event.window` 路由。
+    private final class WeakOwner {
+        weak var value: MainWindowController?
+        init(_ value: MainWindowController) { self.value = value }
+    }
+    private var registeredOwners: [WeakOwner] = []
 
-    private weak var window: NSWindow?
     private var monitors: [Any] = []
+    /// 全局监视器（事件发生在**别的 App** 上时也能收到）
+    private var globalMonitors: [Any] = []
 
     private enum Mode {
         case none
@@ -145,20 +145,45 @@ final class FFPaneDragController {
     private var sourceSide: PaneSide = .left
     private var sourceIndex: Int = 0
     private var didExceedThreshold = false
-    private var isPanelMove = false
+    private var isTabDragOut = false
     private var currentInsertionIndex: Int = 0
     private var ghostPanel: NSPanel?
     private var grabOffset: NSPoint = .zero
-    private weak var movedCard: NSView?
+    private var dropTarget: FFDropTarget?
+    private var highlightView: FFDropHighlightView?
+    private weak var highlightHost: NSView?
+
+    /// 本次拖拽的宿主窗口控制器（拖拽开始时锁定，避免中途路由变化）
+    private weak var dragOwner: MainWindowController?
 
     // 按压反馈
     private weak var pressedCard: NSView?
 
     // MARK: 安装
 
-    func install(for window: NSWindow) {
-        self.window = window
+    /// 注册一个窗口宿主。monitor 只装一次（local monitor 是 app 级的，
+    /// 装多个会出现调用顺序问题），事件按窗口路由到对应宿主。
+    func register(owner: MainWindowController, window: NSWindow) {
+        registeredOwners.removeAll { $0.value == nil }
+        if !registeredOwners.contains(where: { $0.value === owner }) {
+            registeredOwners.append(WeakOwner(owner))
+        }
+        installMonitorsIfNeeded()
+    }
+
+    /// 事件按窗口路由到宿主；找不到就返回 nil
+    private func owner(for window: NSWindow?) -> MainWindowController? {
+        guard let window else { return nil }
+        return registeredOwners.first { $0.value?.window === window }?.value
+    }
+
+    private func installMonitorsIfNeeded() {
         guard monitors.isEmpty else { return }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.resetForInactiveApp()
+        }
         monitors = [
             NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] e in
                 self?.handleDown(e)
@@ -170,67 +195,129 @@ final class FFPaneDragController {
                 self?.handleUp(e)
             },
         ]
+        // 2026-10-20 #4：全局监视器。
+        //
+        // 为什么必须有：拖动时我们**消费**了 mouseDown（否则系统标题栏会抢走），
+        // 如果指针拖到别的 App 上松手，那个 mouseUp 只会派发给别的 App，
+        // 我们的 local monitor 永远收不到 →
+        //   ① 拖拽没有「结束」，浮层与占位框留在屏幕上；
+        //   ② 系统认为鼠标还按着，之后整个操作系统的点击都被当成拖拽续接。
+        // global monitor 正好补上这一段：local 覆盖本 App 的事件，global 覆盖别处的。
+        globalMonitors = [
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] e in
+                self?.handleDragged(e)
+            },
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] e in
+                self?.handleUp(e)
+            },
+        ]
     }
 
     func uninstall() {
         monitors.forEach { NSEvent.removeMonitor($0) }
         monitors.removeAll()
+        globalMonitors.forEach { NSEvent.removeMonitor($0) }
+        globalMonitors.removeAll()
         endGhost()
+    }
+
+    /// 应用失焦：复位所有拖拽状态。
+    ///
+    /// 2026-10-20 #4：如果我们在拖拽中途吞掉了 mouseDown，而 mouseUp 没有回到
+    /// 本应用（切到别的 App 松手），系统会认为「鼠标还按着」——之后整个操作系统的
+    /// 点击都被当成拖拽续接，别的 App 全点不动。这里主动复位，并补发一次 mouseUp
+    /// 释放系统端的按键状态。
+    private func resetForInactiveApp() {
+        let hadConsumedDown = (mode == .windowDrag || mode == .tabDrag)
+        resetDragState()
+        if hadConsumedDown {
+            let p = NSEvent.mouseLocation
+            CGEvent(mouseEventSource: nil,
+                    mouseType: .leftMouseUp,
+                    mouseCursorPosition: p,
+                    mouseButton: .left)?.post(tap: .cghidEventTap)
+        }
+    }
+
+    private func resetDragState() {
+        mode = .none
+        didExceedThreshold = false
+        isTabDragOut = false
+        sourceStrip?.hideInsertionIndicator()
+        sourceStrip = nil
+        dragOwner = nil
+        endGhost()
+        endHighlight()
+        removePressFeedback()
+        pressedCard = nil
     }
 
     // MARK: 事件
 
     /// 一次 mouseDown 的判定：**全部走决策表**，不再有散落的 if。
-    ///
-    /// 区域由命中链上第一个声明 `FFRegionAware` 的祖先给出（见 `FFAreaResolver`），
-    /// 区域 + 状态 → 意图由 `FFInteractionPolicy` 翻译。
-    /// 新增区域或改行为都是往表里加一行，不是往这里加 if。
     private func handleDown(_ event: NSEvent) -> NSEvent? {
-        guard mode == .none, let window, event.window === window,
-              let contentView = window.contentView else { return event }
+        guard mode == .none,
+              let owner = owner(for: event.window),
+              let contentView = event.window?.contentView else { return event }
         let point = event.locationInWindow
         guard let hit = contentView.hitTest(point) else { return event }
 
-        let state = currentState()
+        let state = currentState(for: owner)
         let intent = FFAreaResolver.intent(for: hit, state: state)
 
         switch intent {
         case .dragPane, .reorderTab, .activateTab:
-            // 三者都从「按住标签」起手：条内重排 / 出缓冲搬面板 / 点击激活
+            // 三者都从「按住标签」起手：条内重排 / 出缓冲拖出 / 点击激活
             guard let item = hit as? PaneTabItemView, let strip = item.strip else {
                 return event
             }
             sourceStrip = strip
             sourceSide = strip.side
             sourceIndex = item.index
+            dragOwner = owner
             startScreenPoint = NSEvent.mouseLocation
             didExceedThreshold = false
-            isPanelMove = false
+            isTabDragOut = false
             mode = .tabDrag
-            return nil
+            FFDebug.log("[TABDRAG] 起手 side=\(strip.side) index=\(item.index) 标题=\(item.titleText)")
+            // 2026-10-20 #4：**不消费 mouseDown**。
+            // 消费掉的话，AppKit 不再认为本应用持有鼠标，拖到别的 App 上松手时
+            // mouseUp 不会回到我们 → 拖拽没有结束，且系统认为鼠标还按着
+            // （整个操作系统的点击都失灵）。
+            // 现在事件原样放行：窗口 isMovable=false，标题栏不会自己拖窗口，
+            // 拖动完全由我们接管，而 mouseUp 一定回来。
+            return event
 
         case .dragWindow:
             mode = .windowDrag
-            startScreenPoint = window.convertPoint(toScreen: point)
-            startWindowOrigin = window.frame.origin
-            return nil
+            dragOwner = owner
+            if let w = event.window {
+                startScreenPoint = w.convertPoint(toScreen: point)
+                startWindowOrigin = w.frame.origin
+            }
+            // 同样不消费：保住鼠标归属，mouseUp 才会回来（见 .tab 分支的说明）
+            return event
 
         case .pressFeedback:
+            // 2026-10-20 #4：**不消费事件**。
+            // 原来这里返回 nil，把 mouseDown / mouseUp 都吞了，于是
+            // 点文件、点工具栏按钮、点侧栏行全部没反应；
+            // 而且每一次点击的 mouseDown 都被吞，若拖出窗口外松手，
+            // mouseUp 回不来 → 系统认为鼠标还按着 → 整个系统的点击都失灵。
             mode = .press
-            pressedCard = owner?.paneCard(for: sourceSide)
+            pressedCard = owner.paneCard(for: sourceSide)
             applyPressFeedback()
-            return nil
+            return event
 
         case .marqueeSelect, .handledByControl:
-            // 交给子控件自己处理（列表框选、按钮点击等）
             return event
         }
     }
 
     /// 当前状态快照（决策表需要的三个维度）
-    private func currentState() -> FFInteractionState {
-        FFInteractionState(sidebarVisible: owner?.isSidebarVisible ?? true,
-                           singlePane: owner?.isSinglePaneMode ?? true,
+    private func currentState(for owner: MainWindowController) -> FFInteractionState {
+        FFInteractionState(sidebarVisible: owner.isSidebarVisible,
+                           singlePane: owner.isSinglePaneMode,
                            pointerInsideTabBuffer: true)
     }
 
@@ -239,24 +326,24 @@ final class FFPaneDragController {
         case .none:
             return event
         case .windowDrag:
-            guard let window else { return nil }
+            guard let window = dragOwner?.window else { return nil }
             // 用**事件自带的位置**而不是 NSEvent.mouseLocation：
-            // 后者是真实光标位置，应用内合成事件时不会变，
-            // 会让自检（与某些真实场景）测不出位移。
+            // 后者是真实光标位置，应用内合成事件时不会变。
             let now = event.locationInWindow
             let nowScreen = window.convertPoint(toScreen: now)
             window.setFrameOrigin(NSPoint(x: startWindowOrigin.x + (nowScreen.x - startScreenPoint.x),
                                           y: startWindowOrigin.y + (nowScreen.y - startScreenPoint.y)))
             return nil
         case .press:
-            return nil
+            // 按压反馈期间不干预拖动（列表内部的拖拽、框选都要正常）
+            return event
         case .tabDrag:
             return handleTabDragged()
         }
     }
 
     private func handleTabDragged() -> NSEvent? {
-        guard let window else { return nil }
+        guard dragOwner != nil else { return nil }
         let now = NSEvent.mouseLocation
         if !didExceedThreshold {
             let dx = now.x - startScreenPoint.x
@@ -264,33 +351,45 @@ final class FFPaneDragController {
             guard hypot(dx, dy) > FFPaneDrag.threshold else { return nil }
             didExceedThreshold = true
         }
-        let winPoint = window.convertPoint(fromScreen: now)
 
-        if !isPanelMove {
-            if isOutsideStripBuffer(winPoint) {
-                // 出缓冲 → 升级为「搬整块面板」
-                isPanelMove = true
-                sourceStrip?.hideInsertionIndicator()
-                beginPanelGhost()
-            } else {
-                // 条内 → 重排，更新插入指示线
-                if let strip = sourceStrip, let index = strip.insertionIndex(atWindowPoint: winPoint) {
+        if !isTabDragOut {
+            // 还在源窗口的标签条缓冲内 → 重排
+            if let strip = sourceStrip,
+               let window = dragOwner?.window,
+               !isOutsideStripBuffer(strip, screenPoint: now) {
+                let winPoint = window.convertPoint(fromScreen: now)
+                if let index = strip.insertionIndex(atWindowPoint: winPoint) {
                     currentInsertionIndex = index
                     strip.showInsertionIndicator(atIndex: index)
                 }
+                return nil
             }
+            // 出缓冲 → 升级为「拖出这个标签」
+            isTabDragOut = true
+            sourceStrip?.hideInsertionIndicator()
+            beginTabGhost()
         }
-        if isPanelMove { moveGhost(to: now) }
+
+        moveGhost(to: now)
+        updateDropTarget(screenPoint: now)
         return nil
     }
 
     private func handleUp(_ event: NSEvent) -> NSEvent? {
         let wasMode = mode
         let moved = didExceedThreshold
-        let wasPanelMove = isPanelMove
+        let wasTabDragOut = isTabDragOut
+        let strip = sourceStrip
+        let side = sourceSide
+        let from = sourceIndex
+        let to = currentInsertionIndex
+        let target = dropTarget
         mode = .none
         didExceedThreshold = false
-        isPanelMove = false
+        isTabDragOut = false
+        sourceStrip = nil
+        dropTarget = nil
+        endHighlight()
 
         switch wasMode {
         case .none:
@@ -300,33 +399,27 @@ final class FFPaneDragController {
         case .press:
             removePressFeedback()
             pressedCard = nil
-            return nil
+            return event
         case .tabDrag:
-            sourceStrip?.hideInsertionIndicator()
-            let strip = sourceStrip
-            let side = sourceSide
-            let from = sourceIndex
-            let to = currentInsertionIndex
-            sourceStrip = nil
+            FFDebug.log("[TABDRAG] 松手 moved=\(moved) 出缓冲=\(wasTabDragOut) 有落点=\(target != nil) dragOwner=\(dragOwner != nil)")
+            strip?.hideInsertionIndicator()
+            guard let owner = dragOwner else { return nil }
+            dragOwner = nil
 
-            if wasPanelMove {
+            if wasTabDragOut {
                 endGhost()
-                if let card = movedCard { FFPaneDrag.hidePlaceholder(in: card) }
-                movedCard = nil
-                guard moved, let window else { return nil }
-                let screenPoint = NSEvent.mouseLocation
-                if window.frame.contains(screenPoint) {
-                    owner?.handlePanelMove(toWindowPoint: window.convertPoint(fromScreen: screenPoint),
-                                          from: side)
+                if let target {
+                    // 落在窗口内 → 交给目标窗口处理
+                    owner.transferTab(side: side, index: from, to: target)
                 } else {
-                    owner?.handlePanelMoveOutside(screenPoint: screenPoint, from: side)
+                    // 落在窗口外 → 独立成新窗口
+                    owner.detachTabToNewWindow(side: side, index: from, atScreenPoint: NSEvent.mouseLocation)
                 }
-            } else if moved, let owner {
+            } else if moved {
                 // 条内重排
                 owner.moveTab(side: side, from: from, to: to)
-            } else if let owner {
+            } else {
                 // 没移动 → 视为点击标签：选中它
-                // （mouseDown 被本控制器吞掉了，选中必须在这里补上）
                 owner.selectTab(side: side, index: from)
             }
             return nil
@@ -336,19 +429,55 @@ final class FFPaneDragController {
     // MARK: 判定
 
     /// 指针是否离开了「标签条矩形 + 20pt 缓冲」
-    private func isOutsideStripBuffer(_ windowPoint: NSPoint) -> Bool {
-        guard let strip = sourceStrip else { return true }
+    private func isOutsideStripBuffer(_ strip: PaneTabStripView, screenPoint: NSPoint) -> Bool {
         let frame = strip.convert(strip.bounds, to: nil)
         let buffer = frame.insetBy(dx: -FFPaneDrag.stripBuffer, dy: -FFPaneDrag.stripBuffer)
-        return !buffer.contains(windowPoint)
+        return !buffer.contains(screenPoint)
+    }
+
+    /// 跨窗口落点判定：屏幕坐标 → 落在哪个窗口的哪块区域
+    private func updateDropTarget(screenPoint: NSPoint) {
+        let target = computeDropTarget(screenPoint: screenPoint)
+        dropTarget = target
+        showHighlight(for: target)
+    }
+
+    private func computeDropTarget(screenPoint: NSPoint) -> FFDropTarget? {
+        for weakOwner in registeredOwners {
+            guard let owner = weakOwner.value, let w = owner.window else { continue }
+            guard w.frame.contains(screenPoint) else { continue }
+            guard let cv = w.contentView else { continue }
+            let local = w.convertPoint(fromScreen: screenPoint)
+            guard let hit = cv.hitTest(local) else { continue }
+
+            switch FFAreaResolver.region(of: hit) {
+            case .tab:
+                if let item = hit as? PaneTabItemView, let strip = item.strip {
+                    return .tabStrip(window: owner, side: strip.side, index: item.index)
+                }
+            case .title:
+                if let strip = owner.tabStrip(near: local) {
+                    return .tabStrip(window: owner, side: strip.side, index: nil)
+                }
+            case .panel:
+                if let side = owner.operationSide(near: local) {
+                    return .paneContent(window: owner, side: side)
+                }
+            default:
+                break
+            }
+        }
+        return nil
     }
 
     // MARK: 浮层
 
-    private func beginPanelGhost() {
-        guard let card = owner?.paneCard(for: sourceSide),
-              let window else { return }
-        guard let image = FFPaneDrag.snapshot(of: card) else { return }
+    /// 起拖浮层：跟手的是**那个标签**（1:1 标签快照），不是整块面板
+    private func beginTabGhost() {
+        guard let strip = sourceStrip,
+              let item = strip.itemView(at: sourceIndex),
+              let window = dragOwner?.window else { return }
+        guard let image = FFPaneDrag.snapshot(of: item) else { return }
         let size = image.size
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel],
@@ -364,14 +493,12 @@ final class FFPaneDragController {
         imageView.image = image
         panel.contentView = imageView
 
-        // 抓取点在卡片内的相对位置，浮层要保持它不动
-        let cardFrame = card.convert(card.bounds, to: nil)
+        // 抓取点在标签内的相对位置，浮层要保持它不动
+        let itemFrame = item.convert(item.bounds, to: nil)
         let grab = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        grabOffset = NSPoint(x: grab.x - cardFrame.minX, y: grab.y - cardFrame.minY)
+        grabOffset = NSPoint(x: grab.x - itemFrame.minX, y: grab.y - itemFrame.minY)
 
         ghostPanel = panel
-        movedCard = card
-        FFPaneDrag.showPlaceholder(in: card)
         moveGhost(to: NSEvent.mouseLocation)
     }
 
@@ -385,6 +512,52 @@ final class FFPaneDragController {
     private func endGhost() {
         ghostPanel?.orderOut(nil)
         ghostPanel = nil
+    }
+
+    // MARK: 落点高亮
+
+    private func showHighlight(for target: FFDropTarget?) {
+        guard let target else {
+            endHighlight()
+            return
+        }
+        let host: NSView
+        let rect: NSRect
+        switch target {
+        case .tabStrip(let w, let side, _):
+            guard let strip = w.tabStrip(for: side),
+                  let superview = strip.superview else { return }
+            host = superview
+            rect = strip.convert(strip.bounds, to: superview).insetBy(dx: 2, dy: 0)
+        case .paneContent(let w, let side):
+            guard let wrapper = w.paneWrapper(for: side),
+                  let superview = wrapper.superview else { return }
+            host = superview
+            let full = wrapper.convert(wrapper.bounds, to: superview)
+            // 只高亮落点那一半
+            let half = full.width / 2
+            rect = side == .left
+                ? NSRect(x: full.minX, y: full.minY, width: half, height: full.height)
+                : NSRect(x: full.minX + half, y: full.minY, width: half, height: full.height)
+        }
+
+        if highlightView == nil || highlightHost !== host {
+            endHighlight()
+            let view = FFDropHighlightView()
+            view.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(view)
+            highlightView = view
+            highlightHost = host
+        }
+        guard let view = highlightView else { return }
+        view.frame = rect
+        view.needsDisplay = true
+    }
+
+    private func endHighlight() {
+        highlightView?.removeFromSuperview()
+        highlightView = nil
+        highlightHost = nil
     }
 
     // MARK: 按压反馈

@@ -7,7 +7,7 @@ import Quartz
 /// v0.7.6 发布后修复轮：亮点跟随鼠标 Y（上下各 60pt 渐隐）+ 拖动绝对跟随（禁隐式动画消迟滞）。
 /// 2026-10-20 #8：分隔发光条与 hover 高亮**全部移除**，把手改到「面板卡片的边缘」，
 /// 用户直接拖卡片外沿调宽，不必瞄准缝隙正中那条看不见的线。
-private class FFSplitView: NSSplitView {
+class FFSplitView: NSSplitView {
 
     /// 手动拖拽状态（dividerThickness=0 时 NSSplitView 内置拖拽不生效）
     private var isDragging = false
@@ -312,7 +312,7 @@ public class MainWindowController: NSWindowController {
     /// 任务 F11-9：底部进度栏高度约束（0=收起 / 28=展开，复制/移动/粘贴时动态切换）
     var taskProgressBarHeightConstraint: NSLayoutConstraint!
     private var mainSplitView: FFSplitView!
-    private var paneSplitView: FFSplitView!
+    internal var paneSplitView: FFSplitView!
     /// 主内容容器引用（ThemeManager 需设置 appearance 以确保选中高亮可见）
     private var mainContainerView: NSView!
     /// 诊断：鼠标事件监听器（必须强引用，否则会被立即释放）
@@ -688,9 +688,7 @@ public class MainWindowController: NSWindowController {
         // 2026-10-20 #1：窗口级面板拖拽控制器。
         // 窗口顶部 28pt 是系统标题栏的拖动区，会先于内容视图吃掉 mouseDown；
         // 这里在事件分发之前接管工具栏/标签条空白，把「拖面板」和「拖窗口」彻底分开。
-        let paneDrag = FFPaneDragController.shared
-        paneDrag.owner = self
-        paneDrag.install(for: window)
+        FFPaneDragController.shared.register(owner: self, window: window)
 
         // 窗口外观跟随 ThemeManager 设置（不强制 nil，否则夜间模式无法生效）
         DispatchQueue.main.async { [weak self] in
@@ -1063,6 +1061,43 @@ public class MainWindowController: NSWindowController {
         }
 
         return container
+    }
+
+    // MARK: - 跨窗口落点判定（2026-10-20 #4）
+
+    /// 找到包含某窗口坐标点的标签条
+    func tabStrip(near point: NSPoint) -> PaneTabStripView? {
+        for side in [PaneSide.left, .right] {
+            guard let strip = tabStrip(for: side) else { continue }
+            let frame = strip.convert(strip.bounds, to: nil)
+            if frame.contains(point) { return strip }
+        }
+        return nil
+    }
+
+    /// 面板卡片包裹视图（落点高亮用）
+    func paneWrapper(for side: PaneSide) -> NSView? {
+        side == .left ? leftPaneWrapper : rightPaneWrapper
+    }
+
+    /// 窗口坐标点落在操作区的哪一侧
+    ///
+    /// 双栏：按操作区中线分；单栏：整块都属于活动面板那一侧
+    /// （单栏时真正会「拆出」的是另一侧，由 `highlightSide(for:)` 标出来）。
+    func operationSide(near point: NSPoint) -> PaneSide? {
+        guard let cv = window?.contentView else { return nil }
+        let localX = cv.convert(NSPoint(x: point.x, y: 0), from: nil).x
+        let sidebarRight = sidebarView.flatMap { view in
+            view.superview.map { cv.convert(view.frame, from: $0).maxX }
+        } ?? 0
+        let midX = (sidebarRight + cv.bounds.maxX) / 2
+        if isSinglePaneMode { return activePane }
+        return localX < midX ? .left : .right
+    }
+
+    /// 落点高亮标在哪一侧：单栏时标在「将要出现的新面板」那一侧
+    func highlightSide(for side: PaneSide) -> PaneSide {
+        isSinglePaneMode ? (activePane == .left ? .right : .left) : side
     }
 
     /// 取某个槽位的面板卡片（拖影快照用）
@@ -2111,7 +2146,7 @@ public class MainWindowController: NSWindowController {
     /// `splitViewDidResizeSubviews` 记进 `sidebar_width`（实测单窗切一次，
     /// 侧栏宽度就从 220 掉到 165）。这里改为：记下切换前的侧栏宽度 →
     /// 改窗口尺寸 → 下一拍把分隔线放回原宽度，全程不写记忆。
-    private func resizeWindowKeepingSidebar(_ frame: NSRect) {
+    func resizeWindowKeepingSidebar(_ frame: NSRect) {
         guard let window = window else { return }
         // 2026-10-20 #2：切换动画期间走 animator（同一条弹性曲线），否则瞬时跳变
         if isAnimatingPaneMode {

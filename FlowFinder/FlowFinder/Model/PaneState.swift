@@ -1016,7 +1016,14 @@ public class PaneViewModel: ObservableObject {
                     // Wave3 Task 7: 后台批量预热标签缓存（前 500 条，async P1-4）。
                     // 主线程只做路径快照映射（500 次字符串拷贝，微秒级），xattr I/O 全部
                     // 在后台 utility 队列执行——渲染/滚动路径随后直接读缓存，不再逐条 getxattr。
-                    TagBridge.shared.warmCache(paths: sortedEntries.prefix(500).map { $0.path })
+                    // 2026-10-20 #4：预热完成后广播，列表据此刷新标签（渲染不再等标签）
+                    let warmPaths = Array(sortedEntries.prefix(500).map { $0.path })
+                    TagBridge.shared.warmCache(paths: warmPaths) {
+                        NotificationCenter.default.post(
+                            name: .ffTagCacheWarmed,
+                            object: nil,
+                            userInfo: ["paths": warmPaths])
+                    }
                     // 任务 F11-8: 统一走 applyFilter（综合标签+搜索过滤），保持单一过滤入口
                     // 任务 F11-11: 大目录分页加载（C5）- 首批 pageSize 条立即显示，其余异步追加
                     // B7: 有标签筛选时走 applyFilter 的异步批量读标签路径（xattr I/O 不进主线程）

@@ -188,10 +188,14 @@ enum FFListColumnsState {
     ///   - available: 面板内容宽度
     ///   - columns: 当前可见列（按显示顺序）
     static func columnsFitting(in available: CGFloat,
-                               from columns: [FFListColumn]) -> [FFListColumn] {
+                               from columns: [FFListColumn],
+                               widths: [FFListColumn: CGFloat]? = nil) -> [FFListColumn] {
         var current = columns
+        func widthOf(_ c: FFListColumn) -> CGFloat {
+            widths?[c] ?? width(for: c, default: c.defaultWidth)
+        }
         func total() -> CGFloat {
-            current.reduce(0) { $0 + width(for: $1, default: $1.defaultWidth) }
+            current.reduce(0) { $0 + widthOf($1) }
         }
         // 名称列有 minWidth 兜底，其余列整列收起
         for col in columns.sorted(by: { $0.fitPriority > $1.fitPriority }) where !col.isRequired {

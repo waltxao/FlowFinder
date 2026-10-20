@@ -707,7 +707,8 @@ public class FileListView: NSView, FFRegionAware {
                 if let idx = pathToIndex[entry.path] {
                     // v0.6.9: 预计算标签状态，避免 heightOfRow 高频 I/O
                     // TagBridge 已有内存缓存，重复调用为 O(1)
-                    let hasTags = !TagBridge.shared.getTags(path: entry.path).isEmpty
+                    // 2026-10-20 #4：只读缓存，不在渲染路径做 xattr I/O
+                    let hasTags = !TagBridge.shared.cachedTags(path: entry.path).isEmpty
                     rows.append(FFDisplayRow(isHeader: false, key: group.key, fileIndex: idx, hasTags: hasTags))
                 }
             }
@@ -948,6 +949,12 @@ public class FileListView: NSView, FFRegionAware {
         tableView.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
         rebuildColumns()
 
+        // 标签缓存预热完成 → 刷新（标签色点此时才出现）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(tagCacheWarmed(_:)),
+            name: .ffTagCacheWarmed, object: nil
+        )
+
         // 列可见性变化 → 重建列
         NotificationCenter.default.addObserver(
             self, selector: #selector(listColumnsDidChange),
@@ -1149,6 +1156,14 @@ public class FileListView: NSView, FFRegionAware {
             guard let c = FFListColumn(rawValue: col.identifier.rawValue),
                   let target = widths[c], abs(col.width - target) > 0.5 else { continue }
             col.width = target
+        }
+    }
+
+    /// 标签缓存预热完成：整表刷新一次（此时 getTags 全部命中缓存，不再有 I/O）
+    @objc private func tagCacheWarmed(_ note: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.reloadData()
         }
     }
 
@@ -1403,7 +1418,8 @@ public class FileListView: NSView, FFRegionAware {
         pillContainer?.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
         // 获取文件标签并填充药丸
-        let tags = TagBridge.shared.getTags(path: entry.path)
+        // 2026-10-20 #4：只读缓存（渲染路径不做 xattr I/O），预热完成后由通知触发刷新
+        let tags = TagBridge.shared.cachedTags(path: entry.path)
         if tags.isEmpty {
             pillContainer?.isHidden = true
         } else {
