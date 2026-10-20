@@ -99,11 +99,11 @@ final class FFActivePaneBorderView: NSView {
     /// 卡片圆角（与 SquircleView 的 16pt 对应，发光路径沿用同半径）
     static let cornerRadius: CGFloat = 16
 
-    /// 卡片顶边的额外内缩（2026-10-20 #1 重做）。
+    /// 卡片顶边相对本视图外框的额外内缩。
     ///
-    /// 标签条被提到窗口顶部（与红绿灯同一行）后，卡片顶边就贴到了窗口上沿，
-    /// 顶部不再有 8pt 留白可供发光外扩——顶部内缩因此单独给一个值，
-    /// 卡片顶部往上没有留白时设为 0（发光沿卡片顶边画，不外扩）。
+    /// 2026-10-20 #3：标签条独占窗口顶 0..28 一行，卡片顶部因此让出
+    /// 28（标题区）+ 8（留白）= 36。发光要沿真实卡片边缘画，
+    /// 顶边内缩必须与之一致（否则发光会画在标签条那一行上）。
     var topEdgeOutset: CGFloat = FFActivePaneBorderView.edgeOutset
 
     /// 发光颜色（随强调色设置变化）
@@ -137,20 +137,8 @@ final class FFActivePaneBorderView: NSView {
                           height: bounds.height - Self.edgeOutset - topEdgeOutset)
         guard rect.width > 0, rect.height > 0 else { return }
 
-        // 顶边是直的（标签条盖在上面），底部两角走圆角
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: rect.minX, y: rect.maxY))
-        path.line(to: NSPoint(x: rect.maxX - r, y: rect.maxY))
-        path.appendArc(withCenter: NSPoint(x: rect.maxX - r, y: rect.maxY - r),
-                       radius: r, startAngle: 0, endAngle: 90, clockwise: true)
-        path.line(to: NSPoint(x: rect.maxX, y: rect.minY + r))
-        path.appendArc(withCenter: NSPoint(x: rect.maxX - r, y: rect.minY + r),
-                       radius: r, startAngle: 0, endAngle: -90, clockwise: true)
-        path.line(to: NSPoint(x: rect.minX + r, y: rect.minY))
-        path.appendArc(withCenter: NSPoint(x: rect.minX + r, y: rect.minY + r),
-                       radius: r, startAngle: -90, endAngle: -180, clockwise: true)
-        path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
-        path.close()
+        // 四周都是圆角（2026-10-20 #3：卡片顶部重新有 8pt 留白后不再是直角顶边）
+        let path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r)
 
         if NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast {
             ringColor.setStroke()

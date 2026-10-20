@@ -32,7 +32,10 @@ extension PaneToolbarDelegate {
 
 // MARK: - PaneToolbar
 
-class PaneToolbar: NSView {
+class PaneToolbar: NSView, FFRegionAware {
+
+    /// 工具栏属于面板区：按下只给按压反馈，不产生任何拖动
+    var ffRegion: FFRegion { .panel }
     weak var delegate: PaneToolbarDelegate?
 
     // 2026-10-20 #1：拖工具栏空白 = 拖操作面板（语义上等于拖当前那个标签）
@@ -42,7 +45,6 @@ class PaneToolbar: NSView {
 
     /// 单面板且只有一个标签时，拖面板没有第二个标签可搬，
     /// 退化为「拖窗口」（SPEC-2026-10-20 §1.4 第 1 行）。由 MainWindowController 写入。
-    var dragsWindowInstead: Bool = false
 
     // Row 1: Navigation
     private var backButton: NSButton!

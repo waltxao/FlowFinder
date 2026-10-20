@@ -264,7 +264,7 @@ public class MainWindowController: NSWindowController {
     }
 
     var sidebarView: SidebarView!
-    private var leftPaneContainer: NSView!
+    internal var leftPaneContainer: NSView!
     private var rightPaneContainer: NSView!
     /// #3：分栏两端的卡片包装视图（单窗模式靠 isHidden 收起一侧）
     var leftPaneWrapper: NSView!
@@ -290,7 +290,7 @@ public class MainWindowController: NSWindowController {
     /// 切模式导致的程序化窗口/分隔线变更期间为 true：此时不写 `sidebar_width`
     private var isAdjustingPaneMode = false
     /// 2026-10-19 #10：侧栏是否可见（隐藏后窗口左上角留一个开关按钮）
-    private var isSidebarVisible = true
+    internal var isSidebarVisible = true
     /// 主分栏左侧最小宽度覆盖值：侧栏收起 / 动画期间为 0（默认取 sidebarMinWidth）
     private var sidebarMinWidthOverride: CGFloat?
     /// 隐藏前记住的侧栏宽度（分隔线归零后 frame 宽度就取不到了）
@@ -386,9 +386,10 @@ public class MainWindowController: NSWindowController {
         setupBindings()
         setupNotifications()
         loadInitialDirectories()
-        // 布局稳定后吐一次面板几何（自动化拖拽测试用）
+        // 布局稳定后对齐标签条、吐一次面板几何（自动化拖拽测试用）
         DispatchQueue.main.async { [weak self] in
             self?.window?.contentView?.layoutSubtreeIfNeeded()
+            self?.updateTabStripFrames()
             self?.logPaneGeometry(" 启动")
         }
 
@@ -404,6 +405,9 @@ public class MainWindowController: NSWindowController {
         if ProcessInfo.processInfo.environment["FF_SELFTEST"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 self?.runDragSelfTest()
+                self?.runInteractionPolicySelfTest()
+                self?.runRegionResolveSelfTest()
+                self?.runDragBehaviorSelfTest()
             }
         }
         #endif
@@ -584,6 +588,9 @@ public class MainWindowController: NSWindowController {
         mainContainer.wantsLayer = true
         mainContainer.layer?.backgroundColor = NSColor.clear.cgColor
         mainContainer.addSubview(mainSplitView)
+
+        // 2026-10-20 #3：标签条已在 `makeCardWrapper` 里挂到各自的卡片包裹
+        // 视图上（wrapper 横跨面板全宽、随分栏自动伸缩），这里不再重复添加。
         mainContainer.addSubview(taskProgressBar)
         taskProgressBar.isHidden = true
 
@@ -647,6 +654,18 @@ public class MainWindowController: NSWindowController {
             revealHost.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
         ])
         sidebarRevealHost = revealHost
+
+        // 2026-10-20 #3：标签条是浮层，需要跟着分栏逐帧对齐
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowLayout),
+            name: NSWindow.didResizeNotification,
+            object: window)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowLayout),
+            name: NSWindow.didEndLiveResizeNotification,
+            object: window)
 
         window.contentView = visualEffectView
 
@@ -807,22 +826,41 @@ public class MainWindowController: NSWindowController {
         wrapper.wantsLayer = true
         wrapper.layer?.backgroundColor = NSColor.clear.cgColor
         wrapper.translatesAutoresizingMaskIntoConstraints = false
-        // 2026-10-20 #1：卡片四周 8pt 留白属于「边框空白处」，可拖动窗口。
-        // 卡片本体命中的是 content（面板），不会走到这里。
-        wrapper.onEmptyAreaMouseDown = { [weak wrapper] in
-            guard let wrapper else { return }
-            FFWindowDrag.begin(from: wrapper)
-        }
+        // 2026-10-20 #3：卡片留白的拖动由窗口级控制器按决策表接管，
+        // 这里不再挂回调（否则两套窗口拖动机制并存）。
 
         let glow = FFActivePaneBorderView()
         glow.translatesAutoresizingMaskIntoConstraints = false
-        // 卡片顶部没有留白（标签条占了窗口顶部那一行），发光沿卡片顶边画、不外扩
-        glow.topEdgeOutset = 0
+        // 卡片顶部让出标题区（28）+ 留白（8）= 36，发光顶边内缩与之保持一致
+        glow.topEdgeOutset = MainWindowController.tabStripHeight + FFActivePaneBorderView.edgeOutset
         glow.isHidden = true
         wrapper.addSubview(glow)
 
         content.translatesAutoresizingMaskIntoConstraints = false
         wrapper.addSubview(content)   // 后加入 → 盖住发光的向内半圈
+
+        // 2026-10-20 #3：标签条挂到卡片包裹视图（wrapper）上。
+        //
+        // wrapper 横跨整个面板宽度、且随分栏自动伸缩，标签条作为它的子视图
+        // 就能自动跟随——不需要跨层级约束（那种约束在 arranged subview 场景下
+        // 不可靠，实测 width 恒为 0）。
+        //
+        // 垂直方向：标签条浮在 wrapper 顶部 0..28，**盖在卡片上方**
+        // （卡片顶部让出 8pt，标签条因此「悬」在标题区，与红绿灯同行）。
+        if let strip = side == .left ? leftTabStrip : rightTabStrip {
+            wrapper.addSubview(strip)
+            strip.translatesAutoresizingMaskIntoConstraints = false
+            let height = strip.heightAnchor.constraint(equalToConstant: MainWindowController.tabStripHeight)
+            let leading = strip.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor)
+            if side == .left { leftTabStripHeight = height; leftTabStripLeading = leading }
+            else { rightTabStripHeight = height; rightTabStripLeading = leading }
+            NSLayoutConstraint.activate([
+                height,
+                leading,
+                strip.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                strip.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            ])
+        }
 
         NSLayoutConstraint.activate([
             glow.topAnchor.constraint(equalTo: wrapper.topAnchor),
@@ -830,9 +868,14 @@ public class MainWindowController: NSWindowController {
             glow.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
             glow.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
 
-            // 2026-10-20 #1：卡片顶边贴到窗口上沿（标签条提到顶部那一行，
-            // 与红绿灯同高），顶部不再留 8pt，因此发光的顶边也不外扩。
-            content.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            // 2026-10-20 #3：卡片顶部让出**标题区**（28pt，标签条所在的一行）
+            // 再加 8pt 留白 → 卡片四周的「视觉留白」统一为 8pt：
+            //   - 顶部：28（标题区）+ 8（留白）= 36
+            //   - 其它三边：8
+            // 这样标签条独占窗口顶 0..28 一行，工具栏从 36 开始，不再重叠。
+            content.topAnchor.constraint(equalTo: wrapper.topAnchor,
+                                         constant: MainWindowController.tabStripHeight
+                                                 + FFActivePaneBorderView.edgeOutset),
             content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: FFActivePaneBorderView.edgeOutset),
             content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -FFActivePaneBorderView.edgeOutset),
             content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -FFActivePaneBorderView.edgeOutset),
@@ -916,12 +959,17 @@ public class MainWindowController: NSWindowController {
         let detailsBar = ExpandableDetailsBar()
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
 
-        // #7：操作区顶部标签条（浏览器式，位于工具栏上方 32pt）
+        // #7：操作区顶部标签条（浏览器式）
+        //
+        // 2026-10-20 #3：标签条**不再放进卡片容器**，而是作为窗口级浮层
+        // 挂在窗口顶部 0..28（与红绿灯同一行）。原因：
+        //   - 放进容器时，卡片顶部必须内缩到 0 才能让标签条贴顶，
+        //     于是卡片上边缘 0 / 下边缘 8，上下不对称；
+        //   - 浮到窗口顶后，卡片四周统一 8pt，标签条也不必挤占卡片内部空间。
         let tabStrip = PaneTabStripView()
         tabStrip.side = side
         tabStrip.delegate = self
         tabStrip.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(tabStrip)
         if side == .left { leftTabStrip = tabStrip } else { rightTabStrip = tabStrip }
 
         // 添加到容器
@@ -931,19 +979,9 @@ public class MainWindowController: NSWindowController {
         // v0.6.9: detailsBar 最后添加（视觉最上层），作为浮层覆盖
         container.addSubview(detailsBar)
 
-        // #3（2026-10-18）：标签条高度可切换——只有一个标签时收起为 0，工具栏顶到卡片顶部
-        let tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: MainWindowController.tabStripHeight)
-        if side == .left { leftTabStripHeight = tabStripHeight } else { rightTabStripHeight = tabStripHeight }
-
         NSLayoutConstraint.activate([
-            // #7：标签条贴顶，工具栏在其下方
-            tabStrip.topAnchor.constraint(equalTo: container.topAnchor),
-            tabStrip.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            tabStrip.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            tabStripHeight,
-
-            // toolbar 位于标签条下方
-            toolbar.topAnchor.constraint(equalTo: tabStrip.bottomAnchor),
+            // 2026-10-20 #3：标签条已浮到窗口顶，工具栏直接顶到容器顶部
+            toolbar.topAnchor.constraint(equalTo: container.topAnchor),
             toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
@@ -1862,14 +1900,67 @@ public class MainWindowController: NSWindowController {
         RunLoop.main.add(timer, forMode: .common)
     }
 
+    /// 标签条按分栏实际位置逐帧对齐。
+    ///
+    /// 标签条是浮在窗口顶的**窗口级**视图，而分栏（NSSplitView）在下面，
+    /// Auto Layout 无法表达「贴着某个 arranged subview 的边缘但浮在它上方」，
+    /// 因此这里手动算 frame。
+    ///
+    /// 2026-10-20 #3：标签条与工具栏**共用同一个避让量**
+    /// （`FFInteractionPolicy.titleContentInset`）——侧栏可见时从卡片左缘起，
+    /// 侧栏隐藏时从 x=106 起（红绿灯 70 + 浮动开关 96 + 10）。
+    /// 以前只有工具栏有避让、标签条没有，隐藏侧栏后第一个标签被红绿灯压住。
+    /// 窗口尺寸变化 → 重新对齐标签条
+    @objc private func handleWindowLayout() {
+        updateTabStripFrames()
+    }
+
+    /// 标签条左缘约束（用于避让红绿灯）
+    private var leftTabStripLeading: NSLayoutConstraint?
+    private var rightTabStripLeading: NSLayoutConstraint?
+
+    /// 刷新标签条状态：可见性与左缘避让量。
+    ///
+    /// 2026-10-20 #3：标签条与工具栏**共用同一个避让量**
+    /// （`FFInteractionPolicy.titleContentInset`）——侧栏可见时从卡片左缘起，
+    /// 侧栏隐藏时从 x=106 起（红绿灯 70 + 浮动开关 96 + 10）。
+    /// 以前只有工具栏有避让、标签条没有，隐藏侧栏后第一个标签被红绿灯压住。
+    func updateTabStripFrames() {
+        let inset = FFInteractionPolicy.titleContentInset(sidebarVisible: isSidebarVisible)
+        let leftmostIsLeft = !isSinglePaneMode || activePane == .left
+
+        // 最左那一栏的标签条需要让开红绿灯；另一侧贴着卡片左缘即可。
+        //
+        // 避让量 106 是相对**窗口左边**的绝对值，而约束锚点是 wrapper 左缘
+        // （双栏时在侧栏右边 x=280），因此要减去 wrapper 左缘换算成相对偏移。
+        // 侧栏可见时 wrapper 左缘 = 280 > 106，offset 归 0（不避让）。
+        let wrapperLeading: CGFloat = {
+            guard let w = leftmostIsLeft ? leftPaneWrapper : rightPaneWrapper,
+                  let sup = w.superview, let cv = mainContainerView else { return 0 }
+            return cv.convert(w.frame, from: sup).minX
+        }()
+        let offset = max(0, inset - wrapperLeading)
+        leftTabStripLeading?.constant = leftmostIsLeft ? offset : 0
+        rightTabStripLeading?.constant = leftmostIsLeft ? 0 : offset
+
+        // 单栏模式下只显示活动面板那一侧的标签条
+        leftTabStrip?.isHidden = isSinglePaneMode && activePane != .left
+        rightTabStrip?.isHidden = isSinglePaneMode && activePane != .right
+    }
+
     /// 侧栏收起后，最左那一栏顶到窗口最左边，工具栏要让开红绿灯与「显示侧栏」开关。
     /// 双栏时最左恒为左栏；单栏时要看当前留在哪一侧。
     private func applySidebarHiddenToolbarInset() {
         // 红绿灯到 64pt，浮动开关 72–96，导航按钮从 104 起，互不重叠
-        let inset: CGFloat = isSidebarVisible ? 8 : 106
+        //
+        // 2026-10-20 #3：工具栏与标签条共用同一个避让量
+        // （`FFInteractionPolicy.titleContentInset`），改一处两处生效。
+        let inset = FFInteractionPolicy.titleContentInset(sidebarVisible: isSidebarVisible)
         let leftmostIsLeft = !isSinglePaneMode || activePane == .left
         leftPaneToolbar?.leadingInset = leftmostIsLeft ? inset : 8
         rightPaneToolbar?.leadingInset = leftmostIsLeft ? 8 : inset
+        // 标签条是浮层，避让量由 updateTabStripFrames 计算
+        updateTabStripFrames()
     }
 
     // MARK: - 单/双窗口模式（2026-10-18 #3）
@@ -1947,20 +2038,9 @@ public class MainWindowController: NSWindowController {
         sidebarView?.setSinglePaneMode(single)
         // 侧栏收起时，最左那一栏随单双窗切换而变，工具栏让位要跟着重算（2026-10-19 #10）
         applySidebarHiddenToolbarInset()
-        // 2026-10-20 #1：单面板 + 单标签时，拖面板要退化成拖窗口。
-        // 标签组是在 setupUI 里建的，而 isSinglePaneMode 在 setupUI 之后才赋值，
-        // 所以这里必须再刷一次，否则单栏单标签时仍会走面板拖拽。
-        updatePaneDragFallback()
+        // 2026-10-20 #3：不再有「单栏单标签 → 拖面板退化成拖窗口」这层状态分支。
+        // 拖面板只从标签起手，拖窗口只认区域白名单——行为不再随状态变化。
         updateActivePaneVisual()
-    }
-
-    /// 刷新两侧工具栏的「拖面板 = 拖窗口」退化开关（2026-10-20 #1）
-    private func updatePaneDragFallback() {
-        for side in [PaneSide.left, .right] {
-            let toolbar = (side == .left) ? leftPaneToolbar : rightPaneToolbar
-            let count = tabsStore(for: side)?.count ?? 0
-            toolbar?.dragsWindowInstead = isSinglePaneMode && count <= 1
-        }
     }
 
     /// 切模式时改窗口宽度：**保持侧栏宽度不变**，且不污染 `sidebar_width` 记忆。

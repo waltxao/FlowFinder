@@ -170,7 +170,10 @@ private class FFFNoDisclosureOutlineView: NSOutlineView {
 /// 系统 NSTableRowView 的选中绘制与 cell 内容存在偏移，导致"高亮未完全包裹内容"。
 /// 此子类在 drawSelection 中用强调色绘制覆盖整行内容区域的圆角矩形，
 /// 高亮范围与内容精确对齐；行间无缝隙（intercellSpacing 由 makeOutlineView 设为 0）。
-private class FFSidebarRowView: NSTableRowView {
+private class FFSidebarRowView: NSTableRowView, FFRegionAware {
+
+    /// 侧栏行属于面板区：点击照常进入对应位置，不触发拖窗口
+    var ffRegion: FFRegion { .panel }
     /// 高亮左右内边距（覆盖 cell 内容：图标左缘 x=0 到文字右缘）
     private let highlightInsetH: CGFloat = 3
     /// 高亮圆角
@@ -195,13 +198,18 @@ private class FFSidebarRowView: NSTableRowView {
 
 // MARK: - SidebarView
 
-class SidebarView: NSView {
+class SidebarView: NSView, FFRegionAware {
+
+    /// 侧栏默认属于窗口区：空白处按住可拖动窗口。
+    /// 侧栏内的行（收藏 / 位置 / 标签）另行声明为面板区，点击照常响应。
+    var ffRegion: FFRegion { .window }
 
     /// 2026-10-20 #1：侧栏空白是窗口拖动区（唯一的显式放行处，SPEC §1.5）。
-    /// 窗口已设 isMovable=false（关掉系统标题栏拖动），这里自己管拖动。
-    override func mouseDown(with event: NSEvent) {
-        FFWindowDrag.begin(from: self)
-    }
+    ///
+    /// 2026-10-20 #3 收拢：窗口拖动统一由窗口级 `FFPaneDragController` 接管
+    /// （它按决策表判定区域 → 意图）。这里不再自己起拖动循环，
+    /// 否则会出现两套窗口拖动机制并存、行为不一致。
+    /// 本视图只负责声明区域（.window），拖动由控制器执行。
     /// 任务 R3: 侧边栏顶部应用名称 + 版本号（红绿灯下方，2026-10-18 移除图标）
     private var brandView: NSView!
     /// 2026-10-18 #7：应用名称改渐变绘制（取色自应用图标）
@@ -1919,7 +1927,10 @@ class DeviceSidebarDataSource: SidebarDataSourceBase {
 /// - 悬停 500ms 后显示 NSPopover 气泡（设备名、文件系统类型、挂载点、总容量、可用空间、使用率）
 /// - 鼠标移出后隐藏气泡
 /// 任务 F10-3: 改为 internal 可见性，供 MainWindowController 设备浮层复用（v0.6.6）
-class DeviceCellView: NSTableCellView {
+class DeviceCellView: NSTableCellView, FFRegionAware {
+
+    /// 侧栏行属于面板区：点击照常进入对应位置，不触发拖窗口
+    var ffRegion: FFRegion { .panel }
     private var trackingArea: NSTrackingArea?
     private var hoverTimer: Timer?
     private var popover: NSPopover?
@@ -2140,7 +2151,10 @@ extension NSColor {
 /// 用 layer 背景而非绘制，是因为标签行会在悬停/筛选切换时高频改色；
 /// 动态色必须经 `performAsCurrentDrawingAppearance` 解析，否则深浅色切换后
 /// `cgColor` 会停留在旧外观（项目内既有同类坑，见 FFPanelView）。
-private class TagRowView: NSView {
+private class TagRowView: NSView, FFRegionAware {
+
+    /// 侧栏行属于面板区：点击照常进入对应位置，不触发拖窗口
+    var ffRegion: FFRegion { .panel }
 
     var isFiltered: Bool = false {
         didSet { guard isFiltered != oldValue else { return }; applyBackground() }

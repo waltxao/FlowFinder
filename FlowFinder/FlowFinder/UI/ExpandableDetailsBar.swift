@@ -130,7 +130,10 @@ class FFDetailsDragStrip: NSView {
 /// 接口：
 ///   - `update(with entry: FileEntry?)` 更新显示的文件信息
 ///   - `isExpanded: Bool` 展开/收起状态
-class ExpandableDetailsBar: NSView {
+class ExpandableDetailsBar: NSView, FFRegionAware {
+
+    /// 详情栏浮层属于面板区：按下不产生任何拖动
+    var ffRegion: FFRegion { .panel }
 
     /// 2026-10-20 #1：详情栏浮层不参与窗口拖动
     override var mouseDownCanMoveWindow: Bool { false }

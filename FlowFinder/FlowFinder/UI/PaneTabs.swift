@@ -142,7 +142,10 @@ final class PaneTabsStore {
 
 // MARK: - 单个标签
 
-final class PaneTabItemView: NSView {
+final class PaneTabItemView: NSView, FFRegionAware {
+
+    /// 标签本体：唯一能拖面板的把手（条内重排 / 出缓冲搬整块面板）
+    var ffRegion: FFRegion { .tab }
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
@@ -281,7 +284,10 @@ protocol PaneTabStripDelegate: AnyObject {
 }
 
 /// 操作区顶部的浏览器式标签条（2026-10-20 #1：提到窗口顶部那一行，高 28pt，常显）
-final class PaneTabStripView: NSView {
+final class PaneTabStripView: NSView, FFRegionAware {
+
+    /// 标签条属于标题区：空白处起手是「拖窗口」（性质等同系统标题栏）
+    var ffRegion: FFRegion { .title }
 
     weak var delegate: PaneTabStripDelegate?
     var side: PaneSide = .left

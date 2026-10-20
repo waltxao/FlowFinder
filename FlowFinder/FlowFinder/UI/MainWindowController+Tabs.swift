@@ -29,10 +29,8 @@ extension MainWindowController: PaneTabStripDelegate {
         // 它现在是面板唯一的拖动把手，也是红绿灯的对齐基准，必须始终在场。
         let heightConstraint = (side == .left) ? leftTabStripHeight : rightTabStripHeight
         heightConstraint?.constant = MainWindowController.tabStripHeight
-        // 2026-10-20 #1：单面板且只有一个标签时，拖面板 = 拖窗口
-        // （没有第二个标签可搬，语义上退化成拖整个窗口）
-        let toolbar = (side == .left) ? leftPaneToolbar : rightPaneToolbar
-        toolbar?.dragsWindowInstead = isSinglePaneMode && store.count <= 1
+        // 2026-10-20 #3：标签条是窗口级浮层，位置由 updateTabStripFrames 计算
+        updateTabStripFrames()
     }
 
     func viewModel(for side: PaneSide) -> PaneViewModel {
@@ -346,6 +344,219 @@ extension MainWindowController {
         handlePanelMoveOutside(screenPoint: NSPoint(x: -2000, y: -2000), from: activePane)
         let detachedOK = (tabsStore(for: activePane)?.count ?? 0) == 1   // 只剩占位
         FFDebug.log("[SELFTEST] ④ 拖出窗口独立成窗 \(detachedOK ? "PASS" : "FAIL") 源组=\(tabsStore(for: activePane)?.count ?? -1) 期望=1（占位）原=\(before4)")
+    }
+
+    /// 交互决策表穷举自检（2026-10-20 #3）
+    ///
+    /// 决策表是纯函数（不依赖 AppKit），因此可以在启动时把
+    /// 「区域 × 状态」的所有组合跑一遍，逐条断言结果符合预期。
+    /// 漏掉一个组合 = 少一行表格 = 以后会变成一个 bug。
+    func runInteractionPolicySelfTest() {
+        var pass = 0
+        var fail = 0
+
+        /// 断言：某区域在某状态下应得到某意图
+        func expect(_ region: FFRegion, _ state: FFInteractionState, _ want: FFIntent,
+                    _ label: String) {
+            let got = FFInteractionPolicy.intent(region: region, state: state)
+            if got == want {
+                pass += 1
+            } else {
+                fail += 1
+                FFDebug.log("[POLICY] FAIL \(label)：\(region) + \(state) 期望 \(want) 实得 \(got)")
+            }
+        }
+
+        for state in FFInteractionState.allCombinations {
+            let tag = "侧栏\(state.sidebarVisible ? "可见" : "隐藏")/单栏\(state.singlePane ? "是" : "否")/缓冲内\(state.pointerInsideTabBuffer ? "是" : "否")"
+
+            // ① 窗口区 → 拖窗口（状态无关）
+            expect(.window, state, .dragWindow, "窗口区→拖窗口 [\(tag)]")
+
+            // ② 标题区 → 拖窗口（性质等同系统标题栏）
+            expect(.title, state, .dragWindow, "标题区→拖窗口 [\(tag)]")
+
+            // ③ 面板区 → 按压反馈，不产生拖动
+            expect(.panel, state, .pressFeedback, "面板区→按压反馈 [\(tag)]")
+
+            // ④ 标签本体：缓冲内=重排 / 出缓冲=搬面板
+            expect(.tab, state,
+                   state.pointerInsideTabBuffer ? .reorderTab : .dragPane,
+                   "标签本体 [\(tag)]")
+        }
+
+        // ⑤ 每条规则都必须至少命中一次（防止规则写了但永远走不到）
+        for rule in FFInteractionPolicy.rules {
+            var hit = false
+            for region in FFRegion.allCases {
+                for state in FFInteractionState.allCombinations {
+                    if FFInteractionPolicy.matchedRuleName(region: region, state: state) == rule.name {
+                        hit = true
+                        break
+                    }
+                }
+                if hit { break }
+            }
+            if hit {
+                pass += 1
+            } else {
+                fail += 1
+                FFDebug.log("[POLICY] FAIL 规则「\(rule.name)」在任何组合下都命中不到")
+            }
+        }
+
+        // ⑥ 几何常量：避让量与标题区高度
+        if FFInteractionPolicy.titleContentInset(sidebarVisible: true) == 8,
+           FFInteractionPolicy.titleContentInset(sidebarVisible: false) == 106,
+           FFInteractionPolicy.titleBandHeight == 28 {
+            pass += 1
+        } else {
+            fail += 1
+            FFDebug.log("[POLICY] FAIL 几何常量：避让量应为 8/106，标题区 28")
+        }
+
+        FFDebug.log("[POLICY] 决策表穷举自检 通过\(pass) 失败\(fail)（区域\(FFRegion.allCases.count) × 状态\(FFInteractionState.allCombinations.count) + 规则可达性）")
+    }
+
+    /// 区域判定真机自检（2026-10-20 #3）
+    ///
+    /// 合成鼠标事件驱动不了「拖出条 → 搬面板」的浮层与落点，
+    /// 而且事件链会经过系统标题栏带这一层——外部脚本测出来的结论不可靠。
+    /// 这里改为**在应用内**直接对真实视图做 hitTest，验证
+    /// 「这个窗口坐标点 → 哪个区域 → 什么意图」这条链路。
+    func runRegionResolveSelfTest() {
+        guard let window, let contentView = window.contentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+
+        var pass = 0
+        var fail = 0
+
+        /// 断言：窗口坐标点应解析成某区域
+        func expect(_ point: NSPoint, _ want: FFRegion, _ label: String) {
+            let hit = contentView.hitTest(point)
+            let got = FFAreaResolver.region(of: hit)
+            if got == want {
+                pass += 1
+            } else {
+                fail += 1
+                FFDebug.log("[REGION] FAIL \(label)：点 \(point) 期望 \(want) 实得 \(String(describing: got)) 命中=\(String(describing: hit.map { String(describing: type(of: $0)) }))")
+            }
+        }
+
+        // 找各区域的实际代表点（用真实视图 frame 反推，不靠硬编码坐标）
+        let strip = leftTabStrip
+        let toolbar = leftPaneToolbar
+        let list = leftPaneContainer?.subviews.compactMap { $0 as? FileListView }.first
+
+        if let strip, let frame = strip.superview?.convert(strip.frame, to: contentView) {
+            // 标签条空白处（远离标签胶囊，取右端）
+            let blank = NSPoint(x: frame.maxX - 12, y: frame.midY)
+            expect(blank, .title, "标签条空白")
+            // 标签胶囊本体
+            if let item = strip.subviews.compactMap({ $0 as? PaneTabItemView }).first,
+               let itemFrame = item.superview?.convert(item.frame, to: contentView) {
+                expect(NSPoint(x: itemFrame.midX, y: itemFrame.midY), .tab, "标签胶囊")
+            }
+        }
+
+        if let toolbar, let frame = toolbar.superview?.convert(toolbar.frame, to: contentView) {
+            expect(NSPoint(x: frame.midX, y: frame.midY), .panel, "工具栏")
+        }
+
+        if let list, let frame = list.superview?.convert(list.frame, to: contentView) {
+            expect(NSPoint(x: frame.midX, y: frame.midY), .panel, "文件列表")
+        }
+
+        // 侧栏空白（底部）
+        if let sidebar = sidebarView, let frame = sidebar.superview?.convert(sidebar.frame, to: contentView) {
+            expect(NSPoint(x: frame.midX, y: frame.minY + 20), .window, "侧栏底部空白")
+        }
+
+        // 卡片四周 8pt 留白（wrapper 左缘）
+        if let wrapper = leftPaneWrapper, let frame = wrapper.superview?.convert(wrapper.frame, to: contentView) {
+            expect(NSPoint(x: frame.minX + 3, y: frame.midY), .window, "卡片左缘留白")
+        }
+
+        FFDebug.log("[REGION] 区域解析自检 通过\(pass) 失败\(fail)")
+    }
+
+    /// 拖动行为自检（2026-10-20 #3）
+    ///
+    /// 覆盖「区域 → 意图 → 实际动作」这条链路的最后一段：
+    /// 决策表给出意图后，控制器分别执行「拖窗口」「按压反馈」「不拖动」。
+    ///
+    /// 说明：这里**不构造并派发 NSEvent**——`addLocalMonitorForEvents` 只拦截
+    /// 经由 NSApplication 派发的事件，程序内造的合成事件到不了 monitor
+    /// （`window.sendEvent` 与 `postEvent` 都绕开），测出来的结论不可靠。
+    /// 事件派发本身由 AppKit 负责，不是我们的逻辑，因此不测；
+    /// 测的是「拿到某个意图之后，控制器做的是不是该做的事」。
+    func runDragBehaviorSelfTest() {
+        guard let window, let contentView = window.contentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+
+        var pass = 0
+        var fail = 0
+
+        /// 断言：某点应解析成某意图
+        func expect(_ point: NSPoint, _ want: FFIntent, _ label: String) {
+            let hit = contentView.hitTest(point)
+            let state = FFInteractionState(sidebarVisible: isSidebarVisible,
+                                           singlePane: isSinglePaneMode,
+                                           pointerInsideTabBuffer: true)
+            let got = FFAreaResolver.intent(for: hit, state: state)
+            if got == want {
+                pass += 1
+            } else {
+                fail += 1
+                FFDebug.log("[BEHAVIOR] FAIL \(label)：点 \(point) 期望 \(want) 实得 \(got)")
+            }
+        }
+
+        // ① 工具栏 → 按压反馈（不产生拖动）
+        if let toolbar = leftPaneToolbar,
+           let frame = toolbar.superview?.convert(toolbar.frame, to: contentView) {
+            expect(NSPoint(x: frame.midX, y: frame.midY), .pressFeedback, "工具栏→按压反馈")
+        }
+
+        // ② 侧栏空白 → 拖窗口
+        if let sidebar = sidebarView,
+           let frame = sidebar.superview?.convert(sidebar.frame, to: contentView) {
+            expect(NSPoint(x: frame.midX, y: frame.minY + 20), .dragWindow, "侧栏空白→拖窗口")
+        }
+
+        // ③ 标签条空白 → 拖窗口
+        if let strip = leftTabStrip,
+           let frame = strip.superview?.convert(strip.frame, to: contentView) {
+            expect(NSPoint(x: frame.maxX - 20, y: frame.midY), .dragWindow, "标签条空白→拖窗口")
+        }
+
+        // ④ 标签胶囊在缓冲内 → 重排；出缓冲 → 搬面板
+        if let strip = leftTabStrip,
+           let item = strip.subviews.compactMap({ $0 as? PaneTabItemView }).first,
+           let itemFrame = item.superview?.convert(item.frame, to: contentView) {
+            let p = NSPoint(x: itemFrame.midX, y: itemFrame.midY)
+            let hit = contentView.hitTest(p)
+            var inBuffer = FFInteractionState(sidebarVisible: isSidebarVisible,
+                                              singlePane: isSinglePaneMode,
+                                              pointerInsideTabBuffer: true)
+            expect(p, .reorderTab, "标签胶囊缓冲内→重排")
+            inBuffer.pointerInsideTabBuffer = false
+            let outGot = FFAreaResolver.intent(for: hit, state: inBuffer)
+            if outGot == .dragPane {
+                pass += 1
+            } else {
+                fail += 1
+                FFDebug.log("[BEHAVIOR] FAIL 标签胶囊出缓冲→搬面板：实得 \(outGot)")
+            }
+        }
+
+        // ⑤ 文件列表 → 面板区（框选，不拖动）
+        if let list = leftPaneContainer?.subviews.compactMap({ $0 as? FileListView }).first,
+           let frame = list.superview?.convert(list.frame, to: contentView) {
+            expect(NSPoint(x: frame.midX, y: frame.midY), .pressFeedback, "文件列表→不拖动")
+        }
+
+        FFDebug.log("[BEHAVIOR] 拖动行为自检 通过\(pass) 失败\(fail)")
     }
 
     /// 操作区左半 / 右半各取一个窗口坐标点

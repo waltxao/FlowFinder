@@ -6,6 +6,56 @@
 
 ## [未发版]
 
+### 交互决策表：把「按下去发生什么」收成一张表（2026-10-20 上午，A3 批）
+
+用户反馈「问题有点多」，并提出是否改用 Chromium 组件。
+
+**Chromium 路线的核查结论**：Chromium 的 `TabStrip` / `TabDragController` 在
+`chrome/browser/ui/views/tabs/`，深度绑定 `WebContents`、`TabStripModel`、
+`content::` 通知机制与 C++ Views 框架，**不是可复用的独立库**；唯一可嵌入形态
+（CEF / Electron）等���整体重写。Rust 核心（24 模块 / 13.5k 行文件操作）不受影响。
+→ 保留原生 AppKit + Rust 核心，只借鉴 Chromium「把拖拽判定收进单一状态机」的做法。
+
+**四轮返工不是四个独立 bug，是同一个架构问题的四次显形**：
+「按下去发生什么」这个判定被拆散在 hitTest 归并、mouseDownCanMoveWindow、
+标题栏带、Auto Layout 约束四处，各自决定 → 同一区域的行为取决于当下状态。
+
+**决策表**（`UI/FFInteractionPolicy.swift`，纯函数、不依赖 AppKit）：
+
+| 区域 | 含义 | 意图 |
+|---|---|---|
+| `.window` | 侧栏空白、卡片 8pt 留白 | `dragWindow` |
+| `.title` | 标签条空白（性质等同系统标题栏） | `dragWindow` |
+| `.panel` | 工具栏、文件列表、详情栏、侧栏行 | `pressFeedback` |
+| `.tab` | 标签胶囊 | 缓冲内 `reorderTab` / 出缓冲 `dragPane` |
+
+区域由视图自我声明（`FFRegionAware` 协议），`FFAreaResolver` 统一翻译成意图——
+新增功能是「给新视图加一行协议实现」，不是「再加一个 if」。
+改造前实测散落规模：`mouseDownCanMoveWindow` 覆写 11 处、`hitTest` 覆写 11 处，
+分布 9 个文件；改造后判定收在一处。
+
+**布局修复**：
+
+- 标签条从卡片容器里**提到窗口顶部 0..28**（与红绿灯同行），成为卡片包裹视图的子视图
+- 卡片顶部让出标题区（28）+ 留白（8）= 36，**上下左右四周留白统一**
+- 发光顶边内缩随之改为 36，**恢复四角圆角**（原先顶边是直角）
+- 侧栏隐藏时标签条从 **x=106** 起（与工具栏共用同一避让量，改一处两处生效）
+
+**顺带修掉一个必崩的既有 bug**：`FFQuickLookTableView.draggingEnded(_:)` 调了
+`super.draggingEnded(sender)`，但 `draggingEnded:` 是 `NSDraggingDestination` 的
+`@optional` 方法、`NSTableView` 并不实现 → 系统拖拽结束时 100% 崩溃
+（运行时 `responds(to:)` 验证：只有 `draggingEnded:` 未实现，
+`draggingExited:` / `concludeDragOperation:` 都实现了，不受影响）。
+
+**自检扩到四层共 51 项**（全 PASS）：
+
+| 层 | 项数 | 测什么 |
+|---|---|---|
+| 决策表穷举 | 38 | 区域 × 状态 全部组合 + 规则可达性 + 几何常量 |
+| 区域解析 | 5 | 真实视图 hitTest → 区域 |
+| 拖动行为 | 4 | 点位 → 意图 |
+| 落点状态机 | 4 | 合并 / 回原位 / 挪槽 / 独立成窗 |
+
 ### 拖动模型再重做：只有标签能拖面板（2026-10-20 上午，A2 批）
 
 上一版「拖面板 = 拖当前标签」仍有歧义：同一个区域按下去的结果**取决于当前状态**

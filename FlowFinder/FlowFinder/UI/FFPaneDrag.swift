@@ -180,14 +180,26 @@ final class FFPaneDragController {
 
     // MARK: 事件
 
+    /// 一次 mouseDown 的判定：**全部走决策表**，不再有散落的 if。
+    ///
+    /// 区域由命中链上第一个声明 `FFRegionAware` 的祖先给出（见 `FFAreaResolver`），
+    /// 区域 + 状态 → 意图由 `FFInteractionPolicy` 翻译。
+    /// 新增区域或改行为都是往表里加一行，不是往这里加 if。
     private func handleDown(_ event: NSEvent) -> NSEvent? {
         guard mode == .none, let window, event.window === window,
               let contentView = window.contentView else { return event }
         let point = event.locationInWindow
         guard let hit = contentView.hitTest(point) else { return event }
 
-        // ① 标签 → 拖动（条内重排 / 出缓冲搬面板）
-        if let item = hit as? PaneTabItemView, let strip = item.strip {
+        let state = currentState()
+        let intent = FFAreaResolver.intent(for: hit, state: state)
+
+        switch intent {
+        case .dragPane, .reorderTab, .activateTab:
+            // 三者都从「按住标签」起手：条内重排 / 出缓冲搬面板 / 点击激活
+            guard let item = hit as? PaneTabItemView, let strip = item.strip else {
+                return event
+            }
             sourceStrip = strip
             sourceSide = strip.side
             sourceIndex = item.index
@@ -196,26 +208,30 @@ final class FFPaneDragController {
             isPanelMove = false
             mode = .tabDrag
             return nil
-        }
 
-        // ② 标签条空白 → 拖窗口（标签条在窗口顶部那一行，性质等同标题栏）
-        if hit is PaneTabStripView {
+        case .dragWindow:
             mode = .windowDrag
-            startScreenPoint = NSEvent.mouseLocation
+            startScreenPoint = window.convertPoint(toScreen: point)
             startWindowOrigin = window.frame.origin
             return nil
-        }
 
-        // ③ 工具栏 → 按压反馈，但不产生任何拖动
-        if hit is PaneToolbar {
+        case .pressFeedback:
             mode = .press
             pressedCard = owner?.paneCard(for: sourceSide)
             applyPressFeedback()
             return nil
-        }
 
-        // ④ 其余（列表 / 卡片留白 / 侧栏）交给各自的视图处理
-        return event
+        case .marqueeSelect, .handledByControl:
+            // 交给子控件自己处理（列表框选、按钮点击等）
+            return event
+        }
+    }
+
+    /// 当前状态快照（决策表需要的三个维度）
+    private func currentState() -> FFInteractionState {
+        FFInteractionState(sidebarVisible: owner?.isSidebarVisible ?? true,
+                           singlePane: owner?.isSinglePaneMode ?? true,
+                           pointerInsideTabBuffer: true)
     }
 
     private func handleDragged(_ event: NSEvent) -> NSEvent? {
@@ -223,10 +239,14 @@ final class FFPaneDragController {
         case .none:
             return event
         case .windowDrag:
-            let now = NSEvent.mouseLocation
             guard let window else { return nil }
-            window.setFrameOrigin(NSPoint(x: startWindowOrigin.x + (now.x - startScreenPoint.x),
-                                          y: startWindowOrigin.y + (now.y - startScreenPoint.y)))
+            // 用**事件自带的位置**而不是 NSEvent.mouseLocation：
+            // 后者是真实光标位置，应用内合成事件时不会变，
+            // 会让自检（与某些真实场景）测不出位移。
+            let now = event.locationInWindow
+            let nowScreen = window.convertPoint(toScreen: now)
+            window.setFrameOrigin(NSPoint(x: startWindowOrigin.x + (nowScreen.x - startScreenPoint.x),
+                                          y: startWindowOrigin.y + (nowScreen.y - startScreenPoint.y)))
             return nil
         case .press:
             return nil

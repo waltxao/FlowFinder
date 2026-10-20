@@ -711,7 +711,10 @@ class DraggingCollectionView: NSCollectionView {
 // MARK: - FileGridView
 
 /// NSCollectionView-based grid view with thumbnails
-public class FileGridView: NSView {
+public class FileGridView: NSView, FFRegionAware {
+
+    /// 网格属于面板区：按下不产生任何拖动
+    var ffRegion: FFRegion { .panel }
 
     /// 2026-10-20 #1：网格区不参与窗口拖动（列表空白处要保留框选）
     public override var mouseDownCanMoveWindow: Bool { false }

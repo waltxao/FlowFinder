@@ -33,13 +33,11 @@ class FFNonDragStackView: NSStackView {
 
 /// 卡片包裹视图：卡片四周的留白属于「边框空白处」，按住可拖动窗口。
 /// 卡片本体命中的是里面的面板内容，不会走到这里。
-class FFCardWrapperView: NSView {
-    /// 留白处按下时的回调
-    var onEmptyAreaMouseDown: (() -> Void)?
+class FFCardWrapperView: NSView, FFRegionAware {
 
-    override func mouseDown(with event: NSEvent) {
-        onEmptyAreaMouseDown?()
-    }
+    /// 卡片四周的 8pt 留白属于窗口区：按住可拖动窗口。
+    /// 卡片本体命中的是里面的面板内容，不会走到这里。
+    var ffRegion: FFRegion { .window }
 }
 
 // MARK: - 应用自管的窗口拖动（2026-10-20 #1）

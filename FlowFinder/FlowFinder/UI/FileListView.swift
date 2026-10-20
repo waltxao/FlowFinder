@@ -32,8 +32,13 @@ final class FFQuickLookTableView: NSTableView {
     }
 
     /// Wave3 Task 1: 拖拽会话结束（无论是否落包）——复位全部 Drop 视觉状态
+    ///
+    /// 注意：**不能调 `super.draggingEnded(sender)`**。
+    /// `draggingEnded:` 是 `NSDraggingDestination` 的 `@optional` 方法，
+    /// `NSTableView` 并未实现它（只有 `NSView` 一层的转发），
+    /// 调 super 会走到 `doesNotRecognizeSelector:` 直接崩掉
+    /// （2026-10-20 实测：系统拖拽结束时 100% 崩溃）。
     override func draggingEnded(_ sender: NSDraggingInfo) {
-        super.draggingEnded(sender)
         onDropDestinationReset?()
         onDropSessionEnded?()
     }
@@ -510,7 +515,10 @@ private struct FFDisplayRow {
 
 /// NSTableView-based file list view with 4 columns (名称/修改日期/类型/大小)
 /// 标签以药丸形式内联显示在名称列的文件名之后
-public class FileListView: NSView {
+public class FileListView: NSView, FFRegionAware {
+
+    /// 文件列表属于面板区：空白处保留框选，按下不产生任何拖动
+    var ffRegion: FFRegion { .panel }
 
     /// 2026-10-20 #1：列表区不参与窗口拖动（列表空白处要保留框选）
     public override var mouseDownCanMoveWindow: Bool { false }
