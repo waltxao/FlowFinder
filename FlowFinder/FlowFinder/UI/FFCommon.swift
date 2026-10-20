@@ -11,6 +11,68 @@ class FFOpaqueContainerView: NSView {
     override var isOpaque: Bool { return false }
 }
 
+// MARK: - 窗口拖动拦截（2026-10-20 #1）
+
+/// 不参与窗口拖动的普通视图。
+///
+/// 根因：AppKit 的 `NSView.mouseDownCanMoveWindow` 默认实现是
+/// **「视图不透明（isOpaque == true）就允许拖窗口」**。NSView.isOpaque 的默认值是 true，
+/// 因此工具栏里的堆栈视图、占位视图、面包屑容器这些「纯排版容器」全部成了窗口拖动区——
+/// 用户在操作面板上按住一拖，动的却是整个窗口。
+///
+/// 修法有两种：把 isOpaque 改成 false（副作用大——会关掉主题切换时的子树重绘），
+/// 或显式覆写 mouseDownCanMoveWindow（无副作用）。这里用后者。
+class FFNonDragView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+/// 不参与窗口拖动的堆栈视图（工具栏的两行、标签条里的标签栈都用它）
+class FFNonDragStackView: NSStackView {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+/// 卡片包裹视图：卡片四周的留白属于「边框空白处」，按住可拖动窗口。
+/// 卡片本体命中的是里面的面板内容，不会走到这里。
+class FFCardWrapperView: NSView {
+    /// 留白处按下时的回调
+    var onEmptyAreaMouseDown: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onEmptyAreaMouseDown?()
+    }
+}
+
+// MARK: - 应用自管的窗口拖动（2026-10-20 #1）
+
+/// 窗口拖动的唯一入口。
+///
+/// 为什么不用系统那套：窗口顶部 28pt 是系统标题栏的拖动区，正好压在操作面板工具栏
+/// 的第一行上——「按住操作面板拖动」实际拖走的是整个窗口，这是用户抱怨的核心。
+/// `NSWindow.isMovable = false` 可以关掉系统对标题栏/背景的拖动，
+/// 但代价是窗口完全不能被系统拖动，于是只能自己按区域放行：
+/// - 侧栏空白          → 拖窗口
+/// - 面板卡片四周留白  → 拖窗口
+/// - 操作面板本体      → 拖面板（不是拖窗口）
+///
+/// 官方文档也推荐这个组合：禁用服务端拖动后，在 NSWindow 子类里自行处理
+/// mouseDown / mouseDragged / mouseUp。
+enum FFWindowDrag {
+
+    /// 从 mouseDown 开始跑一次跟踪循环，把鼠标位移换算成窗口位移
+    static func begin(from view: NSView) {
+        guard let window = view.window else { return }
+        let startPoint = NSEvent.mouseLocation
+        let startOrigin = window.frame.origin
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp { break }
+            let now = NSEvent.mouseLocation
+            window.setFrameOrigin(NSPoint(x: startOrigin.x + (now.x - startPoint.x),
+                                         y: startOrigin.y + (now.y - startPoint.y)))
+        }
+    }
+}
+
+
 // MARK: - FFNotificationNames
 
 /// 统一管理所有自定义 Notification.Name 常量

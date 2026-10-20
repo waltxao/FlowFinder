@@ -5,15 +5,16 @@ import Quartz
 
 /// 自定义 NSSplitView 子类：任务 R5 — divider 悬停高亮
 /// v0.7.6 发布后修复轮：亮点跟随鼠标 Y（上下各 60pt 渐隐）+ 拖动绝对跟随（禁隐式动画消迟滞）。
-/// 设计文档：docs/superpowers/specs/2026-08-28-divider-handle-glow-follow-design.md
+/// 2026-10-20 #8：分隔发光条与 hover 高亮**全部移除**，把手改到「面板卡片的边缘」，
+/// 用户直接拖卡片外沿调宽，不必瞄准缝隙正中那条看不见的线。
 private class FFSplitView: NSSplitView {
-    private var dividerTrackingArea: NSTrackingArea?
-
-    /// 渐变亮线 layer（悬停/拖动时显示，复用避免重复创建）
-    private var gradientLineLayer: CAGradientLayer?
 
     /// 手动拖拽状态（dividerThickness=0 时 NSSplitView 内置拖拽不生效）
     private var isDragging = false
+
+    /// 鼠标按下瞬间与分隔线的水平偏移。
+    /// 把手在卡片外沿、与分隔线差 8pt；不记这个偏移的话，按下瞬间卡片会跳 8pt。
+    private var grabOffset: CGFloat = 0
 
     /// 当前可见子视图数。单窗口模式下另一侧 isHidden，此时不应响应分隔线拖拽
     /// （否则可以把隐藏面板拖出来，与单窗状态冲突）
@@ -24,94 +25,15 @@ private class FFSplitView: NSSplitView {
         return 0
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let existing = dividerTrackingArea {
-            removeTrackingArea(existing)
-        }
-        let area = NSTrackingArea(
-            rect: self.bounds,
-            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        dividerTrackingArea = area
-    }
+    /// 把手位置（split 自身坐标系）。
+    ///
+    /// 2026-10-20 #8：把手贴在**面板卡片的外沿**——
+    /// 双操作区是「左卡片右沿 / 右卡片左沿」，侧栏缝是「操作区左卡片左沿」。
+    /// 提供器每次实时求值，布局变化后把手位置自动跟随。
+    var handlePositionsProvider: (() -> [CGFloat])?
 
-    /// 分隔线当前 X（左子视图右边缘）。仅限静止状态（悬停/拖动结束）回读；
-    /// 拖动中必须使用 applyDividerPosition 返回的计算值（布局可能滞后一拍）。
-    private var currentDividerX: CGFloat {
-        return subviews.count >= 2 ? subviews[0].frame.maxX : 0
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        super.mouseMoved(with: event)
-        guard visibleSubviewCount >= 2 else { hideGlow(); return }
-        let loc = convert(event.locationInWindow, from: nil)
-        let hovering = abs(loc.x - currentDividerX) <= FFDividerGlowMath.hotZoneRadius
-        if hovering {
-            updateGlow(mouseInView: loc, dividerX: currentDividerX)
-            NSCursor.resizeLeftRight.set()
-        } else if !isDragging {
-            hideGlow()
-        }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        // 拖拽中鼠标快速划出边界时保持亮线，避免拖拽中途闪烁
-        if !isDragging {
-            hideGlow()
-        }
-    }
-
-    /// 创建渐变亮线 layer（复用，避免重复创建）
-    private func createGradientLine() {
-        guard gradientLineLayer == nil else { return }
-        // 亮点颜色向白色提亮 50%（2026-08-29 用户验收反馈：原纯强调色偏暗）。
-        // 提亮结果在 layer 创建时定格；强调色变更后的刷新策略与原有行为一致。
-        let peakColor = FFAccent.current.blended(withFraction: 0.5, of: .white) ?? FFAccent.current
-        // 渐变端点用峰值色的 0 透明度版本，而非常用的 clear 色：
-        // clear 本质是"透明黑"（RGB 分量为黑），与亮色插值会在中段掺黑形成暗色带
-        // （2026-08-29 用户验收反馈）；端点与峰值同色异透明度时，插值只变透明度不变色相。
-        let fadedEnd = peakColor.cgColor.copy(alpha: 0) ?? NSColor.clear.cgColor
-        let gradientLayer = CAGradientLayer()
-        gradientLayer.colors = [
-            fadedEnd,
-            peakColor.cgColor,
-            fadedEnd
-        ]
-        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
-        gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
-        self.layer?.addSublayer(gradientLayer)
-        gradientLineLayer = gradientLayer
-    }
-
-    /// 统一更新亮线：frame 与渐变 locations 全部禁用隐式动画（「慢半拍」根因修复）。
-    /// - mouseInView: 鼠标在视图坐标系的位置；nil 表示保持当前亮点不动（仅归位 X）
-    /// - dividerX: 亮线 X。拖动中必须传「计算出的目标位置」，不回读布局结果
-    private func updateGlow(mouseInView loc: CGPoint?, dividerX: CGFloat) {
-        createGradientLine()
-        guard let layer = gradientLineLayer else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.frame = CGRect(x: dividerX - 1, y: 0, width: 2, height: self.bounds.height)
-        if let loc = loc {
-            let center = FFDividerGlowMath.glowCenter(mouseY: loc.y, boundsHeight: self.bounds.height)
-            layer.locations = FFDividerGlowMath.gradientLocations(
-                center: center,
-                radiusFraction: FFDividerGlowMath.fadeRadius / max(self.bounds.height, 1)
-            ).map { NSNumber(value: Double($0)) }
-        }
-        layer.isHidden = false
-        CATransaction.commit()
-    }
-
-    private func hideGlow() {
-        gradientLineLayer?.isHidden = true
-        NSCursor.arrow.set()
-    }
+    /// 命中把手时的光标
+    var handleCursor: NSCursor = .resizeLeftRight
 
     /// 左侧子视图最小宽度。侧栏分隔用 160（DESIGN-SPEC B-01），双操作区用 450。
     /// 分隔线厚度为 0 时系统不接管拖拽，最小/最大值只能由本类自行 clamp。
@@ -120,57 +42,87 @@ private class FFSplitView: NSSplitView {
     /// 右侧子视图最小宽度（双操作区两侧各 450；侧栏分隔右侧为操作区，同样按 450 保底）
     var trailingMinWidth: CGFloat = FFDividerGlowMath.minPaneWidth
 
-    /// 绝对跟随：分隔线目标位置一律取 clamp(鼠标X)，返回实际生效的位置。
+    /// 左侧子视图最大宽度（侧栏 280；双操作区不限）
+    var leadingMaxWidth: CGFloat?
+
+    /// 当前把手 X 列表
+    private var handlePositions: [CGFloat] { handlePositionsProvider?() ?? [] }
+
+    /// 分隔线当前 X（左子视图右边缘）。仅限静止状态回读；
+    /// 拖动中必须使用 applyDividerPosition 返回的计算值（布局可能滞后一拍）。
+    private var currentDividerX: CGFloat {
+        return subviews.count >= 2 ? subviews[0].frame.maxX : 0
+    }
+
+    /// 鼠标是否落在某个把手上
+    private func handleHit(atX x: CGFloat) -> Bool {
+        handlePositions.contains { abs(x - $0) <= FFDividerGlowMath.hotZoneRadius }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        guard visibleSubviewCount >= 2 else {
+            NSCursor.arrow.set()
+            return
+        }
+        let loc = convert(event.locationInWindow, from: nil)
+        if handleHit(atX: loc.x) {
+            handleCursor.set()
+        } else if !isDragging {
+            NSCursor.arrow.set()
+        }
+    }
+
+    /// 绝对跟随：分隔线目标位置一律取 clamp(鼠标X + 偏移)，返回实际生效的位置。
     /// 按下瞬间即对齐鼠标正下方（跳动 ≤ 热区半径 6pt）。
     @discardableResult
     private func applyDividerPosition(mouseX: CGFloat) -> CGFloat {
-        let clamped = FFDividerGlowMath.clampedDividerPosition(
+        let raw = FFDividerGlowMath.clampedDividerPosition(
             mouseX: mouseX,
             boundsWidth: bounds.width,
             leadingMin: leadingMinWidth,
             trailingMin: trailingMinWidth
         )
+        let clamped = leadingMaxWidth.map { min(raw, $0) } ?? raw
         setPosition(clamped, ofDividerAt: 0)
         return clamped
     }
 
-    /// 命中热区（±6pt）：按下即对齐并进入拖拽；未命中：交给系统处理
+    /// 命中把手（±6pt）：按下即对齐并进入拖拽；未命中：交给系统处理
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        guard visibleSubviewCount >= 2,
-              abs(point.x - currentDividerX) <= FFDividerGlowMath.hotZoneRadius else {
+        guard visibleSubviewCount >= 2, handleHit(atX: point.x) else {
             super.mouseDown(with: event)
             return
         }
         isDragging = true
-        let effectiveX = applyDividerPosition(mouseX: point.x)
-        updateGlow(mouseInView: point, dividerX: effectiveX)
-        NSCursor.resizeLeftRight.set()
+        // 记住「鼠标 ↔ 分隔线」的偏移：把手在卡片外沿，与分隔线相差一个卡片留白
+        grabOffset = currentDividerX - point.x
+        let effectiveX = applyDividerPosition(mouseX: point.x + grabOffset)
+        _ = effectiveX
+        handleCursor.set()
     }
 
-    /// 拖拽全程 1:1 跟随鼠标 X（绝对模型，无起点记账），亮点同时跟随鼠标 Y
+    /// 拖拽全程 1:1 跟随鼠标 X（绝对模型 + 起始偏移，无起点记账）
     override func mouseDragged(with event: NSEvent) {
         guard isDragging, visibleSubviewCount >= 2 else {
             super.mouseDragged(with: event)
             return
         }
         let point = convert(event.locationInWindow, from: nil)
-        let effectiveX = applyDividerPosition(mouseX: point.x)
-        updateGlow(mouseInView: point, dividerX: effectiveX)
+        applyDividerPosition(mouseX: point.x + grabOffset)
     }
 
-    /// 拖拽结束：亮线归位到分隔线最终位置（已静止，回读布局无碍）；
-    /// 若鼠标已离开热区则隐藏（含光标复位）
+    /// 拖拽结束
     override func mouseUp(with event: NSEvent) {
         if isDragging {
             isDragging = false
-            updateGlow(mouseInView: nil, dividerX: currentDividerX)
         } else {
             super.mouseUp(with: event)
         }
         let loc = convert(event.locationInWindow, from: nil)
-        if abs(loc.x - currentDividerX) > FFDividerGlowMath.hotZoneRadius {
-            hideGlow()
+        if !handleHit(atX: loc.x) {
+            NSCursor.arrow.set()
         }
     }
 }
@@ -270,6 +222,8 @@ public class MainWindowController: NSWindowController {
     static let sidebarMaxWidth: CGFloat = 280
     /// 侧栏宽度记忆键
     private static let sidebarWidthKey = "sidebar_width"
+    /// 2026-10-20 #8：左操作面板宽度记忆键（双面板中缝拖动后的结果）
+    private static let paneLeftWidthKey = "pane_left_width"
     /// 2026-10-18 #3：单/双窗口模式记忆键
     static let singlePaneModeKey = "single_pane_mode"
     /// 2026-10-19 #10：侧栏隐藏状态记忆键
@@ -279,6 +233,12 @@ public class MainWindowController: NSWindowController {
     private static let sidebarAnimationDuration: TimeInterval = 0.18
 
     /// 读取上次拖拽记忆的侧栏宽度，落在 [min, max] 内才采用
+    /// 恢复左操作面板宽度（双面板中缝位置）；0 表示没有记忆
+    static func restoredPaneLeftWidth() -> CGFloat {
+        let saved = UserDefaults.standard.double(forKey: paneLeftWidthKey)
+        return saved > 0 ? saved : 0
+    }
+
     static func restoredSidebarWidth() -> CGFloat {
         let saved = UserDefaults.standard.double(forKey: sidebarWidthKey)
         guard saved >= Double(sidebarMinWidth), saved <= Double(sidebarMaxWidth) else {
@@ -346,8 +306,8 @@ public class MainWindowController: NSWindowController {
     var taskProgressBar: TaskProgressBar!
     /// 任务 F11-9：底部进度栏高度约束（0=收起 / 28=展开，复制/移动/粘贴时动态切换）
     var taskProgressBarHeightConstraint: NSLayoutConstraint!
-    private var mainSplitView: NSSplitView!
-    private var paneSplitView: NSSplitView!
+    private var mainSplitView: FFSplitView!
+    private var paneSplitView: FFSplitView!
     /// 主内容容器引用（ThemeManager 需设置 appearance 以确保选中高亮可见）
     private var mainContainerView: NSView!
     /// 诊断：鼠标事件监听器（必须强引用，否则会被立即释放）
@@ -425,6 +385,11 @@ public class MainWindowController: NSWindowController {
         setupBindings()
         setupNotifications()
         loadInitialDirectories()
+        // 布局稳定后吐一次面板几何（自动化拖拽测试用）
+        DispatchQueue.main.async { [weak self] in
+            self?.window?.contentView?.layoutSubtreeIfNeeded()
+            self?.logPaneGeometry(" 启动")
+        }
 
         // Wave2 P0-4（多窗口）：FSEvents 文件系统监控已上移至 AppDelegate 进程级单实例
         // （CoreBridge 的 watcher 重复 start 会顶掉旧 watcher），本窗口经
@@ -533,6 +498,11 @@ public class MainWindowController: NSWindowController {
         window.hasShadow = true
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        // 2026-10-20 #1：关掉系统对标题栏/背景的窗口拖动。
+        // 窗口顶部 28pt 是系统标题栏的拖动区，正好压在操作面板工具栏第一行上——
+        // 于是「按住操作面板拖动」拖走的是整个窗口。关掉之后由 FFWindowDrag 按区域放行：
+        // 侧栏空白与面板卡片四周留白可拖窗口，操作面板本体改为拖面板。
+        window.isMovable = false
         window.title = "FlowFinder"
         // #7：改用应用内标签条，关闭系统窗口标签，避免两套标签并存
         window.tabbingMode = .disallowed
@@ -583,6 +553,24 @@ public class MainWindowController: NSWindowController {
         mainSplitView.layer?.backgroundColor = NSColor.clear.cgColor
         mainSplitView.addArrangedSubview(sidebarView)
         mainSplitView.addArrangedSubview(paneSplitView)
+
+        // 2026-10-20 #8：把手贴在「面板卡片的外沿」，不再瞄准缝隙正中那条隐形线。
+        //   - 双操作区：左卡片右沿 + 右卡片左沿（两处都调同一条分界：左宽右窄）
+        //   - 侧栏缝  ：操作区左卡片的左沿（往左拖 = 侧栏变窄）
+        // 上下边缘不设把手——面板高度由窗口高度接管。
+        paneSplitView.handlePositionsProvider = { [weak self] in
+            guard let self,
+                  let left = self.leftPaneWrapper,
+                  let right = self.rightPaneWrapper else { return [] }
+            let out = FFActivePaneBorderView.edgeOutset
+            return [left.frame.maxX - out, right.frame.minX + out]
+        }
+        mainSplitView.handlePositionsProvider = { [weak self] in
+            guard let self, let paneSplit = self.paneSplitView else { return [] }
+            return [paneSplit.frame.minX + FFActivePaneBorderView.edgeOutset]
+        }
+        // 侧栏宽度上限 280（DESIGN-SPEC B-01）
+        mainSplit.leadingMaxWidth = MainWindowController.sidebarMaxWidth
 
         // Task Progress Bar
         taskProgressBar = TaskProgressBar()
@@ -680,6 +668,25 @@ public class MainWindowController: NSWindowController {
         }
 
         window.contentView = visualEffectView
+
+        // 2026-10-20 #1：窗口级面板拖拽控制器。
+        // 窗口顶部 28pt 是系统标题栏的拖动区，会先于内容视图吃掉 mouseDown；
+        // 这里在事件分发之前接管工具栏/标签条空白，把「拖面板」和「拖窗口」彻底分开。
+        let paneDrag = FFPaneDragController.shared
+        paneDrag.onDropInside = { [weak self] windowPoint in
+            guard let self else { return }
+            let ctx = PaneTabDragContext.shared
+            ctx.isPaneDrag = true
+            ctx.isGroupMerge = false
+            ctx.session = nil
+            self.handleTabDrop(atWindowPoint: windowPoint)
+        }
+        paneDrag.onDropOutside = { [weak self] screenPoint in
+            guard let self else { return }
+            let side = PaneTabDragContext.shared.sourceSide ?? self.activePane
+            self.handlePaneDragEnded(atScreenPoint: screenPoint, side: side)
+        }
+        paneDrag.install(for: window)
 
         // 窗口外观跟随 ThemeManager 设置（不强制 nil，否则夜间模式无法生效）
         DispatchQueue.main.async { [weak self] in
@@ -827,10 +834,16 @@ public class MainWindowController: NSWindowController {
     /// 留白同时是发光的外扩空间：最外层描边 13pt（外扩 6.5pt）不会被包裹视图裁掉。
     /// 两个卡片之间经 split divider 分隔，视觉上呈现为左右两张独立圆角卡片。
     private func makeCardWrapper(for content: NSView, side: PaneSide) -> NSView {
-        let wrapper = NSView()
+        let wrapper = FFCardWrapperView()
         wrapper.wantsLayer = true
         wrapper.layer?.backgroundColor = NSColor.clear.cgColor
         wrapper.translatesAutoresizingMaskIntoConstraints = false
+        // 2026-10-20 #1：卡片四周 8pt 留白属于「边框空白处」，可拖动窗口。
+        // 卡片本体命中的是 content（面板），不会走到这里。
+        wrapper.onEmptyAreaMouseDown = { [weak wrapper] in
+            guard let wrapper else { return }
+            FFWindowDrag.begin(from: wrapper)
+        }
 
         let glow = FFActivePaneBorderView()
         glow.translatesAutoresizingMaskIntoConstraints = false
@@ -864,6 +877,9 @@ public class MainWindowController: NSWindowController {
     private func createPaneContainer(side: PaneSide) -> NSView {
         FFDebug.log("createPaneContainer: side=\(side)")
         let container = SquircleView(cornerRadius: 16, squircleFactor: 5.0, autoUpdateMask: true)
+        // 2026-10-20 #1：面板卡片不再拖动窗口——窗口拖动只保留侧栏与卡片外留白。
+        // 不改这一条的话，按住操作面板一拖，动的就是整个窗口。
+        container.allowsWindowDrag = false
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
         // v0.6.9: 操作区实体背景（日间#F5F5F5/夜间#2D2D2D，Wave4 Task 3 起走 FFDesign 令牌）
@@ -884,6 +900,8 @@ public class MainWindowController: NSWindowController {
         toolbar.delegate = self
         toolbar.side = side
         toolbar.translatesAutoresizingMaskIntoConstraints = false
+        // 2026-10-20 #1：工具栏空白 = 拖面板（= 拖当前标签）
+        toolbar.paneCard = container
 
         // 面包屑导航栏（嵌入 PaneToolbar Row1）
         let breadcrumbBar = BreadcrumbBar()
@@ -932,6 +950,8 @@ public class MainWindowController: NSWindowController {
         tabStrip.side = side
         tabStrip.delegate = self
         tabStrip.translatesAutoresizingMaskIntoConstraints = false
+        // 2026-10-20 #1：标签条空白 = 拖面板（= 拖当前标签）
+        tabStrip.paneCard = container
         container.addSubview(tabStrip)
         if side == .left { leftTabStrip = tabStrip } else { rightTabStrip = tabStrip }
 
@@ -1021,6 +1041,17 @@ public class MainWindowController: NSWindowController {
         }
 
         return container
+    }
+
+    /// 吐出关键面板几何（窗口坐标），供自动化拖拽测试定位起手点
+    func logPaneGeometry(_ tag: String = "") {
+        guard let cv = window?.contentView else { return }
+        func frame(_ v: NSView?) -> String {
+            guard let v, let sp = v.superview else { return "nil" }
+            let r = cv.convert(v.frame, from: sp)
+            return "x=\(Int(r.minX))..\(Int(r.maxX)) y=\(Int(r.minY))..\(Int(r.maxY))"
+        }
+        FFDebug.log("[GEO]\(tag) 窗口=\(Int(window?.frame.width ?? 0))x\(Int(window?.frame.height ?? 0)) 侧栏=\(frame(sidebarView)) 左卡片=\(frame(leftPaneToolbar?.superview)) 左工具栏=\(frame(leftPaneToolbar)) 右工具栏=\(frame(rightPaneToolbar))")
     }
 
     // MARK: - 任务 F10-3: 设备浮层（浮动在窗口左下角独立区域，v0.6.6）
@@ -1925,16 +1956,34 @@ public class MainWindowController: NSWindowController {
             widthBeforeSinglePane = nil
             appliedSinglePaneMode = false
             if let split = paneSplitView, split.bounds.width > 0 {
-                // 从单窗恢复时把分隔线放回中线（隐藏期间宽度曾被单侧占满）
+                // 从单窗恢复时把分隔线放回记忆中的左面板宽度
+                // （隐藏期间宽度曾被单侧占满；2026-10-20 #8 改为放回记忆值）
                 DispatchQueue.main.async {
-                    split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+                    let saved = MainWindowController.restoredPaneLeftWidth()
+                    let target = saved > 0 ? saved : split.bounds.width / 2
+                    let maxPos = max(FFDividerGlowMath.minPaneWidth,
+                                     split.bounds.width - FFDividerGlowMath.minPaneWidth)
+                    split.setPosition(min(target, maxPos), ofDividerAt: 0)
                 }
             }
         }
         sidebarView?.setSinglePaneMode(single)
         // 侧栏收起时，最左那一栏随单双窗切换而变，工具栏让位要跟着重算（2026-10-19 #10）
         applySidebarHiddenToolbarInset()
+        // 2026-10-20 #1：单面板 + 单标签时，拖面板要退化成拖窗口。
+        // 标签组是在 setupUI 里建的，而 isSinglePaneMode 在 setupUI 之后才赋值，
+        // 所以这里必须再刷一次，否则单栏单标签时仍会走面板拖拽。
+        updatePaneDragFallback()
         updateActivePaneVisual()
+    }
+
+    /// 刷新两侧工具栏的「拖面板 = 拖窗口」退化开关（2026-10-20 #1）
+    private func updatePaneDragFallback() {
+        for side in [PaneSide.left, .right] {
+            let toolbar = (side == .left) ? leftPaneToolbar : rightPaneToolbar
+            let count = tabsStore(for: side)?.count ?? 0
+            toolbar?.dragsWindowInstead = isSinglePaneMode && count <= 1
+        }
     }
 
     /// 切模式时改窗口宽度：**保持侧栏宽度不变**，且不污染 `sidebar_width` 记忆。
@@ -2482,6 +2531,13 @@ extension MainWindowController: NSSplitViewDelegate {
                 if width >= MainWindowController.sidebarMinWidth,
                    width <= MainWindowController.sidebarMaxWidth {
                     UserDefaults.standard.set(Double(width), forKey: MainWindowController.sidebarWidthKey)
+                }
+            }
+            // 2026-10-20 #8：左操作面板宽度记忆（中缝拖动后沿用）
+            if splitView === paneSplitView, !isAdjustingPaneMode, let left = splitView.subviews.first {
+                let width = left.frame.width
+                if width >= FFDividerGlowMath.minPaneWidth {
+                    UserDefaults.standard.set(Double(width), forKey: MainWindowController.paneLeftWidthKey)
                 }
             }
         }

@@ -67,6 +67,9 @@ enum FFBreadcrumbSegments {
 /// 5. 路径溢出时左侧显示省略号按钮（访达行为）：点击展开隐藏的左侧路径段下拉菜单
 class BreadcrumbBar: NSView {
 
+    /// 2026-10-20 #1：面包屑不参与窗口拖动（它的空白处应留给工具栏的拖面板手势）
+    override var mouseDownCanMoveWindow: Bool { false }
+
     weak var delegate: BreadcrumbBarDelegate?
 
     /// 当前路径（绝对路径）。set 后触发重建分段。

@@ -712,6 +712,9 @@ class DraggingCollectionView: NSCollectionView {
 
 /// NSCollectionView-based grid view with thumbnails
 public class FileGridView: NSView {
+
+    /// 2026-10-20 #1：网格区不参与窗口拖动（列表空白处要保留框选）
+    public override var mouseDownCanMoveWindow: Bool { false }
     private var collectionView: NSCollectionView!
     private var scrollView: NSScrollView!
     private var cancellables = Set<AnyCancellable>()

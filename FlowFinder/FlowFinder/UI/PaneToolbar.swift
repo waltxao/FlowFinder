@@ -32,12 +32,18 @@ extension PaneToolbarDelegate {
 
 // MARK: - PaneToolbar
 
-class PaneToolbar: NSView, NSDraggingSource {
+class PaneToolbar: NSView, FFPaneDragSource {
     weak var delegate: PaneToolbarDelegate?
 
-    // B5 #5b：整面板合并拖拽——拖工具栏空白处把整个面板拖到对侧
+    // 2026-10-20 #1：拖工具栏空白 = 拖操作面板（语义上等于拖当前那个标签）
     var side: PaneSide = .left
-    private var mergeDragStart: NSPoint?
+
+    /// 被拖起的面板卡片（由 MainWindowController 注入）
+    var paneCard: NSView?
+
+    /// 单面板且只有一个标签时，拖面板没有第二个标签可搬，
+    /// 退化为「拖窗口」（SPEC-2026-10-20 §1.4 第 1 行）。由 MainWindowController 写入。
+    var dragsWindowInstead: Bool = false
 
     // Row 1: Navigation
     private var backButton: NSButton!
@@ -93,77 +99,30 @@ class PaneToolbar: NSView, NSDraggingSource {
         NotificationCenter.default.removeObserver(self, name: .appearanceChanged, object: nil)
     }
 
-    // MARK: - B5 #5b 整面板合并拖拽（拖工具栏空白处）
+    // MARK: - 面板拖拽（2026-10-20 #1）
 
-    /// 点在按钮 / 搜索框 / 面包屑上时命中被子视图吃掉，走不到这里；
-    /// 能收到 mouseDown 的就是工具栏空白。
-    override func mouseDown(with event: NSEvent) {
-        mergeDragStart = convert(event.locationInWindow, from: nil)
+    /// 工具栏不参与窗口拖动：空白处起手的是「拖面板」
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    /// 命中归并：按钮、搜索框、面包屑保留自身命中；
+    /// 其余（两行堆栈之间的留白、行尾弹性占位、实体背景）一律归工具栏自己。
+    ///
+    /// 不做这一步的话，空白处会命中 NSStackView / 占位视图——那是纯排版容器，
+    /// 既不响应点击也不响应拖拽，表现为「按住工具栏没反应」；
+    /// 而它们默认又会触发窗口拖动，表现为「按住操作面板拖动的是窗口」。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard frame.contains(point) else { return nil }
+        guard let hit = super.hitTest(point) else { return self }
+        if hit === self { return self }
+        if hit is NSControl { return hit }
+        if let bar = breadcrumbBar, hit.isDescendant(of: bar) { return hit }
+        if let container = searchContainer, hit.isDescendant(of: container) { return hit }
+        return self
     }
 
-    override func mouseUp(with event: NSEvent) {
-        mergeDragStart = nil
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let start = mergeDragStart else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        guard hypot(point.x - start.x, point.y - start.y) > 4 else { return }
-        mergeDragStart = nil
-
-        PaneTabDragContext.shared.session = nil
-        PaneTabDragContext.shared.isGroupMerge = true
-        PaneTabDragContext.shared.sourceSide = side
-        PaneTabDragContext.shared.sourceIndex = nil
-
-        let item = NSPasteboardItem()
-        item.setString("merge", forType: PaneTabDragContext.pasteboardType)
-        let dragItem = NSDraggingItem(pasteboardWriter: item)
-        let frame = NSRect(x: 0, y: 0, width: 76, height: 52)
-        dragItem.setDraggingFrame(frame, contents: Self.mergeDragImage())
-        beginDraggingSession(with: [dragItem], event: event, source: self)
-    }
-
-    /// 拖动跟随图像：一张小卡片示意「整个面板」
-    private static func mergeDragImage() -> NSImage {
-        let size = NSSize(width: 76, height: 52)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        let rect = NSRect(x: 2, y: 2, width: 72, height: 48)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
-        NSColor.controlBackgroundColor.withAlphaComponent(0.92).setFill()
-        path.fill()
-        NSColor.controlAccentColor.withAlphaComponent(0.8).setStroke()
-        path.lineWidth = 2
-        path.stroke()
-        // 面板示意：三条横线
-        NSColor.secondaryLabelColor.setStroke()
-        for (i, w) in [40.0, 52.0, 30.0].enumerated() {
-            let y = rect.minY + 12 + CGFloat(i) * 10
-            let line = NSBezierPath()
-            line.move(to: NSPoint(x: rect.minX + 10, y: y))
-            line.line(to: NSPoint(x: rect.minX + 10 + w, y: y))
-            line.lineWidth = 3
-            line.lineCapStyle = .round
-            line.stroke()
-        }
-        image.unlockFocus()
-        return image
-    }
-
-    // NSDraggingSource
-
-    func draggingSession(_ session: NSDraggingSession,
-                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        .move
-    }
-
-    /// 拖拽结束（取消/无效落点）必须清上下文，否则窗口级接收器永久吞点击
-    func draggingSession(_ session: NSDraggingSession,
-                         endedAt screenPoint: NSPoint,
-                         operation: NSDragOperation) {
-        PaneTabDragContext.shared.clear()
-    }
+    // 工具栏空白处的拖动由窗口级 `FFPaneDragController` 接管：
+    // 窗口顶部 28pt 是系统标题栏的拖动区，它会先于内容视图吃掉 mouseDown，
+    // 必须在事件分发之前拦下来才能把「拖面板」和「拖窗口」分开。
 
     private func setupUI() {
         wantsLayer = true
@@ -175,7 +134,7 @@ class PaneToolbar: NSView, NSDraggingSource {
         // 同窗内容，只透出 tint+描边（像半透明灰块），且与列表交界处有模糊/清晰突变。
         // 改为操作区「浅一档」实体灰度（FFDesign.operationAreaElevated：日间 #FAFAFA /
         // 夜间 #333333），与操作区基色形成同材质两级灰度；详情栏保留玻璃浮层作层级对比锚点。
-        solidBackground = NSView()
+        solidBackground = FFNonDragView()
         solidBackground.wantsLayer = true
         solidBackground.translatesAutoresizingMaskIntoConstraints = false
         solidBackground.layer?.backgroundColor = FFDesign.operationAreaElevated.cgColor
@@ -222,7 +181,7 @@ class PaneToolbar: NSView, NSDraggingSource {
         upButton = createNavButton(icon: .chevronUp, action: #selector(upClicked), label: "上级目录")
         refreshButton = createNavButton(icon: .refreshCw, action: #selector(refreshClicked), label: "刷新")
 
-        row1 = NSStackView(views: [backButton, forwardButton, upButton, refreshButton])
+        row1 = FFNonDragStackView(views: [backButton, forwardButton, upButton, refreshButton])
         row1.orientation = .horizontal
         row1.alignment = .centerY
         row1.spacing = 4
@@ -232,7 +191,7 @@ class PaneToolbar: NSView, NSDraggingSource {
 
         // 行尾弹性占位：剩余空白必须落在面包屑之后，面包屑才能紧贴刷新按钮（T-04）。
         // 没有它时栈视图会把空白分给 hugging 最低的视图，面包屑被拉满整行。
-        let row1Spacer = NSView()
+        let row1Spacer = FFNonDragView()
         row1Spacer.translatesAutoresizingMaskIntoConstraints = false
         row1Spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
         row1Spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
@@ -270,7 +229,7 @@ class PaneToolbar: NSView, NSDraggingSource {
         // Wave4 Task 1（审计 §1.1）：容器由 FFGlassView(.component) 玻璃改实体——玻璃叠在
         // 实体背景上只剩 tint+描边噪感。改用操作区浅一档实体灰度 + 1px 分隔线描边，
         // 与工具栏底同色，靠描边勾勒输入域边界（系统设置风格）。
-        searchContainer = NSView()
+        searchContainer = FFNonDragView()
         searchContainer.wantsLayer = true
         searchContainer.layer?.backgroundColor = FFDesign.operationAreaElevated.cgColor
         searchContainer.layer?.cornerRadius = 8
@@ -301,7 +260,7 @@ class PaneToolbar: NSView, NSDraggingSource {
         searchTextField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         searchTextField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let searchStack = NSStackView(views: [searchIcon, searchTextField])
+        let searchStack = FFNonDragStackView(views: [searchIcon, searchTextField])
         searchStack.orientation = .horizontal
         searchStack.alignment = .centerY
         searchStack.spacing = 6
@@ -375,7 +334,7 @@ class PaneToolbar: NSView, NSDraggingSource {
         newFolderButton.toolTip = "新建文件夹"
         newFolderButton.isEnabled = true
 
-        let row2 = NSStackView(views: [
+        let row2 = FFNonDragStackView(views: [
             searchContainer,
             sortPopup,
             groupPopup,

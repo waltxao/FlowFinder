@@ -196,6 +196,12 @@ private class FFSidebarRowView: NSTableRowView {
 // MARK: - SidebarView
 
 class SidebarView: NSView {
+
+    /// 2026-10-20 #1：侧栏空白是窗口拖动区（唯一的显式放行处，SPEC §1.5）。
+    /// 窗口已设 isMovable=false（关掉系统标题栏拖动），这里自己管拖动。
+    override func mouseDown(with event: NSEvent) {
+        FFWindowDrag.begin(from: self)
+    }
     /// 任务 R3: 侧边栏顶部应用名称 + 版本号（红绿灯下方，2026-10-18 移除图标）
     private var brandView: NSView!
     /// 2026-10-18 #7：应用名称改渐变绘制（取色自应用图标）

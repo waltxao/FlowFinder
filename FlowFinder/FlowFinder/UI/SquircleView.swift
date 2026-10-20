@@ -14,6 +14,18 @@ public class SquircleView: NSView {
     /// 是否在 layout 时自动更新 mask
     private var autoUpdateMask: Bool
 
+    /// 是否允许拖动所在窗口（2026-10-20 #1）
+    ///
+    /// AppKit 默认「不透明视图即可拖窗口」，而 NSView.isOpaque 默认就是 true。
+    /// 操作面板卡片（SquircleView）因此成了一块巨大的窗口拖动区——
+    /// 按住操作面板一拖，动的却是整个窗口。
+    ///
+    /// 面板卡片置 false，窗口拖动只保留侧栏与卡片外的留白（SPEC-2026-10-20 §1.5）。
+    public var allowsWindowDrag: Bool = true
+
+    /// 显式覆写，避免依赖 AppKit 的默认值（默认实现是「不透明即可拖」）
+    public override var mouseDownCanMoveWindow: Bool { allowsWindowDrag }
+
     /// 初始化超椭圆视图
     /// - Parameters:
     ///   - cornerRadius: 圆角半径

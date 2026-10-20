@@ -132,6 +132,9 @@ class FFDetailsDragStrip: NSView {
 ///   - `isExpanded: Bool` 展开/收起状态
 class ExpandableDetailsBar: NSView {
 
+    /// 2026-10-20 #1：详情栏浮层不参与窗口拖动
+    override var mouseDownCanMoveWindow: Bool { false }
+
     // MARK: - Constants
 
     /// 收起态高度 36pt + 状态栏 18pt = 54pt

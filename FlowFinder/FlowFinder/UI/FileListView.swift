@@ -511,6 +511,9 @@ private struct FFDisplayRow {
 /// NSTableView-based file list view with 4 columns (名称/修改日期/类型/大小)
 /// 标签以药丸形式内联显示在名称列的文件名之后
 public class FileListView: NSView {
+
+    /// 2026-10-20 #1：列表区不参与窗口拖动（列表空白处要保留框选）
+    public override var mouseDownCanMoveWindow: Bool { false }
     private var tableView: NSTableView!
     private var scrollView: NSScrollView!
     private var cancellables = Set<AnyCancellable>()

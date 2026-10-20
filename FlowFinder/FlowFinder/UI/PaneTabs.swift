@@ -154,12 +154,15 @@ final class PaneTabDragContext {
     var sourceIndex: Int?
     /// B5 #5b：true = 拖的是工具栏空白（整个面板合并），此时 session 无意义
     var isGroupMerge = false
+    /// 2026-10-20 #1：true = 拖的是「操作面板」——语义上等于拖当前那个标签
+    var isPaneDrag = false
 
     func clear() {
         session = nil
         sourceSide = nil
         sourceIndex = nil
         isGroupMerge = false
+        isPaneDrag = false
     }
 }
 
@@ -353,7 +356,7 @@ protocol PaneTabStripDelegate: AnyObject {
 }
 
 /// 操作区顶部的浏览器式标签条（高 32pt）
-final class PaneTabStripView: NSView {
+final class PaneTabStripView: NSView, FFPaneDragSource {
 
     weak var delegate: PaneTabStripDelegate?
     var side: PaneSide = .left
@@ -363,6 +366,31 @@ final class PaneTabStripView: NSView {
     private var items: [PaneTabItemView] = []
     private var sessions: [PaneTabSession] = []
     private var activeIndex: Int = 0
+
+    // MARK: - 面板拖拽（2026-10-20 #1）
+
+
+    /// 被拖起的面板卡片（由 MainWindowController 注入）
+    var paneCard: NSView?
+
+    /// 标签条只在「标签数 ≥ 2」时出现，永远有第二个标签可搬，不会退化成拖窗口
+    var dragsWindowInstead: Bool { false }
+
+    /// 标签条不参与窗口拖动：空白处起手的是「拖面板」
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    /// 命中归并：标签与「+」按钮保留自身命中，
+    /// 其余（标签栈留白、标签之间的空隙）一律归标签条自己，
+    /// 否则会落到 NSStackView 上——那是纯排版容器，点了没有任何反应。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard frame.contains(point) else { return nil }
+        guard let hit = super.hitTest(point) else { return self }
+        if hit === self { return self }
+        if hit === stack { return self }
+        return hit
+    }
+
+    // 标签条空白处的拖动同样由窗口级 `FFPaneDragController` 接管。
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -527,7 +555,9 @@ final class PaneTabDropReceiver: NSView {
 
     /// 标签拖动进行中（单标签或整组合并均算）
     static var isTabDragActive: Bool {
-        PaneTabDragContext.shared.session != nil || PaneTabDragContext.shared.isGroupMerge
+        PaneTabDragContext.shared.session != nil
+            || PaneTabDragContext.shared.isGroupMerge
+            || PaneTabDragContext.shared.isPaneDrag
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
