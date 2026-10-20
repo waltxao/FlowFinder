@@ -108,6 +108,15 @@ class MainMenu {
         )
         sidebarItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(.separator())
+        // 2026-10-20 #3：显示列（与列头右键、工具栏工具菜单同一份状态）
+        let columnsItem = NSMenuItem(title: "显示列", action: nil, keyEquivalent: "")
+        let columnsMenu = FFListColumnMenu.build(
+            target: nil,
+            action: #selector(MainWindowController.menuToggleListColumn(_:)))
+        columnsMenu.delegate = FFListColumnMenuDelegate.shared
+        columnsItem.submenu = columnsMenu
+        viewMenu.addItem(columnsItem)
+        viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: "刷新", action: #selector(MainWindowController.menuRefresh(_:)), keyEquivalent: "r")
 
         // Go menu (导航)

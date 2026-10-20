@@ -290,6 +290,9 @@ public class MainWindowController: NSWindowController {
     private var appliedSinglePaneMode: Bool?
     /// 切模式导致的程序化窗口/分隔线变更期间为 true：此时不写 `sidebar_width`
     private var isAdjustingPaneMode = false
+
+    /// 单双面板切换动画进行中（窗口宽度改走 animator）
+    private var isAnimatingPaneMode = false
     /// 2026-10-19 #10：侧栏是否可见（隐藏后窗口左上角留一个开关按钮）
     internal var isSidebarVisible = true
     /// 主分栏左侧最小宽度覆盖值：侧栏收起 / 动画期间为 0（默认取 sidebarMinWidth）
@@ -410,6 +413,7 @@ public class MainWindowController: NSWindowController {
                 self?.runRegionResolveSelfTest()
                 self?.runDragBehaviorSelfTest()
                 self?.runTabWeldSelfTest()
+                self?.runListShellSelfTest()
             }
         }
         #endif
@@ -670,6 +674,16 @@ public class MainWindowController: NSWindowController {
             object: window)
 
         window.contentView = visualEffectView
+        // 2026-10-20 #5：窗口圆角改超椭圆 12（与面板同一套曲线；系统圆角是圆形弧，无 API 可改）
+        // FF_SKIP_WINDOW_SHAPE=1 可关掉遮罩做对照排查
+        if ProcessInfo.processInfo.environment["FF_SKIP_WINDOW_SHAPE"] != "1" {
+            FFWindowShape.install(on: window)
+        }
+        for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(handleWindowShapeChange),
+                name: name, object: window)
+        }
 
         // 2026-10-20 #1：窗口级面板拖拽控制器。
         // 窗口顶部 28pt 是系统标题栏的拖动区，会先于内容视图吃掉 mouseDown；
@@ -1919,6 +1933,16 @@ public class MainWindowController: NSWindowController {
     /// 窗口尺寸变化 → 重新对齐标签条
     @objc private func handleWindowLayout() {
         updateTabStripFrames()
+        // 窗口尺寸变了，超椭圆遮罩要跟着重算（否则圆角会被拉伸）
+        if let window { FFWindowShape.update(on: window) }
+    }
+
+    /// 进出全屏时增减遮罩（全屏带遮罩会露黑边）
+    @objc private func handleWindowShapeChange() {
+        DispatchQueue.main.async { [weak self] in
+            guard let window = self?.window else { return }
+            FFWindowShape.update(on: window)
+        }
     }
 
     /// 标签条左缘约束（用于避让红绿灯）
@@ -2002,7 +2026,13 @@ public class MainWindowController: NSWindowController {
            !(source === sidebarView), !(source === window) { return }
         isSinglePaneMode.toggle()
         UserDefaults.standard.set(isSinglePaneMode, forKey: Self.singlePaneModeKey)
-        applyPaneMode()
+        // 2026-10-20 #2：0.36s 弹性过渡（窗口宽度同曲线、contentView 叠淡入淡出）
+        let single = isSinglePaneMode
+        isAnimatingPaneMode = true
+        FFPaneModeAnimator.animate(toSingle: single, window: window) { [weak self] in
+            self?.applyPaneMode()
+        }
+        isAnimatingPaneMode = false
     }
 
     /// 应用单/双窗口布局：
@@ -2083,6 +2113,18 @@ public class MainWindowController: NSWindowController {
     /// 改窗口尺寸 → 下一拍把分隔线放回原宽度，全程不写记忆。
     private func resizeWindowKeepingSidebar(_ frame: NSRect) {
         guard let window = window else { return }
+        // 2026-10-20 #2：切换动画期间走 animator（同一条弹性曲线），否则瞬时跳变
+        if isAnimatingPaneMode {
+            isAdjustingPaneMode = true
+            window.animator().setFrame(frame, display: true)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let sidebar = self.sidebarView else { return }
+                let saved = max(MainWindowController.sidebarMinWidth, sidebar.frame.width)
+                self.mainSplitView?.setPosition(saved, ofDividerAt: 0)
+                self.isAdjustingPaneMode = false
+            }
+            return
+        }
         let sidebarWidth = max(MainWindowController.sidebarMinWidth,
                                sidebarView?.frame.width ?? MainWindowController.restoredSidebarWidth())
         isAdjustingPaneMode = true

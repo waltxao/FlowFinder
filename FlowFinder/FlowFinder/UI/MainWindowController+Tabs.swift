@@ -643,6 +643,83 @@ extension MainWindowController {
         FFDebug.log("[WELD] 标签焊接自检 通过\(pass) 失败\(fail)")
     }
 
+    /// 列表列 / 窗口外壳 / 切换动画自检（2026-10-20 #3 #5 #2 #10）
+    func runListShellSelfTest() {
+        var pass = 0
+        var fail = 0
+        func check(_ ok: Bool, _ label: String) {
+            if ok { pass += 1 } else { fail += 1; FFDebug.log("[SHELL] FAIL \(label)") }
+        }
+
+        // ① 列定义：默认四列、名称必选、大小右对齐
+        let defaults = FFListColumn.allCases.filter { $0.defaultVisible }
+        check(defaults == [.name, .kind, .size, .modified],
+              "默认列应为 名称/类型/大小/修改日期（实为 \(defaults.map { $0.rawValue })）")
+        check(FFListColumn.name.isRequired && !FFListColumn.kind.isRequired, "只有名称是必选列")
+        check(FFListColumn.size.alignment == .right, "大小列应右对齐")
+        check(FFListColumn.name.alignment == .left, "名称列应左对齐")
+
+        // ② 可见性切换 + 持久化往返
+        let original = FFListColumnsState.visibleColumns()
+        // 断言「翻转」而不是「一定变为可见」——默认值可能是用户改过的
+        let createdBefore = FFListColumnsState.isVisible(.created)
+        FFListColumnsState.toggle(.created)
+        check(FFListColumnsState.isVisible(.created) == !createdBefore,
+              "切换创建日期应翻转可见性（前=\(createdBefore)）")
+        FFListColumnsState.toggle(.created)
+        FFListColumnsState.toggle(.name)   // 必选列：不应生效
+        check(FFListColumnsState.isVisible(.name), "名称列不可关闭")
+        FFListColumnsState.setVisible(original)
+        check(FFListColumnsState.visibleColumns() == original, "可见列应能还原")
+
+        // ③ 放不下时的收起顺序：说明 → 标签 → 创建日期 → 类型 → 大小 → 修改日期
+        let all = FFListColumn.allCases
+        let narrow = FFListColumnsState.columnsFitting(in: 380, from: all)
+        check(narrow.contains(.name), "名称列永不被收起")
+        check(!narrow.contains(.comment), "窄面板应先收起说明列")
+        let wide = FFListColumnsState.columnsFitting(in: 2000, from: all)
+        check(wide.count == all.count, "宽面板应显示全部列")
+
+        // ④ 排序键：只有四个固定 key，可选列不给 prototype
+        check(FFListColumn.kind.sortKey == "type" && FFListColumn.size.sortKey == "size",
+              "类型/大小列排序键应为 type/size")
+        check(FFListColumn.created.sortKey == nil && FFListColumn.comment.sortKey == nil,
+              "创建日期/说明列不支持排序")
+
+        // ⑤ 窗口圆角（半径 12 + 连续曲率）
+        check(FFWindowShape.cornerRadius == 12, "窗口圆角应为 12")
+        if let window, let layer = window.contentView?.layer {
+            check(abs(layer.cornerRadius - 12) < 0.5, "窗口 contentView 应设 12 圆角")
+            check(layer.cornerCurve == .continuous, "窗口圆角应为连续曲率（非圆弧）")
+        }
+
+        // ⑥ 切换动画参数
+        check(abs(FFPaneModeAnimator.duration - 0.36) < 0.001, "切换时长应为 0.36s")
+
+        // ⑦ 垂直中线：名称列图标/文字与各元信息列都用 centerY（R-10）
+        if let list = leftPaneContainer?.subviews.compactMap({ $0 as? FileListView }).first {
+            check(list.usesSharedRowMidline, "名称列图标与文字应共用行中线")
+            check(list.visibleColumnIDs.contains(FFListColumn.size.rawValue)
+                  || !FFListColumnsState.isVisible(.size),
+                  "可见列与状态应一致")
+        }
+
+        // ⑧ 可选列真的能渲染出内容（不是空列）
+        if let list = leftPaneContainer?.subviews.compactMap({ $0 as? FileListView }).first,
+           list.tableRowCount > 0 {
+            let kind = list.debugCellText(for: .kind, row: 0) ?? ""
+            let size = list.debugCellText(for: .size, row: 0) ?? ""
+            let modified = list.debugCellText(for: .modified, row: 0) ?? ""
+            let created = list.debugCellText(for: .created, row: 0) ?? ""
+            check(!kind.isEmpty, "类型列应有内容（实为「\(kind)」）")
+            check(!size.isEmpty, "大小列应有内容")
+            check(!modified.isEmpty, "修改日期列应有内容")
+            check(!created.isEmpty, "创建日期列应有内容（可选列渲染路径）")
+        }
+
+        FFDebug.log("[SHELL] 列表与外壳自检 通过\(pass) 失败\(fail)")
+    }
+
     /// 操作区左半 / 右半各取一个窗口坐标点
     private func windowPointInOperationHalf(side: PaneSide) -> NSPoint {
         guard let cv = window?.contentView else { return NSPoint(x: 100, y: 100) }

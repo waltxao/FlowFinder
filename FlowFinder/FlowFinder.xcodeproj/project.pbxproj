@@ -12,6 +12,9 @@
 		FFC200020000000000000002 /* FFPaneDrag.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC200010000000000000001; };
 		FFC300020000000000000002 /* FFInteractionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC300010000000000000001; };
 		FFC300040000000000000004 /* FFRegionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC300030000000000000003; };
+		FFC400020000000000000002 /* FFListColumns.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC400010000000000000001; };
+		FFC500020000000000000002 /* FFWindowShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC500010000000000000001; };
+		FFC500040000000000000004 /* FFPaneModeAnimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC500030000000000000003; };
 		FFB000020000000000000002 /* FFTagRemovalSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFB000010000000000000001; };
 		FFA200010000000000000001 /* TagIndexStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100010000000000000001; };
 		FFA200020000000000000002 /* FFTagColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA100020000000000000002; };
@@ -101,6 +104,9 @@
 		FFC200010000000000000001 /* FFPaneDrag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPaneDrag.swift; sourceTree = "<group>"; };
 		FFC300010000000000000001 /* FFInteractionPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFInteractionPolicy.swift; sourceTree = "<group>"; };
 		FFC300030000000000000003 /* FFRegionResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFRegionResolver.swift; sourceTree = "<group>"; };
+		FFC400010000000000000001 /* FFListColumns.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFListColumns.swift; sourceTree = "<group>"; };
+		FFC500010000000000000001 /* FFWindowShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFWindowShape.swift; sourceTree = "<group>"; };
+		FFC500030000000000000003 /* FFPaneModeAnimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPaneModeAnimator.swift; sourceTree = "<group>"; };
 		FFB000010000000000000001 /* FFTagRemovalSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTagRemovalSheet.swift; sourceTree = "<group>"; };
 		FFA100010000000000000001 /* TagIndexStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagIndexStore.swift; sourceTree = "<group>"; };
 		FFA100020000000000000002 /* FFTagColorPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTagColorPalette.swift; sourceTree = "<group>"; };
@@ -299,6 +305,9 @@
 				FFC200010000000000000001 /* FFPaneDrag.swift */,
 				FFC300010000000000000001 /* FFInteractionPolicy.swift */,
 				FFC300030000000000000003 /* FFRegionResolver.swift */,
+				FFC400010000000000000001 /* FFListColumns.swift */,
+				FFC500010000000000000001 /* FFWindowShape.swift */,
+				FFC500030000000000000003 /* FFPaneModeAnimator.swift */,
 				FFB000010000000000000001 /* FFTagRemovalSheet.swift */,
 		);
 		path = UI;
@@ -535,6 +544,9 @@
 				FFC200020000000000000002 /* FFPaneDrag.swift in Sources */,
 				FFC300020000000000000002 /* FFInteractionPolicy.swift in Sources */,
 				FFC300040000000000000004 /* FFRegionResolver.swift in Sources */,
+				FFC400020000000000000002 /* FFListColumns.swift in Sources */,
+				FFC500020000000000000002 /* FFWindowShape.swift in Sources */,
+				FFC500040000000000000004 /* FFPaneModeAnimator.swift in Sources */,
 				FFA200010000000000000001 /* TagIndexStore.swift in Sources */,
 				FFA200020000000000000002 /* FFTagColorPalette.swift in Sources */,
 				FFA200030000000000000003 /* ColorPicker.swift in Sources */,

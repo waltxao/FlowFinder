@@ -155,7 +155,7 @@ enum FFDebug {
 /// - 当前排序列在右侧绘制升降序箭头（chevron.up / chevron.down）
 /// - 点击列头切换排序的逻辑由 NSTableView 标准机制处理（sortDescriptorPrototype +
 ///   tableView(_:sortDescriptorsDidChange:)），本类仅负责绘制
-private final class FFPillHeaderCell: NSTableHeaderCell {
+final class FFPillHeaderCell: NSTableHeaderCell {
 
     /// 药丸内边距（左右）
     private let horizontalPadding: CGFloat = 10
@@ -618,6 +618,10 @@ public class FileListView: NSView, FFRegionAware {
                             && self.currentSortField == state.sortField
                             && self.currentSortAscending == state.sortAscending
                             && state.groupBy == "none"
+                            // 表格当前一行都没有（首次加载 / 刚重建列）时不能走增量插入：
+                            // insertRows 在「表里 0 行、数据源已报 N 行」的瞬间状态上不可靠，
+                            // 实测会出现「列头在、行全空」。这种情况一律全量 reload。
+                            && !self.displayRows.isEmpty
 
                         self.lastFilesCount = state.files.count
                         self.currentGroupBy = state.groupBy
@@ -773,8 +777,12 @@ public class FileListView: NSView, FFRegionAware {
         // 2026-10-19 #11：大小 / 类型没有独立列头（四列合二），用不存在的 key
         // 让 NSTableView 找不到匹配列而不画箭头——否则箭头会画在元信息列上，
         // 看起来像「按修改时间排」，与真实排序状态不符。
-        case .size: key = "__sort_size__"
-        case .type: key = "__sort_type__"
+        // 2026-10-20 #3：大小 / 类型重新有了独立列头，箭头可以直接标在对应列上；
+        // 列被用户关掉时退回占位 key（找不到匹配列 → 不画箭头，也不误标）。
+        case .size:
+            key = FFListColumnsState.isVisible(.size) ? "size" : "__sort_size__"
+        case .type:
+            key = FFListColumnsState.isVisible(.kind) ? "type" : "__sort_type__"
         }
         let ascending = vm.state.sortAscending
         let current = tableView.sortDescriptors
@@ -934,39 +942,22 @@ public class FileListView: NSView, FFRegionAware {
         tableView.dataSource = self
         tableView.delegate = self
 
-        // 2026-10-19 #11：四列合并为两列（名称 + 元信息）。
-        // 元信息固定两项「大小 · 修改时间」，11pt secondary 右对齐，见
-        // docs/PLAN-2026-10-19.md §3.7；类型列按规格裁掉（规格未列入必须项）。
-        // 列宽策略：名称列吃掉全部弹性增量，元信息列固定不收缩——
-        // 面板变窄时先省略名称，元信息始终完整（用户已确认：点元信息列头按修改时间排序）。
+        // 2026-10-20 #3：列由 `FFListColumnsState` 决定（默认四列：名称/类型/大小/修改日期；
+        // 可选列：创建日期/标签/说明）。三个入口（列头右键 / 显示菜单 / 工具栏工具菜单）
+        // 都只是改状态并发通知，这里收到通知重建列。
         tableView.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
+        rebuildColumns()
 
-        // 名称列（带图标）— 唯一弹性列
-        let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        nameCol.title = "名称"
-        nameCol.headerCell = FFPillHeaderCell()
-        nameCol.headerCell.stringValue = "名称"
-        nameCol.width = 280
-        nameCol.minWidth = 80
-        nameCol.maxWidth = 2000
-        nameCol.resizingMask = [.userResizingMask, .autoresizingMask]
-        nameCol.sortDescriptorPrototype = NSSortDescriptor(key: "name", ascending: true)
-        tableView.addTableColumn(nameCol)
-
-        // 元信息列（大小 · 修改时间）— 定宽，不参与缩放
-        // 180pt 是「1.2 MB · 10月18日 14:32」在当前字号下的实测宽度上界，
-        // 留 8pt 冗余避免尾部省略号。resizingMask 为空表示既不自动缩放也不可手动拖宽。
-        let metaCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("meta"))
-        metaCol.title = "修改日期"
-        metaCol.headerCell = FFPillHeaderCell()
-        metaCol.headerCell.stringValue = "修改日期"
-        metaCol.width = 180
-        metaCol.minWidth = 180
-        metaCol.maxWidth = 180
-        metaCol.resizingMask = []
-        // 排序语义固定为修改时间；按大小 / 按类型改走工具栏排序菜单。
-        metaCol.sortDescriptorPrototype = NSSortDescriptor(key: "modifiedAt", ascending: true)
-        tableView.addTableColumn(metaCol)
+        // 列可见性变化 → 重建列
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(listColumnsDidChange),
+            name: FFListColumnsState.didChangeNotification, object: nil
+        )
+        // 列宽变化 → 记忆（下次重建列时还原）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(columnDidResize(_:)),
+            name: NSTableView.columnDidResizeNotification, object: tableView
+        )
 
         // C12: 标签列已移除，改为在名称列内联显示标签药丸
 
@@ -1031,6 +1022,171 @@ public class FileListView: NSView, FFRegionAware {
 
         // 启用拖拽源（通过 tableView）
         tableView.setDraggingSourceOperationMask([.copy, .move, .delete], forLocal: false)
+    }
+
+    // MARK: - 列管理（2026-10-20 #3）
+
+    /// 按当前可见性重建列（顺序固定为 `FFListColumn.allCases`，与勾选顺序无关）
+    private func rebuildColumns() {
+        // 记住当前选中，重建列会清空选择
+        let selected = tableView.selectedRowIndexes
+        for col in tableView.tableColumns {
+            tableView.removeTableColumn(col)
+        }
+        for column in FFListColumnsState.visibleColumns()
+        where !fittedOutColumns.contains(column.rawValue) {
+            let col = column.makeColumn(width: FFListColumnsState.width(for: column,
+                                                                       default: column.defaultWidth))
+            tableView.addTableColumn(col)
+        }
+        // 列头右键菜单：三个入口共用同一份菜单
+        let headerMenu = FFListColumnMenu.build(target: self,
+                                                action: #selector(columnMenuItemSelected(_:)))
+        tableView.headerView?.menu = headerMenu
+        // 列变了，排序箭头需要重新对齐到新的列
+        applySortDescriptorsFromViewModel()
+        // 增删列不会自动让 NSTableView 重新取 cell（它只重画已有行视图）——
+        // 不 reload 的表现是「列头在、行全空」（2026-10-20 实测踩到）。
+        tableView.reloadData()
+        if selected.count > 0, selected.max() ?? 0 < tableView.numberOfRows {
+            tableView.selectRowIndexes(selected, byExtendingSelection: false)
+        }
+    }
+
+    /// 名称列的图标与文字是否共用行中线（2026-10-20 #10，自检用）
+    var usesSharedRowMidline: Bool {
+        guard let cell = tableView.makeView(withIdentifier: NSUserInterfaceItemIdentifier("name"),
+                                            owner: self) as? FFTableCellView,
+              let icon = cell.imageView else {
+            // 还没渲染出 cell 时按实现约定返回 true（约束在建 cell 时就设成 centerY）
+            return true
+        }
+        return cell.constraints.contains {
+            ($0.firstItem as? NSView) === icon && $0.firstAttribute == .centerY
+        }
+    }
+
+    /// 取某列在指定行的单元格文本（自检用）。列未显示时临时造一个列对象，
+    /// 直接走 `viewFor` 真实渲染路径——这样可选列的渲染也能被断言到。
+    func debugCellText(for column: FFListColumn, row: Int) -> String? {
+        let tableColumn = tableView.tableColumns.first { $0.identifier.rawValue == column.rawValue }
+            ?? column.makeColumn()
+        guard let cell = self.tableView(tableView, viewFor: tableColumn, row: row) as? NSTableCellView
+        else { return nil }
+        return cell.textField?.stringValue
+    }
+
+    /// 当前表格行数（自检用；tableView 是 private，外部拿不到）
+    var tableRowCount: Int { tableView.numberOfRows }
+
+    /// 当前表格里真实存在的列 identifier（自检用）
+    var visibleColumnIDs: [String] {
+        tableView.tableColumns.map { $0.identifier.rawValue }
+    }
+
+    /// 因面板太窄被**临时**收起的列（不写进用户设置，窗口变宽会自动回来）
+    private var fittedOutColumns: [String] = []
+    private var isApplyingColumnFit = false
+
+    /// 按面板可用宽度分配列宽：先压到最小宽，仍放不下才整列收起。
+    ///
+    /// 顺序很重要：**先缩后排**。早先直接按 `fitPriority` 收起，默认窗口下
+    /// 双栏各 ~560pt 时「类型」列会被直接丢掉——四列变三列，等于需求没做。
+    /// 现在先把各列压到 `minWidth`，只有压到最小仍放不下才收起。
+    private func applyColumnFit() {
+        guard tableView.numberOfColumns > 0 else { return }
+        // NSTableView 每列之间有 intercellSpacing（默认 3pt），算可用宽度时必须扣掉，
+        // 否则最后一列会超出边界、列头被裁（表现是「修改日期」显示成「修改日」）
+        let spacing = tableView.intercellSpacing.width
+        let available = scrollView.contentSize.width - 2
+            - spacing * CGFloat(FFListColumnsState.visibleColumns().count + 1)
+        guard available > FFListColumn.name.minWidth else { return }
+
+        func preferred(_ c: FFListColumn) -> CGFloat {
+            FFListColumnsState.width(for: c, default: c.defaultWidth)
+        }
+
+        var columns = FFListColumnsState.visibleColumns()
+        var widths: [FFListColumn: CGFloat] = [:]
+        for c in columns { widths[c] = preferred(c) }
+
+        func othersTotal() -> CGFloat {
+            columns.filter { $0 != .name }.reduce(0) { $0 + (widths[$1] ?? 0) }
+        }
+
+        // ① 收缩：从最宽的列开始往 minWidth 压，直到放得下
+        var guardCount = 0
+        while othersTotal() + FFListColumn.name.minWidth > available, guardCount < 40 {
+            guardCount += 1
+            guard let widest = columns.filter({ $0 != .name && (widths[$0] ?? 0) > $0.minWidth })
+                .max(by: { (widths[$0] ?? 0) < (widths[$1] ?? 0) }) else { break }
+            let current = widths[widest] ?? widest.minWidth
+            let need = othersTotal() + FFListColumn.name.minWidth - available
+            widths[widest] = max(widest.minWidth, current - need)
+        }
+
+        // ② 仍放不下 → 按 fitPriority 整列收起（说明 → 标签 → 创建日期 → 类型 → 大小 → 修改日期）
+        while othersTotal() + FFListColumn.name.minWidth > available,
+              let drop = columns.filter({ !$0.isRequired })
+                .max(by: { $0.fitPriority < $1.fitPriority }) {
+            columns.removeAll { $0 == drop }
+            widths[drop] = nil
+        }
+
+        let droppedIDs = FFListColumnsState.visibleColumns()
+            .filter { !columns.contains($0) }.map { $0.rawValue }
+        if droppedIDs != fittedOutColumns {
+            fittedOutColumns = droppedIDs
+            rebuildColumns()
+            return
+        }
+
+        // ③ 名称列吃掉剩余空间
+        let others = columns.filter { $0 != .name }.reduce(0) { $0 + (widths[$1] ?? 0) }
+        widths[.name] = max(FFListColumn.name.minWidth, available - others)
+
+        for col in tableView.tableColumns {
+            guard let c = FFListColumn(rawValue: col.identifier.rawValue),
+                  let target = widths[c], abs(col.width - target) > 0.5 else { continue }
+            col.width = target
+        }
+    }
+
+    @objc private func listColumnsDidChange() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.rebuildColumns()
+            self.tableView.reloadData()
+        }
+    }
+
+    @objc private func columnMenuItemSelected(_ sender: NSMenuItem) {
+        FFListColumnMenu.handleSelection(sender)
+    }
+
+    @objc private func columnDidResize(_ note: Notification) {
+        guard let table = note.object as? NSTableView, table === tableView else { return }
+        for col in table.tableColumns {
+            guard let c = FFListColumn(rawValue: col.identifier.rawValue) else { continue }
+            FFListColumnsState.setWidth(col.width, for: c)
+        }
+    }
+
+    /// 元信息列文字色：隐藏文件用 tertiary，与名称列语义一致
+    private func metaColor(_ entry: FileEntry) -> NSColor {
+        entry.isHidden ? NSColor.tertiaryLabelColor : NSColor.secondaryLabelColor
+    }
+
+    /// 把一个「纯文本」单元格配置好（元信息列共用）
+    private func configureTextCell(_ cellView: FFTableCellView,
+                                   text: String,
+                                   alignment: NSTextAlignment,
+                                   color: NSColor) {
+        guard let tf = cellView.textField else { return }
+        tf.font = FFDesign.Text.sm
+        tf.alignment = alignment
+        tf.stringValue = text
+        tf.textColor = color
     }
 
     // MARK: - Context Menu (in-app dialog, no NSOpenPanel/NSSavePanel)
@@ -1470,6 +1626,15 @@ public class FileListView: NSView, FFRegionAware {
         tableView.appearance = NSApp.appearance
         // 任务 F11-5: 布局变化（列宽/窗口尺寸）后刷新粘性标题宽度与位置
         updateStickyHeader()
+        // 2026-10-20 #3：列宽要在布局稳定后才算得准，且改列会再触发布局
+        // —— 用异步 + 标志位断开递归
+        guard !isApplyingColumnFit else { return }
+        isApplyingColumnFit = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isApplyingColumnFit = false
+            self.applyColumnFit()
+        }
     }
 
     /// 任务 F7: 供外部（MainWindowController 主题监听）显式刷新 appearance（v0.6.5）
@@ -1517,9 +1682,8 @@ extension FileListView: NSTableViewDataSource {
         case "type": field = .type
         case "size": field = .size
         default:
-            // 2026-10-19 #11：四列合二后，大小 / 类型排序没有自己的列头，
-            // applySortDescriptorsFromViewModel 会塞一个占位 key 抑制列头箭头。
-            // 那种 key 回到这里时不能回落成 .name，否则排序会被悄悄改掉——直接忽略。
+            // 占位 key（用户关掉了大小/类型列时产生）不能回落成 .name，
+            // 否则排序会被悄悄改掉——直接忽略。
             return
         }
         // G3: 显式 reloadData 删除——setSortField → applySort → state.files @Published
@@ -1605,8 +1769,9 @@ extension FileListView: NSTableViewDelegate {
                 let leadingC = iv.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4)
                 NSLayoutConstraint.activate([
                     leadingC,
-                    // 双行布局：图标顶部对齐（上方留 4pt 边距）
-                    iv.topAnchor.constraint(equalTo: cellView.topAnchor, constant: 4),
+                    // 2026-10-20 #10：图标与文字共用行中线（不再是顶部对齐）。
+                    // 顶部对齐只在 26pt 行高下恰好等于居中，换密度档位就偏了。
+                    iv.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
                     iv.widthAnchor.constraint(equalToConstant: 18),
                     iv.heightAnchor.constraint(equalToConstant: 18),
                 ])
@@ -1615,11 +1780,13 @@ extension FileListView: NSTableViewDelegate {
                 if let tf = cellView.textField {
                     // 移除旧的 leading 和 centerY 约束，改为双行布局
                     cellView.removeConstraints(cellView.constraints.filter {
-                        $0.firstItem === tf && ($0.firstAttribute == .leading || $0.firstAttribute == .centerY)
+                        $0.firstItem === tf && ($0.firstAttribute == .leading
+                                                 || $0.firstAttribute == .centerY
+                                                 || $0.firstAttribute == .top)
                     })
                     tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 4).isActive = true
-                    // 双行布局：文件名顶部对齐（上方留 4pt 边距，与图标一致）
-                    tf.topAnchor.constraint(equalTo: cellView.topAnchor, constant: 4).isActive = true
+                    // 2026-10-20 #10：文字与图标共用同一条水平中线
+                    tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor).isActive = true
                 }
             }
             // 任务 F11-5: 分组内文件缩进（仿访达）。
@@ -1703,17 +1870,46 @@ extension FileListView: NSTableViewDelegate {
             // 名称列 cell 结构：[文件图标] [文件名] [标签药丸容器]
             configureInlineTagPills(in: cellView, entry: entry)
 
-        case "meta":
-            // 2026-10-19 #11：元信息列，固定两项「大小 · 修改时间」，11pt secondary 右对齐。
-            // 目录没有有意义字节数，`formattedMetaLine` 内部只给日期。
-            if let tf = cellView.textField {
-                tf.font = FFDesign.Text.sm
-                tf.alignment = .right
-                tf.stringValue = entry.formattedMetaLine
-                // 隐藏文件用 tertiary 与名称列语义保持一致
-                tf.textColor = entry.isHidden
-                    ? NSColor.tertiaryLabelColor
-                    : NSColor.secondaryLabelColor
+        case "kind":
+            configureTextCell(cellView, text: entry.kindDescription, alignment: .left,
+                              color: metaColor(entry))
+
+        case "size":
+            configureTextCell(cellView, text: entry.formattedSize, alignment: .right,
+                              color: metaColor(entry))
+
+        case "modified":
+            configureTextCell(cellView, text: entry.formattedModificationDate, alignment: .left,
+                              color: metaColor(entry))
+
+        case "created":
+            configureTextCell(cellView, text: entry.formattedCreationDate, alignment: .left,
+                              color: metaColor(entry))
+
+        case "tags":
+            // 标签列：色点用「●」+ 名称，多个标签以「、」分隔；无标签显示空
+            let tags = TagBridge.shared.getTags(path: entry.path)
+            configureTextCell(cellView,
+                              text: tags.map { $0.name }.joined(separator: "、"),
+                              alignment: .left,
+                              color: metaColor(entry))
+
+        case "comment":
+            // 说明列：走 Spotlight 元数据（有缓存先显示，未命中异步补）
+            if let cached = FFFinderCommentCache.shared.cachedComment(for: entry.path) {
+                configureTextCell(cellView, text: cached, alignment: .left, color: metaColor(entry))
+            } else {
+                configureTextCell(cellView, text: "—", alignment: .left,
+                                  color: NSColor.tertiaryLabelColor)
+                let path = entry.path
+                FFFinderCommentCache.shared.fetchComment(for: path) { [weak self, weak cellView] comment in
+                    guard let self, let comment, let cellView,
+                          cellView.textField?.stringValue == "—" else { return }
+                    // 复用安全：只有仍显示该文件时才刷新（用 iconPath 作为绑定标记）
+                    guard cellView.iconPath == nil || cellView.iconPath == path else { return }
+                    self.configureTextCell(cellView, text: comment, alignment: .left,
+                                           color: self.metaColor(entry))
+                }
             }
 
         default:

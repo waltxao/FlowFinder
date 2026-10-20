@@ -32,6 +32,9 @@ extension Notification.Name {
 
 /// 侧边栏行高度量：outline 行高、内容高度计算与测试共用，避免魔法数字分叉
 enum SidebarMetrics {
+
+    /// 2026-10-20 #6：侧栏行图标 18pt（原 20pt），与 13pt 文字的视觉重心更配
+    static let rowIconSize: CGFloat = 18
     /// 分区标题行（访达 group row：11pt 灰色小字）
     static let sectionHeaderHeight: CGFloat = 22
     /// 收藏项行高
@@ -546,7 +549,8 @@ class SidebarView: NSView, FFRegionAware {
         button.isBordered = false
         button.imagePosition = .imageOnly
         button.contentTintColor = .secondaryLabelColor
-        button.image = FFIcon.template(icon, size: 15)
+        // 2026-10-20 #7：控制图标 15 → 16pt
+        button.image = FFIcon.template(icon, size: 16)
         button.toolTip = tooltip
         button.target = self
         button.action = action
@@ -1240,7 +1244,7 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
             // 与 macOS 访达侧边栏一致；文字本就在 trailing -6pt（高亮右缘内侧）。
             imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 20),
+            imageView.widthAnchor.constraint(equalToConstant: SidebarMetrics.rowIconSize),
             imageView.heightAnchor.constraint(equalToConstant: 20),
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
@@ -1978,7 +1982,7 @@ class DeviceCellView: NSTableCellView, FFRegionAware {
         NSLayoutConstraint.activate([
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 20),
+            iconView.widthAnchor.constraint(equalToConstant: SidebarMetrics.rowIconSize),
             iconView.heightAnchor.constraint(equalToConstant: 20),
 
             nameField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),

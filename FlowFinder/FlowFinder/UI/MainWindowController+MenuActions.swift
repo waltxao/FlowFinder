@@ -1009,6 +1009,14 @@ extension MainWindowController {
         }
     }
 
+    /// 菜单栏「显示 → 显示列」的点击处理（2026-10-20 #3）。
+    ///
+    /// 与列头右键、工具栏工具菜单共用同一份状态；`target = nil` 让动作沿响应链
+    /// 落到当前窗口控制器，所以不需要额外维护 target。
+    @objc func menuToggleListColumn(_ sender: NSMenuItem) {
+        FFListColumnMenu.handleSelection(sender)
+    }
+
     func showError(error: Error) {
         let alert = NSAlert()
         alert.messageText = "错误"

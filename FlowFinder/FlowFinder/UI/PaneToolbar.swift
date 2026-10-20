@@ -481,6 +481,10 @@ class PaneToolbar: NSView, FFRegionAware {
         delegate?.paneToolbar(self, didChangeViewMode: .grid)
     }
 
+    @objc private func toggleListColumn(_ sender: NSMenuItem) {
+        FFListColumnMenu.handleSelection(sender)
+    }
+
     // MARK: - 任务 D15/D17: 工具菜单
 
     /// v0.6.9: 点击文件夹配置按钮弹出显示配置菜单
@@ -532,6 +536,15 @@ class PaneToolbar: NSView, FFRegionAware {
         systemItem.target = self
         systemItem.state = showSystem ? .on : .off
         menu.addItem(systemItem)
+
+        // 2026-10-20 #3：显示列（与列头右键、菜单栏「显示」同一份状态）
+        menu.addItem(.separator())
+        let columnsItem = NSMenuItem(title: "显示列", action: nil, keyEquivalent: "")
+        let columnsMenu = FFListColumnMenu.build(target: self,
+                                                 action: #selector(toggleListColumn(_:)))
+        columnsMenu.delegate = FFListColumnMenuDelegate.shared
+        columnsItem.submenu = columnsMenu
+        menu.addItem(columnsItem)
 
         // v0.7.4 项 2: 「新建文件夹」已从菜单移除，改为工具栏独立按钮（newFolderButton）。
         // 原实现：
