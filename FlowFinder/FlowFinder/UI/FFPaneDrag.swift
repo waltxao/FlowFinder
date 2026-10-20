@@ -429,10 +429,19 @@ final class FFPaneDragController {
     // MARK: 判定
 
     /// 指针是否离开了「标签条矩形 + 20pt 缓冲」
+    ///
+    /// 2026-10-20 第五轮修复：**坐标系必须先统一**。
+    /// `strip.convert(strip.bounds, to: nil)` 是**窗口坐标**（y≈864..900），
+    /// 而 `NSEvent.mouseLocation` 是**屏幕坐标**（y 可能是 1028）——
+    /// 直接比较 y 永远对不上，缓冲判定恒为「已出条」，
+    /// 表现就是**条内重排整个失效、一碰标签就被判成拖出**。
+    /// 先把屏幕点转成窗口点再比较。
     private func isOutsideStripBuffer(_ strip: PaneTabStripView, screenPoint: NSPoint) -> Bool {
+        guard let window = strip.window else { return true }
         let frame = strip.convert(strip.bounds, to: nil)
         let buffer = frame.insetBy(dx: -FFPaneDrag.stripBuffer, dy: -FFPaneDrag.stripBuffer)
-        return !buffer.contains(screenPoint)
+        let local = window.convertPoint(fromScreen: screenPoint)
+        return !buffer.contains(local)
     }
 
     /// 跨窗口落点判定：屏幕坐标 → 落在哪个窗口的哪块区域
