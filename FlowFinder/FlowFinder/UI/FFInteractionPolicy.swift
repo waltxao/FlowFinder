@@ -150,8 +150,36 @@ enum FFInteractionPolicy {
 
     // MARK: 几何常量
 
-    /// 标题区高度（窗口顶部 0..28，与红绿灯同高）
-    static let titleBandHeight: CGFloat = 28
+    /// 标题区高度（窗口顶部 0..36）。
+    ///
+    /// 2026-10-20 #4：从 28 调到 36，让标签上方留出 8pt 间隙
+    /// （与左右下留白 8 同值）。面板卡片顶边正好等于这个值，位置不动。
+    static let titleBandHeight: CGFloat = 36
+
+    /// 活动标签高度：底边焊在面板顶边上，向上凸出
+    static let activeTabHeight: CGFloat = 28
+
+    /// 非活动标签高度：比活动矮 6pt，底边离面板顶边 6pt
+    static let inactiveTabHeight: CGFloat = 22
+
+    /// 标签上方间隙（标题带高 − 活动标签高）
+    static var tabTopGap: CGFloat { titleBandHeight - activeTabHeight }
+
+    /// 非活动标签底边距面板顶边的空隙
+    static let inactiveTabBottomGap: CGFloat = 6
+
+    /// 活动标签顶部圆角（r1）
+    static let tabCornerRadius: CGFloat = 10
+
+    /// 接缝处内凹圆角（r2）
+    static let tabSeamFillet: CGFloat = 8
+
+    /// 首个标签左缘距面板左缘的距离。
+    ///
+    /// 必须 ≥ 面板圆角 16 + 根部内凹 8 = 24，否则内凹会压进面板圆角、
+    /// 轮廓构造器会拒绝画凸起（退化成普通矩形，看起来就是「没焊上」）。
+    /// 取 26 留 2pt 平段。
+    static let tabInsetFromPanel: CGFloat = 26
 
     /// 标签条拖动缓冲：指针在标签条矩形外扩 20pt 内仍算「条内重排」。
     ///

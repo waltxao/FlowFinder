@@ -150,6 +150,8 @@ final class PaneTabItemView: NSView, FFRegionAware {
     private let titleLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
     private var mouseDownPoint: NSPoint?
+    /// 高度约束：活动 28（焊死）/ 非活动 22（上浮）
+    private var heightConstraint: NSLayoutConstraint!
 
     var tabSession: PaneTabSession
     var index: Int
@@ -179,7 +181,7 @@ final class PaneTabItemView: NSView, FFRegionAware {
 
     private func setupUI() {
         wantsLayer = true
-        layer?.cornerRadius = 6
+        layer?.cornerRadius = 8
         layer?.masksToBounds = true
 
         titleLabel.font = NSFont.systemFont(ofSize: 12)
@@ -197,19 +199,22 @@ final class PaneTabItemView: NSView, FFRegionAware {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
+        // 2026-10-20 #4：活动标签 28（底边焊在面板顶边）、非活动 22（上浮 6pt）。
+        // 高度在这里建、在 updateAppearance 里切换。
+        heightConstraint = heightAnchor.constraint(
+            equalToConstant: FFInteractionPolicy.inactiveTabHeight)
+
         NSLayoutConstraint.activate([
-            // 2026-10-20 #1：标签条提到窗口顶部那一行（与红绿灯同高 28pt），
-            // 胶囊相应压到 22pt，垂直中心仍与红绿灯对齐。
-            heightAnchor.constraint(equalToConstant: 22),
+            heightConstraint,
             widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
             widthAnchor.constraint(lessThanOrEqualToConstant: 200),
 
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -2),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
 
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -2),
             closeButton.widthAnchor.constraint(equalToConstant: 14),
             closeButton.heightAnchor.constraint(equalToConstant: 14),
         ])
@@ -223,17 +228,24 @@ final class PaneTabItemView: NSView, FFRegionAware {
     }
 
     private func updateAppearance() {
+        // 2026-10-20 #4：活动标签与面板同色，**形状与填充由标签条背板统一绘制**
+        // （背板在标签之下，画的是一条「面板 + 凸起 + 两处内凹」的合并轮廓）。
+        // 这里必须保持透明，否则会盖住背板、在接缝处留一条色差。
+        heightConstraint?.constant = isActive
+            ? FFInteractionPolicy.activeTabHeight
+            : FFInteractionPolicy.inactiveTabHeight
+        layer?.cornerRadius = isActive ? 0 : 8
+
         // 颜色必须在当前外观下解析：CALayer.backgroundColor 是静态 CGColor，
-        // 直接取 NSColor.controlBackgroundColor.cgColor 会定格在创建时的明暗模式上，
-        // 夜间模式下就成了「白底 + 白字」（2026-10-18 实测）。
+        // 直接取色会定格在创建时的明暗模式上，夜间模式下就成了「白底 + 白字」。
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = isActive
-                ? NSColor.controlBackgroundColor.cgColor
-                : NSColor.clear.cgColor
+                ? NSColor.clear.cgColor
+                : NSColor.controlBackgroundColor.withAlphaComponent(0.55).cgColor
         }
         if isActive {
             titleLabel.textColor = NSColor.labelColor
-            titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+            titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         } else {
             titleLabel.textColor = NSColor.secondaryLabelColor
             titleLabel.font = NSFont.systemFont(ofSize: 12)
@@ -283,6 +295,37 @@ protocol PaneTabStripDelegate: AnyObject {
     func tabStrip(_ strip: PaneTabStripView, didReceive session: PaneTabSession, at index: Int)
 }
 
+/// 标签条背板：画「活动标签 + 两处根部内凹」的合并轮廓并填面板色。
+///
+/// 2026-10-20 #4：为什么需要这一层——
+/// 根部内凹（r2=8）位于「标签左缘再往左」与「面板顶边再往上」的那块区域里，
+/// 既不属于标签视图，也不属于面板卡片（卡片有 masksToBounds 画不出来）。
+/// 于是单独一层背板，位于所有标签之下、标签条之内，负责把这块填成面板色，
+/// 视觉上标签就与面板连成一体。
+final class PaneTabStripBackdrop: NSView {
+
+    /// 活动标签在本视图坐标系里的矩形（原点左下）
+    var tabRect: NSRect? {
+        didSet { if tabRect != oldValue { needsDisplay = true } }
+    }
+
+    /// 填充色，必须与面板卡片一致（日间 #F5F5F5 / 夜间 #2D2D2D）
+    var fillColor: NSColor = .clear {
+        didSet { needsDisplay = true }
+    }
+
+    /// 只负责画，不参与命中
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override var isOpaque: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let tab = tabRect, tab.width > 1, tab.height > 1 else { return }
+        fillColor.setFill()
+        FFTabSilhouette.tabFootprint(tab: tab, baseline: 0).fill()
+    }
+}
+
 /// 操作区顶部的浏览器式标签条（2026-10-20 #1：提到窗口顶部那一行，高 28pt，常显）
 final class PaneTabStripView: NSView, FFRegionAware {
 
@@ -294,6 +337,8 @@ final class PaneTabStripView: NSView, FFRegionAware {
 
     private let stack = NSStackView()
     private let addButton = NSButton()
+    /// 活动标签与面板的焊接背板（在标签之下）
+    private let backdrop = PaneTabStripBackdrop()
     private var items: [PaneTabItemView] = []
     private var sessions: [PaneTabSession] = []
     private var activeIndex: Int = 0
@@ -335,8 +380,14 @@ final class PaneTabStripView: NSView, FFRegionAware {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
+        // 背板铺满整条，位于所有标签之下
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(backdrop)
+
         stack.orientation = .horizontal
-        stack.alignment = .bottom
+        // 2026-10-20 #4：改为顶部对齐——活动标签 28、非活动 22，
+        // 顶部对齐后非活动自然比活动矮 6pt、底边离面板 6pt。
+        stack.alignment = .top
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -353,15 +404,26 @@ final class PaneTabStripView: NSView, FFRegionAware {
         addSubview(addButton)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            backdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            // 首标签左缘：面板左缘（卡片留白 8）+ 20。
+            // 面板圆角是 16，再近的话根部内凹（r2=8）会与圆角打架。
+            stack.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: FFActivePaneBorderView.edgeOutset + FFInteractionPolicy.tabInsetFromPanel),
+            // 顶部留出「标签上方间隙」（标题带 36 − 活动标签 28 = 8）
+            stack.topAnchor.constraint(
+                equalTo: topAnchor,
+                constant: FFInteractionPolicy.tabTopGap),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
 
             // 「+」紧跟最后一个标签（Chrome 式），而不是钉在面板最右侧
             addButton.leadingAnchor.constraint(equalTo: stack.trailingAnchor, constant: 6),
             addButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-            addButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            addButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
             addButton.widthAnchor.constraint(equalToConstant: 20),
             addButton.heightAnchor.constraint(equalToConstant: 20),
         ])
@@ -369,6 +431,38 @@ final class PaneTabStripView: NSView, FFRegionAware {
 
     @objc private func handleNewTab() {
         delegate?.tabStripDidRequestNewTab(self)
+    }
+
+    // MARK: - 焊接背板（2026-10-20 #4）
+
+    /// 背板填充色 = 面板卡片背景色（由控制器注入，跟随主题）
+    func setBackdropColor(_ color: NSColor) {
+        backdrop.fillColor = color
+    }
+
+    /// 当前所有标签项（自检用）
+    func allTabItems() -> [PaneTabItemView] { items }
+
+    /// 活动标签在本标签条坐标系里的矩形；nil = 没有活动标签
+    var activeTabFrame: NSRect? {
+        guard let item = items.first(where: { $0.isActive }),
+              let parent = item.superview else { return nil }
+        return convert(item.frame, from: parent)
+    }
+
+    /// 活动标签位置变化时的回调（控制器据此同步发光的合并轮廓）
+    var onActiveTabFrameChanged: (() -> Void)?
+
+    /// 把活动标签的位置同步给背板
+    private func updateBackdrop() {
+        backdrop.tabRect = activeTabFrame
+        onActiveTabFrameChanged?()
+    }
+
+    override func layout() {
+        super.layout()
+        // 标签位置由 Auto Layout 决定，布局完才知道最终 frame
+        updateBackdrop()
     }
 
     /// 重绘标签：数量不变时就地更新，避免每次选中变化都重建视图
@@ -384,9 +478,13 @@ final class PaneTabStripView: NSView, FFRegionAware {
             item.update(session: sessions[i], index: i, active: i == activeIndex)
             item.canDragOut = sessions.count > 1
         }
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        updateBackdrop()
     }
 
     private func rebuildItems() {
+        // 重建后需要重新算背板（活动标签换了视图对象）
         items.forEach { $0.removeFromSuperview() }
         items.removeAll()
         for (i, session) in sessions.enumerated() {
@@ -406,6 +504,9 @@ final class PaneTabStripView: NSView, FFRegionAware {
             stack.addArrangedSubview(item)
             items.append(item)
         }
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        updateBackdrop()
     }
 
     // MARK: - 拖放命中（由窗口级接收器调用）

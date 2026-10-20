@@ -281,7 +281,8 @@ public class MainWindowController: NSWindowController {
     var rightTabStripHeight: NSLayoutConstraint?
     /// 标签条展开高度（DESIGN-SPEC T-10）
     /// 2026-10-20 #1：标签条提到窗口顶部那一行，与红绿灯同高 28pt
-    static let tabStripHeight: CGFloat = 28
+    /// 标签条高度 = 标题带高度（2026-10-20 #4：28 → 36，让标签上方留 8pt 间隙）
+    static let tabStripHeight: CGFloat = FFInteractionPolicy.titleBandHeight
     /// #5：进入单窗口模式前的窗口宽度，切回双窗口时还原
     private var widthBeforeSinglePane: CGFloat?
     /// #5：上次真正应用的模式（nil = 还没完成过一次「带缩放」的切换）。
@@ -300,7 +301,7 @@ public class MainWindowController: NSWindowController {
     /// 侧栏隐藏后左上角的「显示侧栏」开关
     private var sidebarRevealHost: FFSidebarRevealHost?
     /// 1.2 活动面板描边（替代原 2pt 色条——色条被工具栏盖住，从未可见）
-    private var leftActiveBorder: FFActivePaneBorderView!
+    internal var leftActiveBorder: FFActivePaneBorderView!
     private var rightActiveBorder: FFActivePaneBorderView!
     private var leftDetailsBar: ExpandableDetailsBar!
     private var rightDetailsBar: ExpandableDetailsBar!
@@ -408,6 +409,7 @@ public class MainWindowController: NSWindowController {
                 self?.runInteractionPolicySelfTest()
                 self?.runRegionResolveSelfTest()
                 self?.runDragBehaviorSelfTest()
+                self?.runTabWeldSelfTest()
             }
         }
         #endif
@@ -831,8 +833,6 @@ public class MainWindowController: NSWindowController {
 
         let glow = FFActivePaneBorderView()
         glow.translatesAutoresizingMaskIntoConstraints = false
-        // 卡片顶部让出标题区（28）+ 留白（8）= 36，发光顶边内缩与之保持一致
-        glow.topEdgeOutset = MainWindowController.tabStripHeight + FFActivePaneBorderView.edgeOutset
         glow.isHidden = true
         wrapper.addSubview(glow)
 
@@ -860,6 +860,10 @@ public class MainWindowController: NSWindowController {
                 strip.topAnchor.constraint(equalTo: wrapper.topAnchor),
                 strip.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
             ])
+            // 活动标签位置一变（切换标签 / 增删标签 / 改宽），发光轮廓跟着重算
+            strip.onActiveTabFrameChanged = { [weak self] in
+                self?.syncGlowTabRects()
+            }
         }
 
         NSLayoutConstraint.activate([
@@ -868,14 +872,11 @@ public class MainWindowController: NSWindowController {
             glow.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
             glow.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
 
-            // 2026-10-20 #3：卡片顶部让出**标题区**（28pt，标签条所在的一行）
-            // 再加 8pt 留白 → 卡片四周的「视觉留白」统一为 8pt：
-            //   - 顶部：28（标题区）+ 8（留白）= 36
-            //   - 其它三边：8
-            // 这样标签条独占窗口顶 0..28 一行，工具栏从 36 开始，不再重叠。
+            // 2026-10-20 #4：卡片顶边 = 标题带高度（36）。
+            // 标题带里放标签（活动标签 28 高，上方留 8pt 间隙，底边正好落在
+            // 卡片顶边上 → 焊死）。左右下三边仍是 8pt 留白。
             content.topAnchor.constraint(equalTo: wrapper.topAnchor,
-                                         constant: MainWindowController.tabStripHeight
-                                                 + FFActivePaneBorderView.edgeOutset),
+                                         constant: FFInteractionPolicy.titleBandHeight),
             content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: FFActivePaneBorderView.edgeOutset),
             content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -FFActivePaneBorderView.edgeOutset),
             content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -FFActivePaneBorderView.edgeOutset),
@@ -1085,6 +1086,11 @@ public class MainWindowController: NSWindowController {
         let bgColor = operationAreaBackgroundColor().cgColor
         leftPaneContainer?.layer?.backgroundColor = bgColor
         rightPaneContainer?.layer?.backgroundColor = bgColor
+        // 2026-10-20 #4：标签焊接背板必须与卡片同色，主题切换时一起刷新，
+        // 否则接缝处会露出上一套主题的底色。
+        let color = operationAreaBackgroundColor()
+        leftTabStrip?.setBackdropColor(color)
+        rightTabStrip?.setBackdropColor(color)
     }
 
     deinit {
@@ -1946,6 +1952,31 @@ public class MainWindowController: NSWindowController {
         // 单栏模式下只显示活动面板那一侧的标签条
         leftTabStrip?.isHidden = isSinglePaneMode && activePane != .left
         rightTabStrip?.isHidden = isSinglePaneMode && activePane != .right
+
+        // 背板颜色 = 面板卡片背景色（两者必须一致，否则接缝处会露出色差）
+        let cardColor = operationAreaBackgroundColor()
+        leftTabStrip?.setBackdropColor(cardColor)
+        rightTabStrip?.setBackdropColor(cardColor)
+
+        // 发光沿「面板 + 活动标签」合并轮廓
+        syncGlowTabRects()
+    }
+
+    /// 把活动标签的矩形喂给两侧发光视图。
+    ///
+    /// 标签在标签条坐标系里，发光在包裹视图坐标系里（发光铺满 wrapper）。
+    /// 两级坐标系都是左下原点，直接 convert 即可。
+    private func syncGlowTabRects() {
+        for (strip, glow, wrapper) in [(leftTabStrip, leftActiveBorder, leftPaneWrapper),
+                                       (rightTabStrip, rightActiveBorder, rightPaneWrapper)] {
+            guard let glow, let wrapper else { continue }
+            guard let strip, !strip.isHidden, let tabInStrip = strip.activeTabFrame else {
+                glow.tabRect = nil
+                continue
+            }
+            let inWrapper = wrapper.convert(tabInStrip, from: strip)
+            glow.tabRect = glow.convert(inWrapper, from: wrapper)
+        }
     }
 
     /// 侧栏收起后，最左那一栏顶到窗口最左边，工具栏要让开红绿灯与「显示侧栏」开关。

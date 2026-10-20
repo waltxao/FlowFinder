@@ -89,6 +89,107 @@ final class FFPanelView: NSView {
 /// 由此得到的效果是「光从操作区边缘往外渗」，而不是此前那种整条画在操作区内部的描边。
 /// 深色模式整体提高透明度，浅色模式略降；开启「增强对比度」时降级为 2pt 实线。
 /// 视图不参与命中测试，鼠标事件全部穿透，否则会把列表/工具栏的点击吃掉。
+/// 「面板 + 活动标签」合并轮廓的构造器。
+///
+/// 2026-10-20 #4：标签焊在面板顶边上之后，轮廓不再是矩形——
+/// 面板顶边在标签处向上鼓出一个凸起，接缝处是 r2 的内凹圆角。
+/// 发光（`FFActivePaneBorderView`）与标签条背板（`PaneTabStripBackdrop`）
+/// **必须共用这一条路径**，否则两者对不上，接缝会露出错位的一圈。
+enum FFTabSilhouette {
+
+    /// 面板圆角（与 SquircleView 的 16pt 对应）
+    static let panelCorner: CGFloat = 16
+
+    /// 完整合并轮廓：面板四边 + 顶部凸起的标签。
+    ///
+    /// - Parameters:
+    ///   - panel: 面板矩形（调用方坐标系，原点左下）
+    ///   - tab: 标签矩形，要求 `tab.minY == panel.maxY`（底边与面板顶边共线）
+    static func composite(panel: NSRect,
+                          tab: NSRect?,
+                          panelCorner: CGFloat = panelCorner,
+                          tabCorner: CGFloat = FFInteractionPolicy.tabCornerRadius,
+                          seam: CGFloat = FFInteractionPolicy.tabSeamFillet) -> NSBezierPath {
+        // 没有标签、或标签太窄画不出内凹 → 退化成普通圆角矩形
+        guard let tab,
+              tab.width > seam * 2 + tabCorner * 2,
+              abs(tab.minY - panel.maxY) < 0.5,
+              tab.minX - seam > panel.minX + panelCorner,
+              tab.maxX + seam < panel.maxX - panelCorner
+        else {
+            return NSBezierPath(roundedRect: panel, xRadius: panelCorner, yRadius: panelCorner)
+        }
+
+        let r = panelCorner
+        let rc = tabCorner
+        let path = NSBezierPath()
+
+        // 面板顶边左段 → 左内凹
+        path.move(to: NSPoint(x: panel.minX + r, y: panel.maxY))
+        path.line(to: NSPoint(x: tab.minX - seam, y: panel.maxY))
+        path.curve(to: NSPoint(x: tab.minX, y: panel.maxY + seam),
+                   controlPoint1: NSPoint(x: tab.minX, y: panel.maxY),
+                   controlPoint2: NSPoint(x: tab.minX, y: panel.maxY))
+
+        // 标签左边 → 左上圆角 → 顶边 → 右上圆角 → 右边
+        path.line(to: NSPoint(x: tab.minX, y: tab.maxY - rc))
+        path.appendArc(withCenter: NSPoint(x: tab.minX + rc, y: tab.maxY - rc),
+                       radius: rc, startAngle: 180, endAngle: 90, clockwise: true)
+        path.line(to: NSPoint(x: tab.maxX - rc, y: tab.maxY))
+        path.appendArc(withCenter: NSPoint(x: tab.maxX - rc, y: tab.maxY - rc),
+                       radius: rc, startAngle: 90, endAngle: 0, clockwise: true)
+        path.line(to: NSPoint(x: tab.maxX, y: panel.maxY + seam))
+
+        // 右内凹 → 面板顶边右段 → 右上圆角
+        path.curve(to: NSPoint(x: tab.maxX + seam, y: panel.maxY),
+                   controlPoint1: NSPoint(x: tab.maxX, y: panel.maxY),
+                   controlPoint2: NSPoint(x: tab.maxX, y: panel.maxY))
+        path.line(to: NSPoint(x: panel.maxX - r, y: panel.maxY))
+        path.appendArc(withCenter: NSPoint(x: panel.maxX - r, y: panel.maxY - r),
+                       radius: r, startAngle: 90, endAngle: 0, clockwise: true)
+
+        // 右边 → 右下圆角 → 底边 → 左下圆角 → 左边 → 左上圆角
+        path.line(to: NSPoint(x: panel.maxX, y: panel.minY + r))
+        path.appendArc(withCenter: NSPoint(x: panel.maxX - r, y: panel.minY + r),
+                       radius: r, startAngle: 0, endAngle: -90, clockwise: true)
+        path.line(to: NSPoint(x: panel.minX + r, y: panel.minY))
+        path.appendArc(withCenter: NSPoint(x: panel.minX + r, y: panel.minY + r),
+                       radius: r, startAngle: -90, endAngle: -180, clockwise: true)
+        path.line(to: NSPoint(x: panel.minX, y: panel.maxY - r))
+        path.appendArc(withCenter: NSPoint(x: panel.minX + r, y: panel.maxY - r),
+                       radius: r, startAngle: 180, endAngle: 90, clockwise: true)
+        path.close()
+        return path
+    }
+
+    /// 只有「标签 + 两处内凹」的封闭形状，以下沿 baseline 封口。
+    ///
+    /// 标签条背板用这个：背板只负责填标签那一块，面板本体由卡片自己画。
+    static func tabFootprint(tab: NSRect,
+                             baseline: CGFloat,
+                             tabCorner: CGFloat = FFInteractionPolicy.tabCornerRadius,
+                             seam: CGFloat = FFInteractionPolicy.tabSeamFillet) -> NSBezierPath {
+        let rc = tabCorner
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: tab.minX - seam, y: baseline))
+        path.curve(to: NSPoint(x: tab.minX, y: baseline + seam),
+                   controlPoint1: NSPoint(x: tab.minX, y: baseline),
+                   controlPoint2: NSPoint(x: tab.minX, y: baseline))
+        path.line(to: NSPoint(x: tab.minX, y: tab.maxY - rc))
+        path.appendArc(withCenter: NSPoint(x: tab.minX + rc, y: tab.maxY - rc),
+                       radius: rc, startAngle: 180, endAngle: 90, clockwise: true)
+        path.line(to: NSPoint(x: tab.maxX - rc, y: tab.maxY))
+        path.appendArc(withCenter: NSPoint(x: tab.maxX - rc, y: tab.maxY - rc),
+                       radius: rc, startAngle: 90, endAngle: 0, clockwise: true)
+        path.line(to: NSPoint(x: tab.maxX, y: baseline + seam))
+        path.curve(to: NSPoint(x: tab.maxX + seam, y: baseline),
+                   controlPoint1: NSPoint(x: tab.maxX, y: baseline),
+                   controlPoint2: NSPoint(x: tab.maxX, y: baseline))
+        path.close()
+        return path
+    }
+}
+
 final class FFActivePaneBorderView: NSView {
 
     /// 卡片边缘相对本视图外框的缩进。
@@ -99,12 +200,16 @@ final class FFActivePaneBorderView: NSView {
     /// 卡片圆角（与 SquircleView 的 16pt 对应，发光路径沿用同半径）
     static let cornerRadius: CGFloat = 16
 
-    /// 卡片顶边相对本视图外框的额外内缩。
+    /// 活动标签的矩形（本视图坐标系，原点左下）。nil = 不画凸起。
     ///
-    /// 2026-10-20 #3：标签条独占窗口顶 0..28 一行，卡片顶部因此让出
-    /// 28（标题区）+ 8（留白）= 36。发光要沿真实卡片边缘画，
-    /// 顶边内缩必须与之一致（否则发光会画在标签条那一行上）。
-    var topEdgeOutset: CGFloat = FFActivePaneBorderView.edgeOutset
+    /// 2026-10-20 #4：标签焊在面板顶边上之后，发光必须沿「面板 + 标签」的
+    /// 合并轮廓走，否则光只绕在面板矩形上，与凸出的标签错开一截。
+    var tabRect: NSRect? {
+        didSet {
+            guard tabRect != oldValue else { return }
+            needsDisplay = true
+        }
+    }
 
     /// 发光颜色（随强调色设置变化）
     var ringColor: NSColor = FFAccent.current {
@@ -129,16 +234,21 @@ final class FFActivePaneBorderView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard !isHidden else { return }
         // 中心线 = 卡片边缘；描边向两侧各扩一半，内侧被卡片盖住。
-        // 顶边单独用 topEdgeOutset（标签条提到窗口顶部后，卡片顶边没有留白可外扩）。
-        let r = Self.cornerRadius
+        //
+        // 2026-10-20 #4：面板顶边在标题带下方，发光沿「面板 + 活动标签」
+        // 的合并轮廓走——标签凸起处的光才跟得上。
+        // 底边留 8；顶边让出整条标题带（标题带去掉了旧的 8pt 留白，
+        // 标签底边就落在带底 = 面板顶边上）。
         let rect = NSRect(x: Self.edgeOutset,
                           y: Self.edgeOutset,
                           width: bounds.width - Self.edgeOutset * 2,
-                          height: bounds.height - Self.edgeOutset - topEdgeOutset)
+                          height: bounds.height - Self.edgeOutset
+                                  - FFInteractionPolicy.titleBandHeight)
         guard rect.width > 0, rect.height > 0 else { return }
 
-        // 四周都是圆角（2026-10-20 #3：卡片顶部重新有 8pt 留白后不再是直角顶边）
-        let path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r)
+        let path = FFTabSilhouette.composite(panel: rect,
+                                            tab: tabRect,
+                                            panelCorner: Self.cornerRadius)
 
         if NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast {
             ringColor.setStroke()

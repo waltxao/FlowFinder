@@ -408,11 +408,11 @@ extension MainWindowController {
         // ⑥ 几何常量：避让量与标题区高度
         if FFInteractionPolicy.titleContentInset(sidebarVisible: true) == 8,
            FFInteractionPolicy.titleContentInset(sidebarVisible: false) == 106,
-           FFInteractionPolicy.titleBandHeight == 28 {
+           FFInteractionPolicy.titleBandHeight == 36 {
             pass += 1
         } else {
             fail += 1
-            FFDebug.log("[POLICY] FAIL 几何常量：避让量应为 8/106，标题区 28")
+            FFDebug.log("[POLICY] FAIL 几何常量：避让量应为 8/106，标题区 36")
         }
 
         FFDebug.log("[POLICY] 决策表穷举自检 通过\(pass) 失败\(fail)（区域\(FFRegion.allCases.count) × 状态\(FFInteractionState.allCombinations.count) + 规则可达性）")
@@ -557,6 +557,90 @@ extension MainWindowController {
         }
 
         FFDebug.log("[BEHAVIOR] 拖动行为自检 通过\(pass) 失败\(fail)")
+    }
+
+    /// 标签焊接自检（2026-10-20 #4）
+    ///
+    /// 验证「标签底边 = 面板顶边」「上方间隙 = 8」「非活动比活动矮 6」
+    /// 「合并轮廓真的带凸起」这四件事。这些一旦错了，表现就是
+    /// 「标签又浮起来了」或「发光不跟标签」，都是肉眼才能发现的问题。
+    func runTabWeldSelfTest() {
+        var pass = 0
+        var fail = 0
+
+        func check(_ ok: Bool, _ label: String) {
+            if ok { pass += 1 } else { fail += 1; FFDebug.log("[WELD] FAIL \(label)") }
+        }
+
+        // ① 常量
+        check(FFInteractionPolicy.titleBandHeight == 36, "标题带应为 36")
+        check(FFInteractionPolicy.activeTabHeight == 28, "活动标签应为 28")
+        check(FFInteractionPolicy.tabTopGap == 8, "上方间隙应为 8")
+        check(FFInteractionPolicy.inactiveTabHeight == 22, "非活动标签应为 22")
+        check(FFInteractionPolicy.tabTopGap
+              + FFInteractionPolicy.inactiveTabHeight
+              + FFInteractionPolicy.inactiveTabBottomGap
+              == FFInteractionPolicy.titleBandHeight,
+              "非活动：8 上间隙 + 22 高 + 6 下空隙 应等于 36")
+        // 内凹不能压进面板圆角
+        check(FFInteractionPolicy.tabInsetFromPanel
+              >= FFTabSilhouette.panelCorner + FFInteractionPolicy.tabSeamFillet,
+              "标签左缘退让 \(FFInteractionPolicy.tabInsetFromPanel) 应 ≥ 面板圆角 16 + 内凹 8")
+
+        // ② 活动标签几何：底边贴 0、顶边 = 带高 − 上间隙
+        for (name, strip) in [("左", leftTabStrip), ("右", rightTabStrip)] {
+            guard let strip, let tab = strip.activeTabFrame else { continue }
+            check(abs(tab.minY) < 0.5, "\(name)标签底边应贴 0（实为 \(tab.minY)）")
+            check(abs(tab.maxY - (strip.bounds.height - FFInteractionPolicy.tabTopGap)) < 0.5,
+                  "\(name)标签顶边应 = \(strip.bounds.height - FFInteractionPolicy.tabTopGap)（实为 \(tab.maxY)）")
+            check(tab.minX >= FFInteractionPolicy.tabInsetFromPanel,
+                  "\(name)标签左缘应 ≥ 退让量（实为 \(tab.minX)）")
+        }
+
+        // ③ 非活动标签：顶部与活动对齐，底边比活动高 6
+        for (name, strip) in [("左", leftTabStrip), ("右", rightTabStrip)] {
+            guard let strip, strip.subviews.count > 0 else { continue }
+            let items = strip.allTabItems()
+            guard items.count >= 2, let active = items.first(where: { $0.isActive }) else { continue }
+            let inactive = items.filter { !$0.isActive }
+            for item in inactive {
+                let f = item.convert(item.bounds, to: strip)
+                let a = active.convert(active.bounds, to: strip)
+                check(abs(f.maxY - a.maxY) < 0.5, "\(name)非活动标签顶边应与活动对齐")
+                check(abs(f.minY - FFInteractionPolicy.inactiveTabBottomGap) < 0.5,
+                      "\(name)非活动标签底边应离面板 6（实为 \(f.minY)）")
+            }
+        }
+
+        // ④ 不变量：发光收到的矩形 == 当前活动标签（换算到发光坐标系）
+        if let strip = leftTabStrip, let glow = leftActiveBorder,
+           let wrapper = leftPaneWrapper, let tab = strip.activeTabFrame {
+            if let got = glow.tabRect {
+                // 标签底边（minY）应等于面板顶边：wrapper 高 − 带高
+                check(abs(got.minY - (glow.bounds.height - FFInteractionPolicy.titleBandHeight)) < 1,
+                      "发光收到的标签底边应等于面板顶边（实为 \(got.minY) vs \(glow.bounds.height - FFInteractionPolicy.titleBandHeight)）")
+                // 标签顶边应等于 视图高 − 上间隙
+                check(abs(got.maxY - (glow.bounds.height - FFInteractionPolicy.tabTopGap)) < 1,
+                      "发光收到的标签顶边应等于 视图高 − 上间隙（实为 \(got.maxY) vs \(glow.bounds.height - FFInteractionPolicy.tabTopGap)）")
+                check(abs(got.width - tab.width) < 1, "发光收到的标签宽度应与标签一致")
+                // 横向：与 activeTabFrame 换算后一致
+                let converted = wrapper.convert(tab, from: strip)
+                check(abs(got.minX - converted.minX) < 1, "发光横向位置应与标签一致")
+            } else {
+                check(false, "发光没收到标签矩形")
+            }
+        }
+
+        // ⑤ 合并轮廓真的带凸起（不是退化成矩形）
+        let panel = NSRect(x: 8, y: 8, width: 540, height: 800)
+        let tab = NSRect(x: 34, y: panel.maxY, width: 120,
+                         height: FFInteractionPolicy.activeTabHeight)
+        let withTab = FFTabSilhouette.composite(panel: panel, tab: tab)
+        let withoutTab = FFTabSilhouette.composite(panel: panel, tab: nil)
+        check(withTab.bounds.height > withoutTab.bounds.height + 20,
+              "有标签的轮廓应比无标签高出一个标签高度（\(withTab.bounds.height) vs \(withoutTab.bounds.height)）")
+
+        FFDebug.log("[WELD] 标签焊接自检 通过\(pass) 失败\(fail)")
     }
 
     /// 操作区左半 / 右半各取一个窗口坐标点
