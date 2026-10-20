@@ -13,7 +13,7 @@
 **Chromium 路线的核查结论**：Chromium 的 `TabStrip` / `TabDragController` 在
 `chrome/browser/ui/views/tabs/`，深度绑定 `WebContents`、`TabStripModel`、
 `content::` 通知机制与 C++ Views 框架，**不是可复用的独立库**；唯一可嵌入形态
-（CEF / Electron）等���整体重写。Rust 核心（24 模块 / 13.5k 行文件操作）不受影响。
+（CEF / Electron）等同整体重写。Rust 核心（24 模块 / 13.5k 行文件操作）不受影响。
 → 保留原生 AppKit + Rust 核心，只借鉴 Chromium「把拖拽判定收进单一状态机」的做法。
 
 **四轮返工不是四个独立 bug，是同一个架构问题的四次显形**：
