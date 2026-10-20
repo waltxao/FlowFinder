@@ -50,6 +50,8 @@ enum FFIntent: String, CaseIterable {
     case marqueeSelect
     /// 不产生任何拖动（给按压反馈）
     case pressFeedback
+    /// 命中调宽把手：事件放行，交给 `FFSplitView` 处理（2026-10-20 第五轮）
+    case resizeDivider
     /// 交给子控件自己处理（按钮、输入框等）
     case handledByControl
 }
@@ -68,6 +70,11 @@ struct FFInteractionState: Equatable {
     /// 指针是否仍在标签条的 20pt 缓冲区内
     /// （true = 条内重排，false = 出缓冲搬面板）
     var pointerInsideTabBuffer: Bool = true
+    /// 是否命中调宽把手（卡片 8pt 留白上的把手热区）。
+    /// 2026-10-20 第五轮：卡片留白同时是「拖窗口」与「调宽」把手，
+    /// 两套手势在同一块区域打架（窗口跟跑 + 分隔线同动）——
+    /// 裁定：留白只做调宽，此维度为 true 时优先于拖窗口。
+    var onResizeHandle: Bool = false
 
     /// 穷举用：所有状态维度的组合
     static var allCombinations: [FFInteractionState] {
@@ -75,9 +82,12 @@ struct FFInteractionState: Equatable {
         for sidebarVisible in [true, false] {
             for singlePane in [true, false] {
                 for pointerInsideTabBuffer in [true, false] {
-                    out.append(FFInteractionState(sidebarVisible: sidebarVisible,
-                                                 singlePane: singlePane,
-                                                 pointerInsideTabBuffer: pointerInsideTabBuffer))
+                    for onResizeHandle in [true, false] {
+                        out.append(FFInteractionState(sidebarVisible: sidebarVisible,
+                                                     singlePane: singlePane,
+                                                     pointerInsideTabBuffer: pointerInsideTabBuffer,
+                                                     onResizeHandle: onResizeHandle))
+                    }
                 }
             }
         }
@@ -104,6 +114,14 @@ enum FFInteractionPolicy {
 
     /// 规则表。顺序即优先级。
     static let rules: [Rule] = [
+        // ⓪ 调宽把手优先于一切（2026-10-20 第五轮）：
+        // 卡片 8pt 留白同时被指定为「拖窗口」与「调宽把手」，两套手势在同一块
+        // 物理区域上打架——窗口跟跑 + 分隔线同动，手感错乱。
+        // 裁定：留白只做调宽。命中把手时无论什么区域一律放行给 FFSplitView。
+        Rule(name: "把手→调宽",
+             matches: { _, state in state.onResizeHandle },
+             intent: .resizeDivider),
+
         // ① 标签本体是唯一能拖面板的把手
         Rule(name: "tab-出缓冲→搬面板",
              matches: { region, state in region == .tab && !state.pointerInsideTabBuffer },

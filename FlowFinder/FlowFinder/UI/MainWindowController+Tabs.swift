@@ -398,7 +398,16 @@ extension MainWindowController {
         }
 
         for state in FFInteractionState.allCombinations {
-            let tag = "侧栏\(state.sidebarVisible ? "可见" : "隐藏")/单栏\(state.singlePane ? "是" : "否")/缓冲内\(state.pointerInsideTabBuffer ? "是" : "否")"
+            let tag = "侧栏\(state.sidebarVisible ? "可见" : "隐藏")/单栏\(state.singlePane ? "是" : "否")/缓冲内\(state.pointerInsideTabBuffer ? "是" : "否")/把手\(state.onResizeHandle ? "是" : "否")"
+
+            // ⓪ 把手优先：命中调宽把手时任何区域都放行给 FFSplitView
+            // （卡片 8pt 留白同时是「拖窗口」与「调宽」把手，两套手势打架的仲裁）
+            if state.onResizeHandle {
+                for region in FFRegion.allCases {
+                    expect(region, state, .resizeDivider, "把手优先→放行 [\(tag)] \(region)")
+                }
+                continue
+            }
 
             // ① 窗口区 → 拖窗口（状态无关）
             expect(.window, state, .dragWindow, "窗口区→拖窗口 [\(tag)]")
@@ -505,6 +514,31 @@ extension MainWindowController {
         // 卡片四周 8pt 留白（wrapper 左缘）
         if let wrapper = leftPaneWrapper, let frame = wrapper.superview?.convert(wrapper.frame, to: contentView) {
             expect(NSPoint(x: frame.minX + 3, y: frame.midY), .window, "卡片左缘留白")
+        }
+
+        // ⑥ 调宽把手的 Y 排除：标题带（顶部 36pt）内的缝隙 X 不算把手
+        // （否则点缝隙附近的标签会被判成调宽，标签激活失效）
+        if let split = paneSplitView, split.subviews.count >= 2,
+           let handleX = split.handleXPositions.first {
+            let cv = contentView
+            // 把手在「卡片外沿」，不是分隔线本身（分隔线在缝隙正中，差 8pt）
+            let seamInCV = cv.convert(NSPoint(x: handleX, y: 0), from: split).x
+            // 标题带内：不应命中
+            let inBand = NSPoint(x: seamInCV, y: cv.bounds.height - 14)
+            if !isPointOnResizeHandle(windowPoint: inBand) {
+                pass += 1
+            } else {
+                fail += 1
+                FFDebug.log("[REGION] FAIL 标题带内的缝隙 X 不应命中把手")
+            }
+            // 标题带以下：应命中
+            let belowBand = NSPoint(x: seamInCV, y: cv.bounds.height - 100)
+            if isPointOnResizeHandle(windowPoint: belowBand) {
+                pass += 1
+            } else {
+                fail += 1
+                FFDebug.log("[REGION] FAIL 标题带以下的缝隙 X 应命中把手")
+            }
         }
 
         FFDebug.log("[REGION] 区域解析自检 通过\(pass) 失败\(fail)")

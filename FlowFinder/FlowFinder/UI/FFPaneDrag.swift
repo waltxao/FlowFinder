@@ -262,7 +262,7 @@ final class FFPaneDragController {
         let point = event.locationInWindow
         guard let hit = contentView.hitTest(point) else { return event }
 
-        let state = currentState(for: owner)
+        let state = currentState(for: owner, windowPoint: point)
         let intent = FFAreaResolver.intent(for: hit, state: state)
 
         switch intent {
@@ -309,16 +309,24 @@ final class FFPaneDragController {
             applyPressFeedback()
             return event
 
+        case .resizeDivider:
+            // 命中调宽把手：事件原样放行，`FFSplitView.mouseDown` 接手调宽。
+            // 关键：不设 mode——本控制器对这次按下完全不参与，
+            // 「拖窗口」与「调宽」两个手势不再打架（2026-10-20 第五轮）。
+            return event
+
         case .marqueeSelect, .handledByControl:
             return event
         }
     }
 
-    /// 当前状态快照（决策表需要的三个维度）
-    private func currentState(for owner: MainWindowController) -> FFInteractionState {
+    /// 当前状态快照（决策表需要的维度；含「是否命中调宽把手」）
+    private func currentState(for owner: MainWindowController,
+                              windowPoint: NSPoint) -> FFInteractionState {
         FFInteractionState(sidebarVisible: owner.isSidebarVisible,
                            singlePane: owner.isSinglePaneMode,
-                           pointerInsideTabBuffer: true)
+                           pointerInsideTabBuffer: true,
+                           onResizeHandle: owner.isPointOnResizeHandle(windowPoint: windowPoint))
     }
 
     private func handleDragged(_ event: NSEvent) -> NSEvent? {

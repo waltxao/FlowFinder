@@ -10,7 +10,11 @@ import Quartz
 class FFSplitView: NSSplitView {
 
     /// 手动拖拽状态（dividerThickness=0 时 NSSplitView 内置拖拽不生效）
-    private var isDragging = false
+    /// internal：拖动期间控制器要跳过宽度写盘，松手后由 onResizeDragEnded 补写
+    internal private(set) var isDragging = false
+
+    /// 一次手动调宽结束（松手）。控制器在此补写宽度记忆。
+    var onResizeDragEnded: (() -> Void)?
 
     /// 鼠标按下瞬间与分隔线的水平偏移。
     /// 把手在卡片外沿、与分隔线差 8pt；不记这个偏移的话，按下瞬间卡片会跳 8pt。
@@ -48,6 +52,9 @@ class FFSplitView: NSSplitView {
     /// 当前把手 X 列表
     private var handlePositions: [CGFloat] { handlePositionsProvider?() ?? [] }
 
+    /// 把手 X 列表（自检用）
+    var handleXPositions: [CGFloat] { handlePositions }
+
     /// 分隔线当前 X（左子视图右边缘）。仅限静止状态回读；
     /// 拖动中必须使用 applyDividerPosition 返回的计算值（布局可能滞后一拍）。
     private var currentDividerX: CGFloat {
@@ -55,8 +62,25 @@ class FFSplitView: NSSplitView {
     }
 
     /// 鼠标是否落在某个把手上
-    private func handleHit(atX x: CGFloat) -> Bool {
-        handlePositions.contains { abs(x - $0) <= FFDividerGlowMath.hotZoneRadius }
+    /// internal：决策表要在 mouseDown 之前判定「这个点是不是把手」
+    ///
+    /// 2026-10-20 第五轮：**必须排除标题带**。把手热区本来只看 X，
+    /// 而标签条横跨整个面板宽度——点缝隙 X 附近的标签会被判成调宽、
+    /// 标签激活失效。限定「标题带（顶部 36pt）以下」才响应。
+    func handleHit(atX x: CGFloat, y: CGFloat) -> Bool {
+        // NSSplitView 是**翻转坐标系**（isFlipped = true）：顶部标题带的 y 是 0..36，
+        // 不是「高度 − 36」——第一版守卫写反了方向，标题带内照样命中。
+        let inTopBand = isFlipped
+            ? y < FFInteractionPolicy.titleBandHeight
+            : y > bounds.height - FFInteractionPolicy.titleBandHeight
+        guard !inTopBand else { return false }
+        return handlePositions.contains { abs(x - $0) <= FFDividerGlowMath.hotZoneRadius }
+    }
+
+    /// 窗口坐标点是否命中本 split 的某个把手
+    func handleHit(windowPoint point: NSPoint) -> Bool {
+        let local = convert(point, from: nil)
+        return handleHit(atX: local.x, y: local.y)
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -66,7 +90,7 @@ class FFSplitView: NSSplitView {
             return
         }
         let loc = convert(event.locationInWindow, from: nil)
-        if handleHit(atX: loc.x) {
+        if handleHit(atX: loc.x, y: loc.y) {
             handleCursor.set()
         } else if !isDragging {
             NSCursor.arrow.set()
@@ -91,7 +115,7 @@ class FFSplitView: NSSplitView {
     /// 命中把手（±6pt）：按下即对齐并进入拖拽；未命中：交给系统处理
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        guard visibleSubviewCount >= 2, handleHit(atX: point.x) else {
+        guard visibleSubviewCount >= 2, handleHit(atX: point.x, y: point.y) else {
             super.mouseDown(with: event)
             return
         }
@@ -117,11 +141,12 @@ class FFSplitView: NSSplitView {
     override func mouseUp(with event: NSEvent) {
         if isDragging {
             isDragging = false
+            onResizeDragEnded?()
         } else {
             super.mouseUp(with: event)
         }
         let loc = convert(event.locationInWindow, from: nil)
-        if !handleHit(atX: loc.x) {
+        if !handleHit(atX: loc.x, y: loc.y) {
             NSCursor.arrow.set()
         }
     }
@@ -220,6 +245,24 @@ public class MainWindowController: NSWindowController {
     static let sidebarMinWidth: CGFloat = 160
     /// 侧栏可拖最大宽度
     static let sidebarMaxWidth: CGFloat = 280
+    /// 立即把当前分栏宽度写入记忆（手动调宽松手时调用）
+    fileprivate func saveSplitWidthsNow() {
+        guard !isAdjustingPaneMode else { return }
+        if let sidebar = mainSplitView?.subviews.first {
+            let width = sidebar.frame.width
+            if width >= MainWindowController.sidebarMinWidth,
+               width <= MainWindowController.sidebarMaxWidth {
+                UserDefaults.standard.set(Double(width), forKey: MainWindowController.sidebarWidthKey)
+            }
+        }
+        if let left = paneSplitView?.subviews.first {
+            let width = left.frame.width
+            if width >= FFDividerGlowMath.minPaneWidth {
+                UserDefaults.standard.set(Double(width), forKey: MainWindowController.paneLeftWidthKey)
+            }
+        }
+    }
+
     /// 侧栏宽度记忆键
     private static let sidebarWidthKey = "sidebar_width"
     /// 2026-10-20 #8：左操作面板宽度记忆键（双面板中缝拖动后的结果）
@@ -688,6 +731,14 @@ public class MainWindowController: NSWindowController {
         // 2026-10-20 #1：窗口级面板拖拽控制器。
         // 窗口顶部 28pt 是系统标题栏的拖动区，会先于内容视图吃掉 mouseDown；
         // 这里在事件分发之前接管工具栏/标签条空白，把「拖面板」和「拖窗口」彻底分开。
+        // 2026-10-20 第五轮：手动调宽松手后补写宽度记忆
+        // （拖动期间 didResizeSubviews 被 isDragging 闸门跳过）
+        for split in [mainSplitView, paneSplitView] {
+            split?.onResizeDragEnded = { [weak self] in
+                self?.saveSplitWidthsNow()
+            }
+        }
+
         FFPaneDragController.shared.register(owner: self, window: window)
 
         // 窗口外观跟随 ThemeManager 设置（不强制 nil，否则夜间模式无法生效）
@@ -1061,6 +1112,14 @@ public class MainWindowController: NSWindowController {
         }
 
         return container
+    }
+
+    // MARK: - 调宽把手判定（2026-10-20 第五轮）
+
+    /// 窗口坐标点是否命中调宽把手（中缝 / 侧栏缝的卡片外沿热区）
+    func isPointOnResizeHandle(windowPoint point: NSPoint) -> Bool {
+        mainSplitView?.handleHit(windowPoint: point) == true
+            || paneSplitView?.handleHit(windowPoint: point) == true
     }
 
     // MARK: - 跨窗口落点判定（2026-10-20 #4）
@@ -2699,7 +2758,11 @@ extension MainWindowController: NSSplitViewDelegate {
                 }
             }
             // 2026-10-20 #8：左操作面板宽度记忆（中缝拖动后沿用）
-            if splitView === paneSplitView, !isAdjustingPaneMode, let left = splitView.subviews.first {
+            // 2026-10-20 第五轮：手动拖动期间不写盘（每帧写 UserDefaults 是纯浪费），
+            // 松手时由 onResizeDragEnded 补写最终值。
+            if splitView === paneSplitView, !isAdjustingPaneMode,
+               !(splitView is FFSplitView && (splitView as! FFSplitView).isDragging),
+               let left = splitView.subviews.first {
                 let width = left.frame.width
                 if width >= FFDividerGlowMath.minPaneWidth {
                     UserDefaults.standard.set(Double(width), forKey: MainWindowController.paneLeftWidthKey)
