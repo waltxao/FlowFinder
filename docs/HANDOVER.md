@@ -2,7 +2,7 @@
 
 > **整理日期：** 2026-10-18（基线）· **2026-10-20 增补**（交互大改五轮，见 §1.5）· **2026-10-21 增补**（0.8.0 Beta 顶栏修复，见 §1.9）· **2026-10-22 增补**（第二轮整改，见 §1.11）
 > **当前版本：** **0.8.0-26102209 Beta**（版本规则 `A.B.C-yymmddxx`，见 §1.11 D-09；桌面副本已覆盖 26102209）；**当前分支：`feat/v0.9-overhaul`（分支名沿用；产品版本按用户裁定为 0.8.0）**
-> **最新 Release：** https://github.com/waltxao/FlowFinder/releases/tag/v0.7.9-b1（0.8.0 Beta 尚未发版）
+> **最新 Release：** https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1（0.8.0 Beta · 构建 0.8.0-26102209）
 > **本地路径：** `/Volumes/Iris-Data/文件管理系统/flowfinder-native`
 > **代码规模：** Swift 113 文件 / 约 44,084 行（2026-10-22 实测）；Rust 24 文件 / 13,529 行
 > **验证基线：** Rust 200 项全绿；**Swift XCTest 389 条 0 失败**（`xcodebuild test -scheme FlowFinderTests`，2026-10-22 实测，DerivedData 在 `/tmp/flowfinder-xctest-derived`）；**应用内自检 `FF_SELFTEST=1` 163 项 0 失败 + 布局压力 20 轮 0 失败**（日志 `/tmp/ff-debug.log`）
@@ -572,6 +572,8 @@ Phase 5 完成文件标签系统；Phase 6 完成设置页视觉 A；Phase 7 完
 - 验证：XCTest **389 条 0 失败**；自检 **163 + 20 轮**；版本 `0.8.0-26102209`。
 - 未验：帮助菜单重开引导的自动化点击；崩溃日志未人为触发。
 - 收口（2026-10-22）：`make demo` 覆盖桌面副本为 `0.8.0-26102209`（签名验证通过），最终产物自检 **163 + 20 轮** 0 失败。
+- 发布（2026-10-22）：GitHub Release `v0.8.0-b1`（Prerelease），产物 DMG / ZIP / SHA256；
+  https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1
 
 ---
 
