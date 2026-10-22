@@ -11,7 +11,13 @@
 #
 # 用法：
 #   source scripts/lib-version.sh
-#   echo "$FF_VERSION ($FF_BUILD)"   # 0.8.0 (8000)
+#   echo "$FF_DISPLAY_VERSION"           # 0.8.0-26102101
+#   echo "$FF_VERSION / $FF_BUILD"       # 0.8.0 / 26102101
+#
+# 版本命名规则（用户裁定 2026-10-21）：`A.B.C-yymmddxx`
+#   A=主版本（测试期 0）B=主线大版本（第八轮改版 8）C=小版本
+#   FF_VERSION 只装 A.B.C（CFBundleShortVersionString 必须 x.y.z）
+#   FF_BUILD 装 yymmddxx（CFBundleVersion，由 scripts/bump-version.sh 递增）
 # ============================================================================
 
 FF_PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -51,5 +57,6 @@ fi
 
 # beta 标签只影响产物文件名，不影响 CFBundleShortVersionString（必须 x.y.z）
 FF_BETA_LABEL="${FF_BETA_LABEL:-}"
+FF_DISPLAY_VERSION="$FF_VERSION-$FF_BUILD"
 
-export FF_VERSION FF_BUILD FF_BETA_LABEL FF_PROJECT_DIR
+export FF_VERSION FF_BUILD FF_DISPLAY_VERSION FF_BETA_LABEL FF_PROJECT_DIR
