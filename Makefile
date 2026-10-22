@@ -3,9 +3,9 @@
 # 一条命令覆盖日常：make build / make test / make demo / make beta
 
 RUST_DIR := rust-core
-SWIFT_DIR := FlowFinderNative
+SWIFT_DIR := FlowFinder
 SCRIPT_DIR := scripts
-XCODEPROJ := $(SWIFT_DIR)/FlowFinderNative.xcodeproj
+XCODEPROJ := $(SWIFT_DIR)/FlowFinder.xcodeproj
 BUILD_SCRIPT := $(SCRIPT_DIR)/build-rust.sh
 SETUP_SCRIPT := $(SCRIPT_DIR)/setup.sh
 
@@ -25,14 +25,20 @@ TEST_HOME := /tmp/flowfinder-test-home
 # 构建产物根目录
 # 注意 1：-target 模式不接受 -derivedDataPath（需 -scheme 才可用），改用 SYMROOT/OBJROOT
 # 注意 2：SYMROOT 必须用绝对路径——xcodebuild 会以 $(SRCROOT) 为基准解析相对路径，
-#         写成 build/Products 会落到 FlowFinderNative/build/Products 而不是仓库根
-DERIVED := $(CURDIR)/build
-APP_DEBUG := $(DERIVED)/Products/Debug/FlowFinderNative.app
-APP_RELEASE := $(DERIVED)/Products/Release/FlowFinderNative.app
-DESKTOP_APP := $(HOME)/Desktop/FlowFinderNative.app
+#         写成 build/Products 会落到 FlowFinder/build/Products 而不是仓库根
+# 注意 3（2026-10-20 实测）：仓库放在外置卷（/Volumes/...）时，llbuild 的
+#         BuildEngine 会卡在 condition_variable 上永不返回，xcodebuild 挂死——
+#         现象是 "Building Swift (Debug)..." 之后几分钟无任何输出、无 swift-frontend 进程，
+#         采样 SWBBuildService 可见主线程与全部 Lane 线程都停在 condition_variable::wait。
+#         换到内置卷同一仓库立即 55 秒全新构建通过，因此默认产物目录放到内置卷缓存。
+#         需要改回项目内：make DERIVED=$(CURDIR)/build build
+DERIVED ?= $(HOME)/Library/Caches/FlowFinderBuild
+APP_DEBUG := $(DERIVED)/Products/Debug/FlowFinder.app
+APP_RELEASE := $(DERIVED)/Products/Release/FlowFinder.app
+DESKTOP_APP := $(HOME)/Desktop/FlowFinder.app
 
 # 构建公共参数：本机 ad-hoc 签名，arm64
-XCB := xcodebuild -project $(XCODEPROJ) -target FlowFinderNative \
+XCB := xcodebuild -project $(XCODEPROJ) -target FlowFinder \
 	SYMROOT=$(DERIVED)/Products OBJROOT=$(DERIVED)/Intermediates \
 	ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
 	CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
@@ -46,14 +52,20 @@ RED := \033[0;31m
 NC := \033[0m
 
 .PHONY: build app release test rust-test swift-test integration-test \
-	clean setup run demo beta version warnings help
+	clean setup run demo beta version bump-version warnings help
 
 # =============================================================================
 # 构建
 # =============================================================================
 
-## build: Debug 构建（Rust + Swift）
+## bump-version: 按 A.B.C-yymmddxx 规则递增内部构建号（CFBundleVersion）
+bump-version:
+	@bash $(SCRIPT_DIR)/bump-version.sh
+
+## build: Debug 构建（Rust + Swift），构建号自动递增
 build: rust
+	@echo "$(BLUE)Bumping build number...$(NC)"
+	@echo "$(GREEN)✓ 版本 $$(bash $(SCRIPT_DIR)/bump-version.sh)$(NC)"
 	@echo "$(BLUE)Building Swift (Debug)...$(NC)"
 	@$(XCB) -configuration Debug build 2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" || true
 	@test -d "$(APP_DEBUG)" && echo "$(GREEN)✓ $(APP_DEBUG)$(NC)" || (echo "$(RED)✗ 构建失败$(NC)"; exit 1)
@@ -61,8 +73,9 @@ build: rust
 ## app: build 的别名
 app: build
 
-## release: Release 构建（可直接分发）
+## release: Release 构建（可直接分发），构建号自动递增
 release: 
+	@echo "$(GREEN)✓ 版本 $$(bash $(SCRIPT_DIR)/bump-version.sh)$(NC)"
 	@echo "$(BLUE)Building Rust (Release)...$(NC)"
 	@bash $(BUILD_SCRIPT) Release >/dev/null
 	@echo "$(BLUE)Building Swift (Release)...$(NC)"
@@ -81,8 +94,9 @@ demo: build
 	@echo "$(GREEN)✓ 已复制到桌面：$(DESKTOP_APP)$(NC)"
 	@echo "$(YELLOW)  首次打开需右键 → 打开（ad-hoc 签名）$(NC)"
 
-## beta: 打测试版 DMG/ZIP 到 build-beta/
+## beta: 打测试版 DMG/ZIP 到 build-beta/，构建号自动递增
 beta:
+	@bash $(SCRIPT_DIR)/bump-version.sh >/dev/null
 	@bash $(SCRIPT_DIR)/package-beta.sh
 
 # =============================================================================
@@ -102,9 +116,10 @@ rust-test:
 swift-test:
 	@echo "$(BLUE)Running Swift XCTest...$(NC)"
 	@mkdir -p "$(TEST_HOME)/Desktop" "$(TEST_HOME)/Documents"
-	@pkill -f "MacOS/FlowFinderNative" 2>/dev/null || true
-	@xcodebuild test -project $(XCODEPROJ) -scheme FlowFinderNativeTests \
+	@pkill -f "MacOS/FlowFinder" 2>/dev/null || true
+	@xcodebuild test -project $(XCODEPROJ) -scheme FlowFinderTests \
 		-destination 'platform=macOS' \
+		-derivedDataPath /tmp/flowfinder-xctest-derived \
 		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO 2>&1 \
 		| grep -E "error:|Executed .* tests|TEST SUCCEEDED|TEST FAILED" | tail -8
 
@@ -118,7 +133,7 @@ integration-test: rust
 
 ## version: 打印当前版本（唯一真源：Xcode 工程）
 version:
-	@bash -c 'source $(SCRIPT_DIR)/lib-version.sh; echo "版本: $$FF_VERSION ($$FF_BUILD)"'
+	@bash -c 'source $(SCRIPT_DIR)/lib-version.sh; echo "版本: $$FF_DISPLAY_VERSION Beta（A.B.C-yymmddxx）"'
 
 ## warnings: 统计编译警告数
 warnings:
@@ -138,8 +153,8 @@ clean:
 	@echo "$(BLUE)Cleaning...$(NC)"
 	@cd $(RUST_DIR) && cargo clean 2>/dev/null || true
 	@rm -rf build build-beta
-	@rm -f $(SWIFT_DIR)/FlowFinderNative/Libraries/*.dylib
-	@rm -f $(SWIFT_DIR)/FlowFinderNative/Libraries/*.a
+	@rm -f $(SWIFT_DIR)/FlowFinder/Libraries/*.dylib
+	@rm -f $(SWIFT_DIR)/FlowFinder/Libraries/*.a
 	@rm -rf $(XCODEPROJ)/project.xcworkspace $(XCODEPROJ)/xcuserdata
 	@echo "$(GREEN)✓ Clean completed$(NC)"
 

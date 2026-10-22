@@ -1,0 +1,244 @@
+import Cocoa
+
+/// 外观设置视图：主题切换（浅色/深色/自动跟随系统 三态）
+/// 任务 F11-3: 恢复 .system 三态（v0.6.7），修正 v0.6.5 T2 错误移除
+public class AppearanceSettingsView: NSView {
+
+    private var titleLabel: NSTextField!
+    private var buttonContainer: NSView!
+    private var lightButton: NSButton!
+    private var darkButton: NSButton!
+    private var systemButton: NSButton!
+    private var descriptionLabel: NSTextField!
+    private var sizeTitleLabel: NSTextField!
+    private var sizeControl: NSSegmentedControl!
+    private var sizeHintLabel: NSTextField!
+
+    public override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupUI()
+        setupBindings()
+    }
+
+    public required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupUI()
+        setupBindings()
+    }
+
+    deinit {
+        // 回调使用 [weak self]，对象释放后自动失效，无需手动解绑
+    }
+
+    // MARK: - UI Setup
+
+    private func setupUI() {
+        // 标题
+        titleLabel = NSTextField(labelWithString: "外观")
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        // 按钮容器
+        buttonContainer = NSView()
+        buttonContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        // 浅色按钮
+        lightButton = createThemeButton(
+            title: AppearanceMode.light.title,
+            icon: AppearanceMode.light.icon,
+            mode: .light
+        )
+
+        // 深色按钮
+        darkButton = createThemeButton(
+            title: AppearanceMode.dark.title,
+            icon: AppearanceMode.dark.icon,
+            mode: .dark
+        )
+
+        // 自动跟随系统按钮（任务 F11-3: 恢复三态）
+        systemButton = createThemeButton(
+            title: AppearanceMode.system.title,
+            icon: AppearanceMode.system.icon,
+            mode: .system
+        )
+
+        buttonContainer.addSubview(lightButton)
+        buttonContainer.addSubview(darkButton)
+        buttonContainer.addSubview(systemButton)
+
+        // 描述标签
+        descriptionLabel = NSTextField(labelWithString: "")
+        descriptionLabel.font = NSFont.systemFont(ofSize: 11)
+        descriptionLabel.textColor = NSColor.secondaryLabelColor
+        descriptionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        sizeTitleLabel = NSTextField(labelWithString: "界面尺寸")
+        sizeTitleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        sizeTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        sizeControl = NSSegmentedControl(
+            labels: FFSizeLevel.allCases.map(\.title),
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(sizeLevelChanged(_:))
+        )
+        sizeControl.segmentStyle = .rounded
+        sizeControl.translatesAutoresizingMaskIntoConstraints = false
+
+        sizeHintLabel = NSTextField(labelWithString: "影响正文与图标尺寸；顶栏保持 44pt 高度。")
+        sizeHintLabel.font = NSFont.systemFont(ofSize: 11)
+        sizeHintLabel.textColor = NSColor.secondaryLabelColor
+        sizeHintLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(titleLabel)
+        addSubview(buttonContainer)
+        addSubview(descriptionLabel)
+        addSubview(sizeTitleLabel)
+        addSubview(sizeControl)
+        addSubview(sizeHintLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 20),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+
+            buttonContainer.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
+            buttonContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            buttonContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            buttonContainer.heightAnchor.constraint(equalToConstant: 100),
+
+            lightButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
+            lightButton.leadingAnchor.constraint(equalTo: buttonContainer.leadingAnchor),
+            lightButton.widthAnchor.constraint(equalToConstant: 100),
+            lightButton.heightAnchor.constraint(equalToConstant: 100),
+
+            darkButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
+            darkButton.leadingAnchor.constraint(equalTo: lightButton.trailingAnchor, constant: 16),
+            darkButton.widthAnchor.constraint(equalToConstant: 100),
+            darkButton.heightAnchor.constraint(equalToConstant: 100),
+
+            systemButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
+            systemButton.leadingAnchor.constraint(equalTo: darkButton.trailingAnchor, constant: 16),
+            systemButton.widthAnchor.constraint(equalToConstant: 100),
+            systemButton.heightAnchor.constraint(equalToConstant: 100),
+
+            descriptionLabel.topAnchor.constraint(equalTo: buttonContainer.bottomAnchor, constant: 12),
+            descriptionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            descriptionLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+
+            sizeTitleLabel.topAnchor.constraint(equalTo: descriptionLabel.bottomAnchor, constant: 18),
+            sizeTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+
+            sizeControl.topAnchor.constraint(equalTo: sizeTitleLabel.bottomAnchor, constant: 8),
+            sizeControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            sizeControl.widthAnchor.constraint(equalToConstant: 240),
+            sizeControl.heightAnchor.constraint(equalToConstant: 24),
+
+            sizeHintLabel.topAnchor.constraint(equalTo: sizeControl.bottomAnchor, constant: 8),
+            sizeHintLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            sizeHintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            // Bug #17 修复：约束链必须闭合到底部，否则视图在 NSStackView 中高度歧义、塌缩为 0。
+            sizeHintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
+        ])
+
+        updateSelection()
+    }
+
+    private func createThemeButton(title: String, icon: FFIconName, mode: AppearanceMode) -> NSButton {
+        let button = NSButton()
+        button.bezelStyle = .regularSquare
+        button.isBordered = true
+        button.title = ""
+        button.image = FFIcon.template(icon, size: 40)
+        button.imagePosition = .imageAbove
+        button.font = NSFont.systemFont(ofSize: 12)
+        button.toolTip = title
+        button.tag = mode.rawValue
+        button.target = self
+        button.action = #selector(themeButtonClicked(_:))
+        button.translatesAutoresizingMaskIntoConstraints = false
+        // 使用副标题显示文字
+        button.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
+        )
+        return button
+    }
+
+    // MARK: - Bindings
+
+    private func setupBindings() {
+        // onModeChanged 是单回调，保留前一个回调链避免覆盖其他组件已注册的监听
+        let previousCallback = ThemeManager.shared.onModeChanged
+        ThemeManager.shared.onModeChanged = { [weak self] mode in
+            previousCallback?(mode)
+            DispatchQueue.main.async {
+                self?.updateSelection()
+            }
+        }
+    }
+
+    private func updateSelection() {
+        let currentMode = ThemeManager.shared.currentMode
+
+        lightButton.state = currentMode == .light ? .on : .off
+        darkButton.state = currentMode == .dark ? .on : .off
+        systemButton.state = currentMode == .system ? .on : .off
+
+        let sizeIndex = FFSizeLevel.allCases.firstIndex(of: FFSizePreference.current) ?? 1
+        sizeControl.selectedSegment = sizeIndex
+
+        switch currentMode {
+        case .light:
+            descriptionLabel.stringValue = "应用始终使用浅色外观，不受系统设置影响。"
+        case .dark:
+            descriptionLabel.stringValue = "应用始终使用深色外观，不受系统设置影响。"
+        case .system:
+            descriptionLabel.stringValue = "应用自动跟随系统外观，系统切换浅/深色时即时生效。"
+        }
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            FFDebug.log("AppearanceSettingsView movedToWindow frame=\(frame) bounds=\(bounds)")
+        }
+    }
+
+    private var lastHitTestLogged = Date.distantPast
+
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        let result = super.hitTest(point)
+        // 诊断：点击是否到达本视图（若 super 返回 nil 说明被上层拦截或点在 bounds 外）
+        // 节流：鼠标移动会高频调用 hitTest，限制每 0.5s 最多记一次
+        if window != nil, Date().timeIntervalSince(lastHitTestLogged) > 0.5 {
+            lastHitTestLogged = Date()
+            let inBounds = bounds.contains(point)
+            FFDebug.log("AppearanceSettingsView.hitTest: point=\(point) inBounds=\(inBounds) result=\(result.map { String(describing: type(of: $0)) } ?? "nil") bounds=\(bounds)")
+        }
+        return result
+    }
+
+    public override func layout() {
+        super.layout()
+        if window != nil && !bounds.isEmpty {
+            FFDebug.log("AppearanceSettingsView layout frame=\(frame) bounds=\(bounds) lightBtn=\(lightButton.frame) darkBtn=\(darkButton.frame) systemBtn=\(systemButton.frame) lightInWin=\(lightButton.convert(lightButton.bounds, to: window?.contentView))")
+        }
+    }
+
+    // MARK: - Actions
+
+    @objc private func themeButtonClicked(_ sender: NSButton) {
+        guard let mode = AppearanceMode(rawValue: sender.tag) else { return }
+        FFDebug.log("AppearanceSettingsView.themeButtonClicked: mode=\(mode.title) tag=\(sender.tag)")
+        ThemeManager.shared.applyMode(mode)
+        FFDebug.log("AppearanceSettingsView.themeButtonClicked: applyMode 返回后 NSApp.appearance=\(String(describing: NSApp.appearance?.name))")
+    }
+
+    @objc private func sizeLevelChanged(_ sender: NSSegmentedControl) {
+        guard FFSizeLevel.allCases.indices.contains(sender.selectedSegment) else { return }
+        let level = FFSizeLevel.allCases[sender.selectedSegment]
+        FFSizePreference.current = level
+        FFDebug.log("AppearanceSettingsView.sizeLevelChanged: \(level.rawValue)")
+    }
+}

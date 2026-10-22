@@ -102,7 +102,7 @@ log_info "Verifying project structure..."
 
 REQUIRED_DIRS=(
     "$PROJECT_ROOT/rust-core"
-    "$PROJECT_ROOT/FlowFinderNative"
+    "$PROJECT_ROOT/FlowFinder"
     "$PROJECT_ROOT/scripts"
 )
 
@@ -120,8 +120,8 @@ log_success "Project structure verified"
 
 log_info "Creating necessary directories..."
 
-mkdir -p "$PROJECT_ROOT/FlowFinderNative/Libraries"
-mkdir -p "$PROJECT_ROOT/FlowFinderNative/FlowFinderNative/Libraries"
+mkdir -p "$PROJECT_ROOT/FlowFinder/Libraries"
+mkdir -p "$PROJECT_ROOT/FlowFinder/FlowFinder/Libraries"
 
 log_success "Directories created"
 
@@ -156,7 +156,7 @@ fi
 
 log_info "Verifying Swift Package Manager..."
 
-cd "$PROJECT_ROOT/FlowFinderNative"
+cd "$PROJECT_ROOT/FlowFinder"
 if swift package resolve 2>/dev/null; then
     log_success "Swift Package Manager resolved successfully"
 else
@@ -180,7 +180,7 @@ echo ""
 echo "Project structure:"
 echo "  $(basename "$PROJECT_ROOT")/"
 echo "    ├── rust-core/          # Rust core library"
-echo "    ├── FlowFinderNative/   # Swift project"
+echo "    ├── FlowFinder/   # Swift project"
 echo "    ├── scripts/            # Build scripts"
 echo "    └── Makefile            # Build automation"
 echo ""

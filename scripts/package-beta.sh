@@ -20,11 +20,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-XCODEPROJ="$PROJECT_DIR/FlowFinderNative/FlowFinderNative.xcodeproj"
-APP_NAME="FlowFinderNative"
+XCODEPROJ="$PROJECT_DIR/FlowFinder/FlowFinder.xcodeproj"
+APP_NAME="FlowFinder"
 DMG_NAME="FlowFinder"
-SCHEME_NAME="FlowFinderNative"
-TARGET_NAME="FlowFinderNative"
+SCHEME_NAME="FlowFinder"
+TARGET_NAME="FlowFinder"
 # Release 构建。此前因 Homebrew rustc fat LTO 的 LINKEDIT mis-aligned 无法出包，
 # 临时降级为 Debug；该问题已在 rust-core/Cargo.toml 改 thin LTO + build-rust.sh
 # 用 Xcode ld 重链接解决（2026-10-17），测试版恢复 Release 构建。
@@ -40,7 +40,7 @@ BUILD_NUMBER="$FF_BUILD"
 BETA_LABEL="${BETA_LABEL:-${FF_BETA_LABEL:-beta.1}}"
 LABEL="$VERSION-$BETA_LABEL"
 
-ENTITLEMENTS_PATH="$PROJECT_DIR/FlowFinderNative/FlowFinderNative/FlowFinderNative.entitlements"
+ENTITLEMENTS_PATH="$PROJECT_DIR/FlowFinder/FlowFinder/FlowFinder.entitlements"
 
 TMP_DMG=""
 STAGING_DIR=""
@@ -207,6 +207,6 @@ echo "=== 测试版打包完成 ==="
 echo "DMG:      $DMG_PATH"
 echo "ZIP:      $ZIP_PATH"
 echo "SHA256:   $BUILD_DIR/${DMG_NAME}-${LABEL}.sha256"
-echo "版本:     $VERSION ($BUILD_NUMBER) / $CONFIGURATION / ad-hoc 签名"
+echo "版本:     $VERSION-$BUILD_NUMBER / $CONFIGURATION / ad-hoc 签名"
 echo "提示:     首次打开需右键 -> 打开（未公证）"
 echo ""

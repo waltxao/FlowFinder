@@ -6,13 +6,13 @@
 
 **流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 原生双栏
 
-![Version](https://img.shields.io/badge/version-0.7.9--b1-blue)
+![Version](https://img.shields.io/badge/version-0.8.0--beta-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-green)
 ![Swift](https://img.shields.io/badge/Swift-5.9+-F05138)
 ![Rust](https://img.shields.io/badge/Rust-2021+-DEA584)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
-🌐 [官方网站](https://waltxao.github.io/FlowFinder/) · 📦 [下载最新版](https://github.com/waltxao/FlowFinder/releases) · 📖 [开发者文档](docs/DEVELOPMENT.md) · 📝 [重构日志](docs/MIGRATION_LOG.md)
+🌐 [官方网站](https://waltxao.github.io/FlowFinder/) · 📦 [下载最新版](https://github.com/waltxao/FlowFinder/releases) · 📖 [交接文档](docs/HANDOVER.md) · 📝 [变更日志](CHANGELOG.md)
 
 </div>
 
@@ -74,27 +74,28 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 
 - **BLAKE3 哈希**：高速加密哈希，比 MD5 快 10 倍
 - **三阶段检测**：按大小分组 → 部分哈希（头尾 4KB）→ 完整哈希确认
-- **实时进度**：扫描进度流式推送，支持取消
+- **实时进度**：扫描进度实时回调，支持取消
 - **安全删除**：移入废纸篓（可恢复），每组强制保留一个文件
 - **SQLite 缓存**：基于 mtime 增量扫描，避免重复哈希计算
 
 ### 按类型自动打标签
 
 - **规则引擎**：基于文件扩展名、类型、名称模式的自动标签生成（Rust Core 实现，完全离线）
-- **macOS 原生标签**：标签写入 macOS `com.apple.metadata:_kMDItemUserTags` 扩展属性；当前写入格式与访达尚不完全兼容，修正中
+- **macOS 原生标签**：标签写入 `com.apple.metadata:_kMDItemUserTags` binary plist 字符串数组，访达「显示简介」可直接看到
 - **LLM 多模型**：OpenAI / Claude / Ollama 支持（规划中，当前未接入）
 
 ### 任务调度中心
 
-- **统一调度**：复制 / 移动 / 删除 / 查重统一队列管理
-- **生命周期控制**：支持暂停 / 恢复 / 取消 / 优先级调整
+- **统一汇总**：复制 / 移动 / 删除 / 查重 / 批量重命名的进度汇总
+- **生命周期控制**：支持取消、重试、清除已结束任务
 - **进度可视化**：实时进度条 + 当前文件显示
+- 说明：Rust 任务调度器（暂停/恢复/优先级）尚未接入，当前不宣称这些能力
 
 ### SMB 网络共享
 
 - **渐进式加载**：先加载文件骨架，异步获取元数据，批量推送
 - **目录缓存**：LRU + TTL，前进 / 后退即时切换
-- **批量文件操作**：rayon 并行池，进度流式推送
+- **批量文件操作**：rayon 并行池，进度实时回调
 - **网络韧性**：30 秒健康检查 + 断连自动重连（指数退避 2s/5s/10s，最多 3 次）
 
 ---
@@ -201,7 +202,7 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 ### 系统要求
 
-- **macOS** 13.0+（Apple Silicon / Intel）
+- **macOS** 12.0+（Apple Silicon / Intel）
 - 无需额外运行时依赖
 
 ### 下载方式
@@ -210,8 +211,8 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 | 文件 | 说明 | 适用架构 |
 |------|------|---------|
-| `FlowFinder-0.7.6.dmg` | DMG 安装镜像 | Apple Silicon |
-| `FlowFinder-0.7.6.zip` | ZIP 压缩包（含 .app） | Apple Silicon |
+| `FlowFinder-0.8.0-beta.N.dmg` | DMG 安装镜像（以 Release 页实际文件名为准） | Apple Silicon |
+| `FlowFinder-0.8.0-beta.N.zip` | ZIP 压缩包（含 .app，以 Release 页实际文件名为准） | Apple Silicon |
 
 ### 安装步骤
 
@@ -220,7 +221,7 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 3. 若为 ZIP：解压后直接双击运行，或拖入「应用程序」文件夹
 4. 首次启动若提示「无法验证开发者」，前往「系统设置 → 隐私与安全性」点击「仍要打开」
 
-> ⚠️ 当前为 alpha 版本，建议不要用于生产环境关键数据操作。
+> ⚠️ 当前为 0.8.0 Beta，建议先备份重要数据再试用。
 
 ---
 
@@ -272,7 +273,7 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 ### 环境要求
 
-- **macOS** 13.0+（Apple Silicon 或 Intel）
+- **macOS** 12.0+（Apple Silicon 或 Intel）
 - **Xcode** 15+（含 Swift 5.9+）
 - **Rust** 1.75+（通过 `rustup` 安装）
 - **Xcode Command Line Tools**（`xcode-select --install`）
@@ -306,13 +307,13 @@ cd rust-core
 cargo build --release
 
 # 2. 构建 Swift 应用（-target 无需 shared scheme；若本地已有 shared scheme 也可用 -scheme）
-cd ../FlowFinderNative
+cd ../FlowFinder
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  xcodebuild -project FlowFinderNative.xcodeproj \
-             -target FlowFinderNative \
+  xcodebuild -project FlowFinder.xcodeproj \
+             -target FlowFinder \
              -configuration Release
 
-# 3. 产物位于 build/DerivedData/Build/Products/Release/FlowFinderNative.app
+# 3. 产物位于 build/DerivedData/Build/Products/Release/FlowFinder.app
 ```
 
 > `scripts/package.sh` 会同时生成 `build/FlowFinder-<版本>.dmg`；签名与公证参数见
@@ -339,13 +340,13 @@ bash scripts/benchmark.sh
 
 > ⚠️ Swift 单元测试是 **XCTest**，必须通过 `xcodebuild test` 运行（`swift test`
 > 无法运行 XCTest）。`make swift-test` 会自动定位 `/Applications/Xcode*.app`
-> 并调用 `xcodebuild test -scheme FlowFinderNativeTests`。手动等价命令：
+> 并调用 `xcodebuild test -scheme FlowFinderTests`。手动等价命令：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test \
-    -project FlowFinderNative/FlowFinderNative.xcodeproj \
-    -scheme FlowFinderNativeTests \
+    -project FlowFinder/FlowFinder.xcodeproj \
+    -scheme FlowFinderTests \
     -destination 'platform=macOS' \
     CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
 ```
@@ -377,8 +378,8 @@ FlowFinder/
 │   ├── include/
 │   │   └── ff_ffi.h              # C 头文件（FFI 接口）
 │   └── Cargo.toml
-├── FlowFinderNative/             # Swift Xcode 项目
-│   ├── FlowFinderNative/
+├── FlowFinder/             # Swift Xcode 项目
+│   ├── FlowFinder/
 │   │   ├── App/                  # 应用入口
 │   │   ├── Bridge/               # Swift ↔ Rust 桥接层
 │   │   ├── Model/                # 数据模型
@@ -391,12 +392,14 @@ FlowFinder/
 │   │   │   └── ...
 │   │   ├── Libraries/            # 编译后的 Rust 库
 │   │   └── Resources/            # Info.plist
-│   └── FlowFinderNative.xcodeproj
+│   └── FlowFinder.xcodeproj
 ├── docs/                         # 文档
-│   ├── images/                   # 截图 / mockup
-│   ├── MIGRATION_LOG.md          # 完整重构日志
-│   ├── MIGRATION_PLAN.md         # 迁移计划
-│   └── VERIFICATION.md           # 验证清单
+│   ├── images/                   # 官网截图
+│   ├── PRODUCT.md                # 产品定义与取舍顺序
+│   ├── DESIGN-SPEC.md            # 视觉唯一规格
+│   ├── ACCEPTANCE.md             # 验收口径
+│   ├── REQUIREMENTS.md           # 按旅程组织的功能清单
+│   └── HANDOVER.md               # 交接文档（先读这篇）
 ├── Makefile                      # 构建自动化
 └── README.md
 ```
@@ -468,7 +471,7 @@ A: Rust 提供更高效的系统级编程能力（BLAKE3、rayon 并行、零成
 A: Rust 编译为 cdylib 动态库，通过 C ABI（FFI）暴露函数接口。Swift 侧通过 Bridging Header 调用。详见 `rust-core/include/ff_ffi.h`。
 
 **Q: 如何参与开发？**
-A: 参阅上方「贡献指南」，或查看 [迁移计划](docs/MIGRATION_PLAN.md) 了解待完成子项目。
+A: 先读 [交接文档](docs/HANDOVER.md)，里面写了架构地图、构建流程与已知债务。
 
 ---
 
@@ -489,9 +492,9 @@ A: 参阅上方「贡献指南」，或查看 [迁移计划](docs/MIGRATION_PLAN
 
 详见 [CHANGELOG.md](CHANGELOG.md)。
 
-## 重构日志
+## 重构历史
 
-从 Tauri + React 到 Swift & AppKit 的完整重构历史，详见 [重构日志](docs/MIGRATION_LOG.md)。
+从 Tauri + React 到 Swift & AppKit 的重构过程记录在 Git 历史与 [CHANGELOG.md](CHANGELOG.md) 中。
 
 ## 从原版迁移
 
@@ -507,7 +510,7 @@ MIT License — 详见 [LICENSE](LICENSE) 文件。
 
 <div align="center">
 
-**[🌐 官方网站](https://waltxao.github.io/FlowFinder/)** · **[📦 下载](https://github.com/waltxao/FlowFinder/releases)** · **[📖 文档](docs/DEVELOPMENT.md)** · **[🐛 报告问题](https://github.com/waltxao/FlowFinder/issues)**
+**[🌐 官方网站](https://waltxao.github.io/FlowFinder/)** · **[📦 下载](https://github.com/waltxao/FlowFinder/releases)** · **[📖 文档](docs/HANDOVER.md)** · **[🐛 报告问题](https://github.com/waltxao/FlowFinder/issues)**
 
 Made with ❤️ for macOS
 

@@ -1,0 +1,4 @@
+module FlowFinderC {
+    header "ff_ffi.h"
+    export *
+}

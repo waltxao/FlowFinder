@@ -1,0 +1,2640 @@
+import Cocoa
+import Combine
+
+// MARK: - FFQuickLookTableView
+
+/// 拦截空格键的 NSTableView 子类：
+/// first responder 是 NSTableView 时，空格键事件到达 tableView.keyDown 即被
+/// interpretKeyEvents 消耗，不会冒泡到 FileListView.keyDown——QuickLook 无法触发
+/// （问题 6 根因）。此子类在 keyDown 拦截空格并发送通知转发给 MainWindowController。
+final class FFQuickLookTableView: NSTableView {
+    /// 空格键触发 QuickLook 通知（userInfo 携带 side）
+    var onSpaceKey: ((String) -> Void)?
+    /// Enter 键触发内联重命名（tableView 是 firstResponder 时 Enter 被其 keyDown/
+    /// interpretKeyEvents 消耗不冒泡到 FileListView.keyDown，需在此拦截转发）
+    var onEnterKey: (() -> Void)?
+    /// Del 键触发删除（移到废纸篓，访达语义）
+    var onDeleteKey: (() -> Void)?
+    /// 当前所属面板标识（left/right）
+    var side: String = "left"
+
+    /// Wave3 Task 1: 拖拽目标反馈复位回调（宿主 FileListView 借此清除 Drop 高亮 / Spring 计时）。
+    /// tableView 是注册的拖拽目标，NSDraggingDestination 的 draggingExited/draggingEnded/
+    /// concludeDragOperation 只发给注册视图本身，FileListView 收不到——经此转发给宿主复位。
+    var onDropDestinationReset: (() -> Void)?
+    /// Wave3 Task 2: 拖拽会话结束回调（落包/取消时触发，宿主借此清防重入集合）
+    var onDropSessionEnded: (() -> Void)?
+
+    /// Wave3 Task 1: 拖拽离开本视图（换行/退出/取消都会触发）——复位全部 Drop 视觉状态
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        super.draggingExited(sender)
+        onDropDestinationReset?()
+    }
+
+    /// Wave3 Task 1: 拖拽会话结束（无论是否落包）——复位全部 Drop 视觉状态
+    ///
+    /// 注意：**不能调 `super.draggingEnded(sender)`**。
+    /// `draggingEnded:` 是 `NSDraggingDestination` 的 `@optional` 方法，
+    /// `NSTableView` 并未实现它（只有 `NSView` 一层的转发），
+    /// 调 super 会走到 `doesNotRecognizeSelector:` 直接崩掉
+    /// （2026-10-20 实测：系统拖拽结束时 100% 崩溃）。
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        onDropDestinationReset?()
+        onDropSessionEnded?()
+    }
+
+    /// Wave3 Task 1: 落包视觉收尾——复位全部 Drop 视觉状态
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        super.concludeDragOperation(sender)
+        onDropDestinationReset?()
+        onDropSessionEnded?()
+    }
+
+    /// 拦截 QuickLook 键触发预览。
+    /// 用 performKeyEquivalent 而非 keyDown：NSTableView 的字符键（含空格）先经
+    /// interpretKeyEvents 处理，keyDown 可能收不到（问题 5 根因）。performKeyEquivalent
+    /// 由 NSWindow 在 interpretKeyEvents 之前分发，能可靠捕获。
+    /// Wave2 P0-3：判定键经 ShortcutCenter 读取 shortcut_quicklook 设置（默认空格）。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
+            // 修复问题 2（右操作区 QuickLook 不可用根因）：
+            // performKeyEquivalent 由 NSWindow 对「所有可见 responder」分发，左 tableView 即便不是
+            // firstResponder 也会拦截空格 → 永远走 side=left 通知。改为只在「self 或其子视图是
+            // firstResponder」时拦截，让真正拥有焦点的面板处理空格。
+            let fr = window?.firstResponder as? NSObject
+            let isMyResponder = (fr === self) || (fr is NSView && (fr as! NSView).isDescendant(of: self))
+            if !isMyResponder {
+                return super.performKeyEquivalent(with: event)
+            }
+            // 问题 2 诊断：记录 firstResponder 与 onSpaceKey 状态
+            FFDebug.log("FFQuickLookTableView.performKeyEquivalent side=\(side) firstResponderIsSelf=\(fr === self) onSpaceKeySet=\(onSpaceKey != nil)")
+            FFDebug.log("FFQuickLookTableView.performKeyEquivalent: quicklook key intercepted")
+            onSpaceKey?(side)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // Wave2 P0-3：键位判定经 ShortcutCenter 读设置（默认 空格/Return/Del = 原硬编码行为）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutQuicklook, event: event) {
+            FFDebug.log("FFQuickLookTableView.keyDown: quicklook key intercepted (fallback)")
+            onSpaceKey?(side)
+            return
+        }
+        // 修复 Enter 重命名：tableView 为 firstResponder 时 Enter 被本方法拦截转发，
+        // 否则被 interpretKeyEvents 消化，FileListView.keyDown 收不到 → 无法内联重命名。
+        // （shortcut_rename 配置为 Return(36) 时，ShortcutCenter.eventMatches 已兼容小键盘 Enter 76）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutRename, event: event) {
+            onEnterKey?()
+            return
+        }
+        // Del 删除（访达语义：keyCode 51 = backspace/Del）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutDelete, event: event) {
+            onDeleteKey?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
+// MARK: - FFDebug (file-based debug logger)
+
+/// 文件日志工具：写入 /tmp/ff-debug.log，不依赖系统日志
+/// G4: 仅 DEBUG 编译生效（release 零开销）；常驻 FileHandle 避免每次日志 open/close。
+enum FFDebug {
+    private static let logPath = "/tmp/ff-debug.log"
+    private static let queue = DispatchQueue(label: "ff.debug.log")
+    private static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    /// 常驻写入句柄（首次使用时打开，进程生命周期内复用）
+    private static var persistentHandle: FileHandle?
+
+    static func log(_ msg: String) {
+        #if DEBUG
+        queue.async {
+            let ts = formatter.string(from: Date())
+            let line = "[\(ts)] \(msg)\n"
+            guard let data = line.data(using: .utf8) else { return }
+            let handle: FileHandle
+            if let existing = persistentHandle {
+                handle = existing
+            } else if FileManager.default.fileExists(atPath: logPath),
+                      let opened = FileHandle(forWritingAtPath: logPath) {
+                persistentHandle = opened
+                handle = opened
+            } else {
+                FileManager.default.createFile(atPath: logPath, contents: nil)
+                guard let created = FileHandle(forWritingAtPath: logPath) else { return }
+                persistentHandle = created
+                handle = created
+            }
+            handle.seekToEndOfFile()
+            handle.write(data)
+        }
+        #endif
+    }
+
+    static func clear() {
+        #if DEBUG
+        try? FileManager.default.removeItem(atPath: logPath)
+        #endif
+    }
+}
+
+// MARK: - FFPillHeaderCell
+
+/// 任务 F10-7: 访达风格药丸列头（圆角背景 + 文字 + 排序箭头）
+///
+/// 自定义 NSTableHeaderCell：
+/// - 列头文字绘制在圆角药丸背景内（半透明次级填充色），仿访达列头视觉
+/// - 当前排序列在右侧绘制升降序箭头（chevron.up / chevron.down）
+/// - 点击列头切换排序的逻辑由 NSTableView 标准机制处理（sortDescriptorPrototype +
+///   tableView(_:sortDescriptorsDidChange:)），本类仅负责绘制
+final class FFPillHeaderCell: NSTableHeaderCell {
+
+    /// 药丸内边距（左右）
+    private let horizontalPadding: CGFloat = 10
+    /// 文字与箭头间距
+    private let arrowGap: CGFloat = 4
+    /// 箭头尺寸
+    private let arrowSize: CGFloat = 10
+
+    /// 绘制列头：圆角药丸背景 + 居中文字 + （排序列）排序箭头
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // 任务 F10-7: 圆角药丸背景（次级填充色，仿访达列头）
+        // 上下各留 3pt 边距，使药丸在列头条内垂直居中
+        let pillInsetY: CGFloat = 3
+        let pillRect = NSRect(x: cellFrame.origin.x + 2,
+                              y: cellFrame.origin.y + pillInsetY,
+                              width: cellFrame.width - 4,
+                              height: cellFrame.height - pillInsetY * 2)
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            // 药丸背景：次级填充色（浅灰，在玻璃材质上有层次感）
+            // macOS 14+ 用 secondarySystemFill，旧系统回退 controlBackgroundColor
+            if #available(macOS 14.0, *) {
+                NSColor.secondarySystemFill.setFill()
+            } else {
+                NSColor.controlBackgroundColor.setFill()
+            }
+            let path = NSBezierPath(roundedRect: pillRect, xRadius: 6, yRadius: 6)
+            path.fill()
+            context.restoreGState()
+        }
+
+        // 文字颜色：标签色
+        // 任务 F10-11: 列头字号统一 11pt（访达列头标准，修正此前 13pt 偏大）（v0.6.6）
+        let titleAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let title = self.title as NSString
+
+        // 检查本列是否为当前排序列，并取得升降序方向
+        // 通过 controlView（NSTableHeaderView）-> tableView -> sortDescriptors 反查
+        let ascending = self.sortAscendingForCurrentColumn(controlView: controlView)
+        let hasSortIndicator = ascending != nil
+
+        // 文字区域：药丸内左右各留 horizontalPadding；排序列右侧为箭头预留空间
+        var textRect = pillRect
+        textRect.origin.x += horizontalPadding
+        textRect.size.width -= horizontalPadding * 2
+        if hasSortIndicator {
+            textRect.size.width -= (arrowSize + arrowGap)
+        }
+
+        // 文字垂直居中
+        let titleHeight = title.size(withAttributes: titleAttr).height
+        textRect.origin.y = pillRect.origin.y + (pillRect.height - titleHeight) / 2
+        textRect.size.height = titleHeight
+
+        title.draw(in: textRect, withAttributes: titleAttr)
+
+        // 绘制排序箭头（仅排序列）
+        if let ascending = ascending {
+            self.drawSortIndicator(withFrame: cellFrame, in: controlView, ascending: ascending, priority: 0)
+        }
+    }
+
+    /// 绘制排序指示器（升降序箭头）
+    /// 仅当本列为当前排序列时，NSTableView 才会调用此方法
+    override func drawSortIndicator(withFrame cellFrame: NSRect, in controlView: NSView, ascending: Bool, priority: Int) {
+        // 仅绘制主排序（priority == 0）
+        guard priority == 0 else { return }
+        let arrowRect = self.sortIndicatorRect(forBounds: cellFrame)
+        // 2026-10-19 #11：列头箭头改用 Lucide（原 SF Symbol chevron.up/down）
+        let iconName = ascending ? FFIconName.chevronUp : FFIconName.chevronDown
+        let arrow = FFIcon.image(iconName, size: arrowSize, color: .secondaryLabelColor)
+        arrow.draw(in: arrowRect)
+    }
+
+    /// 排序指示器位置：列头右侧，垂直居中
+    override func sortIndicatorRect(forBounds rect: NSRect) -> NSRect {
+        return NSRect(x: rect.maxX - horizontalPadding - arrowSize,
+                      y: rect.origin.y + (rect.height - arrowSize) / 2,
+                      width: arrowSize,
+                      height: arrowSize)
+    }
+
+    /// 反查当前列是否为排序列，返回升降序方向（nil 表示非排序列）
+    /// 通过 controlView（NSTableHeaderView）-> tableView -> sortDescriptors 反查
+    private func sortAscendingForCurrentColumn(controlView: NSView?) -> Bool? {
+        guard let headerView = controlView as? NSTableHeaderView,
+              let tableView = headerView.tableView else { return nil }
+        // 找到本 cell 所属列
+        guard let column = tableView.tableColumns.first(where: { ($0.headerCell as AnyObject) === self }) else {
+            return nil
+        }
+        guard let descriptor = tableView.sortDescriptors.first,
+              let key = descriptor.key else { return nil }
+        // 列 identifier 与 sortDescriptor key 对应关系
+        let identifier = column.identifier.rawValue
+        let matched: Bool
+        switch key {
+        case "name": matched = identifier == "name"
+        // 元信息列（identifier "meta"）的排序语义就是修改时间
+        case "modifiedAt": matched = identifier == "modifiedAt" || identifier == "meta"
+        case "type": matched = identifier == "type"
+        case "size": matched = identifier == "size"
+        default: matched = false
+        }
+        return matched ? descriptor.ascending : nil
+    }
+}
+
+// MARK: - FFTableCellView
+
+/// 自定义 NSTableCellView：layer-backed，背景保持透明（.clear）以让 NSTableRowView
+/// 的标准 drawSelection 选中绘制可见。选中高亮完全由 rowView 标准机制处理，
+/// cellView 不参与选中绘制。
+private class FFTableCellView: NSTableCellView {
+    /// 任务 F8：记录该 cell 当前显示文件的完整路径。
+    /// 用于缩略图异步回调时校验 cell 仍显示同一文件（避免旧请求覆盖新 cell）。
+    /// 注意：不能用 cellView.identifier 记录路径--identifier 用于 NSTableView
+    /// 的复用匹配（makeView(withIdentifier:owner:)），覆写会破坏 cell 复用机制。
+    var currentFilePath: String?
+
+    /// 任务 F11-7: 记录该 cell 当前工作区图标对应的文件路径（含目录）。
+    /// 与 currentFilePath 分离：currentFilePath 仅记录文件（用于缩略图取消），
+    /// 目录时为 nil；而 iconPath 同时覆盖目录与文件，用于工作区图标回调校验，
+    /// 避免目录的异步图标回调无法通过 currentFilePath 校验而被丢弃。
+    var iconPath: String?
+
+    /// 任务 F11-7: 标记该 cell 是否已收到缩略图。
+    /// 缩略图返回后置 true，工作区图标回调若此时才返回则跳过覆盖（缩略图优先级更高）。
+    /// 每次 viewFor 重新绑定文件时复位为 false。
+    var didReceiveThumbnail: Bool = false
+
+    /// 任务 F11-5: 名称列图标 leading 约束引用。
+    /// 分组开启时文件行需缩进（仿访达），通过动态调整此约束的 constant 实现。
+    /// 复用时每次 tableView(_:viewFor:row:) 重新设置 constant。
+    var nameLeadingConstraint: NSLayoutConstraint?
+}
+
+// MARK: - FFTableRowView
+
+/// 自定义 NSTableRowView：不覆盖任何绘制方法，完全使用 NSTableView 标准选中绘制。
+///
+/// 设计决策（A3 修复）：此前覆盖 drawSelection 硬编码亮蓝色 RGB(0.039, 0.518, 1.0)
+/// 用于诊断选中不可见问题。诊断完成后应恢复标准行为：
+/// - 窗口处于 key 状态时：选中行为强调色（systemBlue）+ 白色文字
+/// - 窗口失焦时：选中为灰色（de-emphasized）+ 黑色文字
+/// 这正是访达的标准行为，无需任何自定义。
+private class FFTableRowView: NSTableRowView {
+    // 空实现：仅作为扩展点保留（如将来添加 hover 效果）
+
+    /// Wave3 Task 1: Drop 目标高亮（拖到文件夹行上时由 FileListView 置位）。
+    /// 绘制：accent 8% 底 + 1.5pt accent 圆角描边（与网格 item Drop 高亮同语言）。
+    var isDropTarget: Bool = false {
+        didSet {
+            guard oldValue != isDropTarget else { return }
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 先走标准绘制（选中背景等），再叠加 Drop 高亮（覆盖在选中之上，保证可见）
+        super.draw(dirtyRect)
+        guard isDropTarget else { return }
+        let rect = bounds.insetBy(dx: 2, dy: 1)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
+        FFAccent.current.withAlphaComponent(0.08).setFill()
+        path.fill()
+        FFAccent.current.setStroke()
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+
+    /// 选中底色统一走应用强调色（DESIGN-SPEC C-04 / C-05）。
+    ///
+    /// 2026-10-17 修复跨视图不一致：此前完全交给 NSTableView 默认绘制，取的是
+    /// **系统**强调色；而侧栏与网格用的是 **应用**强调色（FFAccent，可在设置里改）。
+    /// 用户把强调色改成红后，列表选中是蓝、侧栏与网格是红——同一「选中」概念两种颜色。
+    /// 现三处都从 FFAccent 取，获焦实底、失焦灰底（白字由 backgroundStyle 自动处理）。
+    override func drawSelection(in dirtyRect: NSRect) {
+        // 注意：行视图的 selectionHighlightStyle 默认为 .none（NSTableView 不会把
+        // 自己的 style 传给委托创建的 row view），若按 style 提前返回会一行都画不出来。
+        // 故只以 isSelected 判定。
+        guard isSelected else { return }
+        let color = isEmphasized
+            ? FFAccent.current
+            : NSColor.unemphasizedSelectedContentBackgroundColor
+        // 访达样式：左右各内缩 4pt + 5pt 圆角，不再满宽直角填充（此前与
+        // 分组标题行、窗格边界齐平相接，视觉上像一条色带而不是「选中框」；
+        // 几何与 FFTableRowView 的 Drop 高亮 insetBy(dx: 2)+圆角 5 同语言）
+        let rect = bounds.insetBy(dx: 4, dy: 0)
+        color.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+    }
+}
+
+/// 任务 F10-8 / F11-5: 分组标题行的 rowView。
+/// 仿访达列表视图分组：浅灰背景、小字号标题 + 计数徽章，不参与选中绘制（标题行不可选）。
+///
+/// 任务 F11-5 重叠 bug 根因（v0.6.6 问题14）：
+/// 此前标题文字在两处同时绘制——本类的 draw() 绘制 sectionTitle，
+/// 而 makeSectionHeaderCell 又在 name 列 cell 中添加 NSTextField 显示 "key  (count)"。
+/// 两层文字重叠（rowView 的 draw 与 cellView 的 textField 各画一遍），造成肉眼可见的重影。
+/// 修复方案：单一绘制源——所有标题文字（分组名 + 计数）仅由本类 draw() 绘制，
+/// makeSectionHeaderCell 返回完全透明的空 cell（仅占位保持列对齐，不显示任何文本）。
+private final class FFSectionHeaderRowView: NSTableRowView {
+    /// 分组名（用于绘制）
+    var sectionTitle: String = ""
+    /// 分组内文件数量（用于绘制计数徽章，如 "图片  12"）
+    var sectionCount: Int = 0
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 浅灰背景（次级填充色，仿访达 section header）
+        if #available(macOS 14.0, *) {
+            NSColor.tertiarySystemFill.setFill()
+        } else {
+            NSColor.controlBackgroundColor.withAlphaComponent(0.6).setFill()
+        }
+        dirtyRect.fill()
+
+        // 标题文字：小字号、次级标签色，左对齐留 12pt 边距（Wave4 Task 5：emphasis 令牌）
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: FFDesign.Text.captionEmphasis,
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let title = sectionTitle as NSString
+        let titleSize = title.size(withAttributes: attrs)
+
+        // 标题绘制区域：垂直居中，左侧 12pt 边距
+        let titleX: CGFloat = 12
+        let titleY = (bounds.height - titleSize.height) / 2
+        let titleRect = NSRect(x: titleX, y: titleY, width: bounds.width - 24, height: titleSize.height)
+        title.draw(in: titleRect, withAttributes: attrs)
+
+        // 计数徽章：标题右侧 6pt，使用更弱的次级标签色（仿访达分组数量样式）
+        // 仅当数量 > 0 时绘制，避免单 "全部" 分组显示无意义的 0
+        if sectionCount > 0 {
+            let countText = "\(sectionCount)" as NSString
+            let countAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            let countSize = countText.size(withAttributes: countAttrs)
+            let countX = titleX + titleSize.width + 6
+            let countY = (bounds.height - countSize.height) / 2
+            let countRect = NSRect(x: countX, y: countY, width: countSize.width, height: countSize.height)
+            countText.draw(in: countRect, withAttributes: countAttrs)
+        }
+
+        // 底部细分隔线（增强分组层次，仿访达）
+        if #available(macOS 14.0, *) {
+            NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        } else {
+            NSColor.gridColor.withAlphaComponent(0.5).setFill()
+        }
+        NSRect(x: 0, y: 0, width: bounds.width, height: 0.5).fill()
+    }
+
+    // 标题行不绘制选中高亮
+    override func drawSelection(in dirtyRect: NSRect) {
+        // 空实现：标题行不可选，不绘制选中
+    }
+}
+
+// MARK: - FFStickySectionHeaderView
+
+/// 任务 F11-5: 粘性分组标题浮层。
+///
+/// 访达行为：列表滚动时，当前可见分组的标题固定在列表顶部，直到下一分组标题顶上来再切换。
+/// NSTableView 无原生粘性 section header 支持，本类作为 scrollView.contentView 之上的
+/// 浮层视图实现该效果：由 FileListView 监听 clipView 滚动，计算当前应固定的分组并刷新本视图。
+///
+/// 视觉与 FFSectionHeaderRowView 完全一致（浅灰背景 + 标题 + 计数徽章 + 底部分隔线），
+/// 保证粘性标题与行内标题无缝衔接。分组关闭（groupBy == "none"）时本视图隐藏。
+private final class FFStickySectionHeaderView: NSView {
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let countLabel = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        // Wave4 Task 5：分组标题统一 emphasis(11 semibold) 令牌（与网格分组标题同档）
+        titleLabel.font = FFDesign.Text.captionEmphasis
+        titleLabel.textColor = NSColor.secondaryLabelColor
+        titleLabel.backgroundColor = .clear
+        titleLabel.isBezeled = false
+        titleLabel.drawsBackground = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(titleLabel)
+
+        countLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        countLabel.textColor = NSColor.tertiaryLabelColor
+        countLabel.backgroundColor = .clear
+        countLabel.isBezeled = false
+        countLabel.drawsBackground = false
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(countLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            countLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
+            countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// 配置粘性标题内容（标题 + 计数），空标题时隐藏整个视图
+    func configure(title: String, count: Int) {
+        if title.isEmpty {
+            isHidden = true
+            return
+        }
+        isHidden = false
+        titleLabel.stringValue = title
+        countLabel.stringValue = count > 0 ? "\(count)" : ""
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 浅灰背景（与 FFSectionHeaderRowView 一致）
+        if #available(macOS 14.0, *) {
+            NSColor.tertiarySystemFill.setFill()
+        } else {
+            NSColor.controlBackgroundColor.withAlphaComponent(0.6).setFill()
+        }
+        dirtyRect.fill()
+        // 底部分隔线
+        if #available(macOS 14.0, *) {
+            NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        } else {
+            NSColor.gridColor.withAlphaComponent(0.5).setFill()
+        }
+        NSRect(x: 0, y: 0, width: bounds.width, height: 0.5).fill()
+    }
+}
+
+// MARK: - FileListView
+
+/// 任务 F10-8: 分组渲染用的单行映射条目。
+/// - isHeader == true 时该行为分组标题，key 为分组名（如"图片"），fileIndex 为 nil
+/// - isHeader == false 时该行为文件行，fileIndex 为该文件在 viewModel.files 中的下标
+private struct FFDisplayRow {
+    let isHeader: Bool
+    let key: String
+    let fileIndex: Int
+    /// v0.6.9: 预计算该文件是否有标签，避免 heightOfRow 高频调用 TagBridge I/O
+    var hasTags: Bool = false
+}
+
+/// NSTableView-based file list view with 4 columns (名称/修改日期/类型/大小)
+/// 标签以药丸形式内联显示在名称列的文件名之后
+public class FileListView: NSView, FFRegionAware {
+
+    /// 文件列表属于面板区：空白处保留框选，按下不产生任何拖动
+    var ffRegion: FFRegion { .panel }
+
+    /// 2026-10-20 #1：列表区不参与窗口拖动（列表空白处要保留框选）
+    public override var mouseDownCanMoveWindow: Bool { false }
+    private var tableView: NSTableView!
+    private var scrollView: NSScrollView!
+    private var cancellables = Set<AnyCancellable>()
+    private var lastFilesCount: Int = -1
+
+    // 任务 F11-5: 粘性分组标题浮层（仿访达，滚动时固定当前分组标题于列表顶部）
+    private var stickyHeader: FFStickySectionHeaderView?
+    // 任务 F11-5: 滚动监听观察者（clipView.boundsDidChange 通知）
+    private var clipViewObserver: NSObjectProtocol?
+
+    // 任务 F10-8: 显示行映射缓存。
+    // 将"分组渲染"的显示行号映射为 (是否分组标题行, 文件在 viewModel.files 中的下标)。
+    // groupBy == "none" 时仅含文件行（fileIndex 与行号一一对应），保持原有行为。
+    // 每次 reloadData / state.files 变更时重建。
+    private var displayRows: [FFDisplayRow] = []
+
+    // Bug 9 修复：reload 期间标志位，防止 selectionDidChange -> state 变更 -> reload 形成循环
+    private var isReloading: Bool = false
+
+    /// 任务 T12: 面板状态浮层（加载/空/错误+重试/删除进度），由 PaneState 真值驱动
+    private let stateOverlayView = FFPaneStateOverlayView()
+
+    /// 统一操作控制器：处理右键菜单、键盘操作、内联重命名等（与 FileGridView 共用同一套逻辑）
+    private(set) lazy var actionsController: FFPaneActionsController = FFPaneActionsController(host: self)
+
+    /// Wave2 P0-1：keyViewLoop 焦点落点（内部表格视图）。
+    /// MainWindowController 构建面板 keyViewLoop 时把链尾接到此视图，
+    /// Tab 流转到文件列表后由 tableView 接管方向键/选中。
+    var keyFocusTarget: NSView? { tableView }
+
+    /// 核心旅程 J3（⌘F → ↑↓ → Enter）：搜索框按 ↓/↑ 时把焦点交给列表，
+    /// 选中第一个 / 最后一个**可选**行（跳过分组标题行）并滚动到可见。
+    func focusFirstSelectableRow(toLast: Bool) {
+        let selectable = displayRows.indices.filter { !displayRows[$0].isHeader }
+        guard let row = toLast ? selectable.last : selectable.first else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
+        window?.makeFirstResponder(tableView)
+    }
+
+    // 问题 7 根因修复：拖拽过程中持续捕获修饰键（用于 ⌘ 判断，访达语义）。
+    // validateDrop/acceptDrop 回调中 NSApp.currentEvent 不可靠（可能为 nil 或非拖拽事件），
+    // 故在 draggingUpdated 及各拖拽回调中双保险写入。
+    private var lastDragModifierFlags: NSEvent.ModifierFlags = []
+
+    // Wave3 Task 1: Drop 目标高亮状态（当前高亮的文件夹行；nil = 无高亮）。
+    // 仅保留一个目标行：换行先清旧行再设新行；退出/落包/会话结束全部复位。
+    private var dropHighlightRow: Int? = nil
+
+    // Wave3 Task 2: Spring Loading 驻留展开状态（主线程专用）。
+    // 悬停文件夹 1.0s 后自动进入该文件夹（Finder 驻留展开语义）。
+    private var springLoadingWorkItem: DispatchWorkItem?
+    /// 当前计时中的驻留展开目标文件夹
+    private var springTargetPath: String? = nil
+    /// 本次拖拽会话内已驻留展开过的文件夹（防重入：同文件夹只触发一次）
+    private var springFiredPaths: Set<String> = []
+
+    /// Wave3 Task 5: 两指轻扫节流器（前进/后退动画期间忽略重复轻扫）
+    private lazy var swipeThrottler = FFSwipeThrottler()
+
+    public var viewModel: PaneViewModel? {
+        didSet {
+            // 清空旧订阅，防止累积泄漏
+            cancellables.removeAll()
+            tableView.dataSource = self
+            tableView.delegate = self
+            // 任务 T12: 状态浮层绑定（由 PaneState 真值驱动，独立于表格刷新逻辑）
+            stateOverlayView.viewModel = viewModel
+            // 任务 F10-7: 初始同步排序描述符，使列头箭头显示在当前排序列上
+            applySortDescriptorsFromViewModel()
+            // 任务 F10-8: 初始构建 displayRows（分组渲染映射）
+            rebuildDisplayRows()
+            viewModel?.$state
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] state in
+                    guard let self = self else { return }
+                    // 任务 F10-7: 排序字段/方向变化时同步列头排序描述符与箭头
+                    self.applySortDescriptorsFromViewModel()
+                    // 任务 F10-8: files 数量变化 或 分组维度变化 或 排序变化（顺序变化）时刷新
+                    // - lastFilesCount 检测数量变化（导航/删除/新增）
+                    // - 分组维度变化需刷新（displayRows 结构改变）
+                    // - 排序变化虽数量不变但顺序变了，需刷新（applySort 仅在顺序变化时改 state.files，
+                    //   但我们无法直接对比顺序，故 sortField/sortAscending 变化也触发刷新）
+                    let needReload = self.lastFilesCount != state.files.count
+                        || self.currentGroupBy != state.groupBy
+                        || self.currentSortField != state.sortField
+                        || self.currentSortAscending != state.sortAscending
+                    if needReload {
+                        // 大目录优化：检测是否为纯追加（分页追加批次），仅当无分组、
+                        // 排序/分组维度未变、文件数增加时，使用增量 insertRows 避免全量重建
+                        let delta = state.files.count - self.lastFilesCount
+                        let isAppendOnly = delta > 0
+                            && self.currentGroupBy == state.groupBy
+                            && self.currentSortField == state.sortField
+                            && self.currentSortAscending == state.sortAscending
+                            && state.groupBy == "none"
+                            // 表格当前一行都没有（首次加载 / 刚重建列）时不能走增量插入：
+                            // insertRows 在「表里 0 行、数据源已报 N 行」的瞬间状态上不可靠，
+                            // 实测会出现「列头在、行全空」。这种情况一律全量 reload。
+                            && !self.displayRows.isEmpty
+
+                        self.lastFilesCount = state.files.count
+                        self.currentGroupBy = state.groupBy
+                        self.currentSortField = state.sortField
+                        self.currentSortAscending = state.sortAscending
+
+                        if isAppendOnly {
+                            self.appendDisplayRows(newCount: delta)
+                        } else {
+                            self.reloadData()
+                        }
+                    }
+                }
+                .store(in: &cancellables)
+            reloadData()
+            // 重命名等"数量不变"操作：state sink 只比较数量不刷新，需强制 reloadData
+            // v0.7.4 修复：先移除旧 observer 再注册——viewModel 被多次赋值时，
+            // 不加 removeObserver 会累积重复监听，post 一次通知触发 N 次 forceReload
+            // （实测日志出现 25 次重复 forceReload 风暴）。
+            NotificationCenter.default.removeObserver(self, name: .fileListContentChanged, object: nil)
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(forceReload(_:)),
+                name: .fileListContentChanged, object: nil
+            )
+        }
+    }
+
+    /// 内容变更强制刷新（重命名等数量不变操作）。
+    /// v0.7.4 修复 3：通知携带目录路径。若本面板显示的目录 = 变更目录，
+    /// 说明数据可能过期（尤其对侧面板未随 renameFile 刷新），先 refresh() 重读磁盘再 reloadData。
+    /// 若目录不同（如右面板显示别的目录），仅重渲染即可。
+    @objc private func forceReload(_ notification: Notification) {
+        let changedPath = (notification.userInfo?["path"] as? String) ?? ""
+        if let vm = viewModel, !changedPath.isEmpty, vm.currentPath == changedPath {
+            FFDebug.log("FileListView.forceReload: 目录匹配 \(changedPath)，refresh 重读磁盘")
+            vm.refresh()
+        } else {
+            FFDebug.log("FileListView.forceReload")
+            reloadData()
+        }
+    }
+
+    // 任务 F10-8: 上次刷新时记录的分组/排序状态，用于检测变化决定是否刷新
+    private var currentGroupBy: String = "none"
+    private var currentSortField: SortField = .name
+    private var currentSortAscending: Bool = true
+
+    /// 任务 F10-8: 根据 viewModel.groupedFiles 重建 displayRows 映射。
+    /// groupBy == "none" 时返回纯文件行（与原有行为一致，fileIndex 与行号一一对应）。
+    /// 大目录优化：使用字典预构建 path→index 映射，将 O(n²) 线性搜索降为 O(n)。
+    private func rebuildDisplayRows() {
+        guard let viewModel = viewModel else {
+            displayRows = []
+            return
+        }
+        var rows: [FFDisplayRow] = []
+        let groups = viewModel.groupedFiles
+
+        // 预构建 path → index 字典，避免循环内 firstIndex(where:) 的 O(n²) 搜索
+        var pathToIndex: [String: Int] = [:]
+        pathToIndex.reserveCapacity(viewModel.state.files.count)
+        for (i, entry) in viewModel.state.files.enumerated() {
+            pathToIndex[entry.path] = i
+        }
+
+        for group in groups {
+            // 分组标题行（仅当不止一个分组时才显示标题；"全部" 单分组且 groupBy==none 时不显示）
+            let showHeader = !(groups.count == 1 && viewModel.state.groupBy == "none")
+            if showHeader {
+                rows.append(FFDisplayRow(isHeader: true, key: group.key, fileIndex: -1))
+            }
+            // 组内文件行（fileIndex 指向 viewModel.files 中的下标）
+            for entry in group.entries {
+                if let idx = pathToIndex[entry.path] {
+                    // v0.6.9: 预计算标签状态，避免 heightOfRow 高频 I/O
+                    // TagBridge 已有内存缓存，重复调用为 O(1)
+                    // 2026-10-20 #4：只读缓存，不在渲染路径做 xattr I/O
+                    let hasTags = !TagBridge.shared.cachedTags(path: entry.path).isEmpty
+                    rows.append(FFDisplayRow(isHeader: false, key: group.key, fileIndex: idx, hasTags: hasTags))
+                }
+            }
+        }
+        displayRows = rows
+    }
+
+    /// 大目录优化：分页追加时的增量行构建，避免全量 rebuildDisplayRows + reloadData。
+    /// 仅适用于 groupBy == "none"（无分组），新文件追加到 state.files 末尾的场景。
+    /// - Parameter newCount: 新增的文件数量
+    private func appendDisplayRows(newCount: Int) {
+        guard let viewModel = viewModel, newCount > 0 else { return }
+        let startIndex = viewModel.state.files.count - newCount
+        guard startIndex >= 0 else { return }
+        // 活体验收缺陷修复（列表重复行）防御层：仅当既有 displayRows 恰好映射
+        // files[0..<startIndex]（displayRows.count == startIndex）时才允许增量插入。
+        // 一旦失同步（视图重建/基准过期导致把旧数据再判为「新增」），回退全量
+        // reloadData 重建映射，绝不把已有行再拼一遍（宁全量刷新，不重复渲染）。
+        guard displayRows.count == startIndex else {
+            reloadData()
+            return
+        }
+
+        var newRows: [FFDisplayRow] = []
+        newRows.reserveCapacity(newCount)
+        for i in startIndex..<viewModel.state.files.count {
+            let entry = viewModel.state.files[i]
+            let hasTags = !TagBridge.shared.getTags(path: entry.path).isEmpty
+            newRows.append(FFDisplayRow(isHeader: false, key: "全部", fileIndex: i, hasTags: hasTags))
+        }
+
+        let insertStart = displayRows.count
+        displayRows.append(contentsOf: newRows)
+
+        // 增量插入行，而非全量 reloadData
+        isReloading = true
+        let indexSet = IndexSet(integersIn: insertStart..<(insertStart + newRows.count))
+        tableView.insertRows(at: indexSet, withAnimation: [])
+        restoreSelectionFromViewModel()
+        updateStickyHeader()
+        DispatchQueue.main.async { [weak self] in
+            self?.isReloading = false
+            self?.updateStickyHeader()
+        }
+    }
+
+    /// 任务 F10-7: 将 viewModel 的排序状态同步到 tableView.sortDescriptors
+    ///
+    /// NSTableView 依据 sortDescriptors 在对应列头绘制排序箭头（通过 indicatorImage）。
+    /// 当外部（PaneToolbar 排序下拉框）或内部变更排序时，需同步 sortDescriptors，
+    /// 否则列头箭头不会更新。本方法用 viewModel 的 sortField/sortAscending 构造描述符，
+    /// 并匹配到对应列的 sortDescriptorPrototype 的 key。
+    /// 注意：避免无限循环——仅当描述符确实不同时才 set，且 set 会触发
+    /// tableView(_:sortDescriptorsDidChange:)，但该回调会调用 viewModel.setSortField，
+    /// 此时 viewModel 状态与本方法构造的一致，applySort 不会触发 @Published 重新发射，
+    /// 故不形成循环。
+    private func applySortDescriptorsFromViewModel() {
+        guard let vm = viewModel else { return }
+        // 任务 F10-7: 使用与列 sortDescriptorPrototype 一致的 key
+        // （列 prototype key：name/modifiedAt/type/size，与列 identifier 相同）
+        // 注意：不能用 SortField.key（.type 返回 "extension"），否则与列 prototype 不匹配，
+        // NSTableView 无法识别排序列，箭头不会显示。
+        let key: String
+        switch vm.state.sortField {
+        case .name: key = "name"
+        case .modifiedAt: key = "modifiedAt"
+        // 2026-10-19 #11：大小 / 类型没有独立列头（四列合二），用不存在的 key
+        // 让 NSTableView 找不到匹配列而不画箭头——否则箭头会画在元信息列上，
+        // 看起来像「按修改时间排」，与真实排序状态不符。
+        // 2026-10-20 #3：大小 / 类型重新有了独立列头，箭头可以直接标在对应列上；
+        // 列被用户关掉时退回占位 key（找不到匹配列 → 不画箭头，也不误标）。
+        case .size:
+            key = FFListColumnsState.isVisible(.size) ? "size" : "__sort_size__"
+        case .type:
+            key = FFListColumnsState.isVisible(.kind) ? "type" : "__sort_type__"
+        }
+        let ascending = vm.state.sortAscending
+        let current = tableView.sortDescriptors
+        // 仅在变化时更新，避免重复 set 触发不必要的回调
+        if current.first?.key != key || current.first?.ascending != ascending {
+            tableView.sortDescriptors = [NSSortDescriptor(key: key, ascending: ascending)]
+        }
+    }
+
+    /// 对侧面板的 ViewModel（由 MainWindowController 在 setupUI 中注入），
+    /// 用于拖拽 undo/redo 后刷新对侧面板（跨面板拖拽时源面板需同步更新）
+    weak var counterpartViewModel: PaneViewModel?
+
+    public var onDoubleClick: ((FileEntry) -> Void)?
+    public var onSelectionChanged: (([FileEntry]) -> Void)?
+    public var onActivatePane: (() -> Void)?
+
+    // Reuse identifiers
+    // 2026-10-19 #11：四列合二后，类型 / 大小 / 修改日期三列的 cell 复用标识一并删除。
+    // 文件行的 cell 标识由 viewFor 直接取列 identifier（"name" / "meta"）动态生成，
+    // 复用池按 identifier 隔离，不再需要单独的常量。
+    // 任务 F10-8: 分组标题行复用标识符
+    private let sectionHeaderCellID = NSUserInterfaceItemIdentifier("SectionHeaderCell")
+
+    /// 面板方向（由 MainWindowController 注入），用于右键菜单"移动/复制到另一面板"的箭头方向
+    /// 注：PaneSide 为 internal 类型，故此属性为 internal（同模块内可访问）
+    var panelSide: PaneSide?
+
+    /// 当前面板方向（优先使用 panelSide，否则根据 identifier 推断）
+    private var effectiveSide: PaneSide {
+        if let panelSide = panelSide { return panelSide }
+        return identifier?.rawValue == "right" ? .right : .left
+    }
+
+    /// 标签二级菜单（动态构建：每次显示前由控制器 menuNeedsUpdate 重建内容）
+    lazy var tagsSubmenu: NSMenu = {
+        let menu = NSMenu()
+        menu.delegate = actionsController
+        return menu
+    }()
+
+    public override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        FFDebug.log("FileListView.init frame=\(frameRect)")
+        setupUI()
+        setupContextMenu()
+    }
+
+    public required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupUI()
+        setupContextMenu()
+    }
+
+    deinit {
+        // 任务 F11-5: 移除 clipView 滚动观察者，防止悬空通知回调
+        if let observer = clipViewObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        // G3: 移除 selector 版通知观察者（selector 观察者不会随 dealloc 自动移除，
+        // 不清理则视图销毁后通知仍会向已释放对象发消息）
+        NotificationCenter.default.removeObserver(self, name: .fileListContentChanged, object: nil)
+        // Wave4 Task 4: 移除列表密度变更观察者
+        NotificationCenter.default.removeObserver(self, name: .listDensityChanged, object: nil)
+    }
+
+    // MARK: - UI Setup
+
+    private func setupUI() {
+        // 任务 F11-1: 操作区实体背景（v0.6.7）
+        // 此前为透明背景透出 NSVisualEffectView 玻璃态；现改为实体（日间#F5F5F5/夜间#2D2D2D），
+        // 与 MainWindowController.createPaneContainer 的容器实体背景一致，
+        // 实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        // 任务 S1: 强制使用自定义细滚动条
+        scrollView.verticalScroller = FFScroller()
+        scrollView.horizontalScroller = FFScroller()
+        scrollView.scrollerStyle = .overlay
+
+        // 任务 T5: QuickLook 空格键修复。
+        // first responder 是 NSTableView 时，空格事件被 tableView 的 keyDown/interpretKeyEvents 消耗，
+        // 不会冒泡到 FileListView.keyDown → 改用 FFQuickLookTableView 子类在 keyDown 拦截空格并转发通知。
+        // 注意：side 不能在此刻用 getSide() 固定——identifier 由 MainWindowController 在 init 之后才设置，
+        // 故在 onSpaceKey 回调中动态取 self.getSide()。
+        let qlTableView = FFQuickLookTableView()
+        qlTableView.onSpaceKey = { [weak self] _ in
+            guard let self = self else { return }
+            FFDebug.log("FileListView onSpaceKey side=\(self.getSide()) -> posting notification")
+            // object=self（本面板实例）：接收方 isOwnPaneNotification 据此过滤跨窗口请求，防双窗口 QL 双开（审查 Minor 3）
+            NotificationCenter.default.post(name: .fileListRequestQuickLook, object: self, userInfo: ["side": self.getSide()])
+        }
+        // Enter 键 → 内联重命名（与 Finder 一致，委托给 actionsController）
+        qlTableView.onEnterKey = { [weak self] in
+            FFDebug.log("FFQuickLookTableView.onEnterKey 触发")
+            self?.actionsController.beginInlineRename()
+        }
+        // Del 键 → 移到废纸篓（与 Finder 一致，委托给 actionsController）
+        qlTableView.onDeleteKey = { [weak self] in
+            FFDebug.log("FFQuickLookTableView.onDeleteKey 触发")
+            self?.actionsController.deleteSelected(nil)
+        }
+        // Wave3 Task 1/2: 拖拽退出/结束/收尾经 tableView 子类转发，复位 Drop 高亮与驻留计时
+        qlTableView.onDropDestinationReset = { [weak self] in
+            self?.clearDragVisualState()
+        }
+        // Wave3 Task 2: 拖拽会话结束（落包/取消）额外清防重入集合，允许下次拖拽重新驻留展开
+        qlTableView.onDropSessionEnded = { [weak self] in
+            self?.endDragSession()
+        }
+        tableView = qlTableView
+        // 问题 2 诊断：确认每个面板都创建了 FFQuickLookTableView 且 onSpaceKey 已就位
+        FFDebug.log("FileListView setup tableView type=FFQuickLookTableView side=\(getSide()) onSpaceKeySet=\(qlTableView.onSpaceKey != nil)")
+        tableView.allowsMultipleSelection = true
+        tableView.allowsEmptySelection = true
+        // 任务 F10-7: 启用列拖动重排（访达风格，用户可拖动列头调整列顺序）
+        tableView.allowsColumnReordering = true
+        tableView.allowsColumnResizing = true
+        // 使用 NSTableView 标准选中绘制（.regular 默认值）。
+        // 根因（systematic-debugging）：
+        //   此前设置 selectionHighlightStyle = .none 禁用了标准绘制，转而用
+        //   updateSelectionHighlight 手动设置 layer.backgroundColor。但手动方案在
+        //   cellView 复用、layer 时序竞态、wantsLayer=true 等情况下失效。
+        //   恢复标准绘制后，NSTableRowView.drawSelection 自动根据 isSelected 状态
+        //   绘制选中色（key window + firstResponder 时为强调蓝色）。
+        //   cellView.layer.backgroundColor 已在 tableView(_:viewFor:row:) 中设为 .clear，
+        //   不会遮挡 rowView 的标准选中绘制。
+        // 不显式赋值，使用 NSTableView 默认 selectionHighlightStyle = .regular
+        // 列宽模式：sequentialColumnAutoresizingStyle（四列按比例伸缩，无横向滚动条）。
+        // 用户仍可手动拖拽列头分隔条调整各列宽度。
+        tableView.usesAlternatingRowBackgroundColors = false
+        // Wave4 Task 4: 行高走密度三档（紧凑 22 / 标准 26 / 宽松 32），默认标准；
+        // 带标签行高在 heightOfRow 中按档位联动（42/48/56）
+        tableView.rowHeight = FFListDensity.current.baseRowHeight
+        // 设置页切换密度后广播刷新（重读档位 + 重算行高）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(listDensityDidChange),
+            name: .listDensityChanged, object: nil
+        )
+        // 任务 F11-1: tableView 实体背景（v0.6.7）
+        // 配合操作区容器实体背景，不再透明。实体背景上选中蓝色清晰可见（解决 v0.6.6 问题14 的最终方案）
+        // 保留 selectionHighlightStyle = .regular（标准选中绘制，默认值，不显式赋值）
+        // Wave4 Task 3：改读 FFDesign.operationAreaBackground 统一令牌（日间 #F5F5F5 / 夜间 #2D2D2D）
+        tableView.backgroundColor = FFDesign.operationAreaBackground
+        tableView.enclosingScrollView?.drawsBackground = false
+        scrollView.drawsBackground = false
+        scrollView.backgroundColor = NSColor.clear
+        // NSClipView 默认绘制 controlBackgroundColor（浅灰），必须显式清除
+        scrollView.contentView.drawsBackground = false
+        scrollView.contentView.backgroundColor = .clear
+        tableView.dataSource = self
+        tableView.delegate = self
+
+        // 2026-10-20 #3：列由 `FFListColumnsState` 决定（默认四列：名称/类型/大小/修改日期；
+        // 可选列：创建日期/标签/说明）。三个入口（列头右键 / 显示菜单 / 工具栏工具菜单）
+        // 都只是改状态并发通知，这里收到通知重建列。
+        tableView.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
+        rebuildColumns()
+
+        // 标签缓存预热完成 → 刷新（标签色点此时才出现）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(tagCacheWarmed(_:)),
+            name: .ffTagCacheWarmed, object: nil
+        )
+
+        // 列可见性变化 → 重建列
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(listColumnsDidChange),
+            name: FFListColumnsState.didChangeNotification, object: nil
+        )
+        // 列宽变化 → 记忆（下次重建列时还原）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(columnDidResize(_:)),
+            name: NSTableView.columnDidResizeNotification, object: tableView
+        )
+
+        // C12: 标签列已移除，改为在名称列内联显示标签药丸
+
+        // Double-click
+        tableView.target = self
+        tableView.doubleAction = #selector(handleDoubleClick)
+
+        scrollView.documentView = tableView
+        addSubview(scrollView)
+
+        // 使用 Auto Layout 约束确保 scrollView 正确填充
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        // 任务 T12: 状态浮层叠加在 scrollView 之上（独立叠加层，不参与列表布局）
+        stateOverlayView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stateOverlayView)
+        NSLayoutConstraint.activate([
+            stateOverlayView.topAnchor.constraint(equalTo: topAnchor),
+            stateOverlayView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stateOverlayView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stateOverlayView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        // 注意：不调用 sizeToFit()，避免它压缩列宽导致第 5 列不可见。
+        // columnAutoresizingStyle = .none 时，各列保持 width 设定的固定宽度，
+        // 用户可通过列分隔条手动拖宽（userResizingMask 已启用）。
+
+        // 任务 F11-5: 粘性分组标题浮层。
+        // 添加为 clipView 的子视图并置于最前（覆盖在 tableView 行之上），
+        // 通过监听 clipView.boundsDidChange 滚动通知动态更新位置与内容。
+        let sticky = FFStickySectionHeaderView()
+        sticky.translatesAutoresizingMaskIntoConstraints = false
+        sticky.isHidden = true
+        scrollView.contentView.addSubview(sticky)
+        NSLayoutConstraint.activate([
+            sticky.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            sticky.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            sticky.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            sticky.heightAnchor.constraint(equalToConstant: 24),
+        ])
+        self.stickyHeader = sticky
+
+        // 任务 F11-5: 监听 clipView 滚动，刷新粘性标题
+        let clipView = scrollView.contentView
+        clipView.postsBoundsChangedNotifications = true
+        clipViewObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clipView,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateStickyHeader()
+        }
+
+        // 注册 tableView 为拖拽目标（NSTableViewDataSource 的 validateDrop/acceptDrop
+        // 方法要求 tableView 自身注册拖拽类型，在父 NSView 上注册不会触发回调）
+        tableView.registerForDraggedTypes([.fileURL])
+
+        // 启用拖拽源（通过 tableView）
+        tableView.setDraggingSourceOperationMask([.copy, .move, .delete], forLocal: false)
+    }
+
+    // MARK: - 列管理（2026-10-20 #3）
+
+    /// 按当前可见性重建列（顺序固定为 `FFListColumn.allCases`，与勾选顺序无关）
+    private func rebuildColumns() {
+        // 记住当前选中，重建列会清空选择
+        let selected = tableView.selectedRowIndexes
+        for col in tableView.tableColumns {
+            tableView.removeTableColumn(col)
+        }
+        for column in FFListColumnsState.visibleColumns()
+        where !fittedOutColumns.contains(column.rawValue) {
+            let col = column.makeColumn(width: FFListColumnsState.width(for: column,
+                                                                       default: column.defaultWidth))
+            tableView.addTableColumn(col)
+        }
+        // 列头右键菜单：三个入口共用同一份菜单
+        let headerMenu = FFListColumnMenu.build(target: self,
+                                                action: #selector(columnMenuItemSelected(_:)))
+        tableView.headerView?.menu = headerMenu
+        // 列变了，排序箭头需要重新对齐到新的列
+        applySortDescriptorsFromViewModel()
+        // 增删列不会自动让 NSTableView 重新取 cell（它只重画已有行视图）——
+        // 不 reload 的表现是「列头在、行全空」（2026-10-20 实测踩到）。
+        tableView.reloadData()
+        if selected.count > 0, selected.max() ?? 0 < tableView.numberOfRows {
+            tableView.selectRowIndexes(selected, byExtendingSelection: false)
+        }
+    }
+
+    /// 名称列的图标与文字是否共用行中线（2026-10-20 #10，自检用）
+    var usesSharedRowMidline: Bool {
+        guard let cell = tableView.makeView(withIdentifier: NSUserInterfaceItemIdentifier("name"),
+                                            owner: self) as? FFTableCellView,
+              let icon = cell.imageView else {
+            // 还没渲染出 cell 时按实现约定返回 true（约束在建 cell 时就设成 centerY）
+            return true
+        }
+        return cell.constraints.contains {
+            ($0.firstItem as? NSView) === icon && $0.firstAttribute == .centerY
+        }
+    }
+
+    /// 取某列在指定行的单元格文本（自检用）。列未显示时临时造一个列对象，
+    /// 直接走 `viewFor` 真实渲染路径——这样可选列的渲染也能被断言到。
+    func debugCellText(for column: FFListColumn, row: Int) -> String? {
+        let tableColumn = tableView.tableColumns.first { $0.identifier.rawValue == column.rawValue }
+            ?? column.makeColumn()
+        guard let cell = self.tableView(tableView, viewFor: tableColumn, row: row) as? NSTableCellView
+        else { return nil }
+        return cell.textField?.stringValue
+    }
+
+    /// 当前表格行数（自检用；tableView 是 private，外部拿不到）
+    var tableRowCount: Int { tableView.numberOfRows }
+
+    /// 当前表格里真实存在的列 identifier（自检用）
+    var visibleColumnIDs: [String] {
+        tableView.tableColumns.map { $0.identifier.rawValue }
+    }
+
+    /// 因面板太窄被**临时**收起的列（不写进用户设置，窗口变宽会自动回来）
+    private var fittedOutColumns: [String] = []
+    private var isApplyingColumnFit = false
+    /// 上次触发列宽重算时的可用宽度。宽度没变就不重算，避免拖动/布局抖动级联到列重建。
+    private var lastColumnFitWidth: CGFloat = -1
+
+    /// 按面板可用宽度分配列宽：先压到最小宽，仍放不下才整列收起。
+    ///
+    /// 顺序很重要：**先缩后排**。早先直接按 `fitPriority` 收起，默认窗口下
+    /// 双栏各 ~560pt 时「类型」列会被直接丢掉——四列变三列，等于需求没做。
+    /// 现在先把各列压到 `minWidth`，只有压到最小仍放不下才收起。
+    private func applyColumnFit() {
+        guard tableView.numberOfColumns > 0 else { return }
+        // NSTableView 每列之间有 intercellSpacing（默认 3pt），算可用宽度时必须扣掉，
+        // 否则最后一列会超出边界、列头被裁（表现是「修改日期」显示成「修改日」）
+        let spacing = tableView.intercellSpacing.width
+        let available = scrollView.contentSize.width - 2
+            - spacing * CGFloat(FFListColumnsState.visibleColumns().count + 1)
+        guard available > FFListColumn.name.minWidth else { return }
+
+        func preferred(_ c: FFListColumn) -> CGFloat {
+            FFListColumnsState.width(for: c, default: c.defaultWidth)
+        }
+
+        var columns = FFListColumnsState.visibleColumns()
+        var widths: [FFListColumn: CGFloat] = [:]
+        for c in columns { widths[c] = preferred(c) }
+
+        func othersTotal() -> CGFloat {
+            columns.filter { $0 != .name }.reduce(0) { $0 + (widths[$1] ?? 0) }
+        }
+
+        // ① 收缩：从最宽的列开始往 minWidth 压，直到放得下
+        var guardCount = 0
+        while othersTotal() + FFListColumn.name.minWidth > available, guardCount < 40 {
+            guardCount += 1
+            guard let widest = columns.filter({ $0 != .name && (widths[$0] ?? 0) > $0.minWidth })
+                .max(by: { (widths[$0] ?? 0) < (widths[$1] ?? 0) }) else { break }
+            let current = widths[widest] ?? widest.minWidth
+            let need = othersTotal() + FFListColumn.name.minWidth - available
+            widths[widest] = max(widest.minWidth, current - need)
+        }
+
+        // ② 仍放不下 → 按 fitPriority 整列收起（说明 → 标签 → 创建日期 → 类型 → 大小 → 修改日期）
+        while othersTotal() + FFListColumn.name.minWidth > available,
+              let drop = columns.filter({ !$0.isRequired })
+                .max(by: { $0.fitPriority < $1.fitPriority }) {
+            columns.removeAll { $0 == drop }
+            widths[drop] = nil
+        }
+
+        let droppedIDs = FFListColumnsState.visibleColumns()
+            .filter { !columns.contains($0) }.map { $0.rawValue }
+        if droppedIDs != fittedOutColumns {
+            fittedOutColumns = droppedIDs
+            rebuildColumns()
+            // 列集合变了，下一轮把名称列宽度补齐；fittedOutColumns 已记录，
+            // 不会再次触发 drop，因此不会无限递归。
+            DispatchQueue.main.async { [weak self] in
+                self?.applyColumnFit()
+            }
+            return
+        }
+
+        // ③ 名称列吃掉剩余空间
+        let others = columns.filter { $0 != .name }.reduce(0) { $0 + (widths[$1] ?? 0) }
+        widths[.name] = max(FFListColumn.name.minWidth, available - others)
+
+        for col in tableView.tableColumns {
+            guard let c = FFListColumn(rawValue: col.identifier.rawValue),
+                  let target = widths[c], abs(col.width - target) > 0.5 else { continue }
+            col.width = target
+        }
+    }
+
+    /// 标签缓存预热完成：整表刷新一次（此时 getTags 全部命中缓存，不再有 I/O）
+    @objc private func tagCacheWarmed(_ note: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.reloadData()
+        }
+    }
+
+    @objc private func listColumnsDidChange() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            // 可见列变了：即使宽度没变也要重新 fit 一次。
+            self.lastColumnFitWidth = -1
+            self.rebuildColumns()
+            self.tableView.reloadData()
+            self.needsLayout = true
+        }
+    }
+
+    @objc private func columnMenuItemSelected(_ sender: NSMenuItem) {
+        FFListColumnMenu.handleSelection(sender)
+    }
+
+    @objc private func columnDidResize(_ note: Notification) {
+        guard let table = note.object as? NSTableView, table === tableView else { return }
+        for col in table.tableColumns {
+            guard let c = FFListColumn(rawValue: col.identifier.rawValue) else { continue }
+            FFListColumnsState.setWidth(col.width, for: c)
+        }
+    }
+
+    /// 元信息列文字色：隐藏文件用 tertiary，与名称列语义一致
+    private func metaColor(_ entry: FileEntry) -> NSColor {
+        entry.isHidden ? NSColor.tertiaryLabelColor : NSColor.secondaryLabelColor
+    }
+
+    /// 把一个「纯文本」单元格配置好（元信息列共用）
+    private func configureTextCell(_ cellView: FFTableCellView,
+                                   text: String,
+                                   alignment: NSTextAlignment,
+                                   color: NSColor) {
+        guard let tf = cellView.textField else { return }
+        tf.font = FFDesign.Text.sm
+        tf.alignment = alignment
+        tf.stringValue = text
+        tf.textColor = color
+    }
+
+    // MARK: - Context Menu (in-app dialog, no NSOpenPanel/NSSavePanel)
+
+    private func setupContextMenu() {
+        // 统一由 FFPaneMenuBuilder 构建，target 为 actionsController（操作逻辑由控制器统一处理）
+        let menu = FFPaneMenuBuilder.buildMenu(for: actionsController, isLeft: effectiveSide == .left, tagsSubmenu: tagsSubmenu)
+        menu.delegate = actionsController
+        tableView.menu = menu
+    }
+
+    // MARK: - Keyboard / External Entry（委托给 actionsController）
+
+    /// 统一键盘入口（MainWindowController 全局 keyDown monitor 调用）：
+    /// 委托给 actionsController 统一处理（QuickLook/重命名/删除，键位经 ShortcutCenter 读设置）。
+    func handlePaneKey(_ event: NSEvent) -> Bool {
+        return actionsController.handlePaneKey(event)
+    }
+
+    // 所有右键菜单 @objc action 方法（renameSelected / deleteSelected / createDirectory /
+    // addToFavorites / showInfoMenu / duplicateScan / generateAITags / copyToOtherPane /
+    // moveToOtherPane / openInOtherPane / addTagMenu）已迁移至 FFPaneActionsController。
+    // 菜单 target 设为 actionsController，无需在此重复实现。
+
+    /// AI 自动打标签入口（供 MainWindowController 侧边栏工具面板调用）
+    public func triggerAITagGeneration() {
+        actionsController.triggerAITagGeneration()
+    }
+
+    // MARK: - Drag Source
+
+    /// 开始拖拽（在 tableView 的 mouseDown 中触发）
+    @objc private func handleTableDrag() {
+        // 任务 F10-8: 通过 displayRows 映射 selectedRow -> viewModel.files 下标
+        guard let viewModel = viewModel,
+              let selectedRow = tableView.selectedRow as Int?,
+              selectedRow >= 0, selectedRow < displayRows.count else { return }
+        let displayRow = displayRows[selectedRow]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return }
+
+        let entry = viewModel.files[displayRow.fileIndex]
+        let url = URL(fileURLWithPath: entry.path)
+
+        let draggingItem = NSDraggingItem(pasteboardWriter: url as NSURL)
+        draggingItem.setDraggingFrame(tableView.rect(ofRow: selectedRow), contents: nil)
+
+        beginDraggingSession(with: [draggingItem], event: NSApp.currentEvent!, source: self)
+    }
+
+    // MARK: - Helpers
+
+    var clickedEntry: FileEntry? {
+        // 任务 F10-8: 通过 displayRows 映射 clickedRow -> viewModel.files 下标
+        guard let viewModel = viewModel,
+              let row = tableView.clickedRow as Int?,
+              row >= 0, row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return nil }
+        return viewModel.files[displayRow.fileIndex]
+    }
+
+    private func getSide() -> String {
+        // 修复问题 2（右操作区 QuickLook 不可用根因）：此前用 identifier?.rawValue，
+        // 但 identifier 在 setup 时尚未注入（MainWindowController 在 init 后才设），
+        // 导致右面板 getSide() 也返回 "left"。改用已注入的 panelSide（line 619 设）。
+        if let panelSide = panelSide {
+            return panelSide == .right ? "right" : "left"
+        }
+        return identifier?.rawValue ?? "left"
+    }
+
+    // MARK: - 拖拽撤销辅助（无限撤销/重做闭环）
+
+    /// 撤销"拖拽移动"：把文件移回源位置，并同步注册 redo（redoDragMove）。
+    /// redoDragMove 处理器内又会注册反向 undo（= undoDragMove），从而形成无限撤销/重做闭环：
+    /// 撤销→重做→撤销→重做…可无限进行。文件操作经 undoRedoQueue 串行化，排队在上一操作之后，避免竞态。
+    func undoDragMove(pairs: [(src: String, dst: String)], counterpart: PaneViewModel?, actionName: String) {
+        // 必须先注册 redo 再排队文件操作：registerUndo 在撤销会话内（isUndoing）会路由到 redo 栈，
+        // 而文件操作异步执行，需先建立 redo 栈再排队，否则重做栈可能为空。
+        undoManager?.registerUndo(withTarget: self) { [weak counterpart] view in
+            view.redoDragMove(pairs: pairs, counterpart: counterpart, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self, weak counterpart] in
+            for (src, dst) in pairs {
+                try? CoreBridge.shared.moveFile(src: dst, dst: src)
+            }
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+                counterpart?.refresh()
+            }
+        }
+    }
+
+    /// 重做"拖拽移动"：把文件再次移动到目标位置（与初始移动相同）。
+    /// 处理器内同步注册反向 undo（undoDragMove，路由到 undo 栈，isRedoing == true），
+    /// 从而形成无限撤销/重做闭环。
+    func redoDragMove(pairs: [(src: String, dst: String)], counterpart: PaneViewModel?, actionName: String) {
+        // 先注册反向 undo 再排队文件操作：registerUndo 在重做会话内（isRedoing）路由到 undo 栈。
+        undoManager?.registerUndo(withTarget: self) { [weak counterpart] view in
+            view.undoDragMove(pairs: pairs, counterpart: counterpart, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self, weak counterpart] in
+            for (src, dst) in pairs {
+                try? CoreBridge.shared.moveFile(src: src, dst: dst)
+            }
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+                counterpart?.refresh()
+            }
+        }
+    }
+
+    /// 撤销"拖拽复制"：删除复制项，并同步注册 redo（redoDragCopy）。
+    /// redoDragCopy 处理器内又会注册反向 undo（= undoDragCopy），从而形成无限撤销/重做闭环：
+    /// 撤销→重做→撤销→重做…可无限进行。文件操作经 undoRedoQueue 串行化，排队在上一操作之后，避免竞态。
+    func undoDragCopy(pairs: [(src: String, dst: String)], counterpart: PaneViewModel?, actionName: String) {
+        // 必须先注册 redo 再排队文件操作：registerUndo 在撤销会话内（isUndoing）会路由到 redo 栈，
+        // 而文件操作异步执行，需先建立 redo 栈再排队，否则重做栈可能为空。
+        undoManager?.registerUndo(withTarget: self) { [weak counterpart] view in
+            view.redoDragCopy(pairs: pairs, counterpart: counterpart, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self, weak counterpart] in
+            for (_, dst) in pairs {
+                try? CoreBridge.shared.deleteFile(path: dst)
+            }
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+                counterpart?.refresh()
+            }
+        }
+    }
+
+    /// 重做"拖拽复制"：重新复制目标文件（与初始复制相同）。
+    /// 处理器内同步注册反向 undo（undoDragCopy，路由到 undo 栈，isRedoing == true），
+    /// 从而形成无限撤销/重做闭环。
+    func redoDragCopy(pairs: [(src: String, dst: String)], counterpart: PaneViewModel?, actionName: String) {
+        // 先注册反向 undo 再排队文件操作：registerUndo 在重做会话内（isRedoing）路由到 undo 栈。
+        undoManager?.registerUndo(withTarget: self) { [weak counterpart] view in
+            view.undoDragCopy(pairs: pairs, counterpart: counterpart, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        MainWindowController.undoRedoQueue.async { [weak self, weak counterpart] in
+            for (src, dst) in pairs {
+                try? CoreBridge.shared.copyFile(src: src, dst: dst)
+            }
+            DispatchQueue.main.async {
+                self?.viewModel?.refresh()
+                counterpart?.refresh()
+            }
+        }
+    }
+
+    private func showError(error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "错误"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "好")
+        if let window = window { alert.beginSheetModal(for: window) { _ in } }
+    }
+
+    // MARK: - C12: Inline Tag Pills（名称列双行标签药丸）
+
+    /// 名称列 cell 双行标签药丸配置：
+    /// - 名称列 cell 结构（双行）：
+    ///   上行：[文件图标] [文件名]
+    ///   下行：[标签药丸容器]（横向排列，最多 3 个药丸 + "+N"）
+    /// - 无标签时药丸容器隐藏，行高保持基础单行高度（22/26/32，随密度档位，Wave4 Task 4）
+    /// - 有标签时药丸容器显示在文件名下方，行高增加（42/48/56 随档位联动）
+    /// - 药丸不响应左键点击（仅显示），右键可弹出移除标签菜单
+    private func configureInlineTagPills(in cellView: NSTableCellView, entry: FileEntry) {
+        guard let textField = cellView.textField else { return }
+        // v0.6.9: 根据 showFileTags 设置决定是否显示标签药丸
+        let showTags = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileTags) as? Bool ?? true
+        let containerID = "inlineTagPillContainer"
+        // 复用已存在的容器（cell 复用时避免重复创建）
+        var pillContainer: NSStackView? = nil
+        for sv in cellView.subviews {
+            if let stack = sv as? NSStackView, stack.identifier?.rawValue == containerID {
+                pillContainer = stack
+                break
+            }
+        }
+        // v0.6.9: 若关闭标签显示，隐藏药丸容器并返回
+        if !showTags {
+            pillContainer?.isHidden = true
+            return
+        }
+        if pillContainer == nil {
+            // 双行布局：药丸容器位于文件名下方（而非右侧）
+            let stack = NSStackView()
+            stack.identifier = NSUserInterfaceItemIdentifier(containerID)
+            stack.orientation = .horizontal
+            stack.alignment = .centerY
+            stack.spacing = 4
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            stack.setHuggingPriority(.defaultLow, for: .horizontal)
+            stack.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+            cellView.addSubview(stack)
+            NSLayoutConstraint.activate([
+                // 色点靠名称列右缘、垂直居中（需求 #11：单行 30pt，标签不撑高行）
+                stack.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                stack.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                // 名称过长时先省略名称，色点不被挤压
+                stack.leadingAnchor.constraint(greaterThanOrEqualTo: textField.trailingAnchor, constant: 6),
+            ])
+            pillContainer = stack
+        }
+
+        // 清除旧药丸
+        pillContainer?.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        // 获取文件标签并填充药丸
+        // 2026-10-20 #4：只读缓存（渲染路径不做 xattr I/O），预热完成后由通知触发刷新
+        let tags = TagBridge.shared.cachedTags(path: entry.path)
+        if tags.isEmpty {
+            pillContainer?.isHidden = true
+        } else {
+            pillContainer?.isHidden = false
+            // 最多显示 3 个药丸，超出显示 "+N"
+            for tag in tags.prefix(4) {
+                if let pill = makeTagPill(tag: tag) {
+                    // 每个药丸独立右键菜单：右键任意位置 → "移除标签"（仅移除该文件的此标签）
+                    let menu = NSMenu()
+                    menu.autoenablesItems = false
+                    let item = NSMenuItem(title: "移除标签", action: #selector(removeTagByNameFromPill(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = ["tagName": tag.name, "path": entry.path]
+                    menu.addItem(item)
+                    pill.menu = menu
+                    pillContainer?.addArrangedSubview(pill)
+                }
+            }
+            if tags.count > 4 {
+                if let countPill = makeCountPill(count: tags.count - 4) {
+                    pillContainer?.addArrangedSubview(countPill)
+                }
+            }
+        }
+    }
+
+    /// 需求 #11：名称后最多 4 个 6pt 色点（不再用药丸，也不撑高行）
+    private func makeTagPill(tag: Tag) -> NSView? {
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = (NSColor(hex: tag.color) ?? .systemBlue).cgColor
+        dot.layer?.cornerRadius = 3
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
+        dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+        dot.toolTip = tag.name
+        return dot
+    }
+
+    /// 超出 4 个时右侧的 "+N"（11pt secondary，不占行高）
+    private func makeCountPill(count: Int) -> NSView? {
+        let label = NSTextField(labelWithString: "+\(count)")
+        label.font = NSFont.systemFont(ofSize: 10)
+        label.textColor = NSColor.secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }
+
+    /// 任务 F10-8 / F11-5: 创建分组标题行的 cell。
+    ///
+    /// 任务 F11-5 重叠 bug 修复：标题文字（分组名 + 计数）完全由 FFSectionHeaderRowView.draw()
+    /// 统一绘制，cell 仅作为 NSTableView 列填充的透明占位（避免列错位），不显示任何文本。
+    /// 此前 cell 内的 NSTextField 与 rowView.draw 同时绘制标题，造成重影（问题14）。
+    private func makeSectionHeaderCell(tableView: NSTableView, tableColumn: NSTableColumn?, key: String) -> NSView? {
+        let cellView = tableView.makeView(withIdentifier: sectionHeaderCellID, owner: self) as? NSTableCellView
+            ?? NSTableCellView()
+        cellView.identifier = sectionHeaderCellID
+        cellView.wantsLayer = true
+        cellView.layer?.backgroundColor = NSColor.clear.cgColor
+        // 透明占位：不添加 textField，不清空已存在的 textField（复用时可能残留旧 cellView，
+        // 但 makeView(withIdentifier:) 在我们未设置 textField 的前提下不会创建文本视图）。
+        // 显式置空以防复用残留导致重影。
+        cellView.textField?.stringValue = ""
+        return cellView
+    }
+
+    public func reloadData() {
+        let signpost = FFPerf.begin("Render.list")
+        defer { FFPerf.end("Render.list", signpost) }
+        // Wave3 Task 1/2: reload 后行视图全部重建，Drop 高亮与驻留计时一并复位
+        clearDragVisualState()
+        // 任务 F10-8: 重建分组显示行映射后再 reload tableView
+        rebuildDisplayRows()
+        // 活体验收缺陷修复（列表重复行）：reloadData 已按「当前完整 state」全量重建
+        // displayRows，追加检测基准必须随之同步——否则 viewModel didSet / 外部 reloadData
+        // 把 displayRows 重建到 N 行后 lastFilesCount 仍是旧值（如 0），下一个 state 发射
+        // 会被 sink 的 needReload 判为「数量增加」且满足 isAppendOnly（排序/分组未变），
+        // 走 appendDisplayRows 把整表再拼一遍（实测：9 项列表显示 18 行、9 条目恰好重复两遍，
+        // 而状态栏仍按 state.files 显示「9 项」）。
+        syncTrackersWithCurrentState()
+        // Bug 9 修复：reloadData 可能引起 selectionDidChange 回调（行被清空/重建），
+        // 若不抑制则会触发 viewModel.state.selectedFiles 变更 -> @Published 发射 ->
+        // 上游 sink 再次 reloadData，形成循环。设置标志位并在下一 runloop 复位，
+        // 既能覆盖同步触发的回调，也能覆盖同 runloop 内异步派发的回调。
+        isReloading = true
+        tableView?.reloadData()
+        // 任务 F10-8: 分组渲染后恢复选中行的显示（基于 viewModel.state.selectedFiles 的路径）
+        restoreSelectionFromViewModel()
+        // 任务 F11-5: 数据变更后刷新粘性标题（分组维度/内容可能变化）
+        updateStickyHeader()
+        DispatchQueue.main.async { [weak self] in
+            self?.isReloading = false
+            // reload 后行视图坐标可能尚未更新，下一 runloop 再刷新一次粘性标题
+            self?.updateStickyHeader()
+        }
+    }
+
+    /// 活体验收缺陷修复（列表重复行）：把追加检测基准同步为当前 state。
+    /// reloadData 走全量重建，displayRows 与「当前完整 state.files」严格一一对应，
+    /// 因此 lastFilesCount / 分组 / 排序基准必须取当前值——sink 的下一个发射只需
+    /// 关心「之后的真实变化」。didSet 重绑订阅与外部 reloadData 均经由此方法对齐。
+    private func syncTrackersWithCurrentState() {
+        guard let viewModel = viewModel else {
+            lastFilesCount = -1
+            currentGroupBy = "none"
+            currentSortField = .name
+            currentSortAscending = true
+            return
+        }
+        lastFilesCount = viewModel.state.files.count
+        currentGroupBy = viewModel.state.groupBy
+        currentSortField = viewModel.state.sortField
+        currentSortAscending = viewModel.state.sortAscending
+    }
+
+    /// 当前表格实际显示的行数（internal 只读，供单元测试断言「无重复行」）。
+    var numberOfDisplayedRows: Int {
+        return tableView?.numberOfRows ?? 0
+    }
+
+    /// 任务 F11-5: 更新粘性分组标题（仿访达）。
+    ///
+    /// 算法：根据 clipView 当前可见区域的顶部 Y（document 坐标系），找到该位置所属的分组
+    /// （向上回溯最近的 header 行）。若顶部正好压在某个 header 行的可见区域内，则让粘性标题
+    /// "贴住"该 header 行顶部（视差上推），实现下一分组顶上来时粘性标题被平滑顶替的访达效果。
+    /// groupBy == "none" 时隐藏粘性标题。
+    private func updateStickyHeader() {
+        guard let tableView = tableView, let viewModel = viewModel else { return }
+        // 分组关闭：隐藏粘性标题
+        guard viewModel.state.groupBy != "none" else {
+            stickyHeader?.isHidden = true
+            return
+        }
+        guard !displayRows.isEmpty else {
+            stickyHeader?.isHidden = true
+            return
+        }
+
+        let clipView = scrollView.contentView
+        // clipView 的 bounds.origin.y 是 document 坐标系下可见区域顶部的 Y（NSTableView isFlipped=true）
+        let visibleTopY = clipView.bounds.origin.y
+
+        // 定位可见区域顶部落在哪一行
+        guard visibleTopY >= 0,
+              let topRow = tableView.row(at: NSPoint(x: 0, y: visibleTopY + 1)) as Int?,
+              topRow >= 0, topRow < displayRows.count else {
+            // 顶部点未命中任何行（如表格尚未布局完成或行高未就绪）：保守隐藏，避免显示错误分组
+            stickyHeader?.isHidden = true
+            return
+        }
+
+        // 从 topRow 向上找最近的 header 行（当前所属分组）
+        var headerRow = topRow
+        while headerRow > 0 && !displayRows[headerRow].isHeader {
+            headerRow -= 1
+        }
+        guard displayRows[headerRow].isHeader else {
+            stickyHeader?.isHidden = true
+            return
+        }
+
+        // 当前粘性分组信息
+        let currentKey = displayRows[headerRow].key
+        let currentCount = sectionCount(forKey: currentKey)
+
+        // 判断当前 header 行是否已被顶部完全裁切：
+        // - 若 header 仍有部分处于可见区顶部（headerBottomInDoc > visibleTopY 且 headerTopInDoc <= visibleTopY），
+        //   则隐藏粘性标题，让行内标题显示（避免重影）；
+        // - 若 header 已完全滚出顶部（headerBottomInDoc <= visibleTopY），显示粘性标题。
+        let headerRect = tableView.rect(ofRow: headerRow)
+        let headerTopInDoc = headerRect.origin.y
+        let headerBottomInDoc = headerTopInDoc + headerRect.height
+
+        if headerBottomInDoc > visibleTopY && headerTopInDoc <= visibleTopY {
+            // header 仍部分可见：隐藏粘性标题，让行内标题显示
+            stickyHeader?.isHidden = true
+            return
+        }
+        // header 已完全滚出顶部：显示粘性标题
+        applySticky(title: currentKey, count: currentCount)
+    }
+
+    /// 取指定分组键的文件数量
+    private func sectionCount(forKey key: String) -> Int {
+        return viewModel?.groupedFiles.first(where: { $0.key == key })?.entries.count ?? 0
+    }
+
+    /// 应用粘性标题内容（统一入口，便于未来扩展）
+    private func applySticky(title: String, count: Int) {
+        guard let sticky = stickyHeader else { return }
+        sticky.configure(title: title, count: count)
+        sticky.needsDisplay = true
+    }
+
+    /// 任务 F10-8: 根据 viewModel.state.selectedFiles 恢复 tableView 的选中行。
+    /// 分组渲染后行号与 viewModel.files 下标不再一一对应，reload 会清空选中，
+    /// 需通过路径匹配找到对应的显示行号并重新选中。
+    private func restoreSelectionFromViewModel() {
+        guard let viewModel = viewModel else { return }
+        let selectedPaths = Set(viewModel.state.selectedFiles.map { $0.path })
+        guard !selectedPaths.isEmpty else { return }
+        var indices: [Int] = []
+        for (rowNum, row) in displayRows.enumerated() where !row.isHeader {
+            if row.fileIndex < viewModel.state.files.count,
+               selectedPaths.contains(viewModel.state.files[row.fileIndex].path) {
+                indices.append(rowNum)
+            }
+        }
+        if !indices.isEmpty {
+            // 使用 IndexSet 选中多行（不触发 selectionDidChange 循环：isReloading 仍为 true）
+            tableView?.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
+        }
+    }
+
+    // MARK: - Layout
+
+    // 任务 F7: 显式同步 appearance，确保选中色解析正确（v0.6.5）
+    // FileListView 是 NSView（非 NSViewController），无 viewDidLayout；改用 layout()。
+    // layout() 在布局变更时被频繁调用，appearance 赋值是轻量指针赋值，开销可忽略。
+    public override func layout() {
+        super.layout()
+        tableView.appearance = NSApp.appearance
+        // 任务 F11-5: 布局变化（列宽/窗口尺寸）后刷新粘性标题宽度与位置
+        updateStickyHeader()
+        // 2026-10-20 #3：列宽要在布局稳定后才算得准，且改列会再触发布局
+        // —— 用异步 + 标志位断开递归。
+        // 2026-10-20 第七轮：只有宽度真正变化才重算；插入线/拖动不再触发列重建。
+        guard !isApplyingColumnFit,
+              FFColumnFitPolicy.shouldFit(previousWidth: lastColumnFitWidth,
+                                          currentWidth: bounds.width) else { return }
+        lastColumnFitWidth = bounds.width
+        isApplyingColumnFit = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isApplyingColumnFit = false
+            self.applyColumnFit()
+        }
+    }
+
+    /// 任务 F7: 供外部（MainWindowController 主题监听）显式刷新 appearance（v0.6.5）
+    /// 任务 F11-1: 同时刷新 tableView 实体背景色（日间/夜间切换，v0.6.7）
+    public func refreshAppearance() {
+        tableView.appearance = NSApp.appearance
+        // 任务 F11-1: 主题切换时同步刷新 tableView 实体背景色
+        // Wave4 Task 3：改读 FFDesign.operationAreaBackground 统一令牌（按 isDark 即时解析）
+        tableView.backgroundColor = FFDesign.operationAreaBackground
+        // 任务 F11-5: 主题切换时刷新粘性标题重绘（语义色自动解析，需触发 needsDisplay）
+        stickyHeader?.needsDisplay = true
+        updateStickyHeader()
+    }
+
+    // MARK: - Double Click
+
+    @objc private func handleDoubleClick() {
+        // 任务 F10-8: 通过 displayRows 映射 clickedRow -> viewModel.files 下标
+        guard let viewModel = viewModel,
+              let row = tableView.clickedRow as Int?,
+              row >= 0, row < displayRows.count else { return }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return }
+        let entry = viewModel.files[displayRow.fileIndex]
+        onDoubleClick?(entry)
+    }
+}
+
+// MARK: - NSTableViewDataSource
+
+extension FileListView: NSTableViewDataSource {
+    public func numberOfRows(in tableView: NSTableView) -> Int {
+        // 任务 F10-8: 返回显示行数（含分组标题行）
+        return displayRows.count
+    }
+
+    public func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        guard let descriptor = tableView.sortDescriptors.first,
+              let viewModel = viewModel else { return }
+        let key = descriptor.key ?? "name"
+        let field: SortField
+        switch key {
+        case "name": field = .name
+        case "modifiedAt": field = .modifiedAt
+        case "type": field = .type
+        case "size": field = .size
+        default:
+            // 占位 key（用户关掉了大小/类型列时产生）不能回落成 .name，
+            // 否则排序会被悄悄改掉——直接忽略。
+            return
+        }
+        // G3: 显式 reloadData 删除——setSortField → applySort → state.files @Published
+        // sink 已触发 reloadData，保留此处会每次排序双重全量 reload。
+        viewModel.setSortField(field, ascending: descriptor.ascending)
+    }
+}
+
+// MARK: - NSTableViewDelegate
+
+extension FileListView: NSTableViewDelegate {
+    public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        // 任务 F10-8: 分组标题行单独渲染
+        guard row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+
+        if displayRow.isHeader {
+            // 分组标题行：仅名称列渲染标题文本（跨列视觉效果由 rowView 背景实现）
+            // 其他列返回空 cell，保持列对齐
+            return makeSectionHeaderCell(tableView: tableView, tableColumn: tableColumn, key: displayRow.key)
+        }
+
+        guard let viewModel = viewModel, displayRow.fileIndex < viewModel.files.count else { return nil }
+        let entry = viewModel.files[displayRow.fileIndex]
+
+        let cellID = NSUserInterfaceItemIdentifier(tableColumn?.identifier.rawValue ?? "")
+        // 使用 FFTableCellView：背景保持透明（.clear），让 NSTableRowView 的标准
+        // drawSelection 选中绘制可见。cellView 自身不参与选中绘制。
+        let cellView = tableView.makeView(withIdentifier: cellID, owner: self) as? FFTableCellView
+            ?? FFTableCellView()
+        cellView.identifier = cellID
+        cellView.wantsLayer = true
+        cellView.layer?.backgroundColor = NSColor.clear.cgColor
+
+        // Ensure text field exists (NSTableCellView handles layout)
+        if cellView.textField == nil {
+            let tf = NSTextField(labelWithString: "")
+            tf.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            tf.lineBreakMode = .byTruncatingTail
+            // 任务 F5: 文件名截断不换行，不挤压药丸
+            tf.cell?.truncatesLastVisibleLine = true
+            tf.cell?.wraps = false
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            cellView.addSubview(tf)
+            cellView.textField = tf
+            NSLayoutConstraint.activate([
+                tf.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
+                tf.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+            ])
+        }
+
+        switch tableColumn?.identifier.rawValue {
+        case "name":
+            // v0.6.9: 根据 showFileExtensions 设置决定是否显示文件后缀
+            let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
+            let displayName = showExtensions ? entry.name : entry.displayName
+            cellView.textField?.stringValue = displayName
+            // T13: 无障碍标签：文件名 + 类型 + 大小（VoiceOver 可读）
+            cellView.setAccessibilityLabel(FileEntryAccessibility.label(for: entry))
+            // v0.7.4 决定性诊断：打印实际渲染到 cell 的文件名（仅 row 0 和包含改名关键词时）
+            if row < 3 || entry.name.contains("logo") || entry.name.contains("测试") {
+                FFDebug.log("[RENDER-DIAG] viewFor row=\(row) entry.name=\(entry.name) displayAs=\(displayName) path=\(entry.path)")
+            }
+            // 隐藏文件灰色，系统保护文件红色
+            if entry.isSystemProtected {
+                cellView.textField?.textColor = NSColor.systemRed
+            } else if entry.isHidden {
+                cellView.textField?.textColor = NSColor.tertiaryLabelColor
+            } else {
+                cellView.textField?.textColor = NSColor.labelColor
+            }
+            // 使用 Auto Layout 约束布局 imageView，避免手动 frame 冲突
+            // 双行布局：图标和文件名在上方行，标签药丸在下方行
+            if cellView.imageView == nil {
+                let iv = NSImageView()
+                iv.imageScaling = .scaleProportionallyDown
+                iv.translatesAutoresizingMaskIntoConstraints = false
+                cellView.imageView = iv
+                cellView.addSubview(iv)
+                // 任务 F11-5: 基础 leading constant 4，分组开启时由下方缩进逻辑动态调整。
+                // 保存约束引用到 cellView，便于复用时按分组状态调整 constant。
+                let leadingC = iv.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4)
+                NSLayoutConstraint.activate([
+                    leadingC,
+                    // 2026-10-20 #10：图标与文字共用行中线（不再是顶部对齐）。
+                    // 顶部对齐只在 26pt 行高下恰好等于居中，换密度档位就偏了。
+                    iv.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                    iv.widthAnchor.constraint(equalToConstant: 18),
+                    iv.heightAnchor.constraint(equalToConstant: 18),
+                ])
+                cellView.nameLeadingConstraint = leadingC
+                // 更新 textField 的 leading 和垂直约束
+                if let tf = cellView.textField {
+                    // 移除旧的 leading 和 centerY 约束，改为双行布局
+                    cellView.removeConstraints(cellView.constraints.filter {
+                        $0.firstItem === tf && ($0.firstAttribute == .leading
+                                                 || $0.firstAttribute == .centerY
+                                                 || $0.firstAttribute == .top)
+                    })
+                    tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 4).isActive = true
+                    // 2026-10-20 #10：文字与图标共用同一条水平中线
+                    tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor).isActive = true
+                }
+            }
+            // 任务 F11-5: 分组内文件缩进（仿访达）。
+            // groupBy != "none" 时文件行图标整体右移 16pt，对齐访达分组内文件的缩进层级。
+            // groupBy == "none" 时恢复无缩进（base constant 4），保证非分组视图不受影响。
+            let isGrouped = (viewModel.state.groupBy != "none")
+            cellView.nameLeadingConstraint?.constant = isGrouped ? 20 : 4
+
+            // 任务 F11-7: 卡顿修复 - NSWorkspace.shared.icon 异步化 + 应用层缓存。
+            // 原实现每次 viewFor 都在主线程同步调用 NSWorkspace.shared.icon(forFile:)，
+            // 大目录（数百文件）下叠加 LaunchServices 同步查询造成明显卡顿。
+            // 现改为：
+            // 1) 先查应用层缓存（workspaceIconCache），命中则同步显示（O(1) 内存查找）
+            // 2) 未命中先显示通用占位图标（folder/doc），再后台异步获取真实图标
+            // 3) 回调主线程更新 imageView，校验 cell 仍显示同一文件（复用安全）
+            // 目录用 folder 占位，文件用 doc 占位（与 FileGridView 一致）
+            let iconPointSize: CGFloat = 18
+            let path = entry.path
+            // 先更新 iconPath 标记并复位缩略图标志（cell 重新绑定文件）
+            cellView.iconPath = path
+            cellView.didReceiveThumbnail = false
+            // 需求 #11b：标准位置目录（桌面/下载/文稿/…）按语义色合成图标，
+            // 其余目录与文件仍走 NSWorkspace 真实图标 + 缩略图。
+            if entry.isDirectory, let standardIcon = FFStandardLocationIcon.icon(forPath: path) {
+                cellView.imageView?.image = standardIcon
+            } else if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: iconPointSize) {
+                cellView.imageView?.image = cached
+            } else {
+                // 占位图标：目录用 folder，文件用 doc（缩略图返回前先显示）
+                // 占位图标走 Lucide（真实图标由 NSWorkspace 异步补上）
+                let placeholderName: FFIconName = entry.isDirectory ? .folder : .file
+                let placeholder = FFIcon.image(placeholderName,
+                                               size: iconPointSize,
+                                               color: .secondaryLabelColor)
+                cellView.imageView?.image = placeholder
+
+                // 后台异步获取真实工作区图标
+                ThumbnailManager.shared.fetchWorkspaceIcon(for: path, pointSize: iconPointSize) { [weak cellView] image in
+                    guard let image = image else { return }
+                    // 校验 cell 仍显示同一文件（含目录，复用安全，避免旧请求覆盖新 cell）
+                    guard let cell = cellView, cell.iconPath == path else { return }
+                    // 缩略图优先级更高：若缩略图已返回则不覆盖（避免用工作区图标盖掉缩略图）
+                    guard !cell.didReceiveThumbnail else { return }
+                    cell.imageView?.image = image
+                }
+            }
+
+            // 任务 F8: 缩略图加载层修复（v0.6.5）
+            // 1) 取消该 cell 上一次的缩略图请求（避免旧请求覆盖新 cell）
+            // 2) 回调校验改为完整路径（避免同名文件误覆盖）
+            // 3) 先显示文件类型图标作为占位，缩略图返回后再替换
+            // 注意：路径校验用 cellView.currentFilePath 而非 cellView.identifier，
+            // 因为 identifier 被 NSTableView 的复用机制依赖（见 makeView(withIdentifier:)）。
+            if !entry.isDirectory {
+                let path = entry.path
+                // 取消旧请求（用 cell 的 currentFilePath 记录上一次路径）
+                if let oldPath = cellView.currentFilePath, oldPath != path {
+                    ThumbnailManager.shared.cancelGeneration(for: oldPath)
+                }
+                // 更新 cell 的当前路径标记
+                cellView.currentFilePath = path
+
+                // ThumbnailManager 的 completion 已在主线程回调，
+                // 此处无需再包 DispatchQueue.main.async。
+                ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 32, height: 32)) { [weak cellView] image in
+                    guard let image = image else { return }
+                    // 校验 cell 仍显示同一文件（用完整路径而非文件名）
+                    guard let cell = cellView,
+                          cell.currentFilePath == path else { return }
+                    // 任务 F11-7: 标记已收到缩略图，阻止后续工作区图标回调覆盖
+                    cell.didReceiveThumbnail = true
+                    cell.imageView?.image = image
+                }
+            } else {
+                // 目录不加载缩略图：workspaceIcon 已在上方设置（文件夹图标），
+                // 此处仅清除路径标记，避免旧回调误覆盖目录图标。
+                cellView.currentFilePath = nil
+            }
+
+            // C12: 内联标签药丸容器（位于文件名右侧、cell 右侧）
+            // 名称列 cell 结构：[文件图标] [文件名] [标签药丸容器]
+            configureInlineTagPills(in: cellView, entry: entry)
+
+        case "kind":
+            configureTextCell(cellView, text: entry.kindDescription, alignment: .left,
+                              color: metaColor(entry))
+
+        case "size":
+            configureTextCell(cellView, text: entry.formattedSize, alignment: .right,
+                              color: metaColor(entry))
+
+        case "modified":
+            configureTextCell(cellView, text: entry.formattedModificationDate, alignment: .left,
+                              color: metaColor(entry))
+
+        case "created":
+            configureTextCell(cellView, text: entry.formattedCreationDate, alignment: .left,
+                              color: metaColor(entry))
+
+        case "tags":
+            // 标签列：色点用「●」+ 名称，多个标签以「、」分隔；无标签显示空
+            let tags = TagBridge.shared.getTags(path: entry.path)
+            configureTextCell(cellView,
+                              text: tags.map { $0.name }.joined(separator: "、"),
+                              alignment: .left,
+                              color: metaColor(entry))
+
+        case "comment":
+            // 说明列：走 Spotlight 元数据（有缓存先显示，未命中异步补）
+            if let cached = FFFinderCommentCache.shared.cachedComment(for: entry.path) {
+                configureTextCell(cellView, text: cached, alignment: .left, color: metaColor(entry))
+            } else {
+                configureTextCell(cellView, text: "—", alignment: .left,
+                                  color: NSColor.tertiaryLabelColor)
+                let path = entry.path
+                FFFinderCommentCache.shared.fetchComment(for: path) { [weak self, weak cellView] comment in
+                    guard let self, let comment, let cellView,
+                          cellView.textField?.stringValue == "—" else { return }
+                    // 复用安全：只有仍显示该文件时才刷新（用 iconPath 作为绑定标记）
+                    guard cellView.iconPath == nil || cellView.iconPath == path else { return }
+                    self.configureTextCell(cellView, text: comment, alignment: .left,
+                                           color: self.metaColor(entry))
+                }
+            }
+
+        default:
+            break
+        }
+
+        return cellView
+    }
+
+    public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        // 任务 F10-8 / F11-5: 分组标题行高度 24（仿访达，留出标题+计数徽章+底部分隔线空间）
+        // 需求 #11：标签改为名称后的色点，不再撑高行——所有文件行统一走密度档位（26/30/36）
+        let density = FFListDensity.current
+        guard row < displayRows.count else { return density.baseRowHeight }
+        let displayRow = displayRows[row]
+        if displayRow.isHeader { return 24 }
+        return density.baseRowHeight
+    }
+
+    // MARK: - Wave4 Task 4: 列表密度切换
+
+    /// 设置页（或将来其他入口）切换密度后：重读档位并整表刷新行高
+    @objc private func listDensityDidChange() {
+        tableView.rowHeight = FFListDensity.current.baseRowHeight
+        reloadData()
+    }
+
+    /// 返回自定义 FFTableRowView。标准 NSTableRowView.drawSelection 已能正确绘制
+    /// 选中高亮（key window + firstResponder 时为强调蓝色），FFTableRowView 当前
+    /// 仅作为扩展点保留（如将来添加 hover 效果），不覆盖任何绘制方法。
+    /// 任务 F10-8: 分组标题行返回 FFSectionHeaderRowView（绘制浅灰背景 + 标题）。
+    public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        guard row < displayRows.count else { return FFTableRowView() }
+        if displayRows[row].isHeader {
+            let hv = FFSectionHeaderRowView()
+            hv.sectionTitle = displayRows[row].key
+            // 任务 F11-5: 传入分组内文件数量，用于绘制计数徽章
+            hv.sectionCount = viewModel?.groupedFiles.first(where: { $0.key == displayRows[row].key })?.entries.count ?? 0
+            return hv
+        }
+        // DESIGN-SPEC C-04：显式指定 .regular，让行视图自己负责选中绘制。
+        // 委托创建的 row view 其 selectionHighlightStyle 默认为 .none，此时 NSTableView
+        // 会用系统强调色自己画——这正是「列表蓝、侧栏与网格红」的成因。
+        let rowView = FFTableRowView()
+        rowView.selectionHighlightStyle = .regular
+        return rowView
+    }
+
+    public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        FFDebug.log("shouldSelectRow row=\(row) firstResponder=\(tableView.window?.firstResponder === tableView)")
+        // 任务 F10-8: 分组标题行不可选
+        guard row < displayRows.count else { return true }
+        return !displayRows[row].isHeader
+    }
+
+    // Bug #2 修复：实现拖拽源方法，使表格行可作为拖拽提供者
+    // 此前 handleTableDrag() 为死代码，NSTableViewDelegate 未实现 pasteboardWriterForRowAt:，
+    // 导致拖拽完全不生效。现在由 NSTableView 标准机制驱动拖拽。
+    public func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 else { return nil }
+        let entry = viewModel!.files[displayRow.fileIndex]
+        return NSURL(fileURLWithPath: entry.path)
+    }
+
+    // MARK: - Drag & Drop Destination
+
+    /// Wave3 Task 1: 更新 Drop 目标行高亮（换行先清旧行，再设新行；nil = 清除）。
+    /// 通过 rowView 状态位 + needsDisplay 重绘（invalidateRow 语义），不做动画堆叠。
+    private func updateDropHighlight(row: Int?) {
+        guard dropHighlightRow != row else { return }
+        if let oldRow = dropHighlightRow,
+           let oldView = tableView.rowView(atRow: oldRow, makeIfNecessary: false) as? FFTableRowView {
+            oldView.isDropTarget = false  // didSet 内自动置 needsDisplay
+        }
+        dropHighlightRow = row
+        if let newRow = row,
+           let newView = tableView.rowView(atRow: newRow, makeIfNecessary: false) as? FFTableRowView {
+            newView.isDropTarget = true
+        }
+    }
+
+    /// Wave3 Task 1: 清除 Drop 目标行高亮（换目标/退出/落包/会话结束四路复位共用）。
+    private func clearDropHighlight() {
+        guard let row = dropHighlightRow else { return }
+        dropHighlightRow = nil
+        if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? FFTableRowView {
+            rowView.isDropTarget = false
+        }
+    }
+
+    /// Wave3 Task 2: 更新 Spring Loading 驻留计时。
+    /// 目标文件夹变化时重启 1.0s 计时（DispatchWorkItem 可取消）；目标变化/退出立即取消；
+    /// 同一文件夹在一次拖拽会话内只触发一次（防重入）。
+    private func updateSpringLoading(folderPath: String?) {
+        guard let folderPath = folderPath, !springFiredPaths.contains(folderPath) else {
+            cancelSpringLoading()
+            return
+        }
+        // 同一文件夹已在计时中：不重复启动
+        if springTargetPath == folderPath, springLoadingWorkItem != nil { return }
+        cancelSpringLoading()
+        springTargetPath = folderPath
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            // 到期校验：悬停目标仍是该文件夹（中途换行/退出会清掉对应状态）才展开
+            guard self.springTargetPath == folderPath,
+                  self.springTargetPath == self.springHoveredFolderPath() else { return }
+            self.springFiredPaths.insert(folderPath)
+            // 清除拖拽会话视觉状态后驻留展开；拖拽继续，后续落包落新目录（与 Finder 一致）
+            self.clearDragVisualState()
+            self.viewModel?.navigate(to: folderPath)
+        }
+        springLoadingWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: item)
+    }
+
+    /// Wave3 Task 2: 当前悬停的文件夹路径（到期校验用）——以当前高亮行反查条目路径，
+    /// reload 后行下标指向其他条目时自动失配取消，无需额外 stat。
+    private func springHoveredFolderPath() -> String? {
+        guard let row = dropHighlightRow, row >= 0, row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 else { return nil }
+        let entry = viewModel!.files[displayRow.fileIndex]
+        return entry.isDirectory ? entry.path : nil
+    }
+
+    /// Wave3 Task 2: 取消 Spring Loading 驻留计时
+    private func cancelSpringLoading() {
+        springLoadingWorkItem?.cancel()
+        springLoadingWorkItem = nil
+        springTargetPath = nil
+    }
+
+    /// Wave3 Task 2: 清除拖拽进行中的全部视觉状态（高亮 + 驻留计时）。
+    /// 换目标/退出/落包三路复位共用；会话结束另需 endDragSession 清防重入集合。
+    private func clearDragVisualState() {
+        clearDropHighlight()
+        cancelSpringLoading()
+    }
+
+    /// Wave3 Task 2: 拖拽会话结束（落包或取消）——复位全部视觉状态 + 防重入集合
+    private func endDragSession() {
+        clearDragVisualState()
+        springFiredPaths.removeAll()
+    }
+
+    /// 拖拽目标校验：决定是否接受拖拽及操作类型（move/copy）。
+    /// 问题1 修复：通过 NSTableViewDataSource 标准方法接管拖放目标，
+    /// 替代被 tableView 子视图拦截、永不触发的 NSView 层
+    /// draggingEntered/draggingUpdated/performDragOperation。
+    public func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        // 双保险：tableView 是实际注册的拖拽目标，validateDrop 回调的 NSApp.currentEvent
+        // 通常就是拖拽事件，将其修饰键写入 lastDragModifierFlags（与 draggingUpdated 双写）
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
+        // 检查拖拽内容是否包含文件 URL
+        guard let items = info.draggingPasteboard.pasteboardItems, !items.isEmpty else { return [] }
+        let hasFileURL = items.contains { $0.types.contains(.fileURL) }
+
+        // 同目录 / 文件夹拖进自身或子目录 → 整次拖放无操作，连高亮都不出现。
+        let draggedURLs = (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+        var validationDest = viewModel?.currentPath ?? ""
+        if dropOperation == .on, row >= 0, row < displayRows.count {
+            let rowData = displayRows[row]
+            if !rowData.isHeader, rowData.fileIndex < viewModel?.files.count ?? 0 {
+                let entry = viewModel!.files[rowData.fileIndex]
+                if entry.isDirectory { validationDest = entry.path }
+            }
+        }
+        if !draggedURLs.isEmpty,
+           FFFileDropPolicy.validSources(draggedURLs.map { $0.path }, destination: validationDest).isEmpty {
+            clearDragVisualState()
+            return []
+        }
+        // Wave3 Task 1: 计算 Drop 目标高亮行——仅当提案为 .on 且命中文件夹行时高亮该行；
+        // 行间（.above，系统插入线）/文件行/标题行不高亮。无 fileURL 内容时清除高亮。
+        // Wave3 Task 2: 同时解析驻留展开目标（命中文件夹行时启动 1.0s 驻留计时）。
+        var targetRow: Int? = nil
+        var targetFolderPath: String? = nil
+        if hasFileURL, dropOperation == .on, row >= 0, row < displayRows.count {
+            let displayRow = displayRows[row]
+            if !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 {
+                if viewModel!.files[displayRow.fileIndex].isDirectory {
+                    targetRow = row
+                    targetFolderPath = viewModel!.files[displayRow.fileIndex].path
+                }
+            }
+        }
+        updateDropHighlight(row: targetRow)
+        updateSpringLoading(folderPath: hasFileURL ? targetFolderPath : nil)
+        for item in items {
+            guard item.types.contains(.fileURL) else { continue }
+            // 计算本次判定使用的目标路径（拖到文件夹行上 → 该文件夹；否则 → 当前目录）
+            var destPath = viewModel?.currentPath ?? ""
+            if dropOperation == .on, row < displayRows.count {
+                let displayRow = displayRows[row]
+                if !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 {
+                    let entry = viewModel!.files[displayRow.fileIndex]
+                    if entry.isDirectory {
+                        destPath = entry.path
+                    }
+                }
+            }
+            // 判断目标位置：.on 拖到文件夹行上 → 移入文件夹；.above 拖到行间/空白 → 移到当前目录
+            if dropOperation == .on, row < displayRows.count {
+                let displayRow = displayRows[row]
+                if !displayRow.isHeader, displayRow.fileIndex < viewModel?.files.count ?? 0 {
+                    let entry = viewModel!.files[displayRow.fileIndex]
+                    // 仅文件夹行允许 .on（移入文件夹）；文件行/标题行回退为 .above
+                    if entry.isDirectory {
+                        return isMoveOperation(info, destPath: destPath) ? .move : .copy
+                    }
+                }
+                // 拖到文件行/标题行上 → 改为 .above，避免歧义
+                tableView.setDropRow(row, dropOperation: .above)
+                return isMoveOperation(info, destPath: destPath) ? .move : .copy
+            }
+            return isMoveOperation(info, destPath: destPath) ? .move : .copy
+        }
+        return []
+    }
+
+    /// 接受拖拽并执行文件操作（move/copy）。
+    /// 保留原 performDragOperation 的异步执行 / 撤销注册 / 跨面板刷新 / 部分失败提示逻辑，
+    /// 并新增“拖到文件夹行上 → 移入该文件夹”的目标判定。
+    public func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        // 双保险：与 validateDrop 一致，落下前再捕获一次最新修饰键
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
+        // Wave3 Task 1: 落包即清除 Drop 高亮等视觉状态（松手后无残留）
+        clearDragVisualState()
+        guard let viewModel = viewModel else { return false }
+
+        // 解析拖拽的文件路径
+        guard let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              !urls.isEmpty else {
+            return false
+        }
+
+        // 确定目标路径：拖到文件夹行上 → 移入该文件夹；否则 → 当前目录
+        var destPath = viewModel.currentPath
+        if dropOperation == .on, row < displayRows.count {
+            let displayRow = displayRows[row]
+            if !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count {
+                let entry = viewModel.files[displayRow.fileIndex]
+                if entry.isDirectory {
+                    destPath = entry.path
+                }
+            }
+        }
+        guard !destPath.isEmpty else { return false }
+
+        let validURLs = urls.filter {
+            !FFFileDropPolicy.isNoOp(source: $0.path, destination: destPath)
+        }
+        guard !validURLs.isEmpty else { return false }
+
+        let isMove = isMoveOperation(info, destPath: destPath)
+
+        // 任务 10：冲突预检与解决（替换/保留两者/跳过）
+        let conflictPlan = ConflictResolver.resolveConflicts(
+            srcPaths: validURLs.map { $0.path },
+            destDir: destPath,
+            window: window
+        )
+        guard !conflictPlan.isEmpty else { return true }
+
+        // 批次 1 B1-05：移动前确认（开关默认关闭；复制不受影响）
+        if MoveConfirmation.shouldAsk(enabled: FFAppSettings.confirmMove(), isMove: isMove),
+           !MoveConfirmation.confirmSynchronously(count: validURLs.count,
+                                                  destination: destPath,
+                                                  window: window) {
+            return true
+        }
+
+        // Wave3 Task 3: 直连进度模式（照抄粘贴路径 MainWindowController+MenuActions.performPasteOperation）：
+        // 主线程启动进度栏 → 后台批量操作经 progress 回调切主线程更新 → 完成后延迟收起。
+        // 进度条与展开/收起钩子在主线程捕获快照，后台/回调只使用不可变引用。
+        let operationName = isMove ? "移动" : "复制"
+        let progressBar = viewModel.taskProgressBar
+        let collapsed = viewModel.progressBarsCollapsed
+        progressBar?.startDirectProgress(operation: operationName, totalCount: conflictPlan.count)
+        viewModel.progressBarsExpanded?()
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let srcs = conflictPlan.normalSrcs
+            let allSrcs = srcs + conflictPlan.keepBoth.map { $0.src }
+            let total = allSrcs.count
+            do {
+                var success: Int
+                if isMove {
+                    success = try CoreBridge.shared.parallelMove(srcs: srcs, dstDir: destPath) { completed, total in
+                        // progress 回调来自 ffi 工作线程，切主线程更新 UI（Wave 1 线程纪律）
+                        DispatchQueue.main.async {
+                            progressBar?.updateDirectProgress(
+                                operation: operationName,
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
+                } else {
+                    success = try CoreBridge.shared.parallelCopy(srcs: srcs, dstDir: destPath) { completed, total in
+                        DispatchQueue.main.async {
+                            progressBar?.updateDirectProgress(
+                                operation: operationName,
+                                currentFileName: nil,
+                                completed: completed,
+                                total: total
+                            )
+                        }
+                    }
+                }
+
+                // 保留两者：逐项以改名后的目标名复制/移动（批量接口目标名取 lastPathComponent，无法表达改名）
+                // 仅记录成功项为 (src, dst) 对，保持 src/dst 严格对齐，避免部分失败时 zip 静默截断
+                var keepBothPairs: [(src: String, dst: String)] = []
+                for pair in conflictPlan.keepBoth {
+                    let dstFull = (destPath as NSString).appendingPathComponent(pair.dstName)
+                    do {
+                        if isMove {
+                            try CoreBridge.shared.moveFile(src: pair.src, dst: dstFull)
+                        } else {
+                            try CoreBridge.shared.copyFile(src: pair.src, dst: dstFull)
+                        }
+                        success += 1
+                        keepBothPairs.append((src: pair.src, dst: dstFull))
+                    } catch {
+                        // 单项失败：不计入 success，下方按 partial failure 统一提示
+                    }
+                }
+
+                // I2: 失效缓存使刷新反映新状态。目标目录总会变化；
+                // move 操作下每个源父目录也会变化（条目离开了这些目录），best-effort。
+                try? CoreBridge.shared.invalidateCache(path: destPath)
+                if isMove {
+                    let sourceDirs = Set(allSrcs.map { ($0 as NSString).deletingLastPathComponent })
+                    for dir in sourceDirs where !dir.isEmpty {
+                        try? CoreBridge.shared.invalidateCache(path: dir)
+                    }
+                }
+
+                // I3: 在异步 UI 刷新前捕获详细的部分失败信息（getLastError 为读一次即失效）
+                let partialDetail = (success < total) ? CoreBridge.shared.getLastError() : ""
+
+                // 计算 dst 路径用于撤销注册（best-effort：假设都成功）。
+                // 保留两者项仅计入成功者，normalDstPaths 与 keepBothPairs 顺序对齐，
+                // undoPairs 由 src 列表 + 成功项组成，避免单项失败时 zip 错配 src↔dst
+                let normalDstPaths = srcs.map { src -> String in
+                    let name = (src as NSString).lastPathComponent
+                    return (destPath as NSString).appendingPathComponent(name)
+                }
+                let undoPairs = zip(srcs, normalDstPaths).map { (src: $0, dst: $1) } + keepBothPairs
+
+                DispatchQueue.main.async {
+                    self?.viewModel?.refresh()
+
+                    // Wave3 Task 3: 进度完成，2.2 秒后淡出收起（与粘贴路径一致）
+                    progressBar?.completeDirectProgress(operation: operationName, count: success)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                        progressBar?.hide()
+                        collapsed?()
+                    }
+
+                    // Bug 3 修复：跨面板拖拽时，若源文件来自对侧面板的当前目录，需刷新对侧面板
+                    // （仅 move 操作会改变源目录；copy 不改变源，但为安全起见也刷新对侧）
+                    if let counterpartPath = self?.counterpartViewModel?.currentPath,
+                       !counterpartPath.isEmpty,
+                       allSrcs.contains(where: { ($0 as NSString).deletingLastPathComponent == counterpartPath }) {
+                        self?.counterpartViewModel?.refresh()
+                    }
+
+                    // 注册撤销（通过 viewModel?.undoManager 访问 per-window UndoManager）
+                    if success > 0, let view = self, let vm = view.viewModel, let undoManager = vm.undoManager {
+                        let counterpart = view.counterpartViewModel
+                        if isMove {
+                            let pairs = undoPairs
+                            let actionName = "移动 \(success) 个项目"
+                            // 注册撤销：移回原位。undoDragMove 会同步注册 redo（redoDragMove），
+                            // 而 redoDragMove 处理器内又会注册反向 undo（= undoDragMove），
+                            // 从而形成无限撤销/重做闭环。
+                            undoManager.registerUndo(withTarget: view) { [weak counterpart] targetView in
+                                targetView.undoDragMove(pairs: pairs, counterpart: counterpart, actionName: actionName)
+                            }
+                            undoManager.setActionName(actionName)
+                        } else {
+                            let pairs = undoPairs
+                            let actionName = "复制 \(success) 个项目"
+                            // 注册撤销：删除复制项。undoDragCopy 会同步注册 redo（redoDragCopy），
+                            // 而 redoDragCopy 处理器内又会注册反向 undo（= undoDragCopy），
+                            // 从而形成无限撤销/重做闭环。
+                            undoManager.registerUndo(withTarget: view) { [weak counterpart] targetView in
+                                targetView.undoDragCopy(pairs: pairs, counterpart: counterpart, actionName: actionName)
+                            }
+                            undoManager.setActionName(actionName)
+                        }
+                    }
+
+                    if success < total {
+                        // 诊断：记录失败详情（替换失败时定位 Rust 侧错误）
+                        FFDebug.log("拖拽\(isMove ? "移动" : "复制")部分失败: \(total - success)/\(total) 失败, 详情: \(partialDetail)")
+                        self?.showError(error: NSError(
+                            domain: "FlowFinder", code: -1,
+                            userInfo: [NSLocalizedDescriptionKey: "\(total - success) 个项目操作失败：\(partialDetail)"])
+                        )
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    // Wave3 Task 3: 失败路径不吞错——既有错误弹窗 + 收起进度栏（与粘贴路径一致）
+                    self?.showError(error: error)
+                    progressBar?.hide()
+                    collapsed?()
+                }
+            }
+        }
+
+        return true
+    }
+
+    // 选择变更时才执行选择逻辑（单击选中、Cmd+点击多选、Shift+范围选）
+    public func tableViewSelectionDidChange(_ notification: Notification) {
+        FFDebug.log("selectionDidChange selectedRows=\(tableView.selectedRowIndexes) isReloading=\(isReloading) filesCount=\(viewModel?.files.count ?? -1)")
+        // Bug 9 修复：reloadData 期间触发的 selectionDidChange 应忽略，
+        // 避免与 reload 形成循环（reload → selectionDidChange → state 变更 → reload）
+        if isReloading { return }
+
+        guard let viewModel = viewModel else { return }
+        // 点击行时激活当前面板（tableView 作为子视图拦截了 mouseDown，
+        // FileListView.mouseDown 不会触发，需在此补充激活）
+        onActivatePane?()
+        // 问题2 修复：移除选中变更时的 makeKey + makeFirstResponder 调用。
+        // 透明窗口的 key 状态切换会触发系统重绘导致可见抖动/跳动。
+        // 选中变更不应改变窗口层级或第一响应者，key 状态与 firstResponder
+        // 应在 mouseDown 或 windowDidBecomeKey 时处理。
+        let selectedRows = tableView.selectedRowIndexes
+        // 任务 F10-8: 通过 displayRows 映射显示行号 -> viewModel.files 下标
+        let entries = selectedRows.compactMap { rowNum -> FileEntry? in
+            guard rowNum >= 0, rowNum < displayRows.count else { return nil }
+            let displayRow = displayRows[rowNum]
+            guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return nil }
+            return viewModel.files[displayRow.fileIndex]
+        }
+        // 同步更新 viewModel 的选择状态
+        viewModel.state.selectedFiles = entries
+
+        // 任务 L1: 移除自定义文字色切换，恢复 NSTableView 标准选中绘制
+        // 标准行为：选中行背景为 systemBlue（window key 状态）+ 白色文字（由 NSTableRowView.drawSelection 自动处理）
+        // 失焦时：选中为灰色（de-emphasized）+ 黑色文字
+        // 这正是 Finder 的标准行为，无需任何自定义
+
+        // 异步触发回调，避免阻塞双击事件
+        DispatchQueue.main.async { [weak self] in
+            self?.onSelectionChanged?(entries)
+        }
+    }
+}
+
+// MARK: - Keyboard Events
+
+extension FileListView {
+    /// 重写 mouseDown，先激活面板再传递事件给 tableView 处理选中
+    /// G3: 激活已由 tableViewSelectionDidChange 统一处理，此处不再重复触发（单次点击曾激活两次）
+    public override func mouseDown(with event: NSEvent) {
+        FFDebug.log("FileListView.mouseDown hit=\(hitTest(event.locationInWindow))")
+        super.mouseDown(with: event)
+    }
+
+    /// Wave3 Task 5: 触控板两指轻扫 = 前进/后退（对齐 Finder，左右面板各自响应）。
+    /// 方向判定与「自然滚动」设置一致：isDirectionInvertedFromDevice == true 表示事件方向
+    /// 已相对物理方向反转，先归一化回物理方向再判定——手指右滑 = 后退，手指左滑 = 前进。
+    /// 轻扫事件经 responder chain 从 tableView 冒泡到本视图（中间视图不实现 swipe 方法）。
+    /// 注：新 SDK 中 swipeWithEvent(_:) 的 Swift 名已改为 swipe(with:)，同一 ObjC selector。
+    public override func swipe(with event: NSEvent) {
+        // 防抖：动画进行中忽略重复轻扫（500ms 节流）
+        guard swipeThrottler.shouldAccept() else { return }
+        var dx = event.deltaX
+        if event.isDirectionInvertedFromDevice { dx = -dx }
+        if dx > 0 {
+            _ = viewModel?.goBack()
+        } else if dx < 0 {
+            _ = viewModel?.goForward()
+        }
+    }
+
+    /// 重写 keyDown：Enter/Return 触发内联重命名，空格触发 QuickLook 预览，
+    /// Cmd+Down/Cmd+O 打开选中项，Cmd+Up 上级目录（macOS Finder 风格）。
+    /// 空格/Enter/Del 由 actionsController 统一处理，其他快捷键保留视图内兜底。
+    public override func keyDown(with event: NSEvent) {
+        // Wave2 P0-3：QuickLook/重命名/删除委托给 actionsController（键位经 ShortcutCenter 读设置）
+        if actionsController.handlePaneKey(event) {
+            return
+        }
+
+        // Bug 5 修复：⌘O / ⌘↓（shortcut_open_file）打开选中项（Finder 风格）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutOpenFile, event: event) {
+            actionsController.openSelectedEntry()
+            return
+        }
+
+        // Bug 5 修复：⌘↑（shortcut_go_up）上级目录（Finder 风格）
+        if ShortcutCenter.eventMatches(FFUserDefaultsKeys.shortcutGoUp, event: event) {
+            viewModel?.goUp()
+            return
+        }
+
+        // 其他键传给 nextResponder（沿响应链传递到 MainWindowController）
+        super.keyDown(with: event)
+    }
+
+    // openSelectedEntry / beginInlineRename / endInlineRename 已迁移至 FFPaneActionsController。
+    // keyDown 统一委托 actionsController.handlePaneKey 处理空格/Enter/Del（与 FileGridView 对齐）。
+}
+
+// MARK: - Drag and Drop
+
+extension FileListView: NSDraggingSource {
+    public func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        return [.copy, .move, .delete]
+    }
+}
+
+extension FileListView {
+    /// 拖拽进行中捕获修饰键（见 isMoveOperation）。注意：FileListView 本身可能收不到
+    /// draggingUpdated（tableView 才是实际注册的拖拽目标），因此 validateDrop/acceptDrop
+    /// 中也会双保险写入 lastDragModifierFlags。
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if let event = NSApp.currentEvent {
+            lastDragModifierFlags = event.modifierFlags
+        }
+        return []
+    }
+
+    public override func draggingEnded(_ sender: NSDraggingInfo) {
+        lastDragModifierFlags = []
+        // Wave3 Task 1/2: 兜底复位（实际注册目标是 tableView，正常路径经其转发回调复位）
+        endDragSession()
+    }
+
+    /// 判断是否为移动操作（访达语义）：
+    /// 同盘 + 无修饰键 = 移动；同盘 + ⌘ = 复制
+    /// 跨盘 + 无修饰键 = 复制；跨盘 + ⌘ = 移动
+    /// - Parameter destPath: 真实拖放目标路径（拖到文件夹行时为该文件夹路径，否则当前目录）
+    private func isMoveOperation(_ sender: NSDraggingInfo, destPath: String? = nil) -> Bool {
+        // 读取拖拽过程中捕获的修饰键（比 NSApp.currentEvent 在回调中可靠）
+        let commandPressed = lastDragModifierFlags.contains(.command)
+
+        // 源与目标卷判定
+        let dest = destPath ?? viewModel?.currentPath
+        guard let dest = dest, !dest.isEmpty else { return false }
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              let srcPath = urls.first?.path else { return false }
+        let sameVolume = isSameVolume(srcPath: srcPath, destPath: dest)
+
+        // 批次 1 B1-06：默认操作行为三选（跟随访达 / 总是复制 / 总是移动），⌘ 反转
+        return FFDragBehaviorPolicy.shouldMove(behavior: FFAppSettings.dragBehavior(),
+                                               commandPressed: commandPressed,
+                                               sameVolume: sameVolume)
+    }
+
+    /// 检查两个路径是否在同一卷（通过 statfs）
+    private func isSameVolume(srcPath: String, destPath: String) -> Bool {
+        var srcStat = statfs()
+        var dstStat = statfs()
+
+        let srcResult = srcPath.withCString { statfs($0, &srcStat) }
+        let dstResult = destPath.withCString { statfs($0, &dstStat) }
+
+        guard srcResult == 0 && dstResult == 0 else { return false }
+
+        // 比较设备 ID (使用 memcmp 比较 fsid_t 原始字节)
+        var srcFsid = srcStat.f_fsid
+        var dstFsid = dstStat.f_fsid
+        return withUnsafeBytes(of: &srcFsid) { srcBytes in
+            withUnsafeBytes(of: &dstFsid) { dstBytes in
+                srcBytes.elementsEqual(dstBytes)
+            }
+        }
+    }
+}
+
+// MARK: - Tag Pill Context Menu（列表视图特有：标签药丸右键菜单）
+
+extension FileListView {
+
+    /// 右键药丸移除标签（按名称移除，兼容原生标签随机 id）。
+    /// 此方法为列表视图特有——标签药丸的右键菜单仅列表视图有（网格视图无内联药丸）。
+    @objc private func removeTagByNameFromPill(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let tagName = info["tagName"],
+              let path = info["path"] else { return }
+        _ = TagBridge.shared.removeTagByName(tagName, path: path)
+        reloadData()
+        // 通知侧边栏刷新，携带文件当前标签以同步侧边栏
+        let updatedTags = TagBridge.shared.getTags(path: path)
+        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": updatedTags])
+    }
+}
+
+// MARK: - FFPaneViewHost 协议实现
+
+extension FileListView: FFPaneViewHost {
+
+    public var hostWindow: NSWindow? { window }
+    public var selectedEntries: [FileEntry] { viewModel?.selectedFiles ?? [] }
+    public var doubleClickHandler: ((FileEntry) -> Void)? { onDoubleClick }
+
+    func renameTextFieldForSelection() -> NSTextField? {
+        guard let viewModel = viewModel else { return nil }
+        let selectedRows = tableView.selectedRowIndexes
+        guard selectedRows.count == 1, let row = selectedRows.first,
+              row >= 0, row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return nil }
+        guard let cellView = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView,
+              let textField = cellView.textField else { return nil }
+        return textField
+    }
+
+    func selectClickedItemForRename() {
+        let row = tableView.clickedRow
+        if row >= 0 {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
+
+    var focusRestoreTarget: NSResponder? { tableView }
+
+    func reloadPaneData() { reloadData() }
+
+    /// V0.8.0：详情栏浮层遮挡补偿。
+    ///
+    /// 详情栏以浮层形式覆盖在列表底部（v0.6.9 决策），列表本身始终延伸到容器底部。
+    /// 副作用是最后一行被浮层盖住，必须盲滚才能点到。此处按浮层高度在滚动内容底部
+    /// 预留同等空白（额外 +8pt 对应浮层距容器底部的边距），使列表能滚出遮挡区。
+    ///
+    /// - Parameter height: 详情栏当前高度（收起 54 / 展开为可调高度）
+    var bottomOverlayInsetForTesting: CGFloat {
+        scrollView?.contentInsets.bottom ?? 0
+    }
+
+    func setBottomOverlayInset(_ height: CGFloat) {
+        guard let sv = scrollView else { return }
+        // 浮层底部距容器 8pt，留白需一并覆盖
+        let inset = max(0, height + 8)
+        guard abs(sv.contentInsets.bottom - inset) > 0.5 else { return }
+        // 关闭自动调整，否则 AppKit 会在滚动条出现/消失时覆盖我们设的值
+        sv.automaticallyAdjustsContentInsets = false
+        sv.contentInsets = NSEdgeInsets(
+            top: sv.contentInsets.top,
+            left: sv.contentInsets.left,
+            bottom: inset,
+            right: sv.contentInsets.right
+        )
+        FFDebug.log("FileListView.setBottomOverlayInset side=\(getSide()) barHeight=\(height) inset=\(inset)")
+    }
+}
+
+// MARK: - FFCreateTagColorHolder（新建标签对话框颜色选择辅助类）
+
+/// 颜色选择 holder：与 SidebarView.TagColorHolder 同结构，但 FileListView 不能引用 private 类，
+/// 故在此单独定义（仅在 FileListView 内部使用）
+final class FFCreateTagColorHolder: NSObject {
+    private let colors: [String]
+    private(set) var selectedHex: String
+    /// 颜色圆点引用数组（纯视图无 tag，用数组下标定位点击的 dot）
+    var dotDots: [NSView] = []
+
+    init(colors: [String]) {
+        self.colors = colors
+        self.selectedHex = colors.first ?? "#007AFF"
+        super.init()
+    }
+
+    @objc func selectDot(_ sender: NSClickGestureRecognizer) {
+        guard let dot = sender.view, let idx = dotDots.firstIndex(of: dot), idx < colors.count else { return }
+        selectedHex = colors[idx]
+        // 更新选中边框
+        for (i, d) in dotDots.enumerated() {
+            d.layer?.borderWidth = (i == idx) ? 2 : 0
+        }
+    }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let fileListDidCopy = Notification.Name("fileListDidCopy")
+    static let fileListDidCut = Notification.Name("fileListDidCut")
+    static let fileListDidPaste = Notification.Name("fileListDidPaste")
+    static let fileListDidCopyToOther = Notification.Name("fileListDidCopyToOther")
+    static let fileListDidMoveToOther = Notification.Name("fileListDidMoveToOther")
+    static let fileListDidOpenInOther = Notification.Name("fileListDidOpenInOther")
+    static let fileListRequestQuickLook = Notification.Name("fileListRequestQuickLook")
+    static let fileListDidAddFavorite = Notification.Name("fileListDidAddFavorite")
+    /// C13: 标签变更通知（新建/切换标签后通知侧边栏刷新）
+    static let fileListTagsChanged = Notification.Name("FileListTagsChanged")
+    /// F9-C: 请求显示"显示简介"独立窗口（仿访达 Get Info）
+    static let fileListShowInfo = Notification.Name("FileListShowInfo")
+}

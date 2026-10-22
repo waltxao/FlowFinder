@@ -33,8 +33,8 @@ jobs:
         run: |
           set -e
           VERSION=$(grep '^VERSION=' scripts/package.sh | cut -d'"' -f2)
-          codesign --verify --verbose=2 "build/DerivedData/Build/Products/Release/FlowFinderNative.app"
-          spctl --assess --type execute "build/DerivedData/Build/Products/Release/FlowFinderNative.app" || true
+          codesign --verify --verbose=2 "build/DerivedData/Build/Products/Release/FlowFinder.app"
+          spctl --assess --type execute "build/DerivedData/Build/Products/Release/FlowFinder.app" || true
           shasum -a 256 -c "build/FlowFinder-${VERSION}.sha256"
 
       - name: Publish GitHub Release

@@ -1,4 +1,0 @@
-module FlowFinderNativeC {
-    header "ff_ffi.h"
-    export *
-}

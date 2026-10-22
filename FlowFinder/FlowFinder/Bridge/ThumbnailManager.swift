@@ -1,0 +1,346 @@
+import Foundation
+import QuickLookThumbnailing
+import AppKit
+import os.log
+
+/// 缩略图管理器：QLThumbnailGenerator 异步生成 + NSCache LRU + 磁盘缓存
+public final class ThumbnailManager {
+    public static let shared = ThumbnailManager()
+
+    private let generator = QLThumbnailGenerator.shared
+    private let memoryCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 500  // 大目录优化：200 → 500，提高缓存命中率
+        return cache
+    }()
+
+    /// 任务 F11-7: NSWorkspace.shared.icon(forFile:) 的应用层缓存。
+    /// NSWorkspace 内部虽有缓存，但在主线程同步调用仍会触发 LaunchServices 查询，
+    /// 大目录下 tableView(_:viewFor:row:) 每行都调用会造成明显卡顿。
+    /// 此缓存命中时为纯内存查找，O(1)，彻底消除主线程同步调用。
+    /// key 为文件绝对路径，value 为已缩放到 iconPointSize 的多色非模板图标副本。
+    private let workspaceIconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 1000  // 大目录优化：500 → 1000，提高缓存命中率
+        return cache
+    }()
+
+    /// 任务 F11-7: 异步获取工作区图标时的活跃请求去重表。
+    /// 同一路径若已有后台请求在飞，新调用直接复用，避免重复触发 NSWorkspace 调用。
+    /// value 中的 completion 数组在请求完成后被一次性清空并回调。
+    private var inflightIconRequests: [String: [(NSImage?) -> Void]] = [:]
+    private let iconLock = NSLock()
+
+    /// 磁盘缓存目录
+    private let diskCacheURL: URL = {
+        // 安全解包：cachesDirectory 通常存在，但 first 在极端环境（沙盒配置异常）可能为 nil。
+        // 退化为 ~/Library/Caches，若仍不可用则使用 NSTemporaryDirectory。
+        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let cacheDir = cachesDir.appendingPathComponent("FlowFinderThumbnails", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        return cacheDir
+    }()
+
+    /// 磁盘缓存上限（字节）。超过此上限时按最久未访问清理旧文件。
+    private let maxDiskCacheBytes: Int64 = 100 * 1024 * 1024  // 100 MB
+
+    /// 活跃请求（用于取消）。请求完成后必须移除，否则会泄漏 QLThumbnailGenerator.Request 对象。
+    private var activeRequests: [String: QLThumbnailGenerator.Request] = [:]
+    private let lock = NSLock()
+
+    private init() {}
+
+    // MARK: - Public API
+
+    /// 异步生成缩略图（先查缓存，再生成）
+    /// - Parameters:
+    ///   - path: 文件路径
+    ///   - size: 期望尺寸（默认 64x64）
+    ///   - completion: 完成回调（主线程）
+    ///
+    /// 任务 F11-7: 磁盘缓存读取（NSImage(contentsOf:)）改为后台队列执行。
+    /// 原实现中 loadFromDiskCache 在调用线程同步执行，首次未命中内存缓存时
+    /// 会在主线程（tableView viewFor / collectionView itemFor）做同步文件 I/O，
+    /// 大目录下叠加多个 cell 同时未命中即造成主线程卡顿。现仅在内存命中时同步返回，
+    /// 其余路径（磁盘 / 生成）全部异步，completion 始终在主线程回调。
+    public func generateThumbnail(
+        path: String,
+        size: CGSize = CGSize(width: 64, height: 64),
+        completion: @escaping (NSImage?) -> Void
+    ) {
+        let cacheKey = cacheKey(for: path, size: size)
+
+        // 1. 查内存缓存（命中才同步返回，避免主线程 I/O）
+        if let cached = memoryCache.object(forKey: cacheKey) {
+            completion(cached)
+            return
+        }
+
+        // 2. 磁盘缓存 / 3. 生成 全部放到后台队列，主线程回调
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+
+            // 2. 查磁盘缓存（后台线程）
+            if let diskImage = self.loadFromDiskCache(cacheKey: cacheKey as String) {
+                self.memoryCache.setObject(diskImage, forKey: cacheKey)
+                DispatchQueue.main.async { completion(diskImage) }
+                return
+            }
+
+            // 任务 F8: 调试日志（v0.6.5）
+            FFLog.debug("[Thumb] 请求生成: \(path) size=\(size)", log: FFLog.thumbnail)
+
+            // 3. 异步生成（QLThumbnailGenerator 本身异步，但请求构建移到后台）
+            let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+            let request = QLThumbnailGenerator.Request(
+                fileAt: URL(fileURLWithPath: path),
+                size: size,
+                scale: scale,
+                // 任务 F10-9: representationTypes 改为 .all，无缩略图文件类型回退到图标
+                representationTypes: .all
+            )
+
+            let reqRef = request
+
+            // 记录活跃请求
+            self.lock.lock()
+            self.activeRequests[path] = reqRef
+            self.lock.unlock()
+
+            self.generator.generateBestRepresentation(for: request) { [weak self] thumbnail, error in
+                // 请求完成（无论成功/失败）都必须从 activeRequests 移除，避免泄漏 Request 对象。
+                self?.lock.lock()
+                self?.activeRequests.removeValue(forKey: path)
+                self?.lock.unlock()
+
+                if let error = error {
+                    FFLog.error("[Thumb] 生成失败: \(path) - \(error.localizedDescription)", log: FFLog.thumbnail)
+                    DispatchQueue.main.async { completion(nil) }
+                    return
+                }
+
+                guard let thumbnail = thumbnail else {
+                    DispatchQueue.main.async { completion(nil) }
+                    return
+                }
+
+                // 修复缩略图 1:1 方形根因：原代码 `NSImage(cgImage:size: size)` 用请求的
+                // 方形 point size（96×96）作为 NSImage.size 元数据——虽然 cgImage 像素保持
+                // 原始比例（如 96×54），但 NSImage 按元数据缩放绘制时被拉伸成方形。
+                // 改为用 cgImage 实际像素尺寸换算 point size（除以 scale），NSImage.size
+                // 保持原始宽高比，显示端（FileGridView.setThumbnail）即可按比例渲染。
+                let pixelW = CGFloat(thumbnail.cgImage.width)
+                let pixelH = CGFloat(thumbnail.cgImage.height)
+                let image: NSImage
+                if pixelW > 0 && pixelH > 0 {
+                    image = NSImage(
+                        cgImage: thumbnail.cgImage,
+                        size: NSSize(width: pixelW / scale, height: pixelH / scale)
+                    )
+                } else {
+                    // 极端情况：无像素信息时回退请求尺寸
+                    image = NSImage(cgImage: thumbnail.cgImage, size: size)
+                }
+                FFLog.debug("[Thumb] 生成成功: \(path) \(Int(pixelW))x\(Int(pixelH)) point=\(image.size)", log: FFLog.thumbnail)
+
+                // 写入缓存
+                self?.memoryCache.setObject(image, forKey: cacheKey)
+                self?.saveToDiskCache(image: image, path: path, cacheKey: cacheKey as String)
+
+                DispatchQueue.main.async { completion(image) }
+            }
+        }
+    }
+
+    /// 任务 F11-7: 同步获取缓存中的工作区图标（不触发 NSWorkspace 调用）。
+    /// 用于 tableView(_:viewFor:) / collectionView item 回调中即时取占位图标，
+    /// 命中则同步显示，未命中则调用 fetchWorkspaceIcon 异步获取。
+    /// - Parameters:
+    ///   - path: 文件绝对路径
+    ///   - pointSize: 期望 point size（默认 18，与 FileListView 文件图标一致）
+    /// - Returns: 已缓存的工作区图标（已缩放到 pointSize），未命中返回 nil
+    public func cachedWorkspaceIcon(for path: String, pointSize: CGFloat = 18) -> NSImage? {
+        let key = workspaceIconCacheKey(for: path, pointSize: pointSize)
+        return workspaceIconCache.object(forKey: key)
+    }
+
+    /// 任务 F11-7: 异步获取工作区图标（NSWorkspace.shared.icon(forFile:)）。
+    /// 命中内存缓存时同步回调（仍 dispatch 到主线程，保持调用方一致性）；
+    /// 未命中则后台队列调用 NSWorkspace.shared.icon 并写入缓存，主线程回调。
+    /// 同一路径的并发请求会去重合并（inflightIconRequests），避免重复触发。
+    ///
+    /// 注意：NSWorkspace.shared.icon(forFile:) 在文档上未明确线程安全，实测在后台
+    /// 队列调用稳定（macOS 12+），且 Apple 自家 QLThumbnailGenerator 内部也会在
+    /// 后台访问工作区图标。若未来 SDK 行为变化，可回退为主线程调用 + 缓存。
+    /// - Parameters:
+    ///   - path: 文件绝对路径
+    ///   - pointSize: 期望 point size（默认 18）
+    ///   - completion: 完成回调（主线程），传入已缩放的图标，失败/路径不存在返回 nil
+    public func fetchWorkspaceIcon(
+        for path: String,
+        pointSize: CGFloat = 18,
+        completion: @escaping (NSImage?) -> Void
+    ) {
+        let key = workspaceIconCacheKey(for: path, pointSize: pointSize)
+
+        // 1. 内存命中：直接回调
+        if let cached = workspaceIconCache.object(forKey: key) {
+            DispatchQueue.main.async { completion(cached) }
+            return
+        }
+
+        // 2. 去重：若该路径已有在飞请求，追加 completion 后返回
+        iconLock.lock()
+        if var existing = inflightIconRequests[path] {
+            existing.append(completion)
+            inflightIconRequests[path] = existing
+            iconLock.unlock()
+            return
+        }
+        inflightIconRequests[path] = [completion]
+        iconLock.unlock()
+
+        // 3. 后台队列调用 NSWorkspace.shared.icon
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let image: NSImage? = {
+                // 路径不存在时 NSWorkspace 仍会返回通用图标，但 LaunchServices 查询更慢；
+                // 先做轻量存在性检查，不存在则返回 nil 让调用方回退到占位图标。
+                // （目录/文件都覆盖；symlink 走 FileManager.fileExists 默认行为）
+                if !FileManager.default.fileExists(atPath: path) { return nil }
+                let icon = NSWorkspace.shared.icon(forFile: path)
+                icon.size = NSSize(width: pointSize, height: pointSize)
+                return icon
+            }()
+
+            if let image = image {
+                self.workspaceIconCache.setObject(image, forKey: key)
+            }
+
+            // 4. 取出所有等待的 completion，主线程一次性回调
+            self.iconLock.lock()
+            let completions = self.inflightIconRequests.removeValue(forKey: path) ?? []
+            self.iconLock.unlock()
+
+            DispatchQueue.main.async {
+                for cb in completions { cb(image) }
+            }
+        }
+    }
+
+    /// 取消指定路径的缩略图生成
+    /// - Parameter path: 文件路径
+    public func cancelGeneration(for path: String) {
+        lock.lock()
+        if let request = activeRequests[path] {
+            generator.cancel(request)
+            activeRequests.removeValue(forKey: path)
+        }
+        lock.unlock()
+    }
+
+    // MARK: - Private
+
+    private func cacheKey(for path: String, size: CGSize) -> NSString {
+        return "\(path)_\(Int(size.width))x\(Int(size.height))" as NSString
+    }
+
+    /// 任务 F11-7: 工作区图标缓存的 key。
+    /// 与缩略图 cacheKey 分离，避免不同 pointSize 的图标互相覆盖。
+    private func workspaceIconCacheKey(for path: String, pointSize: CGFloat) -> NSString {
+        return "wsicon_\(path)_\(Int(pointSize))" as NSString
+    }
+
+    /// 磁盘缓存文件名：对完整 cacheKey（含路径与尺寸）取稳定 hash，
+    /// 保证结果不含 `/`、`:` 等路径分隔符，也不会因为原始扩展名生成非法文件名。
+    static func diskCacheFilename(for cacheKey: String) -> String {
+        let hash = cacheKey.djb2hash()
+        return String(format: "thumb_%016llx.png", hash)
+    }
+
+    private func diskCacheURL(for cacheKey: String) -> URL {
+        diskCacheURL.appendingPathComponent(Self.diskCacheFilename(for: cacheKey))
+    }
+
+    private func loadFromDiskCache(cacheKey: String) -> NSImage? {
+        NSImage(contentsOf: diskCacheURL(for: cacheKey))
+    }
+
+    private func saveToDiskCache(image: NSImage, path: String, cacheKey: String) {
+        let url = diskCacheURL(for: cacheKey)
+        let cacheDir = diskCacheURL
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            // 转为 PNG 数据保存
+            if let tiffData = image.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiffData),
+               let pngData = bitmap.representation(using: .png, properties: [:]) {
+                try? FileManager.default.createDirectory(at: cacheDir,
+                                                         withIntermediateDirectories: true)
+                try? pngData.write(to: url, options: .atomic)
+            }
+            // 每次写盘都枚举缓存目录会放大 I/O；改为每 100 次写检查一次。
+            self?.noteDiskCacheWrite()
+        }
+    }
+
+    private let diskWriteLock = NSLock()
+    private var diskWriteCount = 0
+
+    private func noteDiskCacheWrite() {
+        diskWriteLock.lock()
+        diskWriteCount += 1
+        let shouldClean = diskWriteCount % 100 == 0
+        diskWriteLock.unlock()
+        guard shouldClean else { return }
+        cleanupDiskCacheIfNeeded()
+    }
+
+    /// 磁盘缓存清理：当总大小超过 maxDiskCacheBytes 时，按 contentModificationDate
+    /// 从旧到新删除文件，直到总大小降到上限以下。best-effort，错误被忽略。
+    private func cleanupDiskCacheIfNeeded() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: diskCacheURL,
+                                                      includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+                                                      options: [.skipsHiddenFiles]) else {
+            return
+        }
+
+        // 收集 (url, modificationDate, size)
+        var entries: [(url: URL, date: Date, size: Int64)] = []
+        var totalBytes: Int64 = 0
+        for fileURL in files {
+            let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            let date = values?.contentModificationDate ?? Date.distantPast
+            let size = Int64(values?.fileSize ?? 0)
+            entries.append((fileURL, date, size))
+            totalBytes += size
+        }
+
+        guard totalBytes > maxDiskCacheBytes else { return }
+
+        // 按修改时间从旧到新排序，优先删除最旧的文件
+        entries.sort { $0.date < $1.date }
+        for entry in entries {
+            if totalBytes <= maxDiskCacheBytes { break }
+            try? fm.removeItem(at: entry.url)
+            totalBytes -= entry.size
+        }
+    }
+}
+
+// MARK: - String Hash Extension
+
+private extension String {
+    func djb2hash() -> UInt64 {
+        var hash: UInt64 = 5381
+        for char in self.utf8 {
+            hash = hash &* 33 &+ UInt64(char)
+        }
+        return hash
+    }
+}

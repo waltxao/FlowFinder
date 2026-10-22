@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>FlowFinder</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.flowfinder.native</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>FlowFinder</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>NSMainStoryboardFile</key>
+    <string></string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <!--
+      隐私用途说明（TCC）。macOS 14 起，缺少这些键时系统直接拒绝访问，
+      且不会弹授权对话框——首开三个收藏全空、窗口一片「无法加载此文件夹」。
+      文案要求：说清「为什么需要」，面向非技术用户。
+    -->
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>FlowFinder 需要访问「桌面」，以便浏览和管理你桌面上的文件。</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>FlowFinder 需要访问「文稿」，以便浏览和管理你的文档。</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>FlowFinder 需要访问「下载」，以便整理你下载的文件。</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>FlowFinder 需要访问外置磁盘和 U 盘，以便在两个位置之间搬运文件。</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>FlowFinder 需要访问网络卷宗，以便连接并浏览服务器上的文件。</string>
+</dict>
+</plist>

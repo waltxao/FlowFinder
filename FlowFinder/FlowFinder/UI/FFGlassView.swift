@@ -1,0 +1,609 @@
+import AppKit
+import CoreImage
+import QuartzCore
+import os.log
+
+/// 玻璃材质视图：封装 NSGlassEffectView/NSVisualEffectView + 噪声 + 高光 + 内阴影
+///
+/// 替换现有 `GlassSectionMaskView`，作为所有面板/对话框/子组件玻璃背景的统一入口。
+/// 三层全玻璃架构：
+/// - `.window`：透传，FFGlassView 不接管（窗口级玻璃由 MainWindowController 等窗口控制器持有）
+/// - `.panel`：NSGlassEffectView(macOS 26+, .regular)/NSVisualEffectView(旧版) + tint + 噪声 + 顶部高光 + 内阴影
+/// - `.component`：NSGlassEffectView(macOS 26+, .clear)/纯 CALayer(旧版) + tint + 圆角 + 高光 + 内阴影
+class FFGlassView: NSView {
+
+    // MARK: - 玻璃样式（macOS 26+ NSGlassEffectView.Style 的平台无关映射）
+
+    /// 玻璃样式枚举：对应 NSGlassEffectView.Style（macOS 26+）
+    /// 使用自定义枚举避免在类型注解中直接引用 macOS 26+ API
+    enum GlassStyle {
+        case clear
+        case regular
+    }
+
+    /// 将 GlassStyle 映射到原生 NSGlassEffectView.Style（macOS 26+）
+    @available(macOS 26.0, *)
+    private func nativeGlassStyle() -> NSGlassEffectView.Style {
+        switch glassStyle {
+        case .clear:   return .clear
+        case .regular: return .regular
+        }
+    }
+
+    // MARK: - 配置
+
+    /// Wave4 Task 6: 装饰分级（审计 §3 弱化装饰）
+    ///
+    /// 磨边亮线 + 顶部高光 + 内阴影三层装饰在玻璃浮层上提供"浮起"质感，
+    /// 但叠加在实体背景上时只剩噪感——此时降级为仅单层描边。
+    enum DecorationStyle {
+        /// 玻璃浮层（详情栏/设备栏）：保留三层装饰
+        case glassOverlay
+        /// 叠在实体背景上（工具浮层/卡片/进度条等）：降级为仅单层描边
+        case strokeOnly
+    }
+
+    let level: FFDesign.Glass.Level
+    /// 装饰分级（默认玻璃浮层三层装饰；实体底调用方应显式传 .strokeOnly）
+    let decoration: DecorationStyle
+    /// 仅 macOS<26 回退路径使用（.panel 级）
+    let material: NSVisualEffectView.Material?
+    /// 仅 macOS 26+ 使用（.panel 级），通过 GlassStyle 映射到 NSGlassEffectView.Style；默认 .regular
+    let glassStyle: GlassStyle
+    let cornerRadius: CGFloat
+    /// 圆角曲线：与窗口/面板统一为连续曲率。
+    var cornerCurve: CALayerCornerCurve = .continuous
+
+    // MARK: - 子层引用
+
+    /// tint 背景层（.panel/.component 都有）
+    private var tintLayer: CALayer?
+    /// 噪声平铺层
+    private var noiseLayer: CALayer?
+    /// 顶部高光线
+    private var highlightLayer: CAShapeLayer?
+    /// 内阴影层（底部）
+    private var innerShadowLayer: CALayer?
+    /// 全周细亮线（液态玻璃描边）
+    private var borderLayer: CAShapeLayer?
+    /// 原生玻璃视图（.panel 和 .component 级；macOS 26+ 用 NSGlassEffectView，旧版 .panel 用 NSVisualEffectView，旧版 .component 为 nil）
+    private var nativeGlassView: NSView?
+
+    // MARK: - 问题 3 诊断：每实例仅记录一次布局状态，排查「四角灰方块+无亮线+无阴影」
+    private var hasLoggedLayout = false
+
+    // MARK: - 全局实例跟踪
+
+    /// 所有存活的 FFGlassView 实例（弱引用，用于主题刷新）
+    /// 跟踪 `.panel` 和 `.component` 级（两者均需在主题切换时刷新 tint/noise/highlight）。
+    /// `.window` 级由窗口控制器独立持有，不在此计数。
+    private static let allInstances = NSHashTable<FFGlassView>.weakObjects()
+
+    /// 当前 `.panel` 级实例数（用于性能预算检查）
+    static var panelInstanceCount: Int {
+        return allInstances.allObjects.filter { $0.level == .panel }.count
+    }
+
+    // MARK: - 初始化
+
+    /// 创建玻璃视图
+    /// - Parameters:
+    ///   - level: 玻璃层级
+    ///   - cornerRadius: 圆角（nil 时按 level 取默认值）
+    ///   - material: 仅 macOS<26 回退路径使用（.panel 级），如 .sidebar/.headerView/.sheet
+    ///   - glassStyle: 仅 macOS 26+ 使用（.panel 级），默认 .regular（更好可读性，符合 Apple HIG）
+    ///   - decoration: 装饰分级，默认 .glassOverlay（三层装饰）；
+    ///     叠在实体背景上的调用方显式传 .strokeOnly（仅单层描边，Wave4 Task 6）
+    init(level: FFDesign.Glass.Level,
+         cornerRadius: CGFloat? = nil,
+         material: NSVisualEffectView.Material? = nil,
+         glassStyle: GlassStyle = .regular,
+         decoration: DecorationStyle = .glassOverlay) {
+        self.level = level
+        self.decoration = decoration
+        self.material = material
+        self.glassStyle = glassStyle
+        self.cornerRadius = cornerRadius ?? FFDesign.Glass.defaultCornerRadius(for: level)
+        super.init(frame: .zero)
+        setup()
+        // 问题 3 诊断：记录每个玻璃实例的创建（与 layout 日志交叉对照可发现「创建了但从没布局」的实例）
+        FFDebug.log("FFGlass init level=\(level) r=\(cornerRadius)")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        if level != .window {
+            FFGlassView.allInstances.remove(self)
+        }
+    }
+
+    // MARK: - Setup
+
+    private func setup() {
+        // 修复问题 3（根因）：此前先 `wantsLayer=true` 再 `layer = CALayer()` 手动替换 layer，
+        // AppKit 在后续 layout/updateLayer 时机可能接管或重置该手动 layer 的属性
+        // （特别是 shadowOpacity 会被打回 0、shadowPath 失效）——这是「无阴影」根因。
+        // 正确做法：只用 `wantsLayer = true` 让 AppKit 创建并管理 backing layer，
+        // 之后所有属性都设到 self.layer（此时已是 AppKit 提供的 layer）。
+        wantsLayer = true
+        // 使用标准 cornerRadius 圆角背景（不使用 mask，避免裁剪子视图内容）
+        layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = cornerCurve
+        layer?.backgroundColor = NSColor.clear.cgColor
+        // 不设置 masksToBounds：子视图不应被裁剪，仅背景层需要圆角
+
+        // 液态玻璃外阴影：按层级分级
+        // - panel（详情栏/工具面板/设备栏）浮在文件列表上方 → 明显外阴影
+        // - component（搜索框/卡片）嵌在已有玻璃之上不浮起 → 无外阴影
+        // - window 级透明容器，不加阴影
+        // 注：每次 layout 会强制重设这套属性（对抗 AppKit 把 shadowOpacity 重置为 0）
+        if level == .panel {
+            layer?.shadowColor = NSColor.black.cgColor
+            layer?.shadowOpacity = FFDesign.Glass.shadowOpacity
+            layer?.shadowRadius = FFDesign.Glass.shadowRadius
+            layer?.shadowOffset = FFDesign.Glass.shadowOffset
+        } else if level == .component {
+            layer?.shadowColor = NSColor.black.cgColor
+            layer?.shadowOpacity = FFDesign.Glass.shadowOpacityEmbedded
+            layer?.shadowRadius = FFDesign.Glass.shadowRadiusEmbedded
+            layer?.shadowOffset = FFDesign.Glass.shadowOffsetEmbedded
+        }
+
+        switch level {
+        case .window:
+            // 窗口级玻璃由窗口控制器持有独立的 NSGlassEffectView，FFGlassView 不接管。
+            // 这里仅作为透明容器（保持 API 一致性）。
+            layer?.backgroundColor = NSColor.clear.cgColor
+        case .panel:
+            setupPanelGlass()
+            FFGlassView.allInstances.add(self)
+            #if DEBUG
+            if FFGlassView.panelInstanceCount > FFDesign.Glass.maxGlassInstances {
+                FFLog.warning("FFGlassView: panel 实例数 \(FFGlassView.panelInstanceCount) 超过预算 \(FFDesign.Glass.maxGlassInstances)", log: FFLog.glass)
+            }
+            #endif
+        case .component:
+            // NSGlassEffectView(macOS 26+) 或纯 CALayer（旧版）
+            setupComponentGlass()
+            FFGlassView.allInstances.add(self)
+        }
+    }
+
+    /// `.panel` 级：原生玻璃 + tint + 噪声 + 高光 + 内阴影
+    ///
+    /// macOS 26+ 使用原生 NSGlassEffectView（.regular style），提供标准液态玻璃效果。
+    /// 早期实现曾尝试 .clear style，但在液态玻璃中几乎完全透明（仅有微弱模糊），
+    /// 导致侧边栏/工具栏/详情栏等 panel 级组件无法辨识边界。改用 .regular style 后
+    /// 可读性显著提升，符合 Apple HIG 对 panel 级组件的建议。
+    /// macOS < 26 回退到 NSVisualEffectView，由调用方通过 material 参数指定材质
+    /// （.sidebar/.headerView/.sheet 等），在旧版系统上稳定可见。
+    /// 液态玻璃增强（噪声/高光/内阴影/tint）由 CALayer 叠加层提供，保留设计语言一致性。
+    private func setupPanelGlass() {
+        if #available(macOS 26.0, *) {
+            // macOS 26+: 使用原生 NSGlassEffectView（.regular style，更好可读性）
+            let glassView = NSGlassEffectView()
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+            glassView.style = nativeGlassStyle()
+            glassView.cornerRadius = cornerRadius
+            glassView.contentView = nil  // 不嵌入内容视图，叠加层由 FFGlassView 的 layer 管理
+            // 显式设置 appearance 以跟随 NSApp.appearance，避免浅色/深色模式反转
+            glassView.appearance = NSApp.appearance
+
+            addSubview(glassView)
+            NSLayoutConstraint.activate([
+                glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                glassView.topAnchor.constraint(equalTo: topAnchor),
+                glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            nativeGlassView = glassView
+        } else {
+            // macOS < 26: 回退到 NSVisualEffectView
+            let visualEffect = NSVisualEffectView()
+            visualEffect.material = material ?? .headerView
+            visualEffect.blendingMode = .behindWindow
+            visualEffect.state = .active
+            // 修复主题反转: NSVisualEffectView 必须显式设置 appearance 以跟随 NSApp.appearance，
+            // 否则 state = .active 时它会跟随系统外观而非应用强制外观，导致浅色/深色模式反转。
+            visualEffect.appearance = NSApp.appearance
+            // NSVisualEffectView 圆角跟随 FFGlassView 的 cornerRadius
+            visualEffect.wantsLayer = true
+            visualEffect.layer?.cornerRadius = cornerRadius
+            visualEffect.layer?.cornerCurve = cornerCurve
+            visualEffect.layer?.masksToBounds = true  // 仅裁剪玻璃效果本身，不影响 FFGlassView 的子视图
+            visualEffect.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(visualEffect)
+            NSLayoutConstraint.activate([
+                visualEffect.leadingAnchor.constraint(equalTo: leadingAnchor),
+                visualEffect.trailingAnchor.constraint(equalTo: trailingAnchor),
+                visualEffect.topAnchor.constraint(equalTo: topAnchor),
+                visualEffect.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            nativeGlassView = visualEffect
+        }
+
+        // CALayer 叠加层（顺序：tint → 高光 → 内阴影 → 亮线）
+        // 重设计 v0.7.2：去掉 noiseLayer（液态玻璃是平滑材质，不叠噪声）
+        // Wave4 Task 6：装饰分级——实体底上的面板降级为单层描边（无顶部高光/内阴影）
+        let tint = CALayer()
+        tint.backgroundColor = FFDesign.glassTint.cgColor
+        applyCornerClip(to: tint)
+        layer?.addSublayer(tint)
+        tintLayer = tint
+
+        if decoration == .glassOverlay {
+            let highlight = makeHighlightLayer()
+            layer?.addSublayer(highlight)
+            highlightLayer = highlight
+
+            let inner = makeInnerShadowLayer()
+            layer?.addSublayer(inner)
+            innerShadowLayer = inner
+        }
+
+        // 全周细亮线（液态玻璃描边）：CAShapeLayer 沿圆角矩形边缘绘制，
+        // 显式置于最上层，避免被原生玻璃子视图遮挡
+        let border = makeBorderLayer()
+        layer?.addSublayer(border)
+        borderLayer = border
+    }
+
+    /// `.component` 级：原生玻璃（macOS 26+）或纯 CALayer（旧版） + tint + 高光 + 内阴影
+    ///
+    /// macOS 26+ 使用 NSGlassEffectView(.clear style)，为悬浮在内容之上的子组件
+    /// （按钮、搜索框、卡片等）提供轻量液态玻璃效果。.clear style 适合 component 级，
+    /// 因为组件通常浮在已有玻璃背景之上，不需要额外的材质不透明度。
+    /// macOS < 26 回退到纯 CALayer 路径（tint + 圆角 + 高光 + 内阴影），不创建原生玻璃视图。
+    private func setupComponentGlass() {
+        if #available(macOS 26.0, *) {
+            // macOS 26+: 使用原生 NSGlassEffectView（.clear style，适合悬浮组件）
+            let glassView = NSGlassEffectView()
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+            glassView.style = .clear
+            glassView.cornerRadius = cornerRadius
+            glassView.contentView = nil  // 不嵌入内容视图，叠加层由 FFGlassView 的 layer 管理
+            // 显式设置 appearance 以跟随 NSApp.appearance
+            glassView.appearance = NSApp.appearance
+
+            addSubview(glassView)
+            NSLayoutConstraint.activate([
+                glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                glassView.topAnchor.constraint(equalTo: topAnchor),
+                glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            nativeGlassView = glassView
+        }
+        // macOS < 26: 无原生玻璃视图，仅使用下方 CALayer 叠加层
+
+        // CALayer 叠加层（顺序：tint → 高光 → 内阴影 → 亮线）
+        // 重设计 v0.7.2：去掉 noiseLayer（液态玻璃是平滑材质，不叠噪声）
+        // Wave4 Task 6：装饰分级——component 嵌在已有表面上，默认仅单层描边
+
+        // tint 背景
+        let tint = CALayer()
+        tint.backgroundColor = FFDesign.glassTint.cgColor
+        applyCornerClip(to: tint)
+        layer?.addSublayer(tint)
+        tintLayer = tint
+
+        // 顶部高光 + 内阴影（仅玻璃浮层分级保留；实体底降级为单层描边）
+        if decoration == .glassOverlay {
+            let highlight = makeHighlightLayer()
+            layer?.addSublayer(highlight)
+            highlightLayer = highlight
+
+            let inner = makeInnerShadowLayer()
+            layer?.addSublayer(inner)
+            innerShadowLayer = inner
+        }
+
+        // 全周细亮线（液态玻璃描边；降级面板与 component 级用更弱的描边色）
+        let border = makeBorderLayer()
+        layer?.addSublayer(border)
+        borderLayer = border
+    }
+
+    // MARK: - 子层构造
+
+    /// 给装饰层应用圆角裁剪（消除圆角外方形灰边）。
+    /// 在创建时即调用——layout() 首次运行时 bounds 可能为空直接 return，
+    /// 若只依赖 layout() 设置会导致装饰层始终未裁剪（问题 3 根因）。
+    private func applyCornerClip(to layer: CALayer) {
+        layer.cornerRadius = self.cornerRadius
+        layer.cornerCurve = cornerCurve
+        layer.masksToBounds = true
+    }
+
+    /// 顶部 0.5pt 高光线（沿圆角矩形顶边）
+    private func makeHighlightLayer() -> CAShapeLayer {
+        let layer = CAShapeLayer()
+        layer.fillColor = NSColor.clear.cgColor
+        layer.strokeColor = NSColor.white.cgColor
+        layer.lineWidth = FFDesign.Glass.highlightInset
+        layer.opacity = Float(FFDesign.highlightAlpha)
+        return layer
+    }
+
+    /// 描边色按层级 + 装饰分级取值：玻璃浮层 panel 用强亮描边（浮层显眼），
+    /// 降级面板（实体底单层描边）与 component 级用弱亮描边（嵌入式不突兀）
+    private var borderStrokeColor: NSColor {
+        (level == .panel && decoration == .glassOverlay) ? FFDesign.glassBorder : FFDesign.glassBorderComponent
+    }
+
+    /// 全周细亮线（液态玻璃"磨边"反光）：沿圆角矩形边缘绘制，宽度 1.75pt
+    private func makeBorderLayer() -> CAShapeLayer {
+        let layer = CAShapeLayer()
+        layer.fillColor = NSColor.clear.cgColor
+        layer.strokeColor = borderStrokeColor.cgColor
+        layer.lineWidth = FFDesign.Glass.borderWidth
+        layer.opacity = 1.0
+        return layer
+    }
+
+    /// 内阴影层（底部深度感）
+    /// 用一个被反向 mask 的 CALayer 实现：内圈透明，外圈投射阴影向内
+    private func makeInnerShadowLayer() -> CALayer {
+        let shadowLayer = CALayer()
+        shadowLayer.shadowColor = NSColor.black.cgColor
+        shadowLayer.shadowOpacity = Float(FFDesign.innerShadowAlpha)
+        shadowLayer.shadowOffset = FFDesign.Glass.innerShadowOffset
+        shadowLayer.shadowRadius = FFDesign.Glass.innerShadowRadius
+        return shadowLayer
+    }
+
+    // MARK: - 布局
+
+    override func layout() {
+        super.layout()
+        updateSublayerFrames()
+    }
+
+    /// 根据 bounds 更新所有 CALayer 子层的 frame 与路径
+    private func updateSublayerFrames() {
+        let bounds = self.bounds
+
+        guard !bounds.isEmpty else { return }
+
+        // 修复问题 3（根因）：AppKit 在 wantsLayer=true 后某些时机（layout/updateLayer）会把
+        // backing layer 的 shadowOpacity 重置为默认 0。每次 layout 显式重设阴影属性，对抗重置。
+        // 同时按层级（panel 浮层 / component 嵌入式）应用不同 shadow 参数。
+        if level == .panel {
+            layer?.shadowColor = NSColor.black.cgColor
+            layer?.shadowOpacity = FFDesign.Glass.shadowOpacity
+            layer?.shadowRadius = FFDesign.Glass.shadowRadius
+            layer?.shadowOffset = FFDesign.Glass.shadowOffset
+        } else if level == .component {
+            layer?.shadowColor = NSColor.black.cgColor
+            layer?.shadowOpacity = FFDesign.Glass.shadowOpacityEmbedded
+            layer?.shadowRadius = FFDesign.Glass.shadowRadiusEmbedded
+            layer?.shadowOffset = FFDesign.Glass.shadowOffsetEmbedded
+        }
+
+        // 更新 cornerRadius（bounds 变化时确保圆角正确）
+        layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = cornerCurve
+        // 阴影路径跟随圆角（仅 panel 有阴影，但 path 一致设置无副作用）
+        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+
+        // tint：填满，圆角裁剪（消除圆角外方形灰边根因）
+        tintLayer?.frame = bounds
+        tintLayer?.cornerRadius = cornerRadius
+        tintLayer?.cornerCurve = cornerCurve
+        tintLayer?.masksToBounds = true
+
+        // 全周"磨边"亮线路径（沿圆角矩形边缘，向内偏移半个线宽使描边完整可见）
+        // 重设计 v0.7.2：宽度按 borderWidth（1.75pt）偏移
+        if let border = borderLayer {
+            let halfWidth = FFDesign.Glass.borderWidth / 2
+            border.path = CGPath(
+                roundedRect: bounds.insetBy(dx: halfWidth, dy: halfWidth),
+                cornerWidth: max(cornerRadius - halfWidth, 0),
+                cornerHeight: max(cornerRadius - halfWidth, 0),
+                transform: nil
+            )
+        }
+
+        // 高光：沿圆角矩形顶部弧线
+        if let highlight = highlightLayer {
+            let path = highlightPath(in: bounds)
+            highlight.path = path
+        }
+
+        // 内阴影：用 shadowPath 限定为外圈（让阴影向内投射）
+        if let inner = innerShadowLayer {
+            inner.frame = bounds
+            // 外圈路径（含阴影扩散区域）减去内圈路径
+            let inset = -FFDesign.Glass.innerShadowRadius * 2
+            let outerRect = bounds.insetBy(dx: inset, dy: inset)
+            let outerPath = CGPath(roundedRect: outerRect,
+                                   cornerWidth: cornerRadius + FFDesign.Glass.innerShadowRadius * 2,
+                                   cornerHeight: cornerRadius + FFDesign.Glass.innerShadowRadius * 2,
+                                   transform: nil)
+            let innerPath = CGPath(roundedRect: bounds,
+                                   cornerWidth: cornerRadius,
+                                   cornerHeight: cornerRadius,
+                                   transform: nil)
+            // 用 even-odd 规则让外圈减去内圈
+            let combined = CGMutablePath()
+            combined.addPath(outerPath)
+            combined.addPath(innerPath)
+            inner.shadowPath = combined
+            // 让阴影只在内侧显示：mask 为内圈路径（外圈透明）
+            let maskLayer = CAShapeLayer()
+            maskLayer.path = innerPath
+            maskLayer.fillRule = .evenOdd
+            // 反转 mask：用外圈减内圈作为可见区
+            let invertPath = CGMutablePath()
+            invertPath.addRect(bounds)
+            invertPath.addPath(innerPath)
+            let invertMask = CAShapeLayer()
+            invertMask.path = invertPath
+            invertMask.fillRule = .evenOdd
+            inner.mask = invertMask
+        }
+
+        // 问题 3 诊断：在所有赋值完成后记一次，看装饰层是否真正生效
+        if !hasLoggedLayout {
+            hasLoggedLayout = true
+            FFDebug.log("FFGlass layout-done level=\(level) r=\(cornerRadius) bounds=\(bounds) tintFrame=\(String(describing: tintLayer?.frame)) borderPathSet=\(borderLayer?.path != nil) shadowPathSet=\(layer?.shadowPath != nil) shadowOpacity=\(String(format: "%.3f", layer?.shadowOpacity ?? -1)) shadowRadius=\(String(format: "%.1f", layer?.shadowRadius ?? -1)) native=\(nativeGlassView != nil)")
+        }
+    }
+
+    /// 顶部高光路径：沿圆角矩形顶部弧线
+    private func highlightPath(in bounds: CGRect) -> CGPath {
+        let r = cornerRadius
+        let path = CGMutablePath()
+        // 从左上角圆弧起点 → 顶部 → 右上角圆弧终点
+        path.move(to: CGPoint(x: bounds.minX + r, y: bounds.maxY - FFDesign.Glass.highlightInset / 2))
+        path.addLine(to: CGPoint(x: bounds.maxX - r, y: bounds.maxY - FFDesign.Glass.highlightInset / 2))
+        // 左上角弧
+        path.addArc(center: CGPoint(x: bounds.minX + r, y: bounds.maxY - r),
+                    radius: r - FFDesign.Glass.highlightInset / 2,
+                    startAngle: .pi / 2,
+                    endAngle: .pi,
+                    clockwise: false)
+        // 右上角弧
+        path.addArc(center: CGPoint(x: bounds.maxX - r, y: bounds.maxY - r),
+                    radius: r - FFDesign.Glass.highlightInset / 2,
+                    startAngle: 0,
+                    endAngle: .pi / 2,
+                    clockwise: false)
+        return path
+    }
+
+    // MARK: - 主题刷新
+
+    /// 主题变更时刷新噪声/高光/内阴影令牌
+    /// 由 `ThemeManager.onModeChanged` 统一调用
+    func refreshAppearance() {
+        // macOS 26+: 更新 NSGlassEffectView 的 appearance
+        // NSGlassEffectView 自动响应系统外观变化，但显式设置 appearance 确保跟随 NSApp.appearance
+        if #available(macOS 26.0, *), let glassView = nativeGlassView as? NSGlassEffectView {
+            glassView.appearance = NSApp.appearance
+            // tintColor 更新可在此处扩展（当前为 nil，使用系统默认玻璃色调）
+        }
+        // macOS < 26: 更新 NSVisualEffectView 的 appearance 以跟随 NSApp.appearance
+        if let visualEffect = nativeGlassView as? NSVisualEffectView {
+            visualEffect.appearance = NSApp.appearance
+        }
+        // 描边色随主题刷新（按分级：玻璃浮层强亮 / 降级面板与 component 弱亮）
+        borderLayer?.strokeColor = borderStrokeColor.cgColor
+        // tint
+        tintLayer?.backgroundColor = FFDesign.glassTint.cgColor
+        // 高光 alpha
+        highlightLayer?.opacity = Float(FFDesign.highlightAlpha)
+        // 内阴影 alpha
+        innerShadowLayer?.shadowOpacity = Float(FFDesign.innerShadowAlpha)
+        // 强制重新布局以更新路径（dark/light 下圆角不变，但保险起见）
+        needsLayout = true
+    }
+
+    /// 全局刷新所有 FFGlassView 实例（主题切换时调用）
+    static func refreshAllInstances() {
+        for instance in allInstances.allObjects {
+            instance.refreshAppearance()
+        }
+    }
+}
+
+// MARK: - 全局共享噪声纹理
+
+/// 全局共享噪声纹理（CIFilter 程序化生成，避免每实例重复生成）
+enum FFGlassNoise {
+    /// 缓存的 256x256 灰度噪声 CGImage
+    private static var cachedImage: CGImage?
+    private static let cacheQueue = DispatchQueue(label: "FFGlassNoise.cache")
+
+    /// 获取共享噪声 CGImage（线程安全）
+    static func sharedImage() -> CGImage {
+        if let cached = cachedImage { return cached }
+        return cacheQueue.sync {
+            if let cached = cachedImage { return cached }
+            let image = generateNoiseImage()
+            cachedImage = image
+            return image
+        }
+    }
+
+    /// 创建平铺噪声 CALayer（contents=sharedImage, backgroundColor=clear）
+    static func noiseLayer() -> CALayer {
+        let layer = CALayer()
+        layer.contents = sharedImage()
+        // CALayer 的 contentsGravity 不支持 repeat 平铺。
+        // 通过 contentsRect 实现 N x N 平铺（此处 4x4，覆盖大区域不失真）
+        layer.contentsGravity = .resizeAspectFill
+        layer.contentsRect = CGRect(x: 0, y: 0, width: 4, height: 4)  // 4x4 平铺
+        layer.backgroundColor = NSColor.clear.cgColor
+        return layer
+    }
+
+    /// 程序化生成 256x256 灰度噪声 CGImage
+    private static func generateNoiseImage() -> CGImage {
+        let size = Int(FFDesign.Glass.noiseTileSize)
+        let rect = CGRect(x: 0, y: 0, width: size, height: size)
+
+        // CIRandomGenerator 输出彩色噪声，转灰度
+        guard let randomFilter = CIFilter(name: "CIRandomGenerator"),
+              let monochromeFilter = CIFilter(name: "CIColorMonochrome") else {
+            // 回退：返回纯白 CGImage
+            return fallbackWhiteImage(size: size)
+        }
+
+        guard let randomOutput = randomFilter.outputImage?.cropped(to: rect) else {
+            return fallbackWhiteImage(size: size)
+        }
+        monochromeFilter.setValue(randomOutput, forKey: kCIInputImageKey)
+        monochromeFilter.setValue(CIColor(red: 1, green: 1, blue: 1), forKey: "inputColor")
+        monochromeFilter.setValue(1.0, forKey: "inputIntensity")
+
+        let context = CIContext(options: nil)
+        guard let monochromeOutput = monochromeFilter.outputImage,
+              let cgImage = context.createCGImage(monochromeOutput, from: rect) else {
+            return fallbackWhiteImage(size: size)
+        }
+        return cgImage
+    }
+
+    /// 回退方案：纯白 CGImage（噪声生成失败时）
+    private static func fallbackWhiteImage(size: Int) -> CGImage {
+        guard let context = CGContext(data: nil,
+                                width: size,
+                                height: size,
+                                bitsPerComponent: 8,
+                                bytesPerRow: size * 4,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            // 极端情况：连 CGContext 都创建失败，尝试 1x1 尺寸
+            return fallbackWhiteImage1x1()
+        }
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        if let img = context.makeImage() {
+            return img
+        }
+        return fallbackWhiteImage1x1()
+    }
+
+    /// 1x1 纯白图片的终极回退方案
+    private static func fallbackWhiteImage1x1() -> CGImage {
+        let ctx = CGContext(data: nil, width: 1, height: 1,
+                            bitsPerComponent: 8, bytesPerRow: 4,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        ctx?.setFillColor(NSColor.white.cgColor)
+        ctx?.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        if let img = ctx?.makeImage() {
+            return img
+        }
+        // 理论上不可能到达这里，但编译器需要保证返回值
+        return NSImage(size: NSSize(width: 1, height: 1), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            return true
+        }.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+    }
+}
