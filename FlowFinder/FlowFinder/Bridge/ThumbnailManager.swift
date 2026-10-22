@@ -85,7 +85,7 @@ public final class ThumbnailManager {
             }
 
             // 2. 查磁盘缓存（后台线程）
-            if let diskImage = self.loadFromDiskCache(path: path, cacheKey: cacheKey as String) {
+            if let diskImage = self.loadFromDiskCache(cacheKey: cacheKey as String) {
                 self.memoryCache.setObject(diskImage, forKey: cacheKey)
                 DispatchQueue.main.async { completion(diskImage) }
                 return
@@ -255,32 +255,49 @@ public final class ThumbnailManager {
         return "wsicon_\(path)_\(Int(pointSize))" as NSString
     }
 
-    private func diskCacheURL(for path: String, cacheKey: String) -> URL {
-        // 使用路径的 hash 作为文件名
-        let hash = path.djb2hash()
-        let ext = (path as NSString).pathExtension
-        return diskCacheURL.appendingPathComponent("\(hash)_\(cacheKey).\(ext.isEmpty ? "png" : ext)")
+    /// 磁盘缓存文件名：对完整 cacheKey（含路径与尺寸）取稳定 hash，
+    /// 保证结果不含 `/`、`:` 等路径分隔符，也不会因为原始扩展名生成非法文件名。
+    static func diskCacheFilename(for cacheKey: String) -> String {
+        let hash = cacheKey.djb2hash()
+        return String(format: "thumb_%016llx.png", hash)
     }
 
-    private func loadFromDiskCache(path: String, cacheKey: String) -> NSImage? {
-        let url = diskCacheURL(for: path, cacheKey: cacheKey)
-        return NSImage(contentsOf: url)
+    private func diskCacheURL(for cacheKey: String) -> URL {
+        diskCacheURL.appendingPathComponent(Self.diskCacheFilename(for: cacheKey))
+    }
+
+    private func loadFromDiskCache(cacheKey: String) -> NSImage? {
+        NSImage(contentsOf: diskCacheURL(for: cacheKey))
     }
 
     private func saveToDiskCache(image: NSImage, path: String, cacheKey: String) {
-        let url = diskCacheURL(for: path, cacheKey: cacheKey)
+        let url = diskCacheURL(for: cacheKey)
+        let cacheDir = diskCacheURL
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             // 转为 PNG 数据保存
             if let tiffData = image.tiffRepresentation,
                let bitmap = NSBitmapImageRep(data: tiffData),
                let pngData = bitmap.representation(using: .png, properties: [:]) {
+                try? FileManager.default.createDirectory(at: cacheDir,
+                                                         withIntermediateDirectories: true)
                 try? pngData.write(to: url, options: .atomic)
             }
-            // 写入后触发磁盘缓存清理，确保总大小不超过 maxDiskCacheBytes。
-            // cleanupDiskCache 是 best-effort，失败不影响主流程。
-            self?.cleanupDiskCacheIfNeeded()
+            // 每次写盘都枚举缓存目录会放大 I/O；改为每 100 次写检查一次。
+            self?.noteDiskCacheWrite()
         }
+    }
+
+    private let diskWriteLock = NSLock()
+    private var diskWriteCount = 0
+
+    private func noteDiskCacheWrite() {
+        diskWriteLock.lock()
+        diskWriteCount += 1
+        let shouldClean = diskWriteCount % 100 == 0
+        diskWriteLock.unlock()
+        guard shouldClean else { return }
+        cleanupDiskCacheIfNeeded()
     }
 
     /// 磁盘缓存清理：当总大小超过 maxDiskCacheBytes 时，按 contentModificationDate

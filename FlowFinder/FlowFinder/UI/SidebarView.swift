@@ -10,15 +10,6 @@ extension Notification.Name {
     static let sidebarDidSelectTag = Notification.Name("sidebarDidSelectTag")
     /// 任务 F11-8: 活动面板/标签筛选变化通知，侧边栏据此更新标签高亮
     static let paneTagFilterChanged = Notification.Name("paneTagFilterChanged")
-    /// 任务 F11-11: 侧边栏工具面板入口通知（C1）
-    /// 工具面板三个入口（查重 / 批量重命名 / AI 工具）点击后，由 SidebarView 发送对应通知，
-    /// MainWindowController 及活动面板视图据此打开对应窗口或执行操作。
-    /// - sidebarDidRequestDedupScan: 查重扫描，MainWindowController 打开 DuplicateScanWindowController
-    /// - sidebarDidRequestBatchRename: 批量重命名，MainWindowController 转发 menuBatchRename
-    /// - sidebarDidRequestAITools: AI 工具，活动面板视图触发 generateAITags
-    static let sidebarDidRequestDedupScan = Notification.Name("sidebarDidRequestDedupScan")
-    static let sidebarDidRequestBatchRename = Notification.Name("sidebarDidRequestBatchRename")
-    static let sidebarDidRequestAITools = Notification.Name("sidebarDidRequestAITools")
     /// v0.8.0 P1: 收藏右键菜单三项窗口级动作（object 携带发起方 outlineView，userInfo["path"]）
     /// 窗口的创建/持有归 MainWindowController，SidebarView 只发意图，不直接建窗
     static let sidebarDidRequestOpenInNewTab = Notification.Name("sidebarDidRequestOpenInNewTab")
@@ -219,19 +210,31 @@ class SidebarView: NSView, FFRegionAware {
     private var appNameView: FFGradientLabelView!
     /// 2026-10-18：应用名称下方的版本行
     private var brandVersionLabel: NSTextField!
-    /// 2026-10-19 #10：顶部控制行（隐藏侧栏 / 日间夜间 / 单双窗口），紧跟在红绿灯右侧
-    private var topControlsRow: NSStackView!
-    /// 右缘控制组（主题 / 单双窗）——2026-10-20 #4
-    private var rightControlsRow: NSStackView!
-    private var topControlsTopConstraint: NSLayoutConstraint!
-    private var topControlsLeadingConstraint: NSLayoutConstraint!
-    /// 2026-10-19 #10：隐藏侧栏按钮（图标随显隐状态切换）
-    private var sidebarToggleBtn: NSButton!
-    /// 任务 T1: 主题切换按钮（用于切换图标）
-    private var themeToggleBtn: NSButton!
-    /// 2026-10-19 #9：程序名称旁的「发现功能」药丸（工具入口，替代原工具面板）
-    private var discoverButton: FFPillButton!
-    private var discoverPopover: NSPopover?
+    /// 2026-10-21：主题/单双栏/侧栏开关在窗口级全局顶栏；工具入口回到品牌旁（R19-2 D-02）。
+    /// 由 MainWindowController 注入：每次打开工具页时构建最新活动面板上下文。
+    var toolContextProvider: (() -> FFToolContext?)?
+
+    /// 品牌旁的「工具」胶囊：点击进入/退出侧栏工具页
+    private var toolPill: FFPillButton!
+    /// 宽侧栏（≥200pt）胶囊与名称同行，窄侧栏移到版本号所在行
+    private var pillWideConstraints: [NSLayoutConstraint] = []
+    private var pillNarrowConstraints: [NSLayoutConstraint] = []
+    private var pillIsWide = true
+    /// 工具页只替换侧栏内容，收藏/位置/标签原样保留（返回时恢复滚动位置）
+    private var toolPageView: SidebarToolPageView?
+    private(set) var isToolPageShown = false
+
+    var toolPillForTesting: FFPillButton { toolPill }
+    var toolPageForTesting: SidebarToolPageView? { toolPageView }
+    var sidebarContentVisibleForTesting: Bool { sidebarScrollView.isHidden == false }
+    var brandViewsForTesting: (name: NSView, version: NSView, pill: NSView) {
+        (appNameView, brandVersionLabel, toolPill)
+    }
+    /// 批次 1 B1-10：工具页显示状态变化时重建窗口 keyViewLoop
+    var onToolPageVisibilityChanged: (() -> Void)?
+    var toolPillFocusView: NSView { toolPill }
+    /// 侧栏收藏列表：批次 4 接入窗口 keyViewLoop（侧栏 → 左栏 → 右栏）
+    var sidebarFocusableView: NSView { favoritesOutlineView }
 
     /// v0.8.0 P1: 侧边栏滚动容器——品牌区与底部工具行固定，中间内容整体滚动
     /// （访达同构：工具栏与底部不动，中间滚动；收藏 20+ 项不再溢出重叠）
@@ -255,8 +258,6 @@ class SidebarView: NSView, FFRegionAware {
     private var placesRowsStack: NSStackView!
     /// 位置分区标题行
     private var placesHeaderView: NSView!
-    /// 2026-10-18 #3：单/双窗口切换按钮（红绿灯同一水平带的最右侧）
-    private var paneModeButton: NSButton!
     /// v0.8.0 P1: 收藏数据层（顺序 / 失效状态 / 持久化）
     private let favoritesStore = SidebarFavoritesStore()
     private lazy var favoritesDataSource = FavoritesSidebarDataSource(store: favoritesStore)
@@ -270,6 +271,18 @@ class SidebarView: NSView, FFRegionAware {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupUI()
+    }
+
+    /// 宽度跨过 200pt 时把「工具」胶囊在名称行/版本行之间换边。
+    /// 用两套约束显式切换而不是靠优先级仲裁：两条 centerY 挂在不同锚点上，
+    /// 优先级会让窄侧栏下胶囊压到名称尾部。
+    override func layout() {
+        super.layout()
+        let wide = bounds.width >= 200
+        guard wide != pillIsWide else { return }
+        pillIsWide = wide
+        NSLayoutConstraint.deactivate(wide ? pillNarrowConstraints : pillWideConstraints)
+        NSLayoutConstraint.activate(wide ? pillWideConstraints : pillNarrowConstraints)
     }
 
     private func setupUI() {
@@ -288,77 +301,28 @@ class SidebarView: NSView, FFRegionAware {
         brandView.addSubview(appNameView)
 
         // 版本号：0.7.9 (7901)。打包进 .app 后读 Info.plist；测试宿主等无 bundle 场景回退占位
-        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
-        let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
-        brandVersionLabel = NSTextField(labelWithString: "\(shortVersion) (\(buildVersion))")
+        brandVersionLabel = NSTextField(labelWithString: FFBuildInfo.displayVersion)
         brandVersionLabel.font = FFDesign.Text.xs          // 10pt（原 11pt，2026-10-18 #7 缩小）
         brandVersionLabel.textColor = NSColor.secondaryLabelColor
+        brandVersionLabel.lineBreakMode = .byTruncatingTail
         brandVersionLabel.translatesAutoresizingMaskIntoConstraints = false
         brandView.addSubview(brandVersionLabel)
 
-        // 2026-10-19 #9：程序名称右侧的「发现功能」药丸。工具不是常驻操作，
-        // 收进这里按需展开：查重 / 批量重命名 / AI 工具 / 设置 / 关于。
-        discoverButton = FFPillButton(title: "发现功能", icon: .compass)
-        discoverButton.onClick = { [weak self] in self?.toggleDiscoverPanel() }
-        brandView.addSubview(discoverButton)
-
-        // 2026-10-19 #7：设置入口从名称旁移除——点击名称/版本直达设置里的「关于」分区，
-        // 那里集中放设置与关于，不再有两个并列的小按钮。
+        // 2026-10-19 #7：设置入口不在名称旁——点击名称/版本直达设置里的「关于」分区。
         // 点击名称区域弹出设置（范围只限名称/版本）
         let brandClick = NSClickGestureRecognizer(target: self, action: #selector(openSettings))
         appNameView.addGestureRecognizer(brandClick)
         let versionClick = NSClickGestureRecognizer(target: self, action: #selector(openSettings))
         brandVersionLabel.addGestureRecognizer(versionClick)
 
-        // 2026-10-19 #10：顶部控制行——隐藏侧栏 / 日间夜间 / 单双窗口，
-        // 紧跟在红绿灯右侧（top 与 leading 都由 layout 按红绿灯真实位置反算，
-        // 见 alignTopControlsWithTrafficLights；写死常量换系统版本会错位）
-        sidebarToggleBtn = makeSidebarIconButton(
-            icon: .panelLeftClose,
-            tooltip: "隐藏侧边栏 (⌥⌘S)",
-            action: #selector(toggleSidebarTapped)
-        )
-        themeToggleBtn = makeSidebarIconButton(
-            icon: Self.themeIcon(for: ThemeManager.shared.currentMode),
-            tooltip: "切换主题",
-            action: #selector(toggleTheme)
-        )
-        paneModeButton = makeSidebarIconButton(
-            icon: .columns2,
-            tooltip: "切换到单窗口",
-            action: #selector(handlePaneModeToggle)
-        )
-        // 2026-10-20 #4：控制图标拆成两组（推翻 2026-10-19 #10 的「三者都紧跟红绿灯」）
-        //   - 隐藏侧栏：与红绿灯同组，紧跟缩放键之后（位置由 alignTopControlsWithTrafficLights 反算）
-        //   - 主题 / 单双窗：视图类操作，靠侧栏右缘（右缘距 12）
-        topControlsRow = NSStackView(views: [sidebarToggleBtn])
-        topControlsRow.orientation = .horizontal
-        topControlsRow.spacing = 2
-        topControlsRow.alignment = .centerY
-        topControlsRow.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(topControlsRow)
+        // R19-2 D-02：工具入口从顶栏搬回品牌右侧，做成 24pt 的 wrench 胶囊
+        toolPill = FFPillButton(title: "工具", icon: .wrench, height: 24)
+        toolPill.onClick = { [weak self] in self?.toggleToolPage() }
+        toolPill.setAccessibilityLabel("工具")
+        brandView.addSubview(toolPill)
 
-        rightControlsRow = NSStackView(views: [themeToggleBtn, paneModeButton])
-        rightControlsRow.orientation = .horizontal
-        rightControlsRow.spacing = 2
-        rightControlsRow.alignment = .centerY
-        rightControlsRow.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(rightControlsRow)
-
-        topControlsTopConstraint = topControlsRow.topAnchor.constraint(equalTo: topAnchor, constant: 8)
-        topControlsLeadingConstraint = topControlsRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 78)
         NSLayoutConstraint.activate([
-            topControlsTopConstraint,
-            topControlsLeadingConstraint,
-            topControlsRow.heightAnchor.constraint(equalToConstant: 24),
-
-            // 右缘组：与控制行垂直居中，右缘距侧栏右边 12
-            rightControlsRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            rightControlsRow.centerYAnchor.constraint(equalTo: topControlsRow.centerYAnchor),
-            rightControlsRow.heightAnchor.constraint(equalToConstant: 24),
-
-            // 品牌区排在控制行下方（访达同构：标题在工具栏下方，不再与红绿灯同行）
-            brandView.topAnchor.constraint(equalTo: topControlsRow.bottomAnchor, constant: 8),
+            brandView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             brandView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             brandView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             brandView.heightAnchor.constraint(equalToConstant: 40),
@@ -373,12 +337,20 @@ class SidebarView: NSView, FFRegionAware {
             appNameView.trailingAnchor.constraint(lessThanOrEqualTo: brandView.trailingAnchor),
             // 版本号同样不越界
             brandVersionLabel.trailingAnchor.constraint(lessThanOrEqualTo: brandView.trailingAnchor),
-
-            // 发现功能药丸：紧跟名称右侧，与名称行居中对齐
-            discoverButton.leadingAnchor.constraint(equalTo: appNameView.trailingAnchor, constant: 8),
-            discoverButton.centerYAnchor.constraint(equalTo: appNameView.centerYAnchor),
-            discoverButton.trailingAnchor.constraint(lessThanOrEqualTo: brandView.trailingAnchor),
         ])
+
+        // 胶囊位置随侧栏宽度换行：宽侧栏贴名称行，窄侧栏让到版本号行，名称始终完整
+        pillWideConstraints = [
+            toolPill.trailingAnchor.constraint(equalTo: brandView.trailingAnchor),
+            toolPill.centerYAnchor.constraint(equalTo: appNameView.centerYAnchor),
+            appNameView.trailingAnchor.constraint(lessThanOrEqualTo: toolPill.leadingAnchor, constant: -8),
+        ]
+        pillNarrowConstraints = [
+            toolPill.trailingAnchor.constraint(equalTo: brandView.trailingAnchor),
+            toolPill.centerYAnchor.constraint(equalTo: brandVersionLabel.centerYAnchor),
+            brandVersionLabel.trailingAnchor.constraint(lessThanOrEqualTo: toolPill.leadingAnchor, constant: -8),
+        ]
+        NSLayoutConstraint.activate(pillWideConstraints)
 
         // v0.8.0 P1：「个人收藏」标题改为 outline 分区标题行（group row），不再用外置 label。
         // 2026-10-18 #4/#5：位置与标签也用同一套分区标题视图——同字号、同缩进、同行高，
@@ -447,9 +419,11 @@ class SidebarView: NSView, FFRegionAware {
         }
         // 任务 F11-8: 标签点击 -> 发送通知，由 MainWindowController 设置当前活动面板的 tagFilter（问题3）
         // Wave2 P0-4（多窗口）：object 携带本侧边栏实例身份，接收方据此过滤本窗口通知
-        tagFlowView.onTagSelected = { [weak self] tag in
+        tagFlowView.onTagSelected = { [weak self] tag, additive in
             guard let self = self else { return }
-            NotificationCenter.default.post(name: .sidebarDidSelectTag, object: self, userInfo: ["tag": tag])
+            NotificationCenter.default.post(name: .sidebarDidSelectTag,
+                                            object: self,
+                                            userInfo: ["tag": tag, "additive": additive])
         }
 
         // 任务 F11-8: 监听面板标签筛选变化，更新标签行高亮（当前筛选的标签高亮显示）
@@ -538,12 +512,7 @@ class SidebarView: NSView, FFRegionAware {
         // 监听标签数据源刷新通知，更新标签显示
         NotificationCenter.default.addObserver(self, selector: #selector(refreshTagDisplay), name: NSNotification.Name("SidebarTagsDidRefresh"), object: nil)
 
-        // 监听主题变更，更新主题切换按钮图标
-        // （2026-10-19 #10：模板图随外观自动反色，只需换图标本身）
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleAppearanceChanged(_:)),
-            name: .appearanceChanged, object: nil
-        )
+        // 2026-10-21：主题按钮已迁到全局顶栏，侧栏不再监听外观变更。
 
         // v0.8.0 P1: 卷挂载/卸载后重新校验收藏可用性（外置卷重插后失效项自动恢复）
         NotificationCenter.default.addObserver(
@@ -559,26 +528,6 @@ class SidebarView: NSView, FFRegionAware {
     // MARK: - Helpers
 
     /// 统一的侧栏图标按钮：24×24、无边框、仅图标、灰色
-    /// （2026-10-19 #8/#10：图标改取 Lucide 模板图，跟随深浅色自动反色）
-    private func makeSidebarIconButton(icon: FFIconName, tooltip: String, action: Selector) -> NSButton {
-        let button = NSButton()
-        button.bezelStyle = .inline
-        button.isBordered = false
-        button.imagePosition = .imageOnly
-        button.contentTintColor = .secondaryLabelColor
-        // 2026-10-20 #7：控制图标 15 → 16pt
-        button.image = FFIcon.template(icon, size: 16)
-        button.toolTip = tooltip
-        button.target = self
-        button.action = action
-        button.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 24),
-            button.heightAnchor.constraint(equalToConstant: 24),
-        ])
-        return button
-    }
-
     /// 主题按钮图标：浅色显示太阳、深色显示月亮、跟随系统显示半明半暗圆点。
     static func themeIcon(for mode: AppearanceMode) -> FFIconName {
         switch mode {
@@ -586,49 +535,6 @@ class SidebarView: NSView, FFRegionAware {
         case .dark: return .moon
         case .system: return .circleDot
         }
-    }
-
-    /// #6/#10：顶部控制行（隐藏侧栏 / 日间切换 / 单双窗切换）与红绿灯对齐。
-    ///
-    /// 红绿灯位置由系统按窗口类型决定（fullSizeContentView 与普通窗口不同），
-    /// 写死常量在换机器 / 换系统版本后会错位，所以每次布局都按红绿灯的真实
-    /// 位置反算一次；只在与当前常量不同时才写回，避免布局循环。
-    /// 水平方向同理：三个图标要「排在红绿灯后面」，而不是靠右对齐。
-    private func alignTopControlsWithTrafficLights() {
-        guard let window = window else { return }
-
-        // 全屏时红绿灯被系统收起，控制行回到左侧常规缩进
-        if window.styleMask.contains(.fullScreen) {
-            applyTopControls(top: 8, leading: 12)
-            return
-        }
-
-        // 以红绿灯里最右的缩放键为基准：closeButton 只到 24pt，用它算会让三个图标
-        // 盖住「最小化 / 缩放」两颗按钮（实测 close 在 x=8..24，zoom 才到 64）
-        guard let anchorButton = window.standardWindowButton(.zoomButton)
-                ?? window.standardWindowButton(.closeButton),
-              let buttonSuperview = anchorButton.superview else { return }
-        let rectInWindow = buttonSuperview.convert(anchorButton.frame, to: nil)
-        let centerInSelf = convert(NSPoint(x: rectInWindow.midX, y: rectInWindow.midY), from: nil)
-        let maxXInSelf = convert(NSPoint(x: rectInWindow.maxX, y: rectInWindow.midY), from: nil).x
-        let centerFromTop = bounds.height - centerInSelf.y
-        guard centerFromTop.isFinite, centerFromTop > 0, maxXInSelf.isFinite else { return }
-        // 控制行高 24 → 半高 12；水平留 10pt，紧跟在缩放键之后
-        applyTopControls(top: centerFromTop - 12, leading: maxXInSelf + 10)
-    }
-
-    private func applyTopControls(top: CGFloat, leading: CGFloat) {
-        if abs(topControlsTopConstraint.constant - top) > 0.5 {
-            topControlsTopConstraint.constant = top
-        }
-        if abs(topControlsLeadingConstraint.constant - leading) > 0.5 {
-            topControlsLeadingConstraint.constant = leading
-        }
-    }
-
-    override func layout() {
-        super.layout()
-        alignTopControlsWithTrafficLights()
     }
 
     /// 创建外置标题 Label（灰色小字，访达风格）
@@ -734,75 +640,52 @@ class SidebarView: NSView, FFRegionAware {
 
     // MARK: - Context Menu
 
-    /// 任务 T1: 切换夜间/日间模式
-    @objc private func toggleTheme() {
-        let newMode = ThemeManager.shared.currentMode.toggled
-        FFDebug.log("SidebarView.toggleTheme: 当前=\(ThemeManager.shared.currentMode.title) 新=\(newMode.title)")
-        ThemeManager.shared.applyMode(newMode)
-        FFDebug.log("SidebarView.toggleTheme: applyMode 返回后 NSApp.appearance=\(String(describing: NSApp.appearance?.name))")
-        // 更新按钮图标
-        themeToggleBtn.image = FFIcon.template(Self.themeIcon(for: newMode), size: 15)
-    }
-
     /// 任务 T1: 打开设置窗口（2026-10-19 #7：点击程序名称直达设置里的「关于」分区）
     @objc private func openSettings() {
         NotificationCenter.default.post(name: .openSettings, object: nil,
                                         userInfo: ["section": "about"])
     }
 
-    // MARK: - 侧栏显隐（2026-10-19 #10）
+    // MARK: - 工具页（R19-2 D-02/D-03：品牌胶囊 → 侧栏内页面）
 
-    @objc private func toggleSidebarTapped() {
-        NotificationCenter.default.post(name: .sidebarDidToggleVisibility, object: self)
-    }
-
-    /// 由 MainWindowController 回写按钮外观：隐藏后图标变成「展开」，提示语同步。
-    func setSidebarVisible(_ visible: Bool) {
-        sidebarToggleBtn?.image = FFIcon.template(visible ? .panelLeftClose : .panelLeftOpen, size: 15)
-        sidebarToggleBtn?.toolTip = visible ? "隐藏侧边栏 (⌥⌘S)" : "显示侧边栏 (⌥⌘S)"
-    }
-
-    // MARK: - 发现功能（2026-10-19 #9）
-
-    private func toggleDiscoverPanel() {
-        if let pop = discoverPopover, pop.isShown {
-            pop.performClose(nil)
-            return
-        }
-        let controller = FFDiscoverPanelController()
-        controller.onRequestClose = { [weak self] in self?.discoverPopover?.performClose(nil) }
-        controller.onSelect = { [weak self] item in self?.handleDiscoverItem(item) }
-
-        let pop = NSPopover()
-        pop.behavior = .transient
-        pop.animates = true
-        pop.contentViewController = controller
-        pop.show(relativeTo: discoverButton.bounds, of: discoverButton, preferredEdge: .maxY)
-        discoverPopover = pop
-        // 弹层出现后焦点直接落在搜索框，敲字即可筛
-        DispatchQueue.main.async { controller.focusSearch() }
-    }
-
-    private func handleDiscoverItem(_ item: FFDiscoverItem) {
-        switch item {
-        case .dedup:
-            NotificationCenter.default.post(name: .sidebarDidRequestDedupScan, object: self)
-        case .batchRename:
-            NotificationCenter.default.post(name: .sidebarDidRequestBatchRename, object: self)
-        case .aiTag, .aiOrganize:
-            break   // 灰显项点不动，这里只是兜底
-        case .settings:
-            NotificationCenter.default.post(name: .openSettings, object: self)
-        case .about:
-            NotificationCenter.default.post(name: .openSettings, object: self,
-                                            userInfo: ["section": "about"])
+    /// 点胶囊进入；再点胶囊或「返回收藏」退出。文件区、活动面板、筛选都不受影响。
+    func toggleToolPage() {
+        if isToolPageShown {
+            closeToolPage()
+        } else {
+            showToolPage()
         }
     }
 
-    @objc private func handleAppearanceChanged(_ notification: Notification) {
-        themeToggleBtn?.image = FFIcon.template(
-            Self.themeIcon(for: ThemeManager.shared.currentMode), size: 15
-        )
+    private func showToolPage() {
+        guard let context = toolContextProvider?() else { return }
+        FFToolRegistry.registerBuiltInsIfNeeded()
+        toolPageView?.removeFromSuperview()
+
+        let page = SidebarToolPageView(context: context)
+        page.onDismiss = { [weak self] in self?.closeToolPage() }
+        addSubview(page)
+        NSLayoutConstraint.activate([
+            page.topAnchor.constraint(equalTo: brandView.bottomAnchor, constant: 4),
+            page.leadingAnchor.constraint(equalTo: leadingAnchor),
+            page.trailingAnchor.constraint(equalTo: trailingAnchor),
+            page.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+        ])
+
+        toolPageView = page
+        sidebarScrollView.isHidden = true
+        isToolPageShown = true
+        toolPill.isSelected = true
+        onToolPageVisibilityChanged?()
+    }
+
+    private func closeToolPage() {
+        toolPageView?.removeFromSuperview()
+        toolPageView = nil
+        sidebarScrollView.isHidden = false
+        isToolPageShown = false
+        toolPill.isSelected = false
+        onToolPageVisibilityChanged?()
     }
 
     // MARK: - 收藏操作（v0.8.0 P1）
@@ -981,17 +864,7 @@ class SidebarView: NSView, FFRegionAware {
         NotificationCenter.default.post(name: .sidebarDidSelectDirectory, object: self, userInfo: ["entry": entry])
     }
 
-    // MARK: - 单/双窗口切换（2026-10-18 #3）
-
-    @objc private func handlePaneModeToggle() {
-        NotificationCenter.default.post(name: .sidebarDidTogglePaneMode, object: self)
-    }
-
-    /// 由 MainWindowController 在模式变化/启动恢复时回写按钮外观
-    func setSinglePaneMode(_ single: Bool) {
-        paneModeButton?.image = FFIcon.template(single ? .square : .columns2, size: 15)
-        paneModeButton?.toolTip = single ? "切换到双窗口" : "切换到单窗口"
-    }
+    // 2026-10-21：单/双窗口切换已迁到全局顶栏。
 
     @objc private func removeTag(_ sender: NSMenuItem?) {
         guard let tagId = sender?.representedObject as? String else { return }
@@ -1033,8 +906,13 @@ class SidebarView: NSView, FFRegionAware {
         // Wave2 P0-4（多窗口）：仅响应本窗口面板发出的筛选变化（object=所属窗口），
         // object 为 nil 时兼容旧 poster。避免 A 窗口的面板激活高亮到 B 窗口侧边栏。
         if let owner = notification.object as? NSWindow, !(owner === window) { return }
-        let tagFilter = notification.userInfo?["tagFilter"] as? Tag
-        tagFlowView.setHighlightedTagId(tagFilter?.id)
+        if let tagFilters = notification.userInfo?["tagFilters"] as? [Tag] {
+            tagFlowView.setHighlightedTagIds(Set(tagFilters.map(\.id)))
+        } else if let tagFilter = notification.userInfo?["tagFilter"] as? Tag {
+            tagFlowView.setHighlightedTagIds([tagFilter.id])
+        } else {
+            tagFlowView.setHighlightedTagIds([])
+        }
     }
 
     /// 任务 F11-8: 清理通知观察者
@@ -1284,6 +1162,10 @@ class SidebarDataSourceBase: NSObject, NSOutlineViewDataSource, NSOutlineViewDel
             // 非标准位置仍回退真实文件图标（B-05 不变）。
             if let standard = FFStandardLocationIcon.icon(forPath: fav.path) {
                 imageView.image = standard
+            } else if ProcessInfo.processInfo.environment["FF_SKIP_SIDEBAR_ICONS"] == "1" {
+                // 测试宿主：收藏夹可能指向慢卷/网络路径，NSWorkspace 同步查图标
+                // 会卡住主线程布局；测试只关心布局与命中，不需要真实图标。
+                imageView.image = NSImage(named: NSImage.folderName)
             } else {
                 let workspaceIcon = NSWorkspace.shared.icon(forFile: fav.path)
                 workspaceIcon.size = NSSize(width: 20, height: 20)
@@ -1615,97 +1497,39 @@ private final class FlippedSidebarContainer: NSView {
 // MARK: - TagsSidebarDataSource (标签)
 
 private class TagsSidebarDataSource: SidebarDataSourceBase {
-    private var tags: [Tag] = []
-
-    private let tagsKey = "SidebarTags"
-
     override init() {
         super.init()
-        loadTags()
-        // 监听文件标签变更通知，自动刷新侧边栏标签列表
-        NotificationCenter.default.addObserver(self, selector: #selector(handleFileTagsChange), name: NSNotification.Name("FileTagsDidChange"), object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(handleFileTagsChange(_:)),
+                                               name: NSNotification.Name("FileTagsDidChange"),
+                                               object: nil)
     }
 
-    /// 文件标签变更时重新加载侧边栏标签列表并通知 SidebarView 刷新显示
-    @objc func handleFileTagsChange(_ notification: Notification) {
-        // 如果通知携带了标签数据，将其添加到侧边栏标签列表（同步到 UserDefaults）
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    /// Finder 原生标签可能不在目录里；发现后补进 TagCatalog，侧栏才能显示与筛选。
+    @objc private func handleFileTagsChange(_ notification: Notification) {
         if let tags = notification.userInfo?["tags"] as? [Tag] {
-            for tag in tags {
-                if !self.tags.contains(where: { $0.name == tag.name }) {
-                    self.tags.append(tag)
-                }
+            for tag in tags where TagCatalog.shared.tag(named: tag.name) == nil {
+                _ = TagCatalog.shared.add(name: tag.name, color: tag.color)
             }
-            saveTags()
-        } else {
-            loadTags()
         }
-        // 通知 SidebarView 刷新显示
-        NotificationCenter.default.post(name: NSNotification.Name("SidebarTagsDidRefresh"), object: nil)
+        NotificationCenter.default.post(name: .sidebarTagsDidRefresh, object: nil)
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    // MARK: - Data Loading
-
-    private func loadTags() {
-        if let data = UserDefaults.standard.data(forKey: tagsKey),
-           let decoded = try? JSONDecoder().decode([Tag].self, from: data) {
-            // 存量归一：把旧 iOS 色值迁到现行 App 色板，只在真正变化时回写一次。
-            // 这是「同一标签在侧栏与文件两处两种颜色」的历史根因之一。
-            var migrated = decoded
-            var changed = false
-            for i in migrated.indices {
-                let normalized = FFTagColorPalette.normalizedHex(migrated[i].color)
-                if normalized != migrated[i].color {
-                    migrated[i].color = normalized
-                    changed = true
-                }
-            }
-            tags = migrated
-            if changed { saveTags() }
-        } else {
-            tags = [
-                Tag(name: "重要", color: "#ff3b30"),
-                Tag(name: "工作", color: "#0a84ff"),
-                Tag(name: "个人", color: "#34c759"),
-            ]
-            saveTags()
-        }
-    }
-
-    private func saveTags() {
-        if let data = try? JSONEncoder().encode(tags) {
-            UserDefaults.standard.set(data, forKey: tagsKey)
-        }
-    }
-
-    // MARK: - CRUD
+    func allTags() -> [Tag] { TagCatalog.shared.tags }
 
     func addTag(_ tag: Tag) {
-        tags.append(tag)
-        saveTags()
+        _ = TagCatalog.shared.add(name: tag.name, color: tag.color)
     }
 
     func removeTag(id: String) {
-        tags.removeAll(where: { $0.id == id })
-        saveTags()
+        TagCatalog.shared.delete(id: id)
     }
 
-    /// 改标签颜色。同时把新颜色同步到所有已带该标签的文件，
-    /// 否则侧栏显示新色、文件详情栏还是旧色（同一标签两种颜色的历史问题）。
+    /// 改色：TagCatalog 负责同步所有文件并广播刷新。
     func updateColor(id: String, hex: String) {
-        guard let index = tags.firstIndex(where: { $0.id == id }) else { return }
-        let name = tags[index].name
-        tags[index].color = hex
-        saveTags()
-        TagIndexStore.propagateColorChange(tagName: name, newHex: hex)
-    }
-
-    /// 返回所有标签（供 TagFlowView 渲染）
-    func allTags() -> [Tag] {
-        return tags
+        TagCatalog.shared.recolor(id: id, hex: hex)
     }
 }
 
@@ -2231,7 +2055,7 @@ private class TagRowView: NSView, FFRegionAware {
     private func applyBackground() {
         let color: NSColor
         if isFiltered {
-            color = NSColor.controlAccentColor.withAlphaComponent(0.15)
+            color = FFAccent.current.withAlphaComponent(0.15)
         } else if isHovered {
             color = NSColor.labelColor.withAlphaComponent(0.06)
         } else {
@@ -2254,7 +2078,7 @@ private class TagFlowView: NSView {
 
     var onAddTagTapped: (() -> Void)?
     var onTagDeleted: ((String) -> Void)?
-    var onTagSelected: ((Tag) -> Void)?
+    var onTagSelected: ((Tag, Bool) -> Void)?
     /// 标签改色：(tagId, 新 hex)。由 SidebarView 负责写回存储并广播刷新。
     var onTagColorChanged: ((String, String) -> Void)?
 
@@ -2263,8 +2087,8 @@ private class TagFlowView: NSView {
     private var tags: [Tag] = []
     /// tagId → 行视图，供右键「编辑颜色」定位弹层锚点
     private var rowViews: [String: NSView] = [:]
-    /// 任务 F11-8: 当前高亮的标签 id（来自活动面板的 tagFilter），nil 表示无高亮
-    private var highlightedTagId: String?
+    /// 当前高亮的标签 id 集合（Phase 5：支持 ⌘ 多选 AND）
+    private var highlightedTagIds: Set<String> = []
     /// 标签计数：key = 标签名。原生标签（`_kMDItemUserTags`）每次读取生成随机 id，
     /// 不能作 key，故一律按名称匹配（与 TagBridge 的合并去重口径一致）。
     private var counts: [String: Int] = [:]
@@ -2342,12 +2166,10 @@ private class TagFlowView: NSView {
         rebuildRows()
     }
 
-    /// 任务 F11-8: 设置当前高亮标签 id（来自活动面板 tagFilter），并重建行以应用高亮样式。
-    /// nil 表示无高亮（取消筛选）。点击同一标签切换筛选时由 MainWindowController 负责置 nil。
-    func setHighlightedTagId(_ tagId: String?) {
-        // 仅在变化时重建，避免无谓刷新
-        guard highlightedTagId != tagId else { return }
-        highlightedTagId = tagId
+    /// 设置当前高亮标签集合（来自活动面板 tagFilters）。
+    func setHighlightedTagIds(_ ids: Set<String>) {
+        guard highlightedTagIds != ids else { return }
+        highlightedTagIds = ids
         rebuildRows()
     }
 
@@ -2393,7 +2215,7 @@ private class TagFlowView: NSView {
     /// 创建标签行：色点 + 名称 + 右侧计数，整行铺满侧栏宽度
     /// 常态透明，悬停 6% 底，筛选态 15% 强调色底 + 名称加粗（不再使用药丸底）
     private func makeTagRow(tag: Tag) -> NSView {
-        let isHighlighted = (highlightedTagId == tag.id)
+        let isHighlighted = highlightedTagIds.contains(tag.id)
         let tagColor = NSColor(hex: tag.color) ?? .systemBlue
 
         let row = TagRowView()
@@ -2490,7 +2312,8 @@ private class TagFlowView: NSView {
     @objc private func handleRowClick(_ sender: NSClickGestureRecognizer) {
         guard let tagId = sender.view?.identifier?.rawValue else { return }
         if let tag = tags.first(where: { $0.id == tagId }) {
-            onTagSelected?(tag)
+            let additive = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+            onTagSelected?(tag, additive)
         }
     }
 }

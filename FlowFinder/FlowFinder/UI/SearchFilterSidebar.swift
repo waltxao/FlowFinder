@@ -74,10 +74,10 @@ class SearchFilterSidebar: NSView {
         addSubview(scrollView)
 
         mainStack.orientation = .vertical
-        mainStack.spacing = 16
+        mainStack.spacing = 12
         mainStack.detachesHiddenViews = false
         mainStack.translatesAutoresizingMaskIntoConstraints = false
-        mainStack.edgeInsets = NSEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
+        mainStack.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
         scrollView.documentView = mainStack
 
         NSLayoutConstraint.activate([
@@ -189,7 +189,8 @@ class SearchFilterSidebar: NSView {
 
     /// 创建 section 容器（标题用 FFGlassView(.component) chip 背景）
     private func makeSection(title: String) -> SettingsSectionView {
-        let section = SettingsSectionView(title: title)
+        // 整块筛选区外面已是一张卡片；分区用 plain 样式，避免三张卡片嵌套。
+        let section = SettingsSectionView(title: title, style: .plain)
         section.translatesAutoresizingMaskIntoConstraints = false
         return section
     }

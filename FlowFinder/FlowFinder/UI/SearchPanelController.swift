@@ -78,6 +78,11 @@ public class SearchPanelController: NSWindowController {
 
     public static let shared = SearchPanelController()
 
+    /// ⌘W 命中搜索窗口时关闭自身，而不是落到主窗口的标签逻辑。
+    @objc func menuCloseTab(_ sender: Any?) {
+        close()
+    }
+
     // MARK: - UI 引用
 
     private var searchField: NSSearchField!
@@ -89,6 +94,7 @@ public class SearchPanelController: NSWindowController {
     private var resultsTableView: NSTableView!
     private var scrollView: NSScrollView!
     private var resultsHeader: NSTextField!
+    private var resultsHeaderContainer: NSView!
     private var progressIndicator: NSProgressIndicator!
     /// 搜索进行中标志（用于正确判断进度条状态，而非依赖 isDisplayedWhenStopped）
     private var isSearching: Bool = false
@@ -97,10 +103,6 @@ public class SearchPanelController: NSWindowController {
     private var searchGeneration: Int = 0
     /// D5: 结果批量刷新计数器（每 32 条刷新一次表）
     private var searchBatchPending: Int = 0
-    /// D2: 主容器引用（主题切换时刷新静态 cgColor 背景快照）
-    private weak var mainContainerView: NSView?
-    /// D2: 主题变化监听 token
-    private var appearanceObserver: NSObjectProtocol?
 
     // MARK: - 内容索引（FTS5）状态
 
@@ -143,8 +145,14 @@ public class SearchPanelController: NSWindowController {
 
     /// 结果详情标签（任务 T12：选中结果后动态更新，替代静态占位文案）
     private var detailsLabel: NSTextField!
+    /// 空查询时的居中空态
+    private var emptyStateView: NSView!
+    private var emptyStatePrimaryButton: NSButton!
     /// 任务 T12: 窗口是否已首次定位（首次显示 center，之后尊重 frame autosave 保存的 frame）
     private var hasPresentedBefore = false
+
+    var isEmptyStateForTesting: Bool { !(emptyStateView?.isHidden ?? true) }
+    var emptyStatePrimaryTitleForTesting: String { emptyStatePrimaryButton?.title ?? "" }
 
     private override init(window: NSWindow?) {
         super.init(window: window)
@@ -153,7 +161,8 @@ public class SearchPanelController: NSWindowController {
     private convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 560),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            // 不用 fullSizeContentView：内容从标题栏下方开始，避免搜索框被标题栏裁掉。
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -193,7 +202,9 @@ public class SearchPanelController: NSWindowController {
         filterSidebar.onConfigChanged = { [weak self] _ in
             self?.applyFiltersAndReload()
         }
-        let sidebarContainer = makeSolidContainer()
+        let sidebarContainer = makeSolidContainer(cornerRadius: FFVisualTokens.Radius.card)
+        sidebarContainer.layer?.borderWidth = 1
+        (sidebarContainer as? FFSolidSurfaceView)?.borderColor = .separatorColor
         sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
         sidebarContainer.addSubview(filterSidebar)
 
@@ -204,7 +215,7 @@ public class SearchPanelController: NSWindowController {
         resultsPane.layer?.backgroundColor = NSColor.clear.cgColor
 
         // 任务 F11-2: resultsHeader 容器实体背景（替代 FFGlassView .component，v0.6.7）
-        let resultsHeaderContainer = makeSolidContainer()
+        resultsHeaderContainer = makeSolidContainer()
         resultsHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
         resultsHeader = NSTextField(labelWithString: "就绪")
         resultsHeader.font = NSFont.systemFont(ofSize: 11)
@@ -307,10 +318,14 @@ public class SearchPanelController: NSWindowController {
         detailsLabel.translatesAutoresizingMaskIntoConstraints = false
         detailsBar.addSubview(detailsLabel)
 
+        // 空查询空态：覆盖结果区，居中展示主 CTA
+        emptyStateView = makeEmptyStateView()
+
         // 组装结果区
         resultsPane.addSubview(resultsHeaderContainer)
         resultsPane.addSubview(contentIndexStatusBar)
         resultsPane.addSubview(scrollView)
+        resultsPane.addSubview(emptyStateView)
         resultsPane.addSubview(detailsBar)
 
         // 主分栏视图
@@ -330,7 +345,6 @@ public class SearchPanelController: NSWindowController {
         // D2: 不用静态 cgColor 快照（不随主题变化）；背景色由 viewDidChangeEffectiveAppearance 动态刷新
         mainContainer.addSubview(searchToolbar)
         mainContainer.addSubview(splitView)
-        mainContainerView = mainContainer
 
         NSLayoutConstraint.activate([
             // 顶部工具栏
@@ -371,6 +385,11 @@ public class SearchPanelController: NSWindowController {
             scrollView.topAnchor.constraint(equalTo: contentIndexStatusBar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
 
+            emptyStateView.leadingAnchor.constraint(equalTo: resultsPane.leadingAnchor),
+            emptyStateView.trailingAnchor.constraint(equalTo: resultsPane.trailingAnchor),
+            emptyStateView.topAnchor.constraint(equalTo: resultsPane.topAnchor),
+            emptyStateView.bottomAnchor.constraint(equalTo: detailsBar.topAnchor),
+
             detailsBar.leadingAnchor.constraint(equalTo: resultsPane.leadingAnchor, constant: 8),
             detailsBar.trailingAnchor.constraint(equalTo: resultsPane.trailingAnchor, constant: -8),
             detailsBar.bottomAnchor.constraint(equalTo: resultsPane.bottomAnchor, constant: -4),
@@ -378,21 +397,18 @@ public class SearchPanelController: NSWindowController {
             detailsLabel.leadingAnchor.constraint(equalTo: detailsBar.leadingAnchor, constant: 12),
             detailsLabel.centerYAnchor.constraint(equalTo: detailsBar.centerYAnchor),
 
-            filterSidebar.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
-            filterSidebar.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
-            filterSidebar.topAnchor.constraint(equalTo: sidebarContainer.topAnchor),
-            filterSidebar.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
+            filterSidebar.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor, constant: 8),
+            filterSidebar.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor, constant: -8),
+            filterSidebar.topAnchor.constraint(equalTo: sidebarContainer.topAnchor, constant: 8),
+            filterSidebar.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor, constant: -8),
         ])
 
         splitView.setPosition(180, ofDividerAt: 0)
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
 
-        // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
-        let containerView = FFOpaqueContainerView()
-        containerView.wantsLayer = true
+        // 外观感知实体背景：主题切换时重新解析 windowBackgroundColor
+        let containerView = FFSolidSurfaceView(color: .windowBackgroundColor)
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        // D2: cgColor 是快照不随主题变化；窗口背景由系统绘制，层背景色仅在主题切换时刷新一次
-        containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         containerView.addSubview(mainContainer)
         NSLayoutConstraint.activate([
@@ -403,18 +419,6 @@ public class SearchPanelController: NSWindowController {
         ])
 
         window.contentView = containerView
-
-        // D2: 主题切换时刷新静态 cgColor 快照背景（移除 appearance 快照后窗口本身跟随系统，
-        // 但 layer 背景色是快照，需在主题变化时重绘）
-        appearanceObserver = NotificationCenter.default.addObserver(
-            forName: .appearanceChanged, object: nil, queue: .main
-        ) { [weak self] _ in
-            guard let self = self, let mainView = self.mainContainerView else { return }
-            let isDark = ThemeManager.shared.resolvedIsDark
-            let bg: NSColor = isDark ? NSColor(calibratedWhite: 0.16, alpha: 1.0) : NSColor.windowBackgroundColor
-            mainView.layer?.backgroundColor = bg.cgColor
-            mainView.needsDisplay = true
-        }
     }
 
     // MARK: - 任务 F11-2: 实体背景容器工厂（v0.6.7）
@@ -423,12 +427,65 @@ public class SearchPanelController: NSWindowController {
     /// - Parameter cornerRadius: 圆角（默认 0；卡片样式传 8/10 等）
     /// - Returns: isOpaque=true 的 NSView，背景色为系统动态 controlBackgroundColor。
     private func makeSolidContainer(cornerRadius: CGFloat = 0) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let view = FFSolidSurfaceView(color: .controlBackgroundColor)
         view.layer?.cornerRadius = cornerRadius
+        view.layer?.cornerCurve = .continuous
         // 不设置 masksToBounds：避免裁剪容器内内容
         return view
+    }
+
+    private func makeEmptyStateView() -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.isHidden = true
+        container.wantsLayer = true
+
+        let icon = NSImageView()
+        icon.image = FFIcon.template(.search, size: 44)
+        icon.contentTintColor = .tertiaryLabelColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 44).isActive = true
+
+        let title = NSTextField(labelWithString: "搜索这台 Mac")
+        title.font = FFVisualTokens.Font.emptyTitle
+        title.textColor = .labelColor
+        title.alignment = .center
+
+        let subtitle = NSTextField(wrappingLabelWithString: "按文件名查找文件；构建内容索引后，还能搜索文件正文。")
+        subtitle.font = NSFont.systemFont(ofSize: 12)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.alignment = .center
+        subtitle.maximumNumberOfLines = 2
+        subtitle.preferredMaxLayoutWidth = 360
+
+        let primary = NSButton(title: "构建内容索引", target: self, action: #selector(emptyStateBuildIndexClicked))
+        primary.bezelStyle = .rounded
+        primary.controlSize = .large
+        primary.keyEquivalent = "\r"
+        emptyStatePrimaryButton = primary
+
+        let secondary = NSButton(title: "只搜索文件名", target: self, action: #selector(emptyStateNameOnlyClicked))
+        secondary.bezelStyle = .inline
+        secondary.controlSize = .small
+
+        let stack = NSStackView(views: [icon, title, subtitle, primary, secondary])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.setCustomSpacing(14, after: icon)
+        stack.setCustomSpacing(4, after: title)
+        stack.setCustomSpacing(18, after: subtitle)
+        stack.setCustomSpacing(6, after: primary)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -48),
+        ])
+        return container
     }
 
     /// 构建顶部搜索工具栏（大搜索框 32pt + 控件行）（v0.6.7）
@@ -443,8 +500,9 @@ public class SearchPanelController: NSWindowController {
         searchField.target = self
         searchField.action = #selector(searchClicked)
         searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.font = NSFont.systemFont(ofSize: 14)
-        searchField.controlSize = .large
+        // 与主工具栏统一：28pt 高度、13pt 字号、系统清除按钮。
+        searchField.font = FFVisualTokens.Font.body
+        searchField.controlSize = .regular
 
         // 控件行：模式切换 + 范围 + 类型 + 修改时间
         modeSegmentedControl = NSSegmentedControl(labels: SearchMode.allCases.map { $0.title }, trackingMode: .selectOne, target: self, action: #selector(modeChanged))
@@ -486,7 +544,7 @@ public class SearchPanelController: NSWindowController {
             searchField.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 12),
             searchField.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -12),
             searchField.topAnchor.constraint(equalTo: toolbar.topAnchor, constant: 8),
-            searchField.heightAnchor.constraint(equalToConstant: 32),
+            searchField.heightAnchor.constraint(equalToConstant: FFVisualTokens.searchFieldHeight),
 
             controlsStack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 12),
             controlsStack.trailingAnchor.constraint(lessThanOrEqualTo: toolbar.trailingAnchor, constant: -12),
@@ -508,10 +566,18 @@ public class SearchPanelController: NSWindowController {
         // 每次打开面板重置范围选择：清空自定义路径并回到"全部范围"，避免上次选择残留误导
         customScopePath = nil
         scopePopup.selectItem(at: ScopePopupIndex.all.rawValue)
-        if !initialQuery.isEmpty {
-            searchField.stringValue = initialQuery
-            currentQuery = initialQuery
+        let query = initialQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchField.stringValue = query
+        currentQuery = query
+        if !query.isEmpty {
             performSearch()
+        } else {
+            searchGeneration += 1
+            results = []
+            filteredResults = []
+            resultsTableView.reloadData()
+            resultsHeader.stringValue = "就绪"
+            updateEmptyState()
         }
         // 确保应用在前台
         if #available(macOS 14.0, *) {
@@ -557,6 +623,29 @@ public class SearchPanelController: NSWindowController {
         performSearch()
     }
 
+    @objc private func emptyStateBuildIndexClicked() {
+        contentIndexActionClicked()
+    }
+
+    @objc private func emptyStateNameOnlyClicked() {
+        scopePopup.selectItem(at: ScopePopupIndex.currentLocation.rawValue)
+        searchField.placeholderString = "输入文件名..."
+        window?.makeFirstResponder(searchField)
+    }
+
+    private func updateEmptyState() {
+        guard emptyStateView != nil else { return }
+        let status = ContentIndexBridge.shared.status()
+        let shouldShow = currentQuery.isEmpty
+            && filteredResults.isEmpty
+            && !isSearching
+            && status != .indexing
+        emptyStateView.isHidden = !shouldShow
+        scrollView.isHidden = shouldShow
+        resultsHeaderContainer.isHidden = shouldShow
+        contentIndexStatusBar.isHidden = shouldShow
+    }
+
     @objc private func resultDoubleClicked() {
         guard resultsTableView.clickedRow >= 0,
               resultsTableView.clickedRow < filteredResults.count else { return }
@@ -574,8 +663,11 @@ public class SearchPanelController: NSWindowController {
             contentQueryInFlight = false
             results = []
             filteredResults = []
+            isSearching = false
+            progressIndicator.stopAnimation(nil)
             resultsTableView.reloadData()
             resultsHeader.stringValue = "请输入搜索关键词"
+            updateEmptyState()
             return
         }
 
@@ -594,6 +686,7 @@ public class SearchPanelController: NSWindowController {
         progressIndicator.startAnimation(nil)
         resultsHeader.stringValue = "搜索中..."
         searchStartTime = Date()
+        updateEmptyState()
 
         switch currentMode {
         case .local:
@@ -821,6 +914,7 @@ public class SearchPanelController: NSWindowController {
         } else {
             resultsHeader.stringValue = "找到 \(filteredResults.count) 个结果"
         }
+        updateEmptyState()
     }
 
     /// FTS5 phrase 查询转义（契约 §8.4）：双引号包裹 + 内部双引号翻倍，
@@ -917,7 +1011,8 @@ public class SearchPanelController: NSWindowController {
             contentIndexProgress.stopAnimation(nil)
         }
 
-        contentIndexActionButton.isHidden = !descriptor.showsActionButton
+        updateEmptyState()
+        contentIndexActionButton.isHidden = !descriptor.showsActionButton || !emptyStateView.isHidden
         if descriptor.showsActionButton {
             contentIndexActionButton.title = descriptor.actionTitle
         }

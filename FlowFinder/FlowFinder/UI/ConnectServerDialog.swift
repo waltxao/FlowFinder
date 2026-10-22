@@ -43,6 +43,7 @@ class ConnectServerDialog: FFModalSheet {
     private var serverField: NSTextField!
     private var portField: NSTextField!
     private var shareField: NSTextField!
+    private var domainField: NSTextField!
     private var userField: NSTextField!
     private var passwordField: NSSecureTextField!
     private var rememberToggle: NSButton!
@@ -72,6 +73,7 @@ class ConnectServerDialog: FFModalSheet {
                 share: self.shareField.stringValue,
                 user: self.userField.stringValue,
                 password: self.passwordField.stringValue,
+                domain: self.domainField.stringValue,
                 rememberPassword: self.rememberToggle.state == .on,
                 autoConnect: self.autoConnectToggle.state == .on
             )
@@ -157,7 +159,15 @@ class ConnectServerDialog: FFModalSheet {
         bodyView.addSubview(serverLabel)
         bodyView.addSubview(serverField)
         bodyView.addSubview(portShareLabels)
+        let domainLabel = makeFieldLabel("域（可选）")
+        domainField = NSTextField()
+        domainField.placeholderString = "WORKGROUP"
+        domainField.stringValue = FFAppSettings.smbDomain()
+        domainField.translatesAutoresizingMaskIntoConstraints = false
+
         bodyView.addSubview(portShareStack)
+        bodyView.addSubview(domainLabel)
+        bodyView.addSubview(domainField)
         bodyView.addSubview(userLabel)
         bodyView.addSubview(userField)
         bodyView.addSubview(passwordLabel)
@@ -199,8 +209,18 @@ class ConnectServerDialog: FFModalSheet {
             portShareStack.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
             portShareStack.heightAnchor.constraint(equalToConstant: fieldHeight),
 
+            // 域
+            domainLabel.topAnchor.constraint(equalTo: portShareStack.bottomAnchor, constant: spacing),
+            domainLabel.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
+            domainLabel.heightAnchor.constraint(equalToConstant: labelHeight),
+
+            domainField.topAnchor.constraint(equalTo: domainLabel.bottomAnchor, constant: 2),
+            domainField.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
+            domainField.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
+            domainField.heightAnchor.constraint(equalToConstant: fieldHeight),
+
             // 用户名
-            userLabel.topAnchor.constraint(equalTo: portShareStack.bottomAnchor, constant: spacing),
+            userLabel.topAnchor.constraint(equalTo: domainField.bottomAnchor, constant: spacing),
             userLabel.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
             userLabel.heightAnchor.constraint(equalToConstant: labelHeight),
 
@@ -269,28 +289,15 @@ struct ConnectServerResult {
     let share: String
     let user: String
     let password: String
+    var domain: String = ""
     let rememberPassword: Bool
     let autoConnect: Bool
 
     /// 生成 SMB URL（仅 SMB 协议有效）
     /// F2: user/password 需 URL 编码（含 @、:、/ 等字符时否则 URL 解析错误）
     func smbURL() -> URL? {
-        guard `protocol` == .smb, !server.isEmpty else { return nil }
-        var urlString = "smb://"
-        if !user.isEmpty {
-            let encodedUser = user.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? user
-            urlString += encodedUser
-            if !password.isEmpty {
-                let encodedPassword = password.addingPercentEncoding(withAllowedCharacters: .urlPasswordAllowed) ?? password
-                urlString += ":" + encodedPassword
-            }
-            urlString += "@"
-        }
-        urlString += server
-        if !share.isEmpty {
-            let encodedShare = share.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? share
-            urlString += "/\(encodedShare)"
-        }
-        return URL(string: urlString)
+        guard `protocol` == .smb else { return nil }
+        return FFSMBURL.build(server: server, port: port, share: share,
+                              user: user, password: password, domain: domain)
     }
 }

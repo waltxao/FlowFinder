@@ -51,6 +51,8 @@ class FFGlassView: NSView {
     /// 仅 macOS 26+ 使用（.panel 级），通过 GlassStyle 映射到 NSGlassEffectView.Style；默认 .regular
     let glassStyle: GlassStyle
     let cornerRadius: CGFloat
+    /// 圆角曲线：与窗口/面板统一为连续曲率。
+    var cornerCurve: CALayerCornerCurve = .continuous
 
     // MARK: - 子层引用
 
@@ -129,6 +131,7 @@ class FFGlassView: NSView {
         wantsLayer = true
         // 使用标准 cornerRadius 圆角背景（不使用 mask，避免裁剪子视图内容）
         layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = cornerCurve
         layer?.backgroundColor = NSColor.clear.cgColor
         // 不设置 masksToBounds：子视图不应被裁剪，仅背景层需要圆角
 
@@ -209,6 +212,7 @@ class FFGlassView: NSView {
             // NSVisualEffectView 圆角跟随 FFGlassView 的 cornerRadius
             visualEffect.wantsLayer = true
             visualEffect.layer?.cornerRadius = cornerRadius
+            visualEffect.layer?.cornerCurve = cornerCurve
             visualEffect.layer?.masksToBounds = true  // 仅裁剪玻璃效果本身，不影响 FFGlassView 的子视图
             visualEffect.translatesAutoresizingMaskIntoConstraints = false
             addSubview(visualEffect)
@@ -310,6 +314,7 @@ class FFGlassView: NSView {
     /// 若只依赖 layout() 设置会导致装饰层始终未裁剪（问题 3 根因）。
     private func applyCornerClip(to layer: CALayer) {
         layer.cornerRadius = self.cornerRadius
+        layer.cornerCurve = cornerCurve
         layer.masksToBounds = true
     }
 
@@ -380,12 +385,14 @@ class FFGlassView: NSView {
 
         // 更新 cornerRadius（bounds 变化时确保圆角正确）
         layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = cornerCurve
         // 阴影路径跟随圆角（仅 panel 有阴影，但 path 一致设置无副作用）
         layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
 
         // tint：填满，圆角裁剪（消除圆角外方形灰边根因）
         tintLayer?.frame = bounds
         tintLayer?.cornerRadius = cornerRadius
+        tintLayer?.cornerCurve = cornerCurve
         tintLayer?.masksToBounds = true
 
         // 全周"磨边"亮线路径（沿圆角矩形边缘，向内偏移半个线宽使描边完整可见）

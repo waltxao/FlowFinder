@@ -10,6 +10,9 @@ public class AppearanceSettingsView: NSView {
     private var darkButton: NSButton!
     private var systemButton: NSButton!
     private var descriptionLabel: NSTextField!
+    private var sizeTitleLabel: NSTextField!
+    private var sizeControl: NSSegmentedControl!
+    private var sizeHintLabel: NSTextField!
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -70,9 +73,30 @@ public class AppearanceSettingsView: NSView {
         descriptionLabel.textColor = NSColor.secondaryLabelColor
         descriptionLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        sizeTitleLabel = NSTextField(labelWithString: "界面尺寸")
+        sizeTitleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        sizeTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        sizeControl = NSSegmentedControl(
+            labels: FFSizeLevel.allCases.map(\.title),
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(sizeLevelChanged(_:))
+        )
+        sizeControl.segmentStyle = .rounded
+        sizeControl.translatesAutoresizingMaskIntoConstraints = false
+
+        sizeHintLabel = NSTextField(labelWithString: "影响正文与图标尺寸；顶栏保持 44pt 高度。")
+        sizeHintLabel.font = NSFont.systemFont(ofSize: 11)
+        sizeHintLabel.textColor = NSColor.secondaryLabelColor
+        sizeHintLabel.translatesAutoresizingMaskIntoConstraints = false
+
         addSubview(titleLabel)
         addSubview(buttonContainer)
         addSubview(descriptionLabel)
+        addSubview(sizeTitleLabel)
+        addSubview(sizeControl)
+        addSubview(sizeHintLabel)
 
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 20),
@@ -101,11 +125,20 @@ public class AppearanceSettingsView: NSView {
             descriptionLabel.topAnchor.constraint(equalTo: buttonContainer.bottomAnchor, constant: 12),
             descriptionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
             descriptionLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            // Bug #17 修复：原约束链仅自顶向下，未闭合到底部，视图在 NSStackView 中高度歧义、塌缩为 0。
-            // 增加底部约束闭合高度链，使视图依据内容获得确定高度。
-            // 修复：lessThanOrEqualTo 只设最小高度约束，在 NSStackView 中视图可能被压缩到 0 高度。
-            // 改为 equalTo 闭合高度链，使视图获得确定高度。
-            descriptionLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
+
+            sizeTitleLabel.topAnchor.constraint(equalTo: descriptionLabel.bottomAnchor, constant: 18),
+            sizeTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+
+            sizeControl.topAnchor.constraint(equalTo: sizeTitleLabel.bottomAnchor, constant: 8),
+            sizeControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            sizeControl.widthAnchor.constraint(equalToConstant: 240),
+            sizeControl.heightAnchor.constraint(equalToConstant: 24),
+
+            sizeHintLabel.topAnchor.constraint(equalTo: sizeControl.bottomAnchor, constant: 8),
+            sizeHintLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            sizeHintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            // Bug #17 修复：约束链必须闭合到底部，否则视图在 NSStackView 中高度歧义、塌缩为 0。
+            sizeHintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
         ])
 
         updateSelection()
@@ -152,6 +185,9 @@ public class AppearanceSettingsView: NSView {
         darkButton.state = currentMode == .dark ? .on : .off
         systemButton.state = currentMode == .system ? .on : .off
 
+        let sizeIndex = FFSizeLevel.allCases.firstIndex(of: FFSizePreference.current) ?? 1
+        sizeControl.selectedSegment = sizeIndex
+
         switch currentMode {
         case .light:
             descriptionLabel.stringValue = "应用始终使用浅色外观，不受系统设置影响。"
@@ -197,5 +233,12 @@ public class AppearanceSettingsView: NSView {
         FFDebug.log("AppearanceSettingsView.themeButtonClicked: mode=\(mode.title) tag=\(sender.tag)")
         ThemeManager.shared.applyMode(mode)
         FFDebug.log("AppearanceSettingsView.themeButtonClicked: applyMode 返回后 NSApp.appearance=\(String(describing: NSApp.appearance?.name))")
+    }
+
+    @objc private func sizeLevelChanged(_ sender: NSSegmentedControl) {
+        guard FFSizeLevel.allCases.indices.contains(sender.selectedSegment) else { return }
+        let level = FFSizeLevel.allCases[sender.selectedSegment]
+        FFSizePreference.current = level
+        FFDebug.log("AppearanceSettingsView.sizeLevelChanged: \(level.rawValue)")
     }
 }

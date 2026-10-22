@@ -21,11 +21,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         FFDebug.clear()
         FFDebug.log("AppDelegate: applicationDidFinishLaunching")
+        // 2026-10-21：强调色收敛到单一来源；首次运行清除旧粉色自定义值。
+        FFAccent.migrateToUnifiedAccent()
 
         // 任务 F11-3: 全局 ErrorBoundary（v0.6.7）
         // 捕获未处理异常，弹窗提示而非崩溃。轻量进程重启依赖 terminate 后由
         // launch agent / 用户再次打开；此处“重启”按钮通过 relaunch 触发再终止。
         NSSetUncaughtExceptionHandler { exception in
+            FFCrashLog.append(name: exception.name.rawValue, reason: exception.reason)
             DispatchQueue.main.async {
                 let alert = NSAlert()
                 alert.alertStyle = .critical
@@ -97,6 +100,51 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     NSApp.activate(ignoringOtherApps: true)
                 }
             }
+
+            // 启动后再提示，避免挡住首屏；自检/测试宿主不弹。
+            if ProcessInfo.processInfo.environment["FF_SELFTEST"] != "1" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                    self?.warnIfAnotherInstanceIsRunning()
+                }
+                // 批次 4：首次启动欢迎窗口
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    OnboardingWindowController.shared.showIfNeeded()
+                }
+                // 批次 1 B1-04：启动检查更新（开关 + 24h 节流在 checker 内判断）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    FFUpdateChecker.shared.checkOnLaunchIfNeeded()
+                }
+                // 批次 1 B1-08：启动重连已保存的 SMB 服务器
+                if FFAppSettings.smbAutoReconnect() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        SMBBridge.shared.reconnectSavedConnections()
+                    }
+                }
+            }
+        }
+    }
+
+    /// 同 Bundle ID 的另一个进程还在跑时，明确告诉用户“你打开的是哪一份”，
+    /// 避免 0.7.9 与 0.8.0 两个窗口同时出现却无法分辨。
+    private func warnIfAnotherInstanceIsRunning() {
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.flowfinder.native"
+        let instances = FFInstanceGuard.runningInstances(
+            bundleID: bundleID,
+            currentPID: ProcessInfo.processInfo.processIdentifier
+        )
+        guard !instances.isEmpty else { return }
+        FFDebug.log("[INSTANCE] 检测到其它实例：\(instances.map { "\($0.path) [\($0.version)]" }.joined(separator: " | "))")
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "检测到另一个 FlowFinder 正在运行"
+        alert.informativeText = FFInstanceGuard.warningText(for: instances)
+        alert.addButton(withTitle: "继续打开")
+        alert.addButton(withTitle: "退出这个实例")
+        let response = alert.runModal()
+        FFDebug.log("[INSTANCE] 提示框返回 \(response.rawValue)")
+        if response == .alertSecondButtonReturn {
+            NSApp.terminate(nil)
         }
     }
 
@@ -208,6 +256,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
+    }
+
+    /// 标签全部拖出后应用可能处于无窗口状态；点 Dock 图标时补一个新窗口。
+    func applicationShouldHandleReopen(_ sender: NSApplication,
+                                       hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            let controller = MainWindowController()
+            registerWindowController(controller)
+            controller.showWindow(nil)
+            mainWindowController = controller
+        }
+        return true
     }
 
     // MARK: - ErrorBoundary 辅助

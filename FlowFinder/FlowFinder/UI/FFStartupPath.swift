@@ -55,6 +55,17 @@ enum FFStartupPath {
 
     static let lastLeftKey = "last_left_path"
     static let lastRightKey = "last_right_path"
+    static let lastActivePaneKey = "last_active_pane"
+
+    /// 完整会话恢复：只接受 left/right；单栏模式不恢复右栏活动态。
+    static func activePane(from raw: String?, singlePane: Bool) -> PaneSide? {
+        guard !singlePane, let raw else { return nil }
+        switch raw {
+        case "right": return .right
+        case "left": return .left
+        default: return nil
+        }
+    }
 
     /// 真实文件系统判定
     static func isDirectoryOnDisk(_ path: String) -> Bool {

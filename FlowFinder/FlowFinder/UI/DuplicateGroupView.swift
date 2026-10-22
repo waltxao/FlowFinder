@@ -38,8 +38,8 @@ class DuplicateGroupView: NSView {
         // 默认保留第一个文件，其余标记为删除
         self.keepFilePath = group.files.first?.path ?? ""
         super.init(frame: .zero)
-        // 默认除保留项外的所有文件标记为删除
-        self.deleteFilePaths = Set(group.files.filter { $0.path != keepFilePath }.map { $0.path })
+        // 安全默认：只保留第一项，不预先勾选任何删除项。
+        self.deleteFilePaths = FFDuplicateSelectionPolicy.initialSelection(groups: [group])
         setupUI()
     }
 
@@ -229,6 +229,20 @@ extension DuplicateGroupView: DuplicateFileRowDelegate {
     }
 }
 
+extension DuplicateGroupView {
+    /// 显式批量操作：保留每组第一项，其余标记删除（由操作栏「选择重复项」触发）。
+    func markAllButFirstForDeletion() {
+        guard let keep = group.files.first?.path else { return }
+        keepFilePath = keep
+        deleteFilePaths = Set(group.files.filter { $0.path != keep }.map(\.path))
+        for fileRow in fileRows {
+            fileRow.updateKeepState(isKeep: fileRow.filePath == keepFilePath)
+            fileRow.updateDeleteMark(isMarked: deleteFilePaths.contains(fileRow.filePath))
+        }
+        notifySelectionChange()
+    }
+}
+
 // MARK: - DuplicateFileRow
 
 /// 单个文件行：radio 圈 + 图标 + 路径 + 大小 + 保留/删除标签
@@ -254,7 +268,8 @@ private class DuplicateFileRow: NSView {
         self.file = file
         self.filePath = file.path
         self.isKeep = isKeep
-        self.isMarkedForDelete = !isKeep
+        // 安全默认：未由用户勾选前不标记删除。
+        self.isMarkedForDelete = false
         super.init(frame: .zero)
         setupUI()
     }

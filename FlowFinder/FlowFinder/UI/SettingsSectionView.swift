@@ -1,5 +1,16 @@
 import Cocoa
 
+/// 设置页视觉 A（2026-10-21 用户确认）：12pt 卡片 / 40pt 行 / 24–28 控件 / 13·11 字。
+enum FFSettingsMetrics {
+    static let cardRadius: CGFloat = 12
+    static let rowHeight: CGFloat = 40
+    static let controlHeight: CGFloat = 26
+    static let cardPadding: CGFloat = 16
+    static let rowSpacing: CGFloat = 2
+    static let titleFontSize: CGFloat = 13
+    static let descFontSize: CGFloat = 11
+}
+
 // MARK: - SettingsRowView
 
 /// 设置行视图：左侧标题+描述，右侧控件（toggle/popup/segmented/input/button/slider/color）
@@ -53,16 +64,16 @@ class SettingsRowView: NSView {
         // 悬停背景层（默认透明，悬停时显示微弱高亮）
         hoverBackground.wantsLayer = true
         hoverBackground.layer?.backgroundColor = NSColor.clear.cgColor
-        hoverBackground.layer?.cornerRadius = 6
+        hoverBackground.layer?.cornerRadius = 8
         hoverBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hoverBackground)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 13)
+        titleLabel.font = NSFont.systemFont(ofSize: FFSettingsMetrics.titleFontSize)
         titleLabel.textColor = NSColor.labelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.setContentHuggingPriority(.required, for: .vertical)
 
-        descLabel.font = NSFont.systemFont(ofSize: 11)
+        descLabel.font = NSFont.systemFont(ofSize: FFSettingsMetrics.descFontSize)
         descLabel.textColor = NSColor.secondaryLabelColor
         descLabel.translatesAutoresizingMaskIntoConstraints = false
         descLabel.isHidden = true
@@ -83,7 +94,7 @@ class SettingsRowView: NSView {
 
             // 左侧文本区
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 9),
 
             descLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             descLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
@@ -92,15 +103,14 @@ class SettingsRowView: NSView {
             // 右侧控件区
             controlContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             controlContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
-            controlContainer.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 6),
-            controlContainer.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -6),
+            controlContainer.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 7),
+            controlContainer.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -7),
         ])
 
-        // 行高 36pt（无描述时），有描述时自适应
-        bottomAnchor.constraint(greaterThanOrEqualTo: descLabel.bottomAnchor, constant: 8).isActive = true
-        bottomAnchor.constraint(greaterThanOrEqualTo: titleLabel.bottomAnchor, constant: 8).isActive = true
-        // 最小行高 36pt
-        heightAnchor.constraint(greaterThanOrEqualToConstant: 36).isActive = true
+        // 行高 40pt（无描述时），有描述时自适应
+        bottomAnchor.constraint(greaterThanOrEqualTo: descLabel.bottomAnchor, constant: 9).isActive = true
+        bottomAnchor.constraint(greaterThanOrEqualTo: titleLabel.bottomAnchor, constant: 9).isActive = true
+        heightAnchor.constraint(greaterThanOrEqualToConstant: FFSettingsMetrics.rowHeight).isActive = true
     }
 
     // MARK: - 悬停效果
@@ -186,6 +196,12 @@ class SettingsRowView: NSView {
 /// 令牌，日间 #F5F5F5 / 夜间 #2D2D2D，与主窗操作区并排时灰度一致），16pt 内边距，行间用 spacing 替代分隔线
 class SettingsSectionView: NSView {
 
+    enum Style {
+        case card
+        case plain
+    }
+
+    private let style: Style
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let rowsStack = NSStackView()
@@ -195,12 +211,17 @@ class SettingsSectionView: NSView {
     /// 内容容器（在背景之上，提供 16pt 内边距）
     private let contentContainer = NSView()
 
-    init(title: String, icon: FFIconName? = nil) {
+    init(title: String, icon: FFIconName? = nil, style: Style = .card) {
+        self.style = style
         super.init(frame: .zero)
         setupUI()
         titleLabel.stringValue = title
+        if style == .plain {
+            titleLabel.font = NSFont.systemFont(ofSize: FFSettingsMetrics.titleFontSize, weight: .semibold)
+            solidBackground.isHidden = true
+        }
         if let icon = icon {
-            iconView.image = FFIcon.template(icon, size: 13)
+            iconView.image = FFIcon.template(icon, size: 16)
             iconView.contentTintColor = NSColor.secondaryLabelColor
             iconView.isHidden = false
         }
@@ -218,6 +239,7 @@ class SettingsSectionView: NSView {
     }
 
     required init?(coder: NSCoder) {
+        self.style = .card
         super.init(coder: coder)
         setupUI()
     }
@@ -256,7 +278,8 @@ class SettingsSectionView: NSView {
         solidBackground.translatesAutoresizingMaskIntoConstraints = false
         solidBackground.wantsLayer = true
         solidBackground.layer?.backgroundColor = FFDesign.operationAreaBackground.cgColor
-        solidBackground.layer?.cornerRadius = 12
+        solidBackground.layer?.cornerRadius = FFSettingsMetrics.cardRadius
+        solidBackground.layer?.cornerCurve = .continuous
         solidBackground.layer?.borderWidth = 1
         solidBackground.layer?.borderColor = (ThemeManager.shared.resolvedIsDark ? NSColor(calibratedWhite: 0.30, alpha: 1.0) : NSColor(calibratedWhite: 0.80, alpha: 1.0)).cgColor
         addSubview(solidBackground, positioned: .below, relativeTo: nil)
@@ -270,14 +293,14 @@ class SettingsSectionView: NSView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.isHidden = true
 
-        // 分区标题（15pt semibold）
-        titleLabel.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        // 分区标题（13pt semibold，视觉 A）
+        titleLabel.font = NSFont.systemFont(ofSize: FFSettingsMetrics.titleFontSize, weight: .semibold)
         titleLabel.textColor = NSColor.labelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // 行堆叠（垂直，spacing 替代分隔线）
         rowsStack.orientation = .vertical
-        rowsStack.spacing = 4
+        rowsStack.spacing = FFSettingsMetrics.rowSpacing
         rowsStack.detachesHiddenViews = false
         // v0.7.4 根因修复：不再设 rowsStack.alignment = .width！
         // 运行时证据（LAYOUT-DIAG）：.width alignment 与 addRow/addContentView 的
@@ -297,10 +320,10 @@ class SettingsSectionView: NSView {
             solidBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             // 内容容器 16pt 内边距
-            contentContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            contentContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            contentContainer.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            contentContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: FFSettingsMetrics.cardPadding),
+            contentContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -FFSettingsMetrics.cardPadding),
+            contentContainer.topAnchor.constraint(equalTo: topAnchor, constant: FFSettingsMetrics.cardPadding),
+            contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -FFSettingsMetrics.cardPadding),
 
             // 图标
             iconView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
@@ -360,6 +383,7 @@ extension SettingsRowView {
             toggle.action = #selector(SettingsActionTarget.toggleChanged(_:))
             SettingsActionTarget.shared.register(toggle: toggle) { newState in action(newState) }
         }
+        toggle.heightAnchor.constraint(equalToConstant: 24).isActive = true
         row.setControl(toggle)
         return row
     }
@@ -375,6 +399,7 @@ extension SettingsRowView {
             popup.action = #selector(SettingsActionTarget.popupChanged(_:))
             SettingsActionTarget.shared.register(popup: popup) { idx in action(idx) }
         }
+        popup.heightAnchor.constraint(equalToConstant: FFSettingsMetrics.controlHeight).isActive = true
         row.setControl(popup)
         return row
     }
@@ -389,6 +414,7 @@ extension SettingsRowView {
             segmented.action = #selector(SettingsActionTarget.segmentChanged(_:))
             SettingsActionTarget.shared.register(segmented: segmented) { idx in action(idx) }
         }
+        segmented.heightAnchor.constraint(equalToConstant: FFSettingsMetrics.controlHeight).isActive = true
         row.setControl(segmented)
         return row
     }
@@ -403,6 +429,7 @@ extension SettingsRowView {
             slider.action = #selector(SettingsActionTarget.sliderChanged(_:))
             SettingsActionTarget.shared.register(slider: slider) { val in action(val) }
         }
+        slider.heightAnchor.constraint(equalToConstant: 24).isActive = true
         row.setControl(slider)
         return row
     }
@@ -434,6 +461,7 @@ extension SettingsRowView {
             textField.action = #selector(SettingsActionTarget.textFieldChanged(_:))
             SettingsActionTarget.shared.register(textField: textField) { val in action(val) }
         }
+        textField.heightAnchor.constraint(equalToConstant: FFSettingsMetrics.controlHeight).isActive = true
         row.setControl(textField)
         return row
     }
@@ -447,6 +475,7 @@ extension SettingsRowView {
         button.target = SettingsActionTarget.shared
         button.action = #selector(SettingsActionTarget.buttonClicked(_:))
         SettingsActionTarget.shared.register(button: button, handler: action)
+        button.heightAnchor.constraint(equalToConstant: FFSettingsMetrics.controlHeight).isActive = true
         row.setControl(button)
         return row
     }

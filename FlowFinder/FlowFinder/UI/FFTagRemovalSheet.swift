@@ -266,17 +266,14 @@ enum TagRemovalCoordinator {
 
     /// 从 SidebarTags 存储与侧栏界面移除标签，并广播刷新。
     private static func removeFromSidebar(tag: Tag) {
-        var all = FFCreateTagDialog.loadAllSidebarTags()
-        all.removeAll { $0.id == tag.id || $0.name == tag.name }
-        FFCreateTagDialog.saveAllSidebarTags(all)
+        TagCatalog.shared.removeDefinition(id: tag.id, name: tag.name)
 
         // 活动面板若正在按该标签筛选，解除筛选（否则列表空着且无从恢复）
         NotificationCenter.default.post(name: .sidebarTagsDidRemoveTag,
                                         object: nil,
                                         userInfo: ["name": tag.name])
-        NotificationCenter.default.post(name: .sidebarTagsDidRefresh, object: nil)
         NotificationCenter.default.post(name: .fileTagsDidChange, object: nil,
-                                        userInfo: ["tags": all])
+                                        userInfo: ["tags": TagCatalog.shared.tags])
     }
 }
 

@@ -477,13 +477,14 @@ class BreadcrumbBar: NSView, FFRegionAware {
     }
 
     @objc private func openInTerminal() {
-        // 使用 osascript 在 Terminal 中 cd 到当前目录
-        let escaped = path.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "tell application \"Terminal\"\nactivate\ndo script \"cd \\\"\(escaped)\\\"\"\nend tell"
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
+        // 批次 1 B1-09：用 NSWorkspace 打开 Terminal，避免 AppleEvents 自动化授权。
+        let folder = URL(fileURLWithPath: path, isDirectory: true)
+        guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+            NSWorkspace.shared.open(folder)
+            return
         }
+        NSWorkspace.shared.open([folder], withApplicationAt: terminal,
+                                configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
     }
 }
 

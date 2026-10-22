@@ -1583,11 +1583,21 @@ extension FileGridView {
         let target = dropTargetEntry(at: sender.draggingLocation)
         // 仅文件夹 item 作为 ".on" 语义目标（高亮/驻留展开/落包移入）
         let folderPath = target?.isDirectory == true ? target?.path : nil
+
+        // 同目录 / 文件夹拖进自身或子目录 → 整次拖放无操作。
+        let destPath = folderPath ?? viewModel?.currentPath ?? ""
+        let draggedURLs = (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+        if !draggedURLs.isEmpty,
+           FFFileDropPolicy.validSources(draggedURLs.map { $0.path }, destination: destPath).isEmpty {
+            clearDropFeedback()
+            return []
+        }
+
         updateDropHighlight(folderPath: folderPath)
         updateSpringLoading(folderPath: folderPath)
         // Wave3 Task 4: 悬停文件夹 item 时按该文件夹判定同卷/跨卷与 ⌘ 反转
         // （与列表 validateDrop 的 .on 语义一致）；空白区/文件项按当前目录判定
-        return isMoveOperation(sender, destPath: folderPath ?? viewModel?.currentPath) ? .move : .copy
+        return isMoveOperation(sender, destPath: destPath) ? .move : .copy
     }
 
     /// Wave3 Task 1/4: 拖拽位置命中的条目（nil = 空白区/分组标题）。
@@ -1697,11 +1707,16 @@ extension FileGridView {
         }
         guard !destPath.isEmpty else { return false }
 
+        let validURLs = urls.filter {
+            !FFFileDropPolicy.isNoOp(source: $0.path, destination: destPath)
+        }
+        guard !validURLs.isEmpty else { return false }
+
         let isMove = isMoveOperation(sender, destPath: destPath)
 
         // 任务 10：冲突预检与解决（替换/保留两者/跳过）
         let conflictPlan = ConflictResolver.resolveConflicts(
-            srcPaths: urls.map { $0.path },
+            srcPaths: validURLs.map { $0.path },
             destDir: destPath,
             window: window
         )

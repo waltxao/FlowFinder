@@ -303,3 +303,10 @@ final class FFFinderCommentCache {
         }
     }
 }
+
+/// 列宽重算的触发策略：窗口宽度没变时不重算，避免拖动/布局抖动引发列重建。
+enum FFColumnFitPolicy {
+    static func shouldFit(previousWidth: CGFloat, currentWidth: CGFloat) -> Bool {
+        abs(currentWidth - previousWidth) > 0.5
+    }
+}

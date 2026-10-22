@@ -13,6 +13,9 @@ public final class TaskSchedulerManager: ObservableObject {
     private var pollingTimer: DispatchSourceTimer?
     private let pollingQueue = DispatchQueue(label: "com.flowfinder.taskpolling", qos: .utility)
     private var pollingInterval: TimeInterval = 0.5
+    /// 当前定时器实际间隔；无任务时降频到 idleInterval，避免空转。
+    private var scheduledInterval: TimeInterval = 0.5
+    private let idleInterval: TimeInterval = 2.0
 
     private init() {}
 
@@ -31,6 +34,7 @@ public final class TaskSchedulerManager: ObservableObject {
         guard pollingRefCount == 1, pollingTimer == nil else { return }
 
         let timer = DispatchSource.makeTimerSource(queue: pollingQueue)
+        scheduledInterval = pollingInterval
         timer.schedule(deadline: .now(), repeating: pollingInterval)
         timer.setEventHandler { [weak self] in
             self?.refreshTasks()
@@ -54,9 +58,21 @@ public final class TaskSchedulerManager: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
-            self.allTasks = tasks
-            self.activeTask = tasks.first(where: { $0.isActive })
+            // @Published 每次赋值都会触发订阅者重建；只有任务真正变化时才发布。
+            if FFPerformancePolicy.shouldPublishTasks(previous: self.allTasks, next: tasks) {
+                self.allTasks = tasks
+                self.activeTask = tasks.first(where: { $0.isActive })
+            }
+            self.updatePollingCadence(hasTasks: !tasks.isEmpty)
         }
+    }
+
+    /// 有任务时 0.5s 轮询；空闲时降到 2s，保留发现后台新任务的能力。
+    private func updatePollingCadence(hasTasks: Bool) {
+        let desired = hasTasks ? pollingInterval : idleInterval
+        guard abs(desired - scheduledInterval) > 0.01, let timer = pollingTimer else { return }
+        scheduledInterval = desired
+        timer.schedule(deadline: .now() + desired, repeating: desired)
     }
 
     // MARK: - Task Operations

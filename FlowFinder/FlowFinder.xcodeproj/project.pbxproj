@@ -7,9 +7,72 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		FFC000020000000000000002 /* FFDiscoverPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC000010000000000000001; };
+		FFC000020000000000000002 /* FFPillButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC000010000000000000001; };
 		FFC100020000000000000002 /* FFPermissionGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC100010000000000000001; };
 		FFC200020000000000000002 /* FFPaneDrag.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC200010000000000000001; };
+		FFD100020000000000000002 /* FFDropResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD100010000000000000001; };
+		FFD200020000000000000002 /* FFDropResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD200010000000000000001; };
+		FFD300020000000000000002 /* FFDragGeometryCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD300010000000000000001; };
+		FFD700020000000000000002 /* FFDragOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD700010000000000000001; };
+		FFE100020000000000000002 /* FFVisualTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE100010000000000000001; };
+		FFF400020000000000000002 /* FFDetailsLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF400010000000000000001; };
+		FFE100040000000000000004 /* FFContrast.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE100030000000000000003; };
+		FFE100060000000000000006 /* FFKeyboardContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE100050000000000000005; };
+		FFE200020000000000000002 /* FFVisualTokensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE200010000000000000001; };
+		FFE200040000000000000004 /* FFKeyboardContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE200030000000000000003; };
+		FFE500020000000000000002 /* PaneStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE500010000000000000001; };
+		FFE500040000000000000004 /* WindowFocusModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE500030000000000000003; };
+		FFE400020000000000000002 /* FFShellLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE400010000000000000001; };
+		FFE600020000000000000002 /* PaneStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE600010000000000000001; };
+		FFE600040000000000000004 /* FFActivePaneIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE600030000000000000003; };
+		FFE700020000000000000002 /* MetadataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE700010000000000000001; };
+		FFE700060000000000000006 /* FFMetadataServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE700050000000000000005; };
+		FFE700080000000000000008 /* FFDetailsIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE700070000000000000007; };
+		FFE7000A000000000000000A /* ThumbnailCachePathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE700090000000000000009; };
+		FFE800020000000000000002 /* FFPerformancePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE800010000000000000001; };
+		FFE800040000000000000004 /* FFPerformancePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE800030000000000000003; };
+		FFE900020000000000000002 /* FFToolProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE900010000000000000001; };
+		FFE900040000000000000004 /* FFToolRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE900030000000000000003; };
+		FFE900060000000000000006 /* FFToolPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE900050000000000000005; };
+		FFEF001000000000000010 /* FFAppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF000F000000000000000F; };
+		FFEF001200000000000012 /* MoveConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF001100000000000011; };
+		FFEF001400000000000014 /* FFUpdateDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF001300000000000013; };
+		FFEF001600000000000016 /* FFUpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF001500000000000015; };
+		FFEF001800000000000018 /* FFSMBConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF001700000000000017; };
+		FFEF001C000000000000001C /* FFCrashLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF001B000000000000001B; };
+		FFEF001E000000000000001E /* OnboardingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF001D000000000000001D; };
+		FFE900080000000000000008 /* FFToolRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE900070000000000000007; };
+		FFEA00020000000000000002 /* TaskService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEA00010000000000000001; };
+		FFEA00040000000000000004 /* FFTaskServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEA00030000000000000003; };
+		FFEB00020000000000000002 /* PaneCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEB00010000000000000001; };
+		FFEB00040000000000000004 /* ToolCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEB00030000000000000003; };
+		FFEB00060000000000000006 /* TaskCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEB00050000000000000005; };
+		FFEB00080000000000000008 /* SidebarCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEB00070000000000000007; };
+		FFEB000A000000000000000A /* WindowShellCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEB00090000000000000009; };
+		FFEB000C000000000000000C /* FFShellCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEB000B000000000000000B; };
+		FFEC00020000000000000002 /* FFDestructivePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEC00010000000000000001; };
+		FFEC00040000000000000004 /* FFShortcutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEC00030000000000000003; };
+		FFEC00060000000000000006 /* FFDestructivePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEC00050000000000000005; };
+		FFEC00080000000000000008 /* FFShortcutSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEC00070000000000000007; };
+		FFED00020000000000000002 /* FFPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFED00010000000000000001; };
+		FFED00040000000000000004 /* FFAccessibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFED00030000000000000003; };
+		FFEE00020000000000000002 /* FFAccentSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEE00010000000000000001; };
+		FFEF00020000000000000002 /* FFToolbarPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF00010000000000000001; };
+		FFEF00040000000000000004 /* FFGlowSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF00030000000000000003; };
+		FFEF00060000000000000006 /* FFToolbarPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF00050000000000000005; };
+		FFEF00080000000000000008 /* FFGlowSpecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF00070000000000000007; };
+		FFEF000A000000000000000A /* FFToolPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF00090000000000000009; };
+		FFEF000E000000000000000E /* FFAppSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF000D000000000000000D; };
+		FFEF001A000000000000001A /* FFBatch2IntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF001900000000000019; };
+		FFEF002000000000000020 /* FFBatch4Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEF001F000000000000001F; };
+		FFF100020000000000000002 /* FFAccentSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF100010000000000000001; };
+		FFF200020000000000000002 /* FFRadiusTokensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF200010000000000000001; };
+		FFF300020000000000000002 /* FFDetailsLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF300010000000000000001; };
+		FFF500020000000000000002 /* FFSearchEmptyStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF500010000000000000001; };
+		FFF600020000000000000002 /* FFDuplicateLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF600010000000000000001; };
+		FFD400020000000000000002 /* FFDragGeometryCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD400010000000000000001; };
+		FFD500020000000000000002 /* FFDragIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD500010000000000000001; };
+		FFD600020000000000000002 /* FFDragPerformanceStructureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD600010000000000000001; };
 		FFC300020000000000000002 /* FFInteractionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC300010000000000000001; };
 		FFC300040000000000000004 /* FFRegionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC300030000000000000003; };
 		FFC400020000000000000002 /* FFListColumns.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC400010000000000000001; };
@@ -95,13 +158,77 @@
 		FF1000240000000000000024 /* ContentIndexBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000210000000000000021; };
 		FF1000250000000000000025 /* PaneStateDeleteFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1000220000000000000022; };
 		FF2000030000000000000003 /* SidebarFavoritesStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF2000040000000000000004; };
+		FFB100010000000000000001 /* InteractionRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFB200020000000000000002; };
 		FF1000270000000000000027 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FF1000260000000000000026; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		FFC000010000000000000001 /* FFDiscoverPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDiscoverPanel.swift; sourceTree = "<group>"; };
+		FFC000010000000000000001 /* FFPillButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPillButton.swift; sourceTree = "<group>"; };
 		FFC100010000000000000001 /* FFPermissionGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPermissionGate.swift; sourceTree = "<group>"; };
 		FFC200010000000000000001 /* FFPaneDrag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPaneDrag.swift; sourceTree = "<group>"; };
+		FFD100010000000000000001 /* FFDropResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDropResolver.swift; sourceTree = "<group>"; };
+		FFD200010000000000000001 /* FFDropResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDropResolverTests.swift; sourceTree = "<group>"; };
+		FFD300010000000000000001 /* FFDragGeometryCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDragGeometryCache.swift; sourceTree = "<group>"; };
+		FFD700010000000000000001 /* FFDragOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDragOverlay.swift; sourceTree = "<group>"; };
+		FFE100010000000000000001 /* FFVisualTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFVisualTokens.swift; sourceTree = "<group>"; };
+		FFF400010000000000000001 /* FFDetailsLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDetailsLayout.swift; sourceTree = "<group>"; };
+		FFE100030000000000000003 /* FFContrast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFContrast.swift; sourceTree = "<group>"; };
+		FFE100050000000000000005 /* FFKeyboardContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFKeyboardContract.swift; sourceTree = "<group>"; };
+		FFE200010000000000000001 /* FFVisualTokensTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFVisualTokensTests.swift; sourceTree = "<group>"; };
+		FFE200030000000000000003 /* FFKeyboardContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFKeyboardContractTests.swift; sourceTree = "<group>"; };
+		FFE500010000000000000001 /* PaneStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneStore.swift; sourceTree = "<group>"; };
+		FFE500030000000000000003 /* WindowFocusModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowFocusModel.swift; sourceTree = "<group>"; };
+		FFE400010000000000000001 /* FFShellLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFShellLayoutTests.swift; sourceTree = "<group>"; };
+		FFE600010000000000000001 /* PaneStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneStoreTests.swift; sourceTree = "<group>"; };
+		FFE600030000000000000003 /* FFActivePaneIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFActivePaneIntegrationTests.swift; sourceTree = "<group>"; };
+		FFE700010000000000000001 /* MetadataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataService.swift; sourceTree = "<group>"; };
+		FFE700050000000000000005 /* FFMetadataServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFMetadataServiceTests.swift; sourceTree = "<group>"; };
+		FFE700070000000000000007 /* FFDetailsIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDetailsIntegrationTests.swift; sourceTree = "<group>"; };
+		FFE700090000000000000009 /* ThumbnailCachePathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCachePathTests.swift; sourceTree = "<group>"; };
+		FFE800010000000000000001 /* FFPerformancePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPerformancePolicy.swift; sourceTree = "<group>"; };
+		FFE800030000000000000003 /* FFPerformancePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPerformancePolicyTests.swift; sourceTree = "<group>"; };
+		FFE900010000000000000001 /* FFToolProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFToolProtocol.swift; sourceTree = "<group>"; };
+		FFE900030000000000000003 /* FFToolRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFToolRegistry.swift; sourceTree = "<group>"; };
+		FFE900050000000000000005 /* FFToolPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFToolPage.swift; sourceTree = "<group>"; };
+		FFEF000F000000000000000F /* FFAppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFAppSettings.swift; sourceTree = "<group>"; };
+		FFEF001100000000000011 /* MoveConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveConfirmation.swift; sourceTree = "<group>"; };
+		FFEF001300000000000013 /* FFUpdateDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFUpdateDecision.swift; sourceTree = "<group>"; };
+		FFEF001500000000000015 /* FFUpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFUpdateChecker.swift; sourceTree = "<group>"; };
+		FFEF001700000000000017 /* FFSMBConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFSMBConnection.swift; sourceTree = "<group>"; };
+		FFEF001B000000000000001B /* FFCrashLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCrashLog.swift; sourceTree = "<group>"; };
+		FFEF001D000000000000001D /* OnboardingWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWindowController.swift; sourceTree = "<group>"; };
+		FFE900070000000000000007 /* FFToolRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFToolRegistryTests.swift; sourceTree = "<group>"; };
+		FFEA00010000000000000001 /* TaskService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskService.swift; sourceTree = "<group>"; };
+		FFEA00030000000000000003 /* FFTaskServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTaskServiceTests.swift; sourceTree = "<group>"; };
+		FFEB00010000000000000001 /* PaneCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneCoordinator.swift; sourceTree = "<group>"; };
+		FFEB00030000000000000003 /* ToolCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCoordinator.swift; sourceTree = "<group>"; };
+		FFEB00050000000000000005 /* TaskCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskCoordinator.swift; sourceTree = "<group>"; };
+		FFEB00070000000000000007 /* SidebarCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarCoordinator.swift; sourceTree = "<group>"; };
+		FFEB00090000000000000009 /* WindowShellCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowShellCoordinator.swift; sourceTree = "<group>"; };
+		FFEB000B000000000000000B /* FFShellCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFShellCoordinatorTests.swift; sourceTree = "<group>"; };
+		FFEC00010000000000000001 /* FFDestructivePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDestructivePolicy.swift; sourceTree = "<group>"; };
+		FFEC00030000000000000003 /* FFShortcutSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFShortcutSettings.swift; sourceTree = "<group>"; };
+		FFEC00050000000000000005 /* FFDestructivePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDestructivePolicyTests.swift; sourceTree = "<group>"; };
+		FFEC00070000000000000007 /* FFShortcutSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFShortcutSettingsTests.swift; sourceTree = "<group>"; };
+		FFED00010000000000000001 /* FFPerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFPerf.swift; sourceTree = "<group>"; };
+		FFED00030000000000000003 /* FFAccessibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFAccessibilityTests.swift; sourceTree = "<group>"; };
+		FFEE00010000000000000001 /* FFAccentSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFAccentSourceTests.swift; sourceTree = "<group>"; };
+		FFEF00010000000000000001 /* FFToolbarPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFToolbarPreferences.swift; sourceTree = "<group>"; };
+		FFEF00030000000000000003 /* FFGlowSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFGlowSpec.swift; sourceTree = "<group>"; };
+		FFEF00050000000000000005 /* FFToolbarPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFToolbarPreferencesTests.swift; sourceTree = "<group>"; };
+		FFEF00070000000000000007 /* FFGlowSpecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFGlowSpecTests.swift; sourceTree = "<group>"; };
+		FFEF00090000000000000009 /* FFToolPageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFToolPageTests.swift; sourceTree = "<group>"; };
+		FFEF000D000000000000000D /* FFAppSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFAppSettingsTests.swift; sourceTree = "<group>"; };
+		FFEF001900000000000019 /* FFBatch2IntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFBatch2IntegrationTests.swift; sourceTree = "<group>"; };
+		FFEF001F000000000000001F /* FFBatch4Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFBatch4Tests.swift; sourceTree = "<group>"; };
+		FFF100010000000000000001 /* FFAccentSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFAccentSelectionTests.swift; sourceTree = "<group>"; };
+		FFF200010000000000000001 /* FFRadiusTokensTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFRadiusTokensTests.swift; sourceTree = "<group>"; };
+		FFF300010000000000000001 /* FFDetailsLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDetailsLayoutTests.swift; sourceTree = "<group>"; };
+		FFF500010000000000000001 /* FFSearchEmptyStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFSearchEmptyStateTests.swift; sourceTree = "<group>"; };
+		FFF600010000000000000001 /* FFDuplicateLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDuplicateLayoutTests.swift; sourceTree = "<group>"; };
+		FFD400010000000000000001 /* FFDragGeometryCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDragGeometryCacheTests.swift; sourceTree = "<group>"; };
+		FFD500010000000000000001 /* FFDragIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDragIntegrationTests.swift; sourceTree = "<group>"; };
+		FFD600010000000000000001 /* FFDragPerformanceStructureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFDragPerformanceStructureTests.swift; sourceTree = "<group>"; };
 		FFC300010000000000000001 /* FFInteractionPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFInteractionPolicy.swift; sourceTree = "<group>"; };
 		FFC300030000000000000003 /* FFRegionResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFRegionResolver.swift; sourceTree = "<group>"; };
 		FFC400010000000000000001 /* FFListColumns.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFListColumns.swift; sourceTree = "<group>"; };
@@ -189,6 +316,7 @@
 		FF1000210000000000000021 /* ContentIndexBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentIndexBridgeTests.swift; sourceTree = "<group>"; };
 		FF1000220000000000000022 /* PaneStateDeleteFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneStateDeleteFilterTests.swift; sourceTree = "<group>"; };
 		FF2000040000000000000004 /* SidebarFavoritesStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarFavoritesStoreTests.swift; sourceTree = "<group>"; };
+		FFB200020000000000000002 /* InteractionRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractionRegressionTests.swift; sourceTree = "<group>"; };
 		FF1000010000000000000001 /* FlowFinderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FlowFinderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FF1000260000000000000026 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -300,9 +428,37 @@
 				FF1000300000000000000030 /* MainWindowController+MenuActions.swift */,
 				FF8000030000000000000003 /* FFIcon.swift */,
 				FFA100020000000000000002 /* FFTagColorPalette.swift */,
-				FFC000010000000000000001 /* FFDiscoverPanel.swift */,
+				FFC000010000000000000001 /* FFPillButton.swift */,
 				FFC100010000000000000001 /* FFPermissionGate.swift */,
 				FFC200010000000000000001 /* FFPaneDrag.swift */,
+				FFD100010000000000000001 /* FFDropResolver.swift */,
+				FFD300010000000000000001 /* FFDragGeometryCache.swift */,
+				FFD700010000000000000001 /* FFDragOverlay.swift */,
+				FFE100010000000000000001 /* FFVisualTokens.swift */,
+				FFF400010000000000000001 /* FFDetailsLayout.swift */,
+				FFE100030000000000000003 /* FFContrast.swift */,
+				FFE100050000000000000005 /* FFKeyboardContract.swift */,
+				FFE800010000000000000001 /* FFPerformancePolicy.swift */,
+				FFE900010000000000000001 /* FFToolProtocol.swift */,
+				FFE900030000000000000003 /* FFToolRegistry.swift */,
+				FFE900050000000000000005 /* FFToolPage.swift */,
+				FFEF000F000000000000000F /* FFAppSettings.swift */,
+				FFEF001100000000000011 /* MoveConfirmation.swift */,
+				FFEF001300000000000013 /* FFUpdateDecision.swift */,
+				FFEF001500000000000015 /* FFUpdateChecker.swift */,
+				FFEF001700000000000017 /* FFSMBConnection.swift */,
+				FFEF001B000000000000001B /* FFCrashLog.swift */,
+				FFEF001D000000000000001D /* OnboardingWindowController.swift */,
+				FFEB00010000000000000001 /* PaneCoordinator.swift */,
+				FFEB00030000000000000003 /* ToolCoordinator.swift */,
+				FFEB00050000000000000005 /* TaskCoordinator.swift */,
+				FFEB00070000000000000007 /* SidebarCoordinator.swift */,
+				FFEB00090000000000000009 /* WindowShellCoordinator.swift */,
+				FFEF00010000000000000001 /* FFToolbarPreferences.swift */,
+				FFEF00030000000000000003 /* FFGlowSpec.swift */,
+				FFEC00010000000000000001 /* FFDestructivePolicy.swift */,
+				FFEC00030000000000000003 /* FFShortcutSettings.swift */,
+				FFE500030000000000000003 /* WindowFocusModel.swift */,
 				FFC300010000000000000001 /* FFInteractionPolicy.swift */,
 				FFC300030000000000000003 /* FFRegionResolver.swift */,
 				FFC400010000000000000001 /* FFListColumns.swift */,
@@ -318,6 +474,7 @@
 			children = (
 				FF0000170000000000000017 /* FileEntry.swift */,
 							FF0000000000000000200012 /* PaneState.swift */,
+				FFE500010000000000000001 /* PaneStore.swift */,
 				FF0000000000000000200014 /* SidebarItem.swift */,
 				FF0000000000000000200016 /* Tag.swift */,
 				FF0000000000000000200018 /* TaskInfo.swift */,
@@ -340,6 +497,9 @@
 				FF000000000000000020000A /* TaskSchedulerManager.swift */,
 				FF000000000000000020000C /* ThemeManager.swift */,
 				FF0000000000000000200010 /* ThumbnailManager.swift */,
+				FFE700010000000000000001 /* MetadataService.swift */,
+				FFEA00010000000000000001 /* TaskService.swift */,
+				FFED00010000000000000001 /* FFPerf.swift */,
 				FF0000000000000000200064 /* FFLog.swift */,
 				FF1000290000000000000029 /* ContentIndexBridge.swift */,
 );
@@ -391,6 +551,38 @@
 				FF1000210000000000000021 /* ContentIndexBridgeTests.swift */,
 				FF1000220000000000000022 /* PaneStateDeleteFilterTests.swift */,
 				FF2000040000000000000004 /* SidebarFavoritesStoreTests.swift */,
+				FFB200020000000000000002 /* InteractionRegressionTests.swift */,
+				FFD200010000000000000001 /* FFDropResolverTests.swift */,
+				FFD400010000000000000001 /* FFDragGeometryCacheTests.swift */,
+				FFD500010000000000000001 /* FFDragIntegrationTests.swift */,
+				FFD600010000000000000001 /* FFDragPerformanceStructureTests.swift */,
+				FFE200010000000000000001 /* FFVisualTokensTests.swift */,
+				FFE200030000000000000003 /* FFKeyboardContractTests.swift */,
+				FFE400010000000000000001 /* FFShellLayoutTests.swift */,
+				FFE600010000000000000001 /* PaneStoreTests.swift */,
+				FFE600030000000000000003 /* FFActivePaneIntegrationTests.swift */,
+				FFE700050000000000000005 /* FFMetadataServiceTests.swift */,
+				FFE700070000000000000007 /* FFDetailsIntegrationTests.swift */,
+				FFE700090000000000000009 /* ThumbnailCachePathTests.swift */,
+				FFE800030000000000000003 /* FFPerformancePolicyTests.swift */,
+				FFE900070000000000000007 /* FFToolRegistryTests.swift */,
+				FFEA00030000000000000003 /* FFTaskServiceTests.swift */,
+				FFEB000B000000000000000B /* FFShellCoordinatorTests.swift */,
+				FFEC00050000000000000005 /* FFDestructivePolicyTests.swift */,
+				FFEC00070000000000000007 /* FFShortcutSettingsTests.swift */,
+				FFED00030000000000000003 /* FFAccessibilityTests.swift */,
+				FFEE00010000000000000001 /* FFAccentSourceTests.swift */,
+				FFEF00050000000000000005 /* FFToolbarPreferencesTests.swift */,
+				FFEF00070000000000000007 /* FFGlowSpecTests.swift */,
+				FFEF00090000000000000009 /* FFToolPageTests.swift */,
+				FFEF000D000000000000000D /* FFAppSettingsTests.swift */,
+				FFEF001900000000000019 /* FFBatch2IntegrationTests.swift */,
+				FFEF001F000000000000001F /* FFBatch4Tests.swift */,
+				FFF100010000000000000001 /* FFAccentSelectionTests.swift */,
+				FFF200010000000000000001 /* FFRadiusTokensTests.swift */,
+				FFF300010000000000000001 /* FFDetailsLayoutTests.swift */,
+				FFF500010000000000000001 /* FFSearchEmptyStateTests.swift */,
+				FFF600010000000000000001 /* FFDuplicateLayoutTests.swift */,
 			);
 			path = Tests/FlowFinderTests;
 			sourceTree = "<group>";
@@ -539,9 +731,40 @@
 			files = (
 				FF0C0D0E0000000000000001 /* main.swift in Sources */,
 				FF8000040000000000000004 /* FFIcon.swift in Sources */,
-				FFC000020000000000000002 /* FFDiscoverPanel.swift in Sources */,
+				FFC000020000000000000002 /* FFPillButton.swift in Sources */,
 				FFC100020000000000000002 /* FFPermissionGate.swift in Sources */,
 				FFC200020000000000000002 /* FFPaneDrag.swift in Sources */,
+				FFD100020000000000000002 /* FFDropResolver.swift in Sources */,
+				FFD300020000000000000002 /* FFDragGeometryCache.swift in Sources */,
+				FFD700020000000000000002 /* FFDragOverlay.swift in Sources */,
+				FFE100020000000000000002 /* FFVisualTokens.swift in Sources */,
+				FFF400020000000000000002 /* FFDetailsLayout.swift in Sources */,
+				FFE100040000000000000004 /* FFContrast.swift in Sources */,
+				FFE100060000000000000006 /* FFKeyboardContract.swift in Sources */,
+				FFE700020000000000000002 /* MetadataService.swift in Sources */,
+				FFEA00020000000000000002 /* TaskService.swift in Sources */,
+				FFED00020000000000000002 /* FFPerf.swift in Sources */,
+				FFE800020000000000000002 /* FFPerformancePolicy.swift in Sources */,
+				FFE900020000000000000002 /* FFToolProtocol.swift in Sources */,
+				FFE900040000000000000004 /* FFToolRegistry.swift in Sources */,
+				FFE900060000000000000006 /* FFToolPage.swift in Sources */,
+				FFEF001000000000000010 /* FFAppSettings.swift in Sources */,
+				FFEF001200000000000012 /* MoveConfirmation.swift in Sources */,
+				FFEF001400000000000014 /* FFUpdateDecision.swift in Sources */,
+				FFEF001600000000000016 /* FFUpdateChecker.swift in Sources */,
+				FFEF001800000000000018 /* FFSMBConnection.swift in Sources */,
+				FFEF001C000000000000001C /* FFCrashLog.swift in Sources */,
+				FFEF001E000000000000001E /* OnboardingWindowController.swift in Sources */,
+				FFEB00020000000000000002 /* PaneCoordinator.swift in Sources */,
+				FFEB00040000000000000004 /* ToolCoordinator.swift in Sources */,
+				FFEB00060000000000000006 /* TaskCoordinator.swift in Sources */,
+				FFEB00080000000000000008 /* SidebarCoordinator.swift in Sources */,
+				FFEB000A000000000000000A /* WindowShellCoordinator.swift in Sources */,
+				FFEF00020000000000000002 /* FFToolbarPreferences.swift in Sources */,
+				FFEF00040000000000000004 /* FFGlowSpec.swift in Sources */,
+				FFEC00020000000000000002 /* FFDestructivePolicy.swift in Sources */,
+				FFEC00040000000000000004 /* FFShortcutSettings.swift in Sources */,
+				FFE500040000000000000004 /* WindowFocusModel.swift in Sources */,
 				FFC300020000000000000002 /* FFInteractionPolicy.swift in Sources */,
 				FFC300040000000000000004 /* FFRegionResolver.swift in Sources */,
 				FFC400020000000000000002 /* FFListColumns.swift in Sources */,
@@ -573,6 +796,7 @@
 				FF000000000000000020000B /* ThemeManager.swift in Sources */,
 				FF000000000000000020000F /* ThumbnailManager.swift in Sources */,
 				FF0000000000000000200011 /* PaneState.swift in Sources */,
+				FFE500020000000000000002 /* PaneStore.swift in Sources */,
 				FF0000000000000000200013 /* SidebarItem.swift in Sources */,
 				FF0000000000000000200015 /* Tag.swift in Sources */,
 				FF0000000000000000200017 /* TaskInfo.swift in Sources */,
@@ -629,6 +853,38 @@
 				FF1000240000000000000024 /* ContentIndexBridgeTests.swift in Sources */,
 				FF1000250000000000000025 /* PaneStateDeleteFilterTests.swift in Sources */,
 				FF2000030000000000000003 /* SidebarFavoritesStoreTests.swift in Sources */,
+				FFB100010000000000000001 /* InteractionRegressionTests.swift in Sources */,
+				FFD200020000000000000002 /* FFDropResolverTests.swift in Sources */,
+				FFD400020000000000000002 /* FFDragGeometryCacheTests.swift in Sources */,
+				FFD500020000000000000002 /* FFDragIntegrationTests.swift in Sources */,
+				FFD600020000000000000002 /* FFDragPerformanceStructureTests.swift in Sources */,
+				FFE200020000000000000002 /* FFVisualTokensTests.swift in Sources */,
+				FFE200040000000000000004 /* FFKeyboardContractTests.swift in Sources */,
+				FFE400020000000000000002 /* FFShellLayoutTests.swift in Sources */,
+				FFE600020000000000000002 /* PaneStoreTests.swift in Sources */,
+				FFE600040000000000000004 /* FFActivePaneIntegrationTests.swift in Sources */,
+				FFE700060000000000000006 /* FFMetadataServiceTests.swift in Sources */,
+				FFE700080000000000000008 /* FFDetailsIntegrationTests.swift in Sources */,
+				FFE7000A000000000000000A /* ThumbnailCachePathTests.swift in Sources */,
+				FFE800040000000000000004 /* FFPerformancePolicyTests.swift in Sources */,
+				FFE900080000000000000008 /* FFToolRegistryTests.swift in Sources */,
+				FFEA00040000000000000004 /* FFTaskServiceTests.swift in Sources */,
+				FFEB000C000000000000000C /* FFShellCoordinatorTests.swift in Sources */,
+				FFEC00060000000000000006 /* FFDestructivePolicyTests.swift in Sources */,
+				FFEC00080000000000000008 /* FFShortcutSettingsTests.swift in Sources */,
+				FFED00040000000000000004 /* FFAccessibilityTests.swift in Sources */,
+				FFEE00020000000000000002 /* FFAccentSourceTests.swift in Sources */,
+				FFEF00060000000000000006 /* FFToolbarPreferencesTests.swift in Sources */,
+				FFEF00080000000000000008 /* FFGlowSpecTests.swift in Sources */,
+				FFEF000A000000000000000A /* FFToolPageTests.swift in Sources */,
+				FFEF000E000000000000000E /* FFAppSettingsTests.swift in Sources */,
+				FFEF001A000000000000001A /* FFBatch2IntegrationTests.swift in Sources */,
+				FFEF002000000000000020 /* FFBatch4Tests.swift in Sources */,
+				FFF100020000000000000002 /* FFAccentSelectionTests.swift in Sources */,
+				FFF200020000000000000002 /* FFRadiusTokensTests.swift in Sources */,
+				FFF300020000000000000002 /* FFDetailsLayoutTests.swift in Sources */,
+				FFF500020000000000000002 /* FFSearchEmptyStateTests.swift in Sources */,
+				FFF600020000000000000002 /* FFDuplicateLayoutTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -761,7 +1017,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinder/FlowFinder.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 7901;
+				CURRENT_PROJECT_VERSION = 26102209;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -785,7 +1041,7 @@
 					"$(PROJECT_DIR)/FlowFinder/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.7.9;
+				MARKETING_VERSION = 0.8.0;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinder/Libraries",
@@ -806,7 +1062,7 @@
 				CODE_SIGN_ENTITLEMENTS = FlowFinder/FlowFinder.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 7901;
+				CURRENT_PROJECT_VERSION = 26102209;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -830,7 +1086,7 @@
 					"$(PROJECT_DIR)/FlowFinder/Libraries",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.7.9;
+				MARKETING_VERSION = 0.8.0;
 				OTHER_LDFLAGS = (
 					"-lflowfinder_core",
 					"-L$(PROJECT_DIR)/FlowFinder/Libraries",

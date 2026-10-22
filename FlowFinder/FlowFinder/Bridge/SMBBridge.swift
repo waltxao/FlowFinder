@@ -146,6 +146,13 @@ public final class SMBBridge {
     }
 
     /// 刷新已挂载卷列表
+    /// 批次 1 B1-08：启动时重连已保存的服务器（设置开关由调用方判断）。
+    public func reconnectSavedConnections() {
+        for saved in FFSMBConnectionStore.load() {
+            mount(url: saved.url, mountPoint: saved.mountPoint) { _ in }
+        }
+    }
+
     public func refreshMountedVolumes() {
         let volumes = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey, .volumeLocalizedFormatDescriptionKey], options: []) ?? []
 

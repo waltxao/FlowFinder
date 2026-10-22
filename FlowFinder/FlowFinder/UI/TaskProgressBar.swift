@@ -26,8 +26,10 @@ public class TaskProgressBar: NSView {
     /// 该模式下不响应 TaskSchedulerManager.activeTask 的更新，避免被后台任务覆盖
     private var isDirectProgressMode = false
 
-    /// 完成态淡出定时器（完成后延迟 2 秒收起）
+    /// 完成态淡出定时器（保留取消能力；TaskService 接管后不再由内部自动隐藏）
     private var fadeOutTimer: Timer?
+    /// 当前直接进度对应的 FFTask id（写入 TaskService，供任务中心展示历史）
+    private var directTaskID: String?
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -167,6 +169,16 @@ public class TaskProgressBar: NSView {
         percentLabel.stringValue = "0%"
         taskLabel.stringValue = "\(operation) \(totalCount) 个项目…"
         currentTaskId = nil
+
+        let id = "direct-\(UUID().uuidString)"
+        directTaskID = id
+        FFTaskService.shared.upsert(FFTask(id: id,
+                                           title: operation,
+                                           detail: "\(totalCount) 个项目",
+                                           completedBytes: 0,
+                                           totalBytes: Int64(totalCount),
+                                           state: .running,
+                                           startedAt: Date()))
     }
 
     /// 更新直接进度（在批量操作每完成一项时调用，主线程）
@@ -190,6 +202,16 @@ public class TaskProgressBar: NSView {
         } else {
             taskLabel.stringValue = "\(operation) \(completed)/\(total)…"
         }
+        updateDirectTask(completed: completed, detail: currentFileName ?? "\(completed)/\(total)")
+    }
+
+    private func updateDirectTask(completed: Int, detail: String, state: FFTaskState = .running) {
+        guard let id = directTaskID,
+              var task = FFTaskService.shared.tasks.first(where: { $0.id == id }) else { return }
+        task.completedBytes = min(Int64(completed), task.totalBytes)
+        task.detail = detail
+        task.state = state
+        FFTaskService.shared.upsert(task)
     }
 
     /// 标记直接进度完成，显示"已完成"状态并延迟 2 秒淡出收起
@@ -201,12 +223,11 @@ public class TaskProgressBar: NSView {
         progressIndicator.doubleValue = 100
         percentLabel.stringValue = "100%"
         taskLabel.stringValue = "\(operation)完成：\(count) 个项目"
-        // 延迟 2 秒后淡出收起
-        fadeOutTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.hide()
-            }
+        if let id = directTaskID,
+           let task = FFTaskService.shared.tasks.first(where: { $0.id == id }) {
+            updateDirectTask(completed: Int(task.totalBytes), detail: "完成 \(count) 个项目", state: .finished)
         }
+        // 完成态由容器层在短暂停留后收起；进度条自身不再用 2s 定时器硬隐藏。
     }
 
     /// 取消挂起的淡出定时器

@@ -713,41 +713,59 @@ extension FFPaneActionsController: NSMenuDelegate {
     /// - "新建标签..." 项
     private func rebuildTagsSubmenu(_ menu: NSMenu) {
         menu.removeAllItems()
-
-        let targetEntry = host?.clickedEntry ?? host?.viewModel?.selectedFiles.first
-        guard let entry = targetEntry else {
-            let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
-            createItem.target = self
-            createItem.image = FFIcon.template(.plus, size: FFIcon.Metrics.menu)
-            menu.addItem(createItem)
+        let targets = tagTargets()
+        guard !targets.isEmpty else {
+            addCreateTagItem(to: menu, paths: [])
             return
         }
+        let paths = targets.map(\.path)
+        let targetTags = targets.map { TagBridge.shared.cachedTags(path: $0.path) }
+        let allTags = TagCatalog.shared.tags
 
-        let currentTags = TagBridge.shared.getTags(path: entry.path)
-        let currentTagIds = Set(currentTags.map { $0.id })
-        let currentTagNames = Set(currentTags.map { $0.name })
-
-        let allTags = loadAllSidebarTags()
         for tag in allTags {
+            let matched = targetTags.filter { tags in
+                tags.contains { $0.id == tag.id || $0.name == tag.name }
+            }.count
             let item = NSMenuItem(title: tag.name, action: #selector(toggleTagOnFile(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = ["tagId": tag.id, "tagName": tag.name,
-                                      "tagColor": tag.color, "path": entry.path]
+                                      "tagColor": tag.color, "paths": paths]
             item.image = makeDotImage(colorHex: tag.color)
-            if currentTagIds.contains(tag.id) || currentTagNames.contains(tag.name) {
-                item.state = .on
-            }
+            item.state = matched == 0 ? .off : (matched == targets.count ? .on : .mixed)
             menu.addItem(item)
         }
 
         if !allTags.isEmpty {
             menu.addItem(.separator())
         }
+        if targetTags.contains(where: { !$0.isEmpty }) {
+            let clear = NSMenuItem(title: "清除所有标签", action: #selector(clearTagsOnTargets(_:)), keyEquivalent: "")
+            clear.target = self
+            clear.representedObject = paths
+            menu.addItem(clear)
+        }
+        let manage = NSMenuItem(title: "管理标签…", action: #selector(manageTags(_:)), keyEquivalent: "")
+        manage.target = self
+        menu.addItem(manage)
+        addCreateTagItem(to: menu, paths: paths)
+    }
 
+    private func addCreateTagItem(to menu: NSMenu, paths: [String]) {
         let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
         createItem.target = self
+        createItem.representedObject = paths
         createItem.image = FFIcon.template(.plus, size: FFIcon.Metrics.menu)
         menu.addItem(createItem)
+    }
+
+    /// 右键目标：若点击项在多选内 → 全部选中项；否则只作用于点击项。
+    private func tagTargets() -> [FileEntry] {
+        let selected = host?.viewModel?.selectedFiles ?? []
+        if let clicked = host?.clickedEntry {
+            if selected.contains(where: { $0.path == clicked.path }) { return selected }
+            return [clicked]
+        }
+        return selected
     }
 
     /// 创建带颜色的圆点 NSImage（用于标签子菜单项图标）
@@ -767,64 +785,63 @@ extension FFPaneActionsController: NSMenuDelegate {
 
 extension FFPaneActionsController {
 
-    /// 读取所有现有标签（从 UserDefaults "SidebarTags" 读取，与 SidebarView 共享存储）
-    private func loadAllSidebarTags() -> [Tag] {
-        guard let data = UserDefaults.standard.data(forKey: "SidebarTags"),
-              let tags = try? JSONDecoder().decode([Tag].self, from: data) else {
-            return []
-        }
-        return tags
-    }
-
-    /// 写回所有标签到 UserDefaults
-    private func saveAllSidebarTags(_ tags: [Tag]) {
-        if let data = try? JSONEncoder().encode(tags) {
-            UserDefaults.standard.set(data, forKey: "SidebarTags")
-        }
-    }
-
-    /// 切换文件标签：已有则移除，没有则添加
+    /// 批量切换标签：全部已有则移除，否则补到所有目标。
     @objc private func toggleTagOnFile(_ sender: NSMenuItem) {
-        guard let info = sender.representedObject as? [String: String],
-              let tagId = info["tagId"],
-              let tagName = info["tagName"],
-              let path = info["path"] else { return }
-        let tagColor = info["tagColor"] ?? FFTagColorPalette.defaultHex
+        guard let info = sender.representedObject as? [String: Any],
+              let tagId = info["tagId"] as? String,
+              let tagName = info["tagName"] as? String,
+              let paths = info["paths"] as? [String] else { return }
+        let tagColor = info["tagColor"] as? String ?? FFTagColorPalette.defaultHex
+        let shouldRemove = sender.state == .on
 
-        let currentTags = TagBridge.shared.getTags(path: path)
-        if currentTags.contains(where: { $0.id == tagId || $0.name == tagName }) {
-            // 移除前先找到该标签（用于撤销时恢复）
-            let tag = currentTags.first(where: { $0.id == tagId || $0.name == tagName })
-            _ = TagBridge.shared.removeTag(tagId, path: path)
-            if let tag = tag {
-                host?.viewModel?.registerUndoRemoveTag(tag: tag, path: path)
+        for path in paths {
+            if shouldRemove {
+                let existing = TagBridge.shared.getTags(path: path)
+                    .first(where: { $0.id == tagId || $0.name == tagName })
+                _ = TagBridge.shared.removeTag(tagId, path: path)
+                if let existing { host?.viewModel?.registerUndoRemoveTag(tag: existing, path: path) }
+            } else {
+                let tag = TagCatalog.shared.tag(named: tagName)
+                    ?? Tag(id: tagId, name: tagName, color: tagColor)
+                _ = TagBridge.shared.addTag(tag, path: path)
+                host?.viewModel?.registerUndoAddTag(tag: tag, path: path)
             }
-        } else {
-            let tag = Tag(id: tagId, name: tagName, color: tagColor)
-            _ = TagBridge.shared.addTag(tag, path: path)
-            host?.viewModel?.registerUndoAddTag(tag: tag, path: path)
         }
 
         host?.reloadPaneData()
-        let updatedTags = TagBridge.shared.getTags(path: path)
-        NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil,
-                                        userInfo: ["tags": updatedTags])
+        NotificationCenter.default.post(name: .fileTagsDidChange, object: nil,
+                                        userInfo: ["tags": TagCatalog.shared.tags])
     }
 
-    /// 新建标签对话框（创建后同时添加到当前右键目标文件）
-    /// v0.7.4 项 1：统一改用共享模块 FFCreateTagDialog（预设色块 + 自定义系统颜色选择器）
-    @objc private func showCreateTagDialog(_ sender: Any?) {
-        guard let window = host?.hostWindow else { return }
-        let targetPath = host?.clickedEntry?.path ?? host?.viewModel?.selectedFiles.first?.path
-
-        FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { [weak self] tag in
-            guard let self = self else { return }
-            if let path = targetPath {
-                _ = TagBridge.shared.addTag(tag, path: path)
-                self.host?.reloadPaneData()
-            }
-            NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil,
-                                            userInfo: ["tags": FFCreateTagDialog.loadAllSidebarTags()])
+    @objc private func clearTagsOnTargets(_ sender: NSMenuItem) {
+        guard let paths = sender.representedObject as? [String], !paths.isEmpty else { return }
+        TagCatalog.shared.clearTags(on: paths) { [weak self] in
+            self?.host?.reloadPaneData()
         }
     }
+
+    @objc private func manageTags(_ sender: Any?) {
+        NotificationCenter.default.post(name: .openSettings, object: nil,
+                                        userInfo: ["section": "tagManage"])
+    }
+
+    /// 新建标签对话框（创建后批量应用到当前目标）
+    @objc private func showCreateTagDialog(_ sender: Any?) {
+        guard let window = host?.hostWindow else { return }
+        let paths: [String]
+        if let sender = sender as? NSMenuItem, let represented = sender.representedObject as? [String] {
+            paths = represented
+        } else {
+            paths = tagTargets().map(\.path)
+        }
+
+        FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { [weak self] tag in
+            guard let self else { return }
+            let saved = TagCatalog.shared.add(name: tag.name, color: tag.color) ?? tag
+            TagCatalog.shared.addTag(saved, to: paths) { [weak self] in
+                self?.host?.reloadPaneData()
+            }
+        }
+    }
+
 }

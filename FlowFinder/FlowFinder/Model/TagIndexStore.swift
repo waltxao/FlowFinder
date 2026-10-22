@@ -332,3 +332,211 @@ extension TagIndexStore {
         }
     }
 }
+
+// MARK: - 标签目录（唯一真值）
+
+/// 标签定义/排序的唯一入口。设置页、侧栏、选择器都读写这里，
+/// 避免 UserDefaults 多处各写一份导致同名标签漂移。
+final class TagCatalog {
+    static let shared = TagCatalog()
+
+    private(set) var tags: [Tag] = []
+    private let key = FFUserDefaultsKeys.sidebarTags
+
+    private init() { reload() }
+
+    func reload() {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([Tag].self, from: data) else {
+            tags = [
+                Tag(name: "重要", color: "#FF453A"),
+                Tag(name: "工作", color: "#0A84FF"),
+                Tag(name: "个人", color: "#30D158"),
+            ]
+            save()
+            return
+        }
+        var migrated = decoded
+        var changed = false
+        for index in migrated.indices {
+            let normalized = FFTagColorPalette.normalizedHex(migrated[index].color)
+            if normalized != migrated[index].color {
+                migrated[index].color = normalized
+                changed = true
+            }
+        }
+        tags = migrated
+        if changed { save() }
+    }
+
+    func tag(named name: String) -> Tag? {
+        let key = TagIndexStore.normalize(name)
+        return tags.first { TagIndexStore.normalize($0.name) == key }
+    }
+
+    func tag(id: String) -> Tag? { tags.first { $0.id == id } }
+
+    @discardableResult
+    func add(name: String, color: String) -> Tag? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let existing = tag(named: trimmed) { return existing }
+        let tag = Tag(name: trimmed, color: FFTagColorPalette.normalizedHex(color))
+        tags.append(tag)
+        save()
+        return tag
+    }
+
+    /// 改名；目标名已存在时合并到目标标签（文件上的旧名统一改成目标名）。
+    @discardableResult
+    func rename(id: String, to newName: String, includeSpotlight: Bool = true) -> Tag? {
+        guard let index = tags.firstIndex(where: { $0.id == id }) else { return nil }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let oldName = tags[index].name
+        let normalizedNew = TagIndexStore.normalize(trimmed)
+
+        if let targetIndex = tags.firstIndex(where: {
+            $0.id != id && TagIndexStore.normalize($0.name) == normalizedNew
+        }) {
+            let target = tags[targetIndex]
+            tags.remove(at: index)
+            save()
+            TagIndexStore.mutateTag(oldName: oldName,
+                                    newName: target.name,
+                                    newColor: target.color,
+                                    includeSpotlight: includeSpotlight)
+            return target
+        }
+
+        tags[index].name = trimmed
+        let color = tags[index].color
+        save()
+        TagIndexStore.mutateTag(oldName: oldName,
+                                newName: trimmed,
+                                newColor: color,
+                                includeSpotlight: includeSpotlight)
+        return tags[index]
+    }
+
+    func recolor(id: String, hex: String) {
+        guard let index = tags.firstIndex(where: { $0.id == id }) else { return }
+        let name = tags[index].name
+        tags[index].color = FFTagColorPalette.normalizedHex(hex)
+        save()
+        TagIndexStore.propagateColorChange(tagName: name, newHex: tags[index].color)
+    }
+
+    /// 只移除标签定义，不触碰文件（文件已由调用方批量清理时使用）。
+    func removeDefinition(id: String, name: String) {
+        tags.removeAll { $0.id == id || TagIndexStore.normalize($0.name) == TagIndexStore.normalize(name) }
+        save()
+    }
+
+    func delete(id: String, includeSpotlight: Bool = true) {
+        guard let index = tags.firstIndex(where: { $0.id == id }) else { return }
+        let name = tags[index].name
+        tags.remove(at: index)
+        save()
+        TagIndexStore.mutateTag(oldName: name,
+                                newName: nil,
+                                newColor: nil,
+                                includeSpotlight: includeSpotlight)
+        NotificationCenter.default.post(name: .sidebarTagsDidRemoveTag,
+                                        object: nil, userInfo: ["name": name])
+    }
+
+    func move(id: String, to destination: Int) {
+        guard let index = tags.firstIndex(where: { $0.id == id }) else { return }
+        let tag = tags.remove(at: index)
+        let target = min(max(destination, 0), tags.count)
+        tags.insert(tag, at: target)
+        save()
+    }
+
+    /// 目标文件数（本地索引 ∪ Spotlight），用于删除/改名前的影响提示。
+    func affectedPathCount(forTagNamed name: String,
+                           completion: @escaping (Int) -> Void) {
+        TagIndexStore.shared.collectPaths(forTagNamed: name, includeSpotlight: true) { paths in
+            completion(paths.count)
+        }
+    }
+
+    func addTag(_ tag: Tag, to paths: [String], completion: (() -> Void)? = nil) {
+        guard !paths.isEmpty else { completion?(); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            for path in paths {
+                _ = TagBridge.shared.addTag(tag, path: path)
+            }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .fileTagsDidChange, object: nil)
+                completion?()
+            }
+        }
+    }
+
+    func removeTag(named name: String, from paths: [String], completion: (() -> Void)? = nil) {
+        guard !paths.isEmpty else { completion?(); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            for path in paths {
+                _ = TagBridge.shared.removeTagByName(name, path: path)
+            }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .fileTagsDidChange, object: nil)
+                completion?()
+            }
+        }
+    }
+
+    func clearTags(on paths: [String], completion: (() -> Void)? = nil) {
+        guard !paths.isEmpty else { completion?(); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            for path in paths {
+                _ = TagBridge.shared.setTags([], path: path)
+            }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .fileTagsDidChange, object: nil)
+                completion?()
+            }
+        }
+    }
+
+    private func save() {
+        guard let data = try? JSONEncoder().encode(tags) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+        NotificationCenter.default.post(name: .sidebarTagsDidRefresh, object: nil)
+    }
+}
+
+extension TagIndexStore {
+    /// 跨文件改名/改色/删除。newName=nil 表示删除；newColor=nil 表示保留原色。
+    static func mutateTag(oldName: String,
+                          newName: String?,
+                          newColor: String?,
+                          includeSpotlight: Bool = true,
+                          completion: ((Int) -> Void)? = nil) {
+        shared.collectPaths(forTagNamed: oldName, includeSpotlight: includeSpotlight) { paths in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var changed = 0
+                for path in paths {
+                    guard FileManager.default.fileExists(atPath: path) else { continue }
+                    var tags = TagBridge.shared.getTags(path: path)
+                    guard let index = tags.firstIndex(where: { $0.name == oldName }) else { continue }
+                    if let newName, !newName.isEmpty {
+                        tags[index].name = newName
+                        if let newColor { tags[index].color = newColor }
+                        var seen = Set<String>()
+                        tags = tags.filter { seen.insert($0.name).inserted }
+                    } else {
+                        tags.remove(at: index)
+                    }
+                    if TagBridge.shared.setTags(tags, path: path) { changed += 1 }
+                }
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .fileTagsDidChange, object: nil)
+                    completion?(changed)
+                }
+            }
+        }
+    }
+}

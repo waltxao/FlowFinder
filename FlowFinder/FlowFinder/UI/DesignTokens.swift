@@ -49,10 +49,10 @@ enum FFDesign {
         // 性能预算
         static let maxGlassInstances = 8
 
-        // 圆角（按层级）——Wave4 Task 2 收敛为两档：容器级 16 / 浮层级 10
-        static let cornerRadiusWindow: CGFloat = 12
-        static let cornerRadiusPanel: CGFloat = 10     // 浮层 10（与详情栏/设备/工具面板统一）
-        static let cornerRadiusComponent: CGFloat = 10 // 嵌入式 10
+        // 圆角（按层级）——统一自 FFVisualTokens.Radius：窗口/面板 12，浮层/卡片 8
+        static let cornerRadiusWindow: CGFloat = FFVisualTokens.Radius.window
+        static let cornerRadiusPanel: CGFloat = FFVisualTokens.Radius.panel
+        static let cornerRadiusComponent: CGFloat = FFVisualTokens.Radius.card
 
         // 液态玻璃描边："磨边"亮线，宽 1.75pt，alpha 较高，边缘反光感
         // 嵌入式小元素的描边略弱（贴在大玻璃上不应突兀）

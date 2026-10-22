@@ -92,8 +92,10 @@ class TagSelectorDialog: FFModalSheet {
     private var selectedTags: [Tag] = []
     /// 所有可用标签
     private var allTags: [Tag] = []
-    /// 目标文件路径
-    private let filePath: String
+    /// 目标文件路径（多选时批量应用差异，不覆盖各自的其它标签）
+    private let paths: [String]
+    /// 打开时的公共标签（多选取交集），用于计算增删差异
+    private let initialTags: [Tag]
 
     // UI 引用
     private var searchField: NSSearchField!
@@ -102,21 +104,15 @@ class TagSelectorDialog: FFModalSheet {
 
     /// 初始化
     /// - Parameters:
-    ///   - filePath: 目标文件路径
-    ///   - currentTags: 当前文件已有的标签
+    ///   - paths: 目标文件路径（1 个 = 精确覆盖；多个 = 只应用增删差异）
+    ///   - currentTags: 当前公共标签
     ///   - allTags: 所有可用标签
-    init(filePath: String, currentTags: [Tag] = [], allTags: [Tag] = []) {
-        self.filePath = filePath
+    init(paths: [String], currentTags: [Tag] = [], allTags: [Tag] = []) {
+        self.paths = paths
+        self.initialTags = currentTags
         self.selectedTags = currentTags
-        // 合并侧边栏标签与默认标签，按名称去重（侧边栏标签优先）
-        var merged = allTags
-        let existingNames = Set(merged.map { $0.name })
-        for def in TagSelectorDialog.defaultAvailableTags() {
-            if !existingNames.contains(def.name) {
-                merged.append(def)
-            }
-        }
-        self.allTags = merged.isEmpty ? TagSelectorDialog.defaultAvailableTags() : merged
+        let catalogTags = allTags.isEmpty ? TagCatalog.shared.tags : allTags
+        self.allTags = catalogTags.isEmpty ? TagSelectorDialog.defaultAvailableTags() : catalogTags
 
         let bodyView = NSView()
         // 使用闭包持有盒延迟注入 self 依赖（Swift 6 严格模式禁止 super.init 前捕获 self）
@@ -129,8 +125,22 @@ class TagSelectorDialog: FFModalSheet {
 
         box.closure = { [weak self] in
             guard let self = self else { return }
-            _ = TagBridge.shared.setTags(self.selectedTags, path: self.filePath)
-            // 同步到侧边栏标签列表：通知 TagsSidebarDataSource 添加新标签
+            if self.paths.count <= 1 {
+                if let path = self.paths.first {
+                    _ = TagBridge.shared.setTags(self.selectedTags, path: path)
+                }
+            } else {
+                let initialNames = Set(self.initialTags.map { $0.name })
+                let finalNames = Set(self.selectedTags.map { $0.name })
+                for path in self.paths {
+                    var tags = TagBridge.shared.getTags(path: path)
+                    tags.removeAll { initialNames.contains($0.name) && !finalNames.contains($0.name) }
+                    for tag in self.selectedTags where !tags.contains(where: { $0.name == tag.name }) {
+                        tags.append(tag)
+                    }
+                    _ = TagBridge.shared.setTags(tags, path: path)
+                }
+            }
             NotificationCenter.default.post(
                 name: NSNotification.Name("FileTagsDidChange"),
                 object: nil,
@@ -152,6 +162,10 @@ class TagSelectorDialog: FFModalSheet {
         return colorHexMap.map { (name, hex) in
             Tag(id: name, name: name, color: hex)
         }
+    }
+
+    convenience init(filePath: String, currentTags: [Tag] = [], allTags: [Tag] = []) {
+        self.init(paths: [filePath], currentTags: currentTags, allTags: allTags)
     }
 
     required init?(coder: NSCoder) {

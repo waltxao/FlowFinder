@@ -53,22 +53,32 @@ extension MainWindowController {
     }
 
     @objc func menuAddTag(_ sender: Any?) {
-        let selectedFiles = activePaneViewModel.selectedFiles
-        guard let firstFile = selectedFiles.first else { return }
-        // 获取当前文件的标签，并传入侧边栏标签供选择
-        let currentTags = TagBridge.shared.getTags(path: firstFile.path)
-        let allTags = sidebarView.allSidebarTags()
-        let dialog = TagSelectorDialog(filePath: firstFile.path, currentTags: currentTags, allTags: allTags)
-        if let window = window {
-            dialog.beginSheetModal(for: window)
+        presentTagEditorForSelection()
+    }
+
+    @objc func menuEditTags(_ sender: Any?) {
+        presentTagEditorForSelection()
+    }
+
+    /// ⌥⌘T / 文件菜单：统一标签选择器。多选时只应用增删差异。
+    private func presentTagEditorForSelection() {
+        let files = activePaneViewModel.selectedFiles
+        guard !files.isEmpty, let window else {
+            NSSound.beep()
+            return
         }
+        let sets = files.map { Set(TagBridge.shared.getTags(path: $0.path).map(\.name)) }
+        let commonNames = sets.dropFirst().reduce(sets.first ?? []) { $0.intersection($1) }
+        let commonTags = TagCatalog.shared.tags.filter { commonNames.contains($0.name) }
+        let dialog = TagSelectorDialog(paths: files.map(\.path),
+                                       currentTags: commonTags,
+                                       allTags: TagCatalog.shared.tags)
+        dialog.beginSheetModal(for: window)
     }
 
     @objc func menuGetInfo(_ sender: Any?) {
-        // F9-C: 弹出独立 FileInfoWindow（仿访达 Get Info）。
-        // 访达行为：显示选中项的第一个文件信息；无选中则不弹窗。
-        guard let path = activePaneViewModel.selectedFiles.first?.path else { return }
-        showFileInfo(forPath: path)
+        // D-07：⌘I 打开活动面板的按需详情浮层；无选中不创建浮层。
+        showDetailsForActiveSelection()
     }
 
     /// F9-C: 显示独立 FileInfoWindow（仿访达 Get Info）。
@@ -188,6 +198,15 @@ extension MainWindowController {
             window: window
         )
         guard !conflictPlan.isEmpty else { return }
+
+        // 批次 1 B1-05：剪切粘贴属于移动，按开关确认
+        if case .cut = operation,
+           MoveConfirmation.shouldAsk(enabled: FFAppSettings.confirmMove(), isMove: true),
+           !MoveConfirmation.confirmSynchronously(count: conflictPlan.count,
+                                                  destination: destPath,
+                                                  window: window) {
+            return
+        }
 
         // 任务 F11-9：粘贴也属于复制/移动操作，展示底部进度栏反馈
         let operationName: String
@@ -532,6 +551,14 @@ extension MainWindowController {
             return
         }
 
+        // 批次 1 B1-05：移动前确认（复制不拦）
+        if MoveConfirmation.shouldAsk(enabled: FFAppSettings.confirmMove(), isMove: isMove),
+           !MoveConfirmation.confirmSynchronously(count: selectedFiles.count,
+                                                  destination: destPath,
+                                                  window: window) {
+            return
+        }
+
         // 修复问题4：跨面板移动/复制重名时不再自动"副本N"后缀，改为弹出冲突对话框
         // （替换/保留两者/跳过，与拖拽/粘贴路径一致，走 ConflictResolver）。
         let operationName = isMove ? "移动" : "复制"
@@ -853,8 +880,14 @@ extension MainWindowController {
             SMBBridge.shared.mount(url: url.absoluteString) { mountResult in
                 DispatchQueue.main.async {
                     switch mountResult {
-                    case .success:
-                        break
+                    case .success(let mountedPath):
+                        // 批次 1 B1-08：勾选「下次自动连接」的连接写入持久列表
+                        if result.autoConnect {
+                            FFSMBConnectionStore.save(FFSavedSMBConnection(
+                                url: url.absoluteString,
+                                mountPoint: nil,
+                                volumeName: (mountedPath as NSString).lastPathComponent))
+                        }
                     case .failure(let error):
                         let alert = NSAlert()
                         alert.messageText = "连接失败"
@@ -871,6 +904,10 @@ extension MainWindowController {
 
     /// Wave2 P1：⌘F 分流——聚焦活动面板内搜索框（面板内筛选的全键盘可达入口）。
     /// 原行为是打开全局搜索面板，已拆分到 menuGlobalSearch（⌘⇧F）。
+    @objc func menuShowWelcome(_ sender: Any?) {
+        OnboardingWindowController.shared.show(force: true)
+    }
+
     @objc func menuSearch(_ sender: Any?) {
         let toolbar = activePane == .left ? leftPaneToolbar : rightPaneToolbar
         toolbar?.focusSearchField()
@@ -880,7 +917,8 @@ extension MainWindowController {
     @objc func menuGlobalSearch(_ sender: Any?) {
         let path = activePaneViewModel.currentPath
         SearchPanelController.shared.onNavigateToPath = { [weak self] resultPath in
-            self?.activePaneViewModel.navigate(to: (resultPath as NSString).deletingLastPathComponent)
+            self?.activePaneViewModel.navigate(to: (resultPath as NSString).deletingLastPathComponent,
+                                               selecting: resultPath)
         }
         SearchPanelController.shared.showPanel(initialQuery: "", searchPath: path)
     }
@@ -900,7 +938,8 @@ extension MainWindowController {
     }
 
     @objc func menuDuplicateScan(_ sender: Any?) {
-        DuplicateScanWindowController.shared.showWindow()
+        // 工具默认作用于当前活动面板目录，而不是把用户丢回主目录。
+        DuplicateScanWindowController.shared.showWindow(scanPath: activePaneViewModel.state.path)
     }
 
     @objc func menuTaskPanel(_ sender: Any?) {

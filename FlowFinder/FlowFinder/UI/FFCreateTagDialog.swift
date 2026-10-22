@@ -79,35 +79,17 @@ enum FFCreateTagDialog {
     /// 调用 TagBridge.shared.addTag(tag, path:)。
     static func showCreateTagDialogAndSave(on window: NSWindow, completion: @escaping (Tag) -> Void = { _ in }) {
         showCreateTagDialog(on: window) { tag in
-            // 保存到 UserDefaults "SidebarTags"（与侧边栏/设置页共享存储）
-            var allTags = loadAllSidebarTags()
-            if !allTags.contains(where: { $0.name == tag.name }) {
-                allTags.append(tag)
-                saveAllSidebarTags(allTags)
-            }
-            // 通知侧边栏刷新
-            NotificationCenter.default.post(name: NSNotification.Name("SidebarTagsDidRefresh"), object: nil)
-            // 通知文件标签变更（供详情栏/右键菜单刷新）
+            let saved = TagCatalog.shared.add(name: tag.name, color: tag.color) ?? tag
             NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil,
-                                            userInfo: ["tags": allTags])
-            completion(tag)
+                                            userInfo: ["tags": TagCatalog.shared.tags])
+            completion(saved)
         }
     }
 
     // MARK: - SidebarTags 存储辅助（与 SidebarView/TagManagementRowView 共享同一 key）
 
     static func loadAllSidebarTags() -> [Tag] {
-        guard let data = UserDefaults.standard.data(forKey: "SidebarTags"),
-              let tags = try? JSONDecoder().decode([Tag].self, from: data) else {
-            return []
-        }
-        return tags
-    }
-
-    static func saveAllSidebarTags(_ tags: [Tag]) {
-        if let data = try? JSONEncoder().encode(tags) {
-            UserDefaults.standard.set(data, forKey: "SidebarTags")
-        }
+        TagCatalog.shared.tags
     }
 }
 

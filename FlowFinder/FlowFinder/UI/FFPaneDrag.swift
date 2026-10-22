@@ -1,4 +1,8 @@
 import Cocoa
+import os
+
+private let dragLog = OSLog(subsystem: "com.flowfinder.native",
+                            category: .pointsOfInterest)
 
 // MARK: - 标签拖动（2026-10-20 #4 重做）
 //
@@ -30,25 +34,8 @@ final class FFTabInsertionIndicator: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = NSRect(x: bounds.midX - 1, y: 0, width: 2, height: bounds.height)
-        NSColor.controlAccentColor.setFill()
+        FFAccent.current.setFill()
         rect.fill()
-    }
-}
-
-/// 跨窗口拖动时的落点高亮（半透明色块）
-final class FFDropHighlightView: NSView {
-
-    override var isOpaque: Bool { false }
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 12, yRadius: 12)
-        FFAccent.current.withAlphaComponent(0.18).setFill()
-        path.fill()
-        FFAccent.current.withAlphaComponent(0.55).setStroke()
-        path.lineWidth = 1.5
-        path.setLineDash([5, 4], count: 2, phase: 0)
-        path.stroke()
     }
 }
 
@@ -70,6 +57,38 @@ enum FFDropTarget {
     }
 }
 
+/// 系统窗口按钮（红绿灯）的命中判定。
+///
+/// fullSizeContentView 下 contentView 会铺到标题栏，`contentView.hitTest` 在红绿灯
+/// 位置返回的是背后的侧栏/标签条，而不是系统按钮。窗口级 mouseDown 监视器如果
+/// 直接把这套命中翻译成 `.window` / `.title`，就会把红绿灯点击当成拖窗口消费。
+enum FFWindowChrome {
+
+    /// 纯几何命中：用于单测，避免依赖真实 NSWindow。
+    static func contains(point: NSPoint, in rects: [NSRect]) -> Bool {
+        rects.contains { NSPointInRect(point, $0) }
+    }
+
+    /// 三个系统窗口按钮在窗口坐标系里的矩形。
+    static func standardButtonFrames(in window: NSWindow) -> [NSRect] {
+        var rects: [NSRect] = []
+        func append(_ type: NSWindow.ButtonType) {
+            guard let button = window.standardWindowButton(type),
+                  !button.isHidden,
+                  button.superview != nil else { return }
+            rects.append(button.convert(button.bounds, to: nil))
+        }
+        append(.closeButton)
+        append(.miniaturizeButton)
+        append(.zoomButton)
+        return rects
+    }
+
+    static func hitsStandardButton(window: NSWindow, point: NSPoint) -> Bool {
+        contains(point: point, in: standardButtonFrames(in: window))
+    }
+}
+
 /// 面板拖拽的工具方法
 enum FFPaneDrag {
 
@@ -82,23 +101,59 @@ enum FFPaneDrag {
     static let stripBuffer: CGFloat = 20
 
     /// 标签快照：1:1 尺寸、0.55 不透明度
-    static func snapshot(of view: NSView) -> NSImage? {
+    static func snapshot(of view: NSView, background: NSColor? = nil) -> NSImage? {
         let size = view.bounds.size
         guard size.width > 1, size.height > 1,
               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
 
-        let opaque = NSImage(size: size)
-        opaque.addRepresentation(rep)
+        let rendered = NSImage(size: size)
+        rendered.addRepresentation(rep)
 
-        let faded = NSImage(size: size)
-        faded.lockFocus()
-        opaque.draw(in: NSRect(origin: .zero, size: size),
-                    from: .zero,
-                    operation: .sourceOver,
-                    fraction: 0.55)
-        faded.unlockFocus()
-        return faded
+        let result = NSImage(size: size)
+        result.lockFocus()
+        if let background {
+            let path = NSBezierPath(roundedRect: NSRect(origin: .zero, size: size),
+                                    xRadius: 8, yRadius: 8)
+            background.setFill()
+            path.fill()
+        }
+        rendered.draw(in: NSRect(origin: .zero, size: size))
+        result.unlockFocus()
+        return result
+    }
+}
+
+/// 60Hz 帧调度：事件只记录最新指针，每帧最多跑一次落点解析与浮层更新。
+final class FFDragFrameScheduler {
+
+    private var timer: Timer?
+    private var latest: CGPoint = .zero
+    private let onFrame: (CGPoint) -> Void
+
+    var latestPoint: CGPoint { latest }
+
+    init(onFrame: @escaping (CGPoint) -> Void) {
+        self.onFrame = onFrame
+    }
+
+    func update(_ point: CGPoint) {
+        latest = point
+    }
+
+    func start() {
+        stop()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.onFrame(self.latest)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
     }
 }
 
@@ -147,11 +202,22 @@ final class FFPaneDragController {
     private var didExceedThreshold = false
     private var isTabDragOut = false
     private var currentInsertionIndex: Int = 0
-    private var ghostPanel: NSPanel?
+    private let overlay = FFDragOverlay()
     private var grabOffset: NSPoint = .zero
-    private var dropTarget: FFDropTarget?
-    private var highlightView: FFDropHighlightView?
-    private weak var highlightHost: NSView?
+
+    // 第七轮：落点决策 + 几何缓存 + 帧调度
+    private let geometryCache = FFDragGeometryCache()
+    private var sourceRef: FFDragSource?
+    private var latestPointer: CGPoint = .zero
+    private var currentDecision: FFDropDecision?
+    /// 拖动开始时快照的窗口几何（按窗口层级排好），拖动中不再重建。
+    private var dragGeometries: [FFWindowDropGeometry] = []
+    private lazy var frameScheduler = FFDragFrameScheduler { [weak self] point in
+        self?.processDragFrame(at: point)
+    }
+    private lazy var windowFrameScheduler = FFDragFrameScheduler { [weak self] point in
+        self?.processWindowDragFrame(at: point)
+    }
 
     /// 本次拖拽的宿主窗口控制器（拖拽开始时锁定，避免中途路由变化）
     private weak var dragOwner: MainWindowController?
@@ -168,7 +234,13 @@ final class FFPaneDragController {
         if !registeredOwners.contains(where: { $0.value === owner }) {
             registeredOwners.append(WeakOwner(owner))
         }
+        geometryCache.update(for: owner)
         installMonitorsIfNeeded()
+    }
+
+    func unregister(owner: MainWindowController) {
+        registeredOwners.removeAll { $0.value === owner || $0.value == nil }
+        geometryCache.remove(owner)
     }
 
     /// 事件按窗口路由到宿主；找不到就返回 nil
@@ -218,6 +290,7 @@ final class FFPaneDragController {
         monitors.removeAll()
         globalMonitors.forEach { NSEvent.removeMonitor($0) }
         globalMonitors.removeAll()
+        frameScheduler.stop()
         endGhost()
     }
 
@@ -243,6 +316,11 @@ final class FFPaneDragController {
         mode = .none
         didExceedThreshold = false
         isTabDragOut = false
+        frameScheduler.stop()
+        windowFrameScheduler.stop()
+        sourceRef = nil
+        currentDecision = nil
+        dragGeometries = []
         sourceStrip?.hideInsertionIndicator()
         sourceStrip = nil
         dragOwner = nil
@@ -252,14 +330,30 @@ final class FFPaneDragController {
         pressedCard = nil
     }
 
+    /// 窗口拖动优先走系统 `performDrag(with:)`：服务端合并移动事件，
+    /// 避免逐事件 `setFrameOrigin` 在透明/模糊窗口上反复重合成。
+    /// `FF_NATIVE_WINDOW_DRAG=0` 可回退到 60Hz 合并的自管拖动。
+    private var useNativeWindowDrag: Bool {
+        ProcessInfo.processInfo.environment["FF_NATIVE_WINDOW_DRAG"] != "0"
+    }
+
     // MARK: 事件
 
     /// 一次 mouseDown 的判定：**全部走决策表**，不再有散落的 if。
     private func handleDown(_ event: NSEvent) -> NSEvent? {
         guard mode == .none,
-              let owner = owner(for: event.window),
-              let contentView = event.window?.contentView else { return event }
+              let window = event.window,
+              let owner = owner(for: window),
+              let contentView = window.contentView else { return event }
         let point = event.locationInWindow
+
+        // 红绿灯在标题栏上层，但 contentView 铺满整窗；必须先放行标准窗口按钮，
+        // 否则点击会命中背后的侧栏/标签条并被当成拖窗口。
+        if FFWindowChrome.hitsStandardButton(window: window, point: point) {
+            FFDebug.log("[WINDOWCHROME] 放行系统窗口按钮 point=\(point)")
+            return event
+        }
+
         guard let hit = contentView.hitTest(point) else { return event }
 
         let state = currentState(for: owner, windowPoint: point)
@@ -274,6 +368,13 @@ final class FFPaneDragController {
             sourceStrip = strip
             sourceSide = strip.side
             sourceIndex = item.index
+            sourceRef = FFDragSource(windowID: ObjectIdentifier(owner),
+                                     side: strip.side,
+                                     index: item.index)
+            latestPointer = NSEvent.mouseLocation
+            // 起手就记成原位置：若指针一直在缓冲内但没命中插入点，
+            // 松手时不能把标签误移到 0。
+            currentInsertionIndex = item.index
             dragOwner = owner
             startScreenPoint = NSEvent.mouseLocation
             didExceedThreshold = false
@@ -289,12 +390,20 @@ final class FFPaneDragController {
             return event
 
         case .dragWindow:
+            guard let window = event.window else { return event }
+            if useNativeWindowDrag {
+                mode = .none
+                // 系统接管整个拖动循环（含 mouseUp/窗口移动合并）。
+                // 这里同步调用，返回时本次拖动已结束。
+                window.performDrag(with: event)
+                return nil
+            }
             mode = .windowDrag
             dragOwner = owner
-            if let w = event.window {
-                startScreenPoint = w.convertPoint(toScreen: point)
-                startWindowOrigin = w.frame.origin
-            }
+            didExceedThreshold = false
+            startScreenPoint = window.convertPoint(toScreen: point)
+            startWindowOrigin = window.frame.origin
+            windowFrameScheduler.start()
             // 同样不消费：保住鼠标归属，mouseUp 才会回来（见 .tab 分支的说明）
             return event
 
@@ -305,7 +414,9 @@ final class FFPaneDragController {
             // 而且每一次点击的 mouseDown 都被吞，若拖出窗口外松手，
             // mouseUp 回不来 → 系统认为鼠标还按着 → 整个系统的点击都失灵。
             mode = .press
-            pressedCard = owner.paneCard(for: sourceSide)
+            // 按命中视图所属的面板取卡片。旧实现用 sourceSide，而它只在
+            // 上次拖标签时才被写入——点右面板会闪左面板。
+            pressedCard = owner.paneSide(containing: hit).flatMap { owner.paneCard(for: $0) }
             applyPressFeedback()
             return event
 
@@ -339,8 +450,14 @@ final class FFPaneDragController {
             // 后者是真实光标位置，应用内合成事件时不会变。
             let now = event.locationInWindow
             let nowScreen = window.convertPoint(toScreen: now)
-            window.setFrameOrigin(NSPoint(x: startWindowOrigin.x + (nowScreen.x - startScreenPoint.x),
-                                          y: startWindowOrigin.y + (nowScreen.y - startScreenPoint.y)))
+            latestPointer = nowScreen
+            windowFrameScheduler.update(nowScreen)
+            if !didExceedThreshold {
+                let dx = nowScreen.x - startScreenPoint.x
+                let dy = nowScreen.y - startScreenPoint.y
+                guard hypot(dx, dy) > FFPaneDrag.threshold else { return nil }
+                didExceedThreshold = true
+            }
             return nil
         case .press:
             // 按压反馈期间不干预拖动（列表内部的拖拽、框选都要正常）
@@ -353,6 +470,7 @@ final class FFPaneDragController {
     private func handleTabDragged() -> NSEvent? {
         guard dragOwner != nil else { return nil }
         let now = NSEvent.mouseLocation
+        latestPointer = now
         if !didExceedThreshold {
             let dx = now.x - startScreenPoint.x
             let dy = now.y - startScreenPoint.y
@@ -374,13 +492,49 @@ final class FFPaneDragController {
             }
             // 出缓冲 → 升级为「拖出这个标签」
             isTabDragOut = true
+            os_signpost(.event, log: dragLog, name: "FFDrag.begin")
             sourceStrip?.hideInsertionIndicator()
             beginTabGhost()
+            refreshGeometryForDragStart()
+            frameScheduler.start()
         }
 
-        moveGhost(to: now)
-        updateDropTarget(screenPoint: now)
+        // 事件本身只记录最新指针；浮层与落点由 60Hz 帧调度处理。
+        frameScheduler.update(now)
         return nil
+    }
+
+    private func refreshGeometryForDragStart() {
+        for weakOwner in registeredOwners {
+            if let owner = weakOwner.value {
+                geometryCache.update(for: owner)
+            }
+        }
+        dragGeometries = geometryCache.all()
+    }
+
+    private func processDragFrame(at point: CGPoint) {
+        os_signpost(.begin, log: dragLog, name: "FFDrag.frame")
+        defer { os_signpost(.end, log: dragLog, name: "FFDrag.frame") }
+        guard isTabDragOut, let source = sourceRef else { return }
+        moveGhost(to: point)
+        let decision = FFDropResolver.resolve(source: source,
+                                              pointer: point,
+                                              geometries: dragGeometries)
+        if decision != currentDecision {
+            currentDecision = decision
+            applyOverlay(for: decision)
+            os_signpost(.event, log: dragLog, name: "FFDrag.decision")
+            FFDebug.log("[TABDRAG] 决策=\(String(describing: decision))")
+        }
+    }
+
+    private func processWindowDragFrame(at screenPoint: CGPoint) {
+        os_signpost(.begin, log: dragLog, name: "FFDrag.windowFrame")
+        defer { os_signpost(.end, log: dragLog, name: "FFDrag.windowFrame") }
+        guard mode == .windowDrag, let window = dragOwner?.window else { return }
+        window.setFrameOrigin(NSPoint(x: startWindowOrigin.x + (screenPoint.x - startScreenPoint.x),
+                                      y: startWindowOrigin.y + (screenPoint.y - startScreenPoint.y)))
     }
 
     private func handleUp(_ event: NSEvent) -> NSEvent? {
@@ -388,48 +542,67 @@ final class FFPaneDragController {
         let moved = didExceedThreshold
         let wasTabDragOut = isTabDragOut
         let strip = sourceStrip
-        let side = sourceSide
+        let draggedSide = sourceSide
         let from = sourceIndex
         let to = currentInsertionIndex
-        let target = dropTarget
+        let decision = currentDecision
         mode = .none
         didExceedThreshold = false
         isTabDragOut = false
+        frameScheduler.stop()
         sourceStrip = nil
-        dropTarget = nil
+        sourceRef = nil
+        currentDecision = nil
+        dragGeometries = []
         endHighlight()
 
         switch wasMode {
         case .none:
             return event
         case .windowDrag:
-            return nil
+            windowFrameScheduler.stop()
+            os_signpost(.event, log: dragLog, name: "FFDrag.windowEnd")
+            // 没超过阈值的按下是点击，mouseUp 必须放行给下面的视图
+            // （侧栏品牌名 / 自绘药丸都靠 mouseUp 触发动作）。
+            return moved ? nil : event
         case .press:
             removePressFeedback()
             pressedCard = nil
             return event
         case .tabDrag:
-            FFDebug.log("[TABDRAG] 松手 moved=\(moved) 出缓冲=\(wasTabDragOut) 有落点=\(target != nil) dragOwner=\(dragOwner != nil)")
+            FFDebug.log("[TABDRAG] 松手 moved=\(moved) 出缓冲=\(wasTabDragOut) 决策=\(String(describing: decision)) dragOwner=\(dragOwner != nil)")
+            os_signpost(.event, log: dragLog, name: "FFDrag.drop")
             strip?.hideInsertionIndicator()
-            guard let owner = dragOwner else { return nil }
+            guard let sourceOwner = dragOwner else { return nil }
             dragOwner = nil
 
             if wasTabDragOut {
                 endGhost()
-                if let target {
-                    // 落在窗口内 → 交给目标窗口处理
-                    owner.transferTab(side: side, index: from, to: target)
-                } else {
-                    // 落在窗口外 → 独立成新窗口
-                    owner.detachTabToNewWindow(side: side, index: from, atScreenPoint: NSEvent.mouseLocation)
+                switch decision {
+                case .some(.reorder(_, _, let index)):
+                    sourceOwner.moveTab(side: draggedSide, from: from, to: index)
+                case .some(.merge(let windowID, let targetSide, let index)):
+                    guard let target = owner(for: windowID) else { break }
+                    sourceOwner.transferTab(side: draggedSide, index: from,
+                                            to: .tabStrip(window: target, side: targetSide, index: index))
+                case .some(.split(let windowID, let dropSide)):
+                    guard let target = owner(for: windowID) else { break }
+                    sourceOwner.transferTab(side: draggedSide, index: from,
+                                            to: .paneContent(window: target, side: dropSide))
+                case .some(.newWindow):
+                    sourceOwner.detachTabToNewWindow(side: draggedSide, index: from,
+                                                     atScreenPoint: latestPointer)
+                case .some(.returnToSource), .none:
+                    break
                 }
             } else if moved {
                 // 条内重排
-                owner.moveTab(side: side, from: from, to: to)
+                sourceOwner.moveTab(side: draggedSide, from: from, to: to)
             } else {
                 // 没移动 → 视为点击标签：选中它
-                owner.selectTab(side: side, index: from)
+                sourceOwner.selectTab(side: draggedSide, index: from)
             }
+            os_signpost(.event, log: dragLog, name: "FFDrag.end")
             return nil
         }
     }
@@ -452,39 +625,56 @@ final class FFPaneDragController {
         return !buffer.contains(local)
     }
 
-    /// 跨窗口落点判定：屏幕坐标 → 落在哪个窗口的哪块区域
-    private func updateDropTarget(screenPoint: NSPoint) {
-        let target = computeDropTarget(screenPoint: screenPoint)
-        dropTarget = target
-        showHighlight(for: target)
+    /// 把纯决策渲染成浮层/插入线/描边。
+    private func applyOverlay(for decision: FFDropDecision?) {
+        guard let decision else {
+            sourceStrip?.hideInsertionIndicator()
+            endHighlight()
+            return
+        }
+        switch decision {
+        case .reorder(_, _, let index):
+            sourceStrip?.showInsertionIndicator(atIndex: index)
+            endHighlight()
+        case .merge(let windowID, let targetSide, let index):
+            guard let target = owner(for: windowID),
+                  let strip = target.tabStrip(for: targetSide) else { return }
+            if let index {
+                strip.showInsertionIndicator(atIndex: index)
+            }
+            showOutline(around: strip)
+        case .split(let windowID, let dropSide):
+            guard let target = owner(for: windowID) else { return }
+            showPaneOutline(owner: target, dropSide: dropSide)
+        case .newWindow, .returnToSource:
+            sourceStrip?.hideInsertionIndicator()
+            endHighlight()
+        }
     }
 
-    private func computeDropTarget(screenPoint: NSPoint) -> FFDropTarget? {
-        for weakOwner in registeredOwners {
-            guard let owner = weakOwner.value, let w = owner.window else { continue }
-            guard w.frame.contains(screenPoint) else { continue }
-            guard let cv = w.contentView else { continue }
-            let local = w.convertPoint(fromScreen: screenPoint)
-            guard let hit = cv.hitTest(local) else { continue }
+    private func owner(for windowID: ObjectIdentifier) -> MainWindowController? {
+        registeredOwners.compactMap { $0.value }.first { ObjectIdentifier($0) == windowID }
+    }
 
-            switch FFAreaResolver.region(of: hit) {
-            case .tab:
-                if let item = hit as? PaneTabItemView, let strip = item.strip {
-                    return .tabStrip(window: owner, side: strip.side, index: item.index)
-                }
-            case .title:
-                if let strip = owner.tabStrip(near: local) {
-                    return .tabStrip(window: owner, side: strip.side, index: nil)
-                }
-            case .panel:
-                if let side = owner.operationSide(near: local) {
-                    return .paneContent(window: owner, side: side)
-                }
-            default:
-                break
-            }
-        }
-        return nil
+    private func showOutline(around view: NSView) {
+        guard let host = view.superview else { return }
+        let rect = view.convert(view.bounds, to: host).insetBy(dx: 1, dy: 1)
+        showOutline(rect: rect, in: host)
+    }
+
+    private func showOutline(rect: NSRect, in host: NSView) {
+        overlay.showOutline(rect: rect, in: host)
+    }
+
+    private func showPaneOutline(owner: MainWindowController, dropSide: PaneSide) {
+        let visibleSide = owner.isSinglePaneMode ? owner.activePane : dropSide
+        guard let wrapper = owner.paneWrapper(for: visibleSide),
+              let host = wrapper.superview else { return }
+        let full = wrapper.convert(wrapper.bounds, to: host)
+        let rect = dropSide == .left
+            ? NSRect(x: full.minX, y: full.minY, width: full.width / 2, height: full.height)
+            : NSRect(x: full.midX, y: full.minY, width: full.width / 2, height: full.height)
+        showOutline(rect: rect, in: host)
     }
 
     // MARK: 浮层
@@ -494,87 +684,28 @@ final class FFPaneDragController {
         guard let strip = sourceStrip,
               let item = strip.itemView(at: sourceIndex),
               let window = dragOwner?.window else { return }
-        guard let image = FFPaneDrag.snapshot(of: item) else { return }
-        let size = image.size
-        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
-                            styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered,
-                            defer: false)
-        panel.isFloatingPanel = true
-        panel.level = NSWindow.Level.floating
-        panel.isOpaque = false
-        panel.backgroundColor = NSColor.clear
-        panel.hasShadow = true
-        panel.ignoresMouseEvents = true
-        let imageView = NSImageView(frame: NSRect(origin: .zero, size: size))
-        imageView.image = image
-        panel.contentView = imageView
 
         // 抓取点在标签内的相对位置，浮层要保持它不动
         let itemFrame = item.convert(item.bounds, to: nil)
         let grab = window.convertPoint(fromScreen: NSEvent.mouseLocation)
         grabOffset = NSPoint(x: grab.x - itemFrame.minX, y: grab.y - itemFrame.minY)
-
-        ghostPanel = panel
-        moveGhost(to: NSEvent.mouseLocation)
+        overlay.beginGhost(from: item,
+                           at: NSEvent.mouseLocation,
+                           grabOffset: grabOffset)
     }
 
     private func moveGhost(to screenPoint: NSPoint) {
-        guard let panel = ghostPanel else { return }
-        panel.setFrameOrigin(NSPoint(x: screenPoint.x - grabOffset.x,
-                                     y: screenPoint.y - grabOffset.y))
-        panel.orderFrontRegardless()
+        overlay.moveGhost(to: screenPoint, grabOffset: grabOffset)
     }
 
     private func endGhost() {
-        ghostPanel?.orderOut(nil)
-        ghostPanel = nil
+        overlay.end()
     }
 
     // MARK: 落点高亮
 
-    private func showHighlight(for target: FFDropTarget?) {
-        guard let target else {
-            endHighlight()
-            return
-        }
-        let host: NSView
-        let rect: NSRect
-        switch target {
-        case .tabStrip(let w, let side, _):
-            guard let strip = w.tabStrip(for: side),
-                  let superview = strip.superview else { return }
-            host = superview
-            rect = strip.convert(strip.bounds, to: superview).insetBy(dx: 2, dy: 0)
-        case .paneContent(let w, let side):
-            guard let wrapper = w.paneWrapper(for: side),
-                  let superview = wrapper.superview else { return }
-            host = superview
-            let full = wrapper.convert(wrapper.bounds, to: superview)
-            // 只高亮落点那一半
-            let half = full.width / 2
-            rect = side == .left
-                ? NSRect(x: full.minX, y: full.minY, width: half, height: full.height)
-                : NSRect(x: full.minX + half, y: full.minY, width: half, height: full.height)
-        }
-
-        if highlightView == nil || highlightHost !== host {
-            endHighlight()
-            let view = FFDropHighlightView()
-            view.translatesAutoresizingMaskIntoConstraints = false
-            host.addSubview(view)
-            highlightView = view
-            highlightHost = host
-        }
-        guard let view = highlightView else { return }
-        view.frame = rect
-        view.needsDisplay = true
-    }
-
     private func endHighlight() {
-        highlightView?.removeFromSuperview()
-        highlightView = nil
-        highlightHost = nil
+        overlay.hideOutline()
     }
 
     // MARK: 按压反馈

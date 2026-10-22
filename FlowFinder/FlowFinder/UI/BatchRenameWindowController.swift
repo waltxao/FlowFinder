@@ -6,6 +6,11 @@ public class BatchRenameWindowController: NSWindowController {
 
     public static let shared = BatchRenameWindowController()
 
+    /// ⌘W 命中批量重命名窗口时关闭自身。
+    @objc func menuCloseTab(_ sender: Any?) {
+        close()
+    }
+
     // MARK: - State
 
     private var files: [FileEntry] = []
@@ -295,30 +300,30 @@ public class BatchRenameWindowController: NSWindowController {
         contentView.addSubview(buttonBar)
 
         NSLayoutConstraint.activate([
-            modeSegmentedControl.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            modeSegmentedControl.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            modeSegmentedControl.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            modeSegmentedControl.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            modeSegmentedControl.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            modeSegmentedControl.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             patternContainer.topAnchor.constraint(equalTo: modeSegmentedControl.bottomAnchor, constant: 12),
-            patternContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            patternContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            patternContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            patternContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             sequenceContainer.topAnchor.constraint(equalTo: modeSegmentedControl.bottomAnchor, constant: 12),
-            sequenceContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            sequenceContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            sequenceContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            sequenceContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             caseContainer.topAnchor.constraint(equalTo: modeSegmentedControl.bottomAnchor, constant: 12),
-            caseContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            caseContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            caseContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            caseContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             scrollView.topAnchor.constraint(equalTo: patternContainer.bottomAnchor, constant: 12),
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             scrollView.bottomAnchor.constraint(equalTo: buttonBar.topAnchor, constant: -12),
 
-            buttonBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            buttonBar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            buttonBar.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            buttonBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            buttonBar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            buttonBar.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
             buttonBar.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
@@ -506,16 +511,26 @@ public class BatchRenameWindowController: NSWindowController {
 
         renameButton.isEnabled = false
 
+        let taskID = "rename-\(UUID().uuidString)"
+        FFTaskService.shared.upsert(FFTask(id: taskID, title: "批量重命名",
+                                           detail: "\(items.count) 个项目",
+                                           completedBytes: 0, totalBytes: Int64(items.count),
+                                           state: .running, startedAt: Date()))
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let success = try CoreBridge.shared.batchRename(items: items)
                 DispatchQueue.main.async {
                     guard let self = self else { return }
-                    // 刷新目录缓存以反映重命名
-                    if let firstPath = items.first?.0 {
-                        let dir = (firstPath as NSString).deletingLastPathComponent
-                        try? CoreBridge.shared.invalidateCache(path: dir)
-                    }
+                    var task = FFTaskService.shared.tasks.first(where: { $0.id == taskID })
+                        ?? FFTask(id: taskID, title: "批量重命名", detail: "",
+                                  completedBytes: 0, totalBytes: Int64(items.count),
+                                  state: .running, startedAt: Date())
+                    task.completedBytes = Int64(success)
+                    task.state = success == items.count ? .finished : .failed("部分项目重命名失败")
+                    FFTaskService.shared.upsert(task)
+
+                    // 刷新面板：refresh() 内部异步失效缓存后再重读目录。
                     self.paneViewModel?.refresh()
                     self.registerUndoForBatchRename(items: items, reverseItems: reverseItems)
                     if success < items.count {
@@ -529,6 +544,10 @@ public class BatchRenameWindowController: NSWindowController {
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.renameButton.isEnabled = true
+                    if var task = FFTaskService.shared.tasks.first(where: { $0.id == taskID }) {
+                        task.state = .failed(error.localizedDescription)
+                        FFTaskService.shared.upsert(task)
+                    }
                     self.showError(error: error)
                 }
             }

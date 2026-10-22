@@ -5,7 +5,7 @@ import AppKit
 /// 复制/移动冲突解决器（任务 10）
 /// 目标目录存在同名文件时弹窗询问：替换 / 保留两者 / 跳过。
 /// 批量时支持"应用于所有冲突"。
-enum ConflictResolution {
+enum ConflictResolution: Equatable {
     case replace      // 替换：覆盖同名目标
     case keepBoth     // 保留两者：源自动改名"名称 副本.扩展名"
     case skip         // 跳过：不处理该文件
@@ -108,9 +108,18 @@ enum ConflictResolver {
         alert.messageText = "“\(name)”已存在"
         alert.informativeText = "目标位置已存在同名文件。您想要如何处理？"
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "替换")
-        alert.addButton(withTitle: "保留两者")
-        alert.addButton(withTitle: "跳过")
+        // 默认按钮是第一个：跳过；替换危险且放最后
+        for resolution in FFConflictPolicy.buttonOrder {
+            switch resolution {
+            case .skip:
+                alert.addButton(withTitle: "跳过")
+            case .keepBoth:
+                alert.addButton(withTitle: "保留两者")
+            case .replace:
+                alert.addButton(withTitle: "替换…")
+            }
+        }
+        alert.buttons.last?.hasDestructiveAction = true
 
         // "应用于所有冲突"复选框
         let checkbox = NSButton(checkboxWithTitle: "应用于所有冲突", target: nil, action: nil)
@@ -123,9 +132,9 @@ enum ConflictResolver {
         applyToAll = checkbox.state == .on
 
         switch response {
-        case .alertFirstButtonReturn:  return .replace
+        case .alertFirstButtonReturn:  return .skip
         case .alertSecondButtonReturn: return .keepBoth
-        default:                       return .skip
+        default:                       return .replace
         }
     }
 }

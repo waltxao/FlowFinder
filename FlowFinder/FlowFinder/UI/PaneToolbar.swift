@@ -13,9 +13,6 @@ protocol PaneToolbarDelegate: AnyObject {
     func paneToolbar(_ toolbar: PaneToolbar, didChangeGroupBy groupBy: String)
     func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: ViewMode)
     func paneToolbar(_ toolbar: PaneToolbar, didClickPath path: String)
-    // v0.6.9: 文件夹显示配置菜单回调
-    // v0.7.4 修订: 新建文件夹回调携带当前选中数量（未选中建空文件夹，选中>=2 用所选新建文件夹）
-    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar, selectedCount: Int)
     /// 搜索框内按 ↓ / ↑：把键盘焦点交给本面板的文件视图并选中首 / 末项。
     /// 核心旅程 J3（⌘F → ↑↓ → Enter）在「↓ 进入结果列表」这一环原先断掉。
     func paneToolbarDidRequestMoveToResults(_ toolbar: PaneToolbar, toLast: Bool)
@@ -25,7 +22,6 @@ protocol PaneToolbarDelegate: AnyObject {
 
 // MARK: - PaneToolbarDelegate 默认实现
 extension PaneToolbarDelegate {
-    func paneToolbarDidClickNewFolder(_ toolbar: PaneToolbar, selectedCount: Int) {}
     func paneToolbarDidRequestMoveToResults(_ toolbar: PaneToolbar, toLast: Bool) {}
     func paneToolbarDidRequestOpenResult(_ toolbar: PaneToolbar) {}
 }
@@ -62,11 +58,8 @@ class PaneToolbar: NSView, FFRegionAware {
     private var groupPopup: NSPopUpButton!
     private var listViewButton: NSButton!
     private var gridViewButton: NSButton!
-    private var toolsButton: NSButton!  // 任务 D15: 工具菜单按钮
-    // v0.7.4 项 2: 新建文件夹独立按钮（原在显示设置菜单里）
-    private var newFolderButton: NSButton!
-    // v0.7.4 修订: 当前选中数量（决定按钮行为与悬停提示）
-    private var currentSelectionCount: Int = 0
+    /// 第二行唯一的设置入口（R19-2 D-08）：显示开关 + 显示列 + 第二行配置并入同一个菜单。
+    var displaySettingsButton: NSButton!
 
     // 任务 F3: BreadcrumbBar 嵌入 Row1（刷新按钮后），紧贴刷新按钮
     private var breadcrumbBar: BreadcrumbBar?
@@ -74,6 +67,15 @@ class PaneToolbar: NSView, FFRegionAware {
     // 2026-10-19 #10：两行内容的左边缘约束
     private var row1LeadingConstraint: NSLayoutConstraint!
     private var row2LeadingConstraint: NSLayoutConstraint!
+
+    // 2026-10-21：恢复固定两行；第二行内容可按应用级配置隐藏。
+    private var row2: FFNonDragStackView!
+    private var row2HeightConstraint: NSLayoutConstraint!
+    var showsSecondaryRow: Bool { true }
+    private(set) var visibleRow2Items: Set<FFToolbarRow2Item> =
+        FFToolbarRow2Preferences.defaultItems
+    var visibleRow2ItemsForTesting: Set<FFToolbarRow2Item> { visibleRow2Items }
+    var searchFieldForTesting: NSTextField { searchTextField }
 
     /// 左边缘缩进。侧栏隐藏后这一栏顶到窗口最左，红绿灯与「显示侧栏」浮动按钮会压在
     /// 导航按钮上，所以窗口会把这里推到它们右侧；侧栏可见时回到常规 8pt。
@@ -96,8 +98,8 @@ class PaneToolbar: NSView, FFRegionAware {
     }
 
     deinit {
-        // 移除主题刷新观察者，防止悬空回调
         NotificationCenter.default.removeObserver(self, name: .appearanceChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .toolbarRow2PreferencesChanged, object: nil)
     }
 
     // MARK: - 面板拖拽（2026-10-20 #1）
@@ -158,8 +160,6 @@ class PaneToolbar: NSView, FFRegionAware {
 
         setupRow1()
         setupRow2()
-        // v0.7.4 修订 1：注册新建文件夹按钮悬停跟踪（鼠标移入立即弹提示气泡）
-        setupNewFolderHoverHint()
     }
 
     // MARK: - Wave4 Task 1: 实体表面主题刷新
@@ -300,8 +300,8 @@ class PaneToolbar: NSView, FFRegionAware {
 
         // Wave4 Task 6（审计 §2 折中）：Row2 溢出分级——窗口缩窄时按抗压缩优先级
         // 从低到高依次压缩/截断，不破版：
-        //   搜索框(1，弹性输入域最先让位，止步于最小宽 120) → 文件夹选项(700) →
-        //   新建文件夹(710) → 视图切换(720) → 分组(730) → 排序(740，最保文字可读)。
+        //   搜索框(1，弹性输入域最先让位，止步于最小宽 120) → 显示设置(700) →
+        //   视图切换(720) → 分组(730) → 排序(740，最保文字可读)。
         // 图标按钮的固定宽度约束已在工厂方法中同步降至同级优先级。
         searchContainer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
         sortPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 740), for: .horizontal)
@@ -320,29 +320,21 @@ class PaneToolbar: NSView, FFRegionAware {
         toolsSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolsSeparator.heightAnchor.constraint(equalToConstant: 16).isActive = true
 
-        // v0.6.9+: 文件夹显示配置按钮，使用系统 SF Symbol「slider.horizontal.3」
-        // 模板色自动适配浅/深色，与其他导航按钮视觉统一
-        // Wave4 Task 6：溢出分级 700——窗口缩窄时最先让位的图标按钮
-        toolsButton = createNavButton(icon: .settings, action: #selector(showFolderOptionsMenu), label: "文件夹选项",
-                                      compressionPriority: NSLayoutConstraint.Priority(rawValue: 700))
+        // R19-2 D-08：第二行只剩一个设置入口。模板色图标自动适配浅/深色；
+        // 菜单内含显示开关、显示列与第二行配置（原齿轮按钮并入此处）。
+        displaySettingsButton = createNavButton(icon: .eye,
+                                                action: #selector(showDisplaySettingsMenu),
+                                                label: "显示设置",
+                                                compressionPriority: NSLayoutConstraint.Priority(rawValue: 700))
+        displaySettingsButton.toolTip = "显示设置（隐藏文件 / 标签 / 后缀 / 列 / 第二行）"
 
-        // v0.7.4 项 2 + 项 6 合并（v0.7.4 修订）：单一「新建文件夹」按钮。
-        // - 未选中任何项目：点击创建空文件夹（默认名"新建文件夹"，重名自动加序号）
-        // - 选中 2 个及以上：点击自动"用所选 N 个项目新建文件夹"
-        // - 悬停提示随选中状态动态变化（由 setFolderSelectionCount 更新）
-        newFolderButton = createNavButton(icon: .folderPlus, action: #selector(newFolderClicked), label: "新建文件夹",
-                                          compressionPriority: NSLayoutConstraint.Priority(rawValue: 710))
-        newFolderButton.toolTip = "新建文件夹"
-        newFolderButton.isEnabled = true
-
-        let row2 = FFNonDragStackView(views: [
+        row2 = FFNonDragStackView(views: [
             searchContainer,
             sortPopup,
             groupPopup,
             listViewButton, gridViewButton,
-            newFolderButton,
             toolsSeparator,
-            toolsButton,
+            displaySettingsButton,
         ])
         row2.orientation = .horizontal
         row2.alignment = .centerY
@@ -352,18 +344,89 @@ class PaneToolbar: NSView, FFRegionAware {
         // （即 searchContainer，hugging=1）吃掉全部剩余宽度，排序/分组/视图/显示设置等
         // 高 hugging 控件保持固有宽度并整体贴到行最右。
         row2.distribution = .fill
-        row2.detachesHiddenViews = false
+        // 配置隐藏项必须真正让出宽度，而不是留下空位。
+        row2.detachesHiddenViews = true
         row2.translatesAutoresizingMaskIntoConstraints = false
         row2.setContentHuggingPriority(.defaultHigh, for: .vertical)
         addSubview(row2)
 
         row2LeadingConstraint = row2.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8)
+        row2HeightConstraint = row2.heightAnchor.constraint(equalToConstant: 32)
         NSLayoutConstraint.activate([
             row2.topAnchor.constraint(equalTo: row1.bottomAnchor, constant: 4),
             row2LeadingConstraint,
             row2.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            row2.heightAnchor.constraint(equalToConstant: 32),
+            row2HeightConstraint,
         ])
+
+        visibleRow2Items = FFToolbarRow2Preferences.visibleItems(
+            from: UserDefaults.standard.string(forKey: FFToolbarRow2Preferences.storageKey)
+        )
+        applyRow2Visibility()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(row2PreferencesChanged),
+            name: .toolbarRow2PreferencesChanged, object: nil
+        )
+    }
+
+    func applyRow2Visibility() {
+        searchContainer.isHidden = !visibleRow2Items.contains(.search)
+        sortPopup.isHidden = !visibleRow2Items.contains(.sort)
+        groupPopup.isHidden = !visibleRow2Items.contains(.group)
+        listViewButton.isHidden = !visibleRow2Items.contains(.viewMode)
+        gridViewButton.isHidden = !visibleRow2Items.contains(.viewMode)
+        displaySettingsButton.isHidden = false
+        needsLayout = true
+    }
+
+    func setRow2Item(_ item: FFToolbarRow2Item, visible: Bool) {
+        visibleRow2Items = visible
+            ? visibleRow2Items.union([item])
+            : visibleRow2Items.subtracting([item])
+        UserDefaults.standard.set(FFToolbarRow2Preferences.encode(visibleRow2Items),
+                                  forKey: FFToolbarRow2Preferences.storageKey)
+        applyRow2Visibility()
+        NotificationCenter.default.post(name: .toolbarRow2PreferencesChanged, object: nil)
+    }
+
+    @objc private func row2PreferencesChanged() {
+        visibleRow2Items = FFToolbarRow2Preferences.visibleItems(
+            from: UserDefaults.standard.string(forKey: FFToolbarRow2Preferences.storageKey)
+        )
+        applyRow2Visibility()
+    }
+
+    /// 第二行里的图标按钮（供布局与结构断言用）
+    func row2Buttons() -> [NSButton] {
+        row2.arrangedSubviews.compactMap { $0 as? NSButton }
+    }
+
+    /// 「第二行显示」子菜单：四类可配置项，勾选态跟随偏好。
+    private func makeRow2Submenu() -> NSMenu {
+        let menu = NSMenu()
+        for item in FFToolbarRow2Item.allCases {
+            let title: String
+            switch item {
+            case .search: title = "搜索"
+            case .sort: title = "排序"
+            case .group: title = "分组"
+            case .viewMode: title = "列表 / 图标"
+            }
+            let menuItem = NSMenuItem(title: title,
+                                      action: #selector(toggleRow2Item(_:)),
+                                      keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = item.rawValue
+            menuItem.state = visibleRow2Items.contains(item) ? .on : .off
+            menu.addItem(menuItem)
+        }
+        return menu
+    }
+
+    @objc private func toggleRow2Item(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let item = FFToolbarRow2Item(rawValue: raw) else { return }
+        setRow2Item(item, visible: !visibleRow2Items.contains(item))
     }
 
     // MARK: - Button Factory
@@ -485,10 +548,10 @@ class PaneToolbar: NSView, FFRegionAware {
         FFListColumnMenu.handleSelection(sender)
     }
 
-    // MARK: - 任务 D15/D17: 工具菜单
+    // MARK: - 显示设置（R19-2 D-08：第二行唯一的设置入口）
 
-    /// v0.6.9: 点击文件夹配置按钮弹出显示配置菜单
-    @objc private func showFolderOptionsMenu() {
+    /// 组装显示设置菜单。与按钮动作同一份代码，测试直接断言结构。
+    func makeDisplaySettingsMenu() -> NSMenu {
         let menu = NSMenu()
 
         // 读取当前显示配置状态
@@ -546,15 +609,20 @@ class PaneToolbar: NSView, FFRegionAware {
         columnsItem.submenu = columnsMenu
         menu.addItem(columnsItem)
 
-        // v0.7.4 项 2: 「新建文件夹」已从菜单移除，改为工具栏独立按钮（newFolderButton）。
-        // 原实现：
-        //   menu.addItem(.separator())
-        //   let newFolderItem = NSMenuItem(title: "新建文件夹", ...)
-        //   menu.addItem(newFolderItem)
+        // R19-2 D-08：齿轮按钮取消，第二行配置并入这里（应用级）
+        menu.addItem(.separator())
+        let row2Item = NSMenuItem(title: "第二行显示", action: nil, keyEquivalent: "")
+        row2Item.submenu = makeRow2Submenu()
+        menu.addItem(row2Item)
 
-        // 在按钮下方弹出菜单
-        let location = NSPoint(x: 0, y: toolsButton.bounds.height + 2)
-        menu.popUp(positioning: nil, at: location, in: toolsButton)
+        return menu
+    }
+
+    /// 在按钮下方弹出显示设置菜单
+    @objc private func showDisplaySettingsMenu() {
+        let menu = makeDisplaySettingsMenu()
+        let location = NSPoint(x: 0, y: displaySettingsButton.bounds.height + 2)
+        menu.popUp(positioning: nil, at: location, in: displaySettingsButton)
     }
 
     // MARK: - v0.6.9: 显示配置切换回调
@@ -581,107 +649,6 @@ class PaneToolbar: NSView, FFRegionAware {
         let current = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showSystemFiles) as? Bool ?? false
         UserDefaults.standard.set(!current, forKey: FFUserDefaultsKeys.showSystemFiles)
         NotificationCenter.default.post(name: .refreshSystemFiles, object: nil)
-    }
-
-    /// v0.7.4 项 2+6 合并：新建文件夹按钮回调。
-    /// 行为由 MainWindowController 决定（未选中建空文件夹；选中>=2 用所选新建文件夹），
-    /// 通过新回调把当前选中数量传出去，让控制器按需处理。
-    @objc private func newFolderClicked() {
-        delegate?.paneToolbarDidClickNewFolder(self, selectedCount: currentSelectionCount)
-    }
-
-    /// v0.7.4 修订：外部更新选中数量，用于动态切换按钮行为与悬停提示
-    /// - Parameter count: 当前选中项目数（0 = 未选中）
-    func setFolderSelectionCount(_ count: Int) {
-        currentSelectionCount = count
-        // 若悬停提示当前正显示，立即更新文字
-        if let label = hoverHintLabel, hoverHintLabel?.window != nil {
-            label.stringValue = currentHintText()
-            label.sizeToFit()
-        }
-    }
-
-    // MARK: - v0.7.4 修订：立即显示悬停提示（轻量，鼠标移入即现，移出即隐）
-
-    private var hoverHintLabel: NSTextField?
-    private var newFolderHoverTracking: NSTrackingArea?
-
-    /// 给新建文件夹按钮注册悬停跟踪（在按钮创建后调用一次）
-    func setupNewFolderHoverHint() {
-        guard let btn = newFolderButton else { return }
-        // 移除旧的跟踪区域
-        if let old = newFolderHoverTracking {
-            btn.removeTrackingArea(old)
-        }
-        let area = NSTrackingArea(
-            rect: btn.bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        btn.addTrackingArea(area)
-        newFolderHoverTracking = area
-    }
-
-    public override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-        guard event.trackingArea === newFolderHoverTracking else { return }
-        showHoverHint()
-    }
-
-    public override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        guard event.trackingArea === newFolderHoverTracking else { return }
-        hideHoverHint()
-    }
-
-    /// 立即显示悬停提示（轻量小浮层，跟随按钮上方）
-    private func showHoverHint() {
-        guard let btn = newFolderButton, let window = window else { return }
-        hideHoverHint()
-
-        let label = NSTextField(labelWithString: currentHintText())
-        label.font = NSFont.systemFont(ofSize: 11)
-        label.textColor = NSColor.labelColor
-        label.backgroundColor = NSColor.windowBackgroundColor
-        label.wantsLayer = true
-        label.layer?.cornerRadius = 4
-        label.layer?.borderWidth = 0.5
-        label.layer?.borderColor = NSColor.separatorColor.cgColor
-        label.alphaValue = 0.0
-        label.sizeToFit()
-        // 增加内边距
-        let padded = NSSize(width: label.frame.width + 12, height: label.frame.height + 6)
-        label.frame.size = padded
-
-        // 位置：按钮上方居中
-        let btnFrameInWindow = btn.convert(btn.bounds, to: nil)
-        let x = btnFrameInWindow.midX - padded.width / 2
-        let y = btnFrameInWindow.maxY + 4
-        label.frame.origin = NSPoint(x: x, y: y)
-
-        // 添加到 window 的 contentView 上（浮层，不参与布局）
-        window.contentView?.addSubview(label)
-        hoverHintLabel = label
-
-        // 立即显示（无需动画延迟）
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = FFMotion.animationDuration(0.08)
-            label.animator().alphaValue = 1.0
-        }
-    }
-
-    private func hideHoverHint() {
-        hoverHintLabel?.removeFromSuperview()
-        hoverHintLabel = nil
-    }
-
-    /// 当前提示文本（随选中数量变化）
-    private func currentHintText() -> String {
-        if currentSelectionCount >= 2 {
-            return "用所选 \(currentSelectionCount) 个项目新建文件夹"
-        }
-        return "新建文件夹"
     }
 }
 

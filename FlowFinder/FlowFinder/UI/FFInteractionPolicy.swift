@@ -168,48 +168,69 @@ enum FFInteractionPolicy {
 
     // MARK: 几何常量
 
-    /// 标题区高度（窗口顶部 0..36）。
+    /// 全局顶栏高度（第二轮：36pt）。
     ///
-    /// 2026-10-20 #4：从 28 调到 36，让标签上方留出 8pt 间隙
-    /// （与左右下留白 8 同值）。面板卡片顶边正好等于这个值，位置不动。
+    /// 2026-10-21 第二轮：44 → 36，操作面板上边缘同步上移 8pt。
     static let titleBandHeight: CGFloat = 36
 
-    /// 活动标签高度：底边焊在面板顶边上，向上凸出
-    static let activeTabHeight: CGFloat = 28
+    /// 活动标签高度：底边焊在面板顶边上，向上凸出（第二轮：30pt）
+    static let activeTabHeight: CGFloat = 30
 
-    /// 非活动标签高度：比活动矮 6pt，底边离面板顶边 6pt
-    static let inactiveTabHeight: CGFloat = 22
+    /// 非活动标签高度：在 30pt 栈内垂直居中，上下各让 2pt（第二轮：26pt）
+    static let inactiveTabHeight: CGFloat = 26
 
     /// 标签上方间隙（标题带高 − 活动标签高）
     static var tabTopGap: CGFloat { titleBandHeight - activeTabHeight }
 
     /// 非活动标签底边距面板顶边的空隙
-    static let inactiveTabBottomGap: CGFloat = 6
+    static var inactiveTabBottomGap: CGFloat { (activeTabHeight - inactiveTabHeight) / 2 }
+
+    /// 非活动标签顶边距标题带顶部的空隙
+    static var inactiveTabTopGap: CGFloat { tabTopGap + inactiveTabBottomGap }
 
     /// 活动标签顶部圆角（r1）
     static let tabCornerRadius: CGFloat = 10
 
-    /// 接缝处内凹圆角（r2）
-    static let tabSeamFillet: CGFloat = 8
+    /// 接缝处内凹圆角（r2，C2：10pt）
+    static let tabSeamFillet: CGFloat = 10
 
     /// 首个标签左缘距面板左缘的距离。
     ///
-    /// 必须 ≥ 面板圆角 16 + 根部内凹 8 = 24，否则内凹会压进面板圆角、
+    /// 必须 ≥ 面板圆角 16 + 根部内凹 9 = 25，否则内凹会压进面板圆角、
     /// 轮廓构造器会拒绝画凸起（退化成普通矩形，看起来就是「没焊上」）。
-    /// 取 26 留 2pt 平段。
+    /// 取 26 留 1pt 平段。
     static let tabInsetFromPanel: CGFloat = 26
 
     /// 标签条拖动缓冲：指针在标签条矩形外扩 20pt 内仍算「条内重排」。
     ///
-    /// 标签条只有 28pt 高，无缓冲会导致垂直抖动 1pt 就「出条」，
+    /// 标签条只有 30pt 高，无缓冲会导致垂直抖动 1pt 就「出条」，
     /// 重排手势与搬面板打架。
     static let tabBuffer: CGFloat = 20
 
+    /// 面板内小图标命中尺寸（关闭 × 等）
+    static let iconHitSize: CGFloat = 24
+
+    /// 全局顶栏工具按钮命中尺寸（工具 / 侧栏 / 主题 / 单双栏）
+    static let topBarHitSize: CGFloat = 28
+
+    /// 新建 + 底边距顶栏底边的距离（28pt 命中中心落在 18pt 中线）
+    static let addButtonBottomInset: CGFloat = 4
+
+    /// 新建 + 的图形尺寸
+    static let plusGlyphSize: CGFloat = 14
+
+    /// 标签关闭 × 的图形尺寸
+    static let closeGlyphSize: CGFloat = 10
+
+    /// 侧栏顶部图标的图形尺寸
+    static let sidebarIconGlyphSize: CGFloat = 16
+
     /// 侧栏隐藏时，标题区内容（标签条 / 工具栏）的避让起点。
     ///
-    /// 红绿灯占 13..70，「显示侧栏」浮动开关占 72..96，
-    /// 96 + 10 = 106。侧栏可见时不需要避让（红绿灯在侧栏范围内）。
-    static let hiddenSidebarInset: CGFloat = 106
+    /// 红绿灯占 13..70，「显示侧栏」浮动开关占 78..102；
+    /// 112 让标签条左缘再留 10pt，同时给 9pt 内凹肩线留出空间。
+    /// 侧栏可见时不需要避让（红绿灯在侧栏范围内）。
+    static let hiddenSidebarInset: CGFloat = 112
 
     /// 侧栏可见时标题区内容的左缘（卡片左缘内侧）
     static let visibleSidebarInset: CGFloat = 8
@@ -220,5 +241,49 @@ enum FFInteractionPolicy {
     /// 改一处两处生效，不会再出现「工具栏避让了、标签条没避让」。
     static func titleContentInset(sidebarVisible: Bool) -> CGFloat {
         sidebarVisible ? visibleSidebarInset : hiddenSidebarInset
+    }
+}
+
+/// 标签条位置的纯几何：不依赖 AppKit，供窗口控制器与单测共用。
+enum FFTabStripLayout {
+
+    /// 标签条容器的左缘偏移。
+    ///
+    /// `contentInset` 约束的是**首个标签**的左缘（112），标签自身还有
+    /// `tabLeadingInset`（卡片留白 8 + 标签退让 26 = 34）的内缩，
+    /// 所以容器要再往左让 34，首个标签才正好落在 112。
+    static func leadingOffset(contentInset: CGFloat,
+                              wrapperLeading: CGFloat,
+                              tabLeadingInset: CGFloat) -> CGFloat {
+        max(0, contentInset - tabLeadingInset - wrapperLeading)
+    }
+
+    /// 元素中心距窗口顶部的距离。
+    ///
+    /// 标签条坐标原点在左下，这里统一按「距顶部」表达，避免上下翻转时算错。
+    static func centerFromTop(bandHeight: CGFloat,
+                              itemHeight: CGFloat,
+                              bottomInset: CGFloat) -> CGFloat {
+        bandHeight - bottomInset - itemHeight / 2
+    }
+
+    /// 首个标签左缘（窗口坐标）。
+    static func firstTabMinX(stripOffset: CGFloat, tabLeadingInset: CGFloat) -> CGFloat {
+        stripOffset + tabLeadingInset
+    }
+}
+
+/// 全局顶栏标签组的纯几何（C2）。
+enum FFTopBarLayout {
+    /// 标签组跟随面板宽度；面板左缘被顶栏按钮占用时整体右移。
+    static func tabGroupFrame(pane: NSRect,
+                              contentStart: CGFloat,
+                              rightLimit: CGFloat) -> NSRect {
+        let minX = max(pane.minX, contentStart)
+        let maxX = min(pane.maxX, rightLimit)
+        return NSRect(x: minX,
+                      y: pane.minY,
+                      width: max(0, maxX - minX),
+                      height: pane.height)
     }
 }

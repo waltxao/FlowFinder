@@ -6,6 +6,11 @@ public class TaskPanelWindowController: NSWindowController {
 
     public static let shared = TaskPanelWindowController()
 
+    /// ⌘W 命中任务中心窗口时关闭自身。
+    @objc func menuCloseTab(_ sender: Any?) {
+        close()
+    }
+
     private var tableView: NSTableView!
     private var scrollView: NSScrollView!
     private var refreshButton: NSButton!
@@ -14,6 +19,13 @@ public class TaskPanelWindowController: NSWindowController {
     private var statusLabel: NSTextField!
 
     private var cancellables = Set<AnyCancellable>()
+
+    private enum PanelRow {
+        case app(FFTask)
+        case system(TaskInfo)
+    }
+    private var rows: [PanelRow] = []
+    private var emptyLabel: NSTextField!
 
     private override init(window: NSWindow?) {
         super.init(window: window)
@@ -110,6 +122,17 @@ public class TaskPanelWindowController: NSWindowController {
         contentView.addSubview(toolbar)
         contentView.addSubview(scrollView)
 
+        emptyLabel = NSTextField(labelWithString: "暂无任务")
+        emptyLabel.font = NSFont.systemFont(ofSize: 13)
+        emptyLabel.textColor = .tertiaryLabelColor
+        emptyLabel.isHidden = true
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(emptyLabel)
+        NSLayoutConstraint.activate([
+            emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+        ])
+
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
             toolbar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
@@ -138,13 +161,25 @@ public class TaskPanelWindowController: NSWindowController {
     // MARK: - Bindings
 
     private func setupBindings() {
-        TaskSchedulerManager.shared.$allTasks
+        Publishers.CombineLatest(FFTaskService.shared.$tasks,
+                                 TaskSchedulerManager.shared.$allTasks)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] tasks in
-                self?.tableView.reloadData()
-                let active = tasks.filter { $0.isActive }.count
-                let completed = tasks.filter { $0.isCompleted }.count
-                self?.statusLabel.stringValue = "共 \(tasks.count) 个任务（\(active) 进行中，\(completed) 已完成）"
+            .sink { [weak self] appTasks, systemTasks in
+                guard let self else { return }
+                self.rows = appTasks.map(PanelRow.app) + systemTasks.map(PanelRow.system)
+                self.tableView.reloadData()
+
+                let activeApp = appTasks.filter(\.isActive).count
+                let activeSystem = systemTasks.filter { $0.isActive }.count
+                let completedSystem = systemTasks.filter { $0.isCompleted }.count
+                let completedApp = appTasks.filter { !$0.isActive }.count
+                self.emptyLabel.isHidden = !self.rows.isEmpty
+                if self.rows.isEmpty {
+                    self.statusLabel.stringValue = "暂无任务"
+                } else {
+                    self.statusLabel.stringValue =
+                        "共 \(self.rows.count) 个任务（\(activeApp + activeSystem) 进行中，\(completedApp + completedSystem) 已完成）"
+                }
             }
             .store(in: &cancellables)
     }
@@ -164,14 +199,19 @@ public class TaskPanelWindowController: NSWindowController {
     }
 
     @objc private func cancelClicked() {
-        guard tableView.selectedRow >= 0,
-              tableView.selectedRow < TaskSchedulerManager.shared.allTasks.count else { return }
-        let task = TaskSchedulerManager.shared.allTasks[tableView.selectedRow]
-        TaskSchedulerManager.shared.cancelTask(taskId: task.id)
+        guard tableView.selectedRow >= 0, tableView.selectedRow < rows.count else { return }
+        switch rows[tableView.selectedRow] {
+        case .app(let task):
+            guard FFTaskService.shared.canCancel(task.id) else { return }
+            FFTaskService.shared.cancel(task.id)
+        case .system(let task):
+            TaskSchedulerManager.shared.cancelTask(taskId: task.id)
+        }
     }
 
     @objc private func clearClicked() {
-        // 真正清除已完成/失败的任务历史（Rust 端），正在执行的任务保留
+        // 清除应用任务与 Rust 任务的已完成历史，正在执行的任务保留
+        FFTaskService.shared.removeFinished()
         TaskSchedulerManager.shared.clearCompletedTasks()
     }
 }
@@ -180,17 +220,23 @@ public class TaskPanelWindowController: NSWindowController {
 
 extension TaskPanelWindowController: NSTableViewDataSource {
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        return TaskSchedulerManager.shared.allTasks.count
+        rows.count
     }
 }
 
 // MARK: - NSTableViewDelegate
 
 extension TaskPanelWindowController: NSTableViewDelegate {
+
+    private static let appDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let tasks = TaskSchedulerManager.shared.allTasks
-        guard row < tasks.count else { return nil }
-        let task = tasks[row]
+        guard row < rows.count else { return nil }
 
         let cellID = NSUserInterfaceItemIdentifier(tableColumn?.identifier.rawValue ?? "")
         let cellView = tableView.makeView(withIdentifier: cellID, owner: self) as? NSTableCellView
@@ -210,25 +256,50 @@ extension TaskPanelWindowController: NSTableViewDelegate {
                 tf.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
             ])
         }
+        guard let text = cellView.textField else { return cellView }
+        text.textColor = .labelColor
 
-        switch tableColumn?.identifier.rawValue {
-        case "name":
-            cellView.textField?.stringValue = task.name
-        case "status":
-            cellView.textField?.stringValue = task.statusDescription
-            switch task.status {
-            case .running: cellView.textField?.textColor = NSColor.systemBlue
-            case .completed: cellView.textField?.textColor = NSColor.systemGreen
-            case .failed: cellView.textField?.textColor = NSColor.systemRed
-            case .cancelled: cellView.textField?.textColor = NSColor.systemGray
-            default: cellView.textField?.textColor = NSColor.labelColor
+        switch rows[row] {
+        case .app(let task):
+            switch tableColumn?.identifier.rawValue {
+            case "name":
+                text.stringValue = task.detail.isEmpty ? task.title : "\(task.title) · \(task.detail)"
+            case "status":
+                text.stringValue = task.statusText
+                switch task.state {
+                case .running: text.textColor = .systemBlue
+                case .finished: text.textColor = .systemGreen
+                case .failed: text.textColor = .systemRed
+                case .cancelled: text.textColor = .systemGray
+                case .queued, .paused: text.textColor = .secondaryLabelColor
+                }
+            case "progress":
+                text.stringValue = "\(Int(task.progress * 100))%"
+            case "created":
+                text.stringValue = Self.appDateFormatter.string(from: task.startedAt)
+            default:
+                break
             }
-        case "progress":
-            cellView.textField?.stringValue = task.progressPercentage
-        case "created":
-            cellView.textField?.stringValue = task.formattedCreatedAt
-        default:
-            break
+        case .system(let task):
+            switch tableColumn?.identifier.rawValue {
+            case "name":
+                text.stringValue = task.name
+            case "status":
+                text.stringValue = task.statusDescription
+                switch task.status {
+                case .running: text.textColor = NSColor.systemBlue
+                case .completed: text.textColor = NSColor.systemGreen
+                case .failed: text.textColor = NSColor.systemRed
+                case .cancelled: text.textColor = NSColor.systemGray
+                default: text.textColor = NSColor.labelColor
+                }
+            case "progress":
+                text.stringValue = task.progressPercentage
+            case "created":
+                text.stringValue = task.formattedCreatedAt
+            default:
+                break
+            }
         }
 
         return cellView

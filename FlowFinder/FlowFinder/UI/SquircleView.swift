@@ -48,6 +48,7 @@ public class SquircleView: NSView {
         if autoUpdateMask {
             applySquircleMask()
         }
+        FFPaneGlow.updateShadowPath(for: self)
     }
 
     /// 应用圆角（使用标准 cornerRadius，不使用 mask，避免裁剪子视图内容）
@@ -58,6 +59,7 @@ public class SquircleView: NSView {
         // 使用标准 cornerRadius 圆角背景
         // 不使用 mask：mask 会裁剪所有子视图内容，导致大量内容被遮挡
         layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = .continuous
     }
 
     /// 生成超椭圆圆角路径
@@ -181,6 +183,7 @@ public class SquircleMaskedView: NSView {
         wantsLayer = true
         // 使用 cornerRadius 圆角背景，不裁剪子视图
         layer?.cornerRadius = squircleRadius
+        layer?.cornerCurve = .continuous
     }
 }
 
@@ -196,5 +199,6 @@ extension NSView {
         wantsLayer = true
         // 使用 cornerRadius 圆角背景，不使用 mask
         layer?.cornerRadius = radius
+        layer?.cornerCurve = .continuous
     }
 }

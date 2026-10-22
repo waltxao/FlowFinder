@@ -15,6 +15,11 @@ public class DuplicateScanWindowController: NSWindowController {
 
     public static let shared = DuplicateScanWindowController()
 
+    /// ⌘W 命中查重窗口时关闭自身，而不是落到主窗口的标签逻辑。
+    @objc func menuCloseTab(_ sender: Any?) {
+        close()
+    }
+
     // MARK: - UI 引用
 
     private var pathField: NSTextField!
@@ -32,9 +37,13 @@ public class DuplicateScanWindowController: NSWindowController {
     private var resultsScrollView: NSScrollView!
     private var resultsStack: NSStackView!
     private var sectionHeader: NSTextField!
+    private var sectionHeaderContainer: NSView!
+    private var emptyStateView: NSView!
+    private var emptyStateTitleLabel: NSTextField!
     /// 预览面板
     private var previewPanel: DuplicatePreviewPanel!
     /// 操作栏
+    private var summaryLabel: NSTextField!
     private var selectionCountLabel: NSTextField!
     private var spaceLabel: NSTextField!
     private var clearSelectionButton: NSButton!
@@ -50,10 +59,16 @@ public class DuplicateScanWindowController: NSWindowController {
     private var groupViews: [DuplicateGroupView] = []
     /// 所有待删除的文件路径（跨组汇总）
     private var allDeleteFilePaths: Set<String> = []
+    private var selectDuplicatesButton: NSButton!
     /// 所有可释放空间
     private var totalReleasableSpace: UInt64 = 0
     /// internal 供回归测试轮询扫描状态
     var isScanning = false
+    private var scanTaskID: String?
+    private var hasScanned = false
+
+    var isEmptyStateForTesting: Bool { !(emptyStateView?.isHidden ?? true) }
+    var primaryActionTitleForTesting: String { startButton?.title ?? "" }
 
     private override init(window: NSWindow?) {
         super.init(window: window)
@@ -99,6 +114,16 @@ public class DuplicateScanWindowController: NSWindowController {
         let optionsStrip = makeOptionsStrip()
         optionsStrip.translatesAutoresizingMaskIntoConstraints = false
 
+        // 条件卡片：路径/浏览/开始停止 + 扫描方式/类型/最小大小合成一张卡片
+        let conditionsCard = makeSolidContainer(cornerRadius: FFVisualTokens.Radius.card)
+        conditionsCard.layer?.borderWidth = 1
+        (conditionsCard as? FFSolidSurfaceView)?.borderColor = .separatorColor
+        conditionsCard.translatesAutoresizingMaskIntoConstraints = false
+        (toolbar as? FFSolidSurfaceView)?.surfaceColor = .clear
+        (optionsStrip as? FFSolidSurfaceView)?.surfaceColor = .clear
+        conditionsCard.addSubview(toolbar)
+        conditionsCard.addSubview(optionsStrip)
+
         // ===== 中部分栏内容（左列表+右预览） =====
         // 左侧结果列表区
         let resultsPane = NSView()
@@ -112,7 +137,7 @@ public class DuplicateScanWindowController: NSWindowController {
         sectionHeader.translatesAutoresizingMaskIntoConstraints = false
 
         // 任务 F11-2: sectionHeader 容器实体背景（替代 FFGlassView .component，v0.6.7）
-        let sectionHeaderContainer = makeSolidContainer()
+        sectionHeaderContainer = makeSolidContainer()
         sectionHeaderContainer.translatesAutoresizingMaskIntoConstraints = false
         sectionHeaderContainer.addSubview(sectionHeader)
 
@@ -130,14 +155,17 @@ public class DuplicateScanWindowController: NSWindowController {
         resultsStack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         resultsScrollView.documentView = resultsStack
 
+        emptyStateView = makeResultsEmptyStateView()
+
         resultsPane.addSubview(sectionHeaderContainer)
         resultsPane.addSubview(resultsScrollView)
+        resultsPane.addSubview(emptyStateView)
 
         // 任务 F11-2: 右侧预览面板实体背景（替代 FFGlassView .panel .headerView，v0.6.7）
         // 保留 10pt 圆角卡片样式，背景色为系统动态 controlBackgroundColor。
         previewPanel = DuplicatePreviewPanel(frame: .zero)
         previewPanel.translatesAutoresizingMaskIntoConstraints = false
-        let previewContainer = makeSolidContainer(cornerRadius: 10)
+        let previewContainer = makeSolidContainer(cornerRadius: FFVisualTokens.Radius.card)
         previewContainer.translatesAutoresizingMaskIntoConstraints = false
         previewContainer.addSubview(previewPanel)
 
@@ -162,32 +190,33 @@ public class DuplicateScanWindowController: NSWindowController {
         // 组装主容器（实体背景）
         let mainContainer = NSView()
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
-        mainContainer.wantsLayer = true
-        mainContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        mainContainer.addSubview(toolbar)
-        mainContainer.addSubview(optionsStrip)
+        mainContainer.addSubview(conditionsCard)
         mainContainer.addSubview(splitView)
         mainContainer.addSubview(actionbar)
         mainContainer.addSubview(taskbar)
         mainContainer.appearance = NSApp.effectiveAppearance
 
         NSLayoutConstraint.activate([
-            // 顶部工具栏
-            toolbar.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: mainContainer.topAnchor),
+            // 条件卡片（两行：路径/按钮 + 扫描条件）
+            conditionsCard.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor, constant: 12),
+            conditionsCard.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor, constant: -12),
+            conditionsCard.topAnchor.constraint(equalTo: mainContainer.topAnchor, constant: 8),
+            conditionsCard.heightAnchor.constraint(equalToConstant: 68),
+
+            toolbar.leadingAnchor.constraint(equalTo: conditionsCard.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: conditionsCard.trailingAnchor),
+            toolbar.topAnchor.constraint(equalTo: conditionsCard.topAnchor),
             toolbar.heightAnchor.constraint(equalToConstant: 36),
 
-            // 选项条
-            optionsStrip.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
-            optionsStrip.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
+            optionsStrip.leadingAnchor.constraint(equalTo: conditionsCard.leadingAnchor),
+            optionsStrip.trailingAnchor.constraint(equalTo: conditionsCard.trailingAnchor),
             optionsStrip.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
-            optionsStrip.heightAnchor.constraint(equalToConstant: 32),
+            optionsStrip.bottomAnchor.constraint(equalTo: conditionsCard.bottomAnchor),
 
             // 分栏内容
             splitView.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: mainContainer.trailingAnchor),
-            splitView.topAnchor.constraint(equalTo: optionsStrip.bottomAnchor),
+            splitView.topAnchor.constraint(equalTo: conditionsCard.bottomAnchor, constant: 8),
             splitView.bottomAnchor.constraint(equalTo: actionbar.topAnchor),
 
             // 操作栏
@@ -220,6 +249,11 @@ public class DuplicateScanWindowController: NSWindowController {
             resultsScrollView.topAnchor.constraint(equalTo: sectionHeaderContainer.bottomAnchor),
             resultsScrollView.bottomAnchor.constraint(equalTo: resultsPane.bottomAnchor),
 
+            emptyStateView.leadingAnchor.constraint(equalTo: resultsPane.leadingAnchor),
+            emptyStateView.trailingAnchor.constraint(equalTo: resultsPane.trailingAnchor),
+            emptyStateView.topAnchor.constraint(equalTo: resultsPane.topAnchor),
+            emptyStateView.bottomAnchor.constraint(equalTo: resultsPane.bottomAnchor),
+
             resultsStack.leadingAnchor.constraint(equalTo: resultsScrollView.contentView.leadingAnchor),
             resultsStack.trailingAnchor.constraint(equalTo: resultsScrollView.contentView.trailingAnchor),
             resultsStack.topAnchor.constraint(equalTo: resultsScrollView.contentView.topAnchor),
@@ -235,10 +269,8 @@ public class DuplicateScanWindowController: NSWindowController {
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
 
         // 任务 F11-2: 实体背景容器（替代 NSGlassEffectView/NSVisualEffectView 透明架构，v0.6.7）
-        let containerView = FFOpaqueContainerView()
-        containerView.wantsLayer = true
+        let containerView = FFSolidSurfaceView(color: .windowBackgroundColor)
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         // 修复：窗口使用 .fullSizeContentView + titlebarAppearsTransparent=true，
         // 由于 FFOpaqueContainerView 的 isOpaque=true，safeAreaLayoutGuide 可能不提供正确的顶部 inset，
@@ -256,6 +288,65 @@ public class DuplicateScanWindowController: NSWindowController {
         ])
 
         window.contentView = containerView
+        updateEmptyState()
+    }
+
+    private func makeResultsEmptyStateView() -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.wantsLayer = true
+
+        let icon = NSImageView()
+        icon.image = FFIcon.template(.scanSearch, size: 40)
+        icon.contentTintColor = .tertiaryLabelColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: "还没有扫描结果")
+        title.font = FFVisualTokens.Font.emptyTitle
+        title.textColor = .labelColor
+        title.alignment = .center
+        emptyStateTitleLabel = title
+
+        let subtitle = NSTextField(wrappingLabelWithString: "选择扫描路径和条件，然后开始查找重复文件。")
+        subtitle.font = NSFont.systemFont(ofSize: 12)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.alignment = .center
+        subtitle.maximumNumberOfLines = 2
+        subtitle.preferredMaxLayoutWidth = 320
+
+        let scanButton = NSButton(title: "开始扫描", target: self, action: #selector(startScan))
+        scanButton.bezelStyle = .rounded
+        scanButton.controlSize = .large
+        scanButton.keyEquivalent = "\r"
+        scanButton.bezelColor = FFAccent.current
+
+        let stack = NSStackView(views: [icon, title, subtitle, scanButton])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.setCustomSpacing(14, after: icon)
+        stack.setCustomSpacing(4, after: title)
+        stack.setCustomSpacing(18, after: subtitle)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 40),
+            icon.heightAnchor.constraint(equalToConstant: 40),
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -32),
+        ])
+        return container
+    }
+
+    private func updateEmptyState() {
+        guard emptyStateView != nil else { return }
+        let shouldShow = duplicateGroups.isEmpty && !isScanning
+        emptyStateView.isHidden = !shouldShow
+        sectionHeaderContainer.isHidden = shouldShow
+        resultsScrollView.isHidden = shouldShow
+        emptyStateTitleLabel.stringValue = hasScanned ? "没有发现重复文件" : "还没有扫描结果"
     }
 
     // MARK: - 任务 F11-2: 实体背景容器工厂（v0.6.7）
@@ -266,10 +357,9 @@ public class DuplicateScanWindowController: NSWindowController {
     /// 工具栏/操作栏/任务栏/选项条使用 controlBackgroundColor（比 windowBackgroundColor 略亮，
     /// 与系统 NSBox/工具栏视觉一致）；卡片式预览面板同理。
     private func makeSolidContainer(cornerRadius: CGFloat = 0) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let view = FFSolidSurfaceView(color: .controlBackgroundColor)
         view.layer?.cornerRadius = cornerRadius
+        view.layer?.cornerCurve = .continuous
         // 不设置 masksToBounds：避免裁剪容器内内容
         return view
     }
@@ -301,9 +391,8 @@ public class DuplicateScanWindowController: NSWindowController {
         browseButton.translatesAutoresizingMaskIntoConstraints = false
 
         startButton = NSButton(title: "开始扫描", target: self, action: #selector(startScan))
-        // 设为默认按钮（return 键等效），AppKit 自动渲染为强调色填充
+        // 空态中心 CTA 才是默认按钮；顶部入口保持普通按钮，避免双默认键冲突
         startButton.bezelStyle = .rounded
-        startButton.keyEquivalent = "\r"
         startButton.controlSize = .small
         startButton.translatesAutoresizingMaskIntoConstraints = false
 
@@ -386,6 +475,11 @@ public class DuplicateScanWindowController: NSWindowController {
         // 任务 F11-2: 实体背景容器（替代 FFGlassView .panel .headerView，v0.6.7）
         let bar = makeSolidContainer()
 
+        summaryLabel = NSTextField(labelWithString: "0 组 · 0 个文件")
+        summaryLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        summaryLabel.textColor = NSColor.labelColor
+        summaryLabel.translatesAutoresizingMaskIntoConstraints = false
+
         selectionCountLabel = NSTextField(labelWithString: "已选择 0 个文件待删除")
         selectionCountLabel.font = NSFont.systemFont(ofSize: 12)
         selectionCountLabel.textColor = NSColor.secondaryLabelColor
@@ -395,6 +489,12 @@ public class DuplicateScanWindowController: NSWindowController {
         spaceLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         spaceLabel.textColor = NSColor.systemGreen
         spaceLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        selectDuplicatesButton = NSButton(title: "选择重复项", target: self, action: #selector(selectDuplicatesForDeletion))
+        selectDuplicatesButton.bezelStyle = .rounded
+        selectDuplicatesButton.controlSize = .small
+        selectDuplicatesButton.isEnabled = false
+        selectDuplicatesButton.translatesAutoresizingMaskIntoConstraints = false
 
         clearSelectionButton = NSButton(title: "取消选择", target: self, action: #selector(clearSelection))
         clearSelectionButton.bezelStyle = .rounded
@@ -410,7 +510,8 @@ public class DuplicateScanWindowController: NSWindowController {
         confirmDeleteButton.bezelColor = NSColor.systemRed
         confirmDeleteButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [selectionCountLabel, NSView(), spaceLabel, clearSelectionButton, confirmDeleteButton])
+        let stack = NSStackView(views: [summaryLabel, selectionCountLabel, NSView(), spaceLabel,
+                                        selectDuplicatesButton, clearSelectionButton, confirmDeleteButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 12
@@ -474,6 +575,36 @@ public class DuplicateScanWindowController: NSWindowController {
         window?.makeKeyAndOrderFront(nil)
     }
 
+    /// 打开扫描窗口并预填当前目录（来自活动面板）。
+    public func showWindow(scanPath: String) {
+        // 先加载窗口，pathField 在 windowDidLoad 后才存在。
+        showWindow(nil)
+        if !isScanning {
+            resetResultsForNewSession()
+        }
+        if !scanPath.isEmpty, pathField != nil {
+            selectedURL = URL(fileURLWithPath: scanPath)
+            pathField.stringValue = scanPath
+        }
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func resetResultsForNewSession() {
+        duplicateGroups = []
+        allDeleteFilePaths = []
+        totalReleasableSpace = 0
+        groupViews.forEach { $0.removeFromSuperview() }
+        groupViews = []
+        hasScanned = false
+        sectionHeader.stringValue = "就绪"
+        statusLabel.stringValue = "就绪"
+        progressIndicator.doubleValue = 0
+        progressPercentLabel.stringValue = "0%"
+        previewPanel.showEmptyState()
+        updateActionbar()
+        updateEmptyState()
+    }
+
     // MARK: - Actions
 
     @objc private func browseClicked() {
@@ -496,11 +627,14 @@ public class DuplicateScanWindowController: NSWindowController {
         let path = url.path
 
         isScanning = true
+        hasScanned = false
         duplicateGroups = []
         allDeleteFilePaths = []
         totalReleasableSpace = 0
         groupViews.forEach { $0.removeFromSuperview() }
         groupViews = []
+        previewPanel.showEmptyState()
+        updateEmptyState()
         startButton.isEnabled = false
         stopButton.isEnabled = true
         confirmDeleteButton.isEnabled = false
@@ -510,6 +644,12 @@ public class DuplicateScanWindowController: NSWindowController {
         statusLabel.stringValue = "扫描中..."
         sectionHeader.stringValue = "扫描中..."
 
+        let taskID = "dedup-\(UUID().uuidString)"
+        scanTaskID = taskID
+        FFTaskService.shared.upsert(FFTask(id: taskID, title: "重复文件扫描", detail: path,
+                                           completedBytes: 0, totalBytes: 0,
+                                           state: .running, startedAt: Date()))
+
         DuplicateScanBridge.shared.scanDuplicates(
             path: path,
             progressHandler: { [weak self] scanned, total in
@@ -518,6 +658,7 @@ public class DuplicateScanWindowController: NSWindowController {
                     self?.progressIndicator.doubleValue = progress
                     self?.progressPercentLabel.stringValue = "\(Int(progress))%"
                     self?.statusLabel.stringValue = "已扫描 \(scanned) / \(total) 个文件"
+                    self?.updateScanTask(completed: Int64(scanned), total: Int64(total), state: .running)
                 }
             },
             groupHandler: { [weak self] group in
@@ -538,23 +679,61 @@ public class DuplicateScanWindowController: NSWindowController {
 
                     if let error = error {
                         self?.statusLabel.stringValue = "错误: \(error.localizedDescription)"
+                        self?.finishScanTask(state: .failed(error.localizedDescription))
                     } else {
                         let count = self?.duplicateGroups.count ?? 0
+                        self?.hasScanned = true
                         self?.statusLabel.stringValue = "完成，找到 \(count) 个重复组"
                         self?.progressPercentLabel.stringValue = "100%"
+                        self?.finishScanTask(state: .finished)
                     }
                     self?.updateSectionHeader()
+                    self?.updateActionbar()
+                    self?.updateEmptyState()
                 }
             }
         )
     }
 
+    private func updateScanTask(completed: Int64, total: Int64, state: FFTaskState) {
+        guard let id = scanTaskID,
+              var task = FFTaskService.shared.tasks.first(where: { $0.id == id }) else { return }
+        task.completedBytes = completed
+        task.totalBytes = max(task.totalBytes, total)
+        task.state = state
+        FFTaskService.shared.upsert(task)
+    }
+
+    private func finishScanTask(state: FFTaskState) {
+        guard let id = scanTaskID,
+              var task = FFTaskService.shared.tasks.first(where: { $0.id == id }) else { return }
+        if task.totalBytes > 0 {
+            task.completedBytes = task.totalBytes
+        }
+        task.state = state
+        FFTaskService.shared.upsert(task)
+    }
+
     @objc private func cancelScan() {
         DuplicateScanBridge.shared.cancelScan()
         isScanning = false
+        hasScanned = false
         startButton.isEnabled = true
         stopButton.isEnabled = false
         statusLabel.stringValue = "已取消扫描"
+        updateEmptyState()
+        if let id = scanTaskID,
+           var task = FFTaskService.shared.tasks.first(where: { $0.id == id }) {
+            task.state = .cancelled
+            FFTaskService.shared.upsert(task)
+        }
+    }
+
+    /// 用户显式请求：每组保留第一项，其余加入待删除。默认扫描结果仍然零勾选。
+    @objc func selectDuplicatesForDeletion() {
+        for groupView in groupViews {
+            groupView.markAllButFirstForDeletion()
+        }
     }
 
     @objc private func clearSelection() {
@@ -572,11 +751,6 @@ public class DuplicateScanWindowController: NSWindowController {
                 groupViews[index] = newView
                 resultsStack.insertArrangedSubview(newView, at: index)
                 constrainGroupView(newView)
-                // 收集默认删除项
-                for file in group.files.dropFirst() {
-                    allDeleteFilePaths.insert(file.path)
-                    totalReleasableSpace += file.size
-                }
             }
         }
         updateActionbar()
@@ -632,12 +806,9 @@ public class DuplicateScanWindowController: NSWindowController {
         resultsStack.addArrangedSubview(groupView)
         constrainGroupView(groupView)
 
-        // 默认收集删除项（除保留项外的所有文件）
-        for file in group.files.dropFirst() {
-            allDeleteFilePaths.insert(file.path)
-            totalReleasableSpace += file.size
-        }
+        // 安全默认：新结果不预勾选删除项，必须由用户明确选择。
         updateActionbar()
+        updateEmptyState()
 
         // 选中第一个组时更新预览
         if groupViews.count == 1 {
@@ -659,12 +830,15 @@ public class DuplicateScanWindowController: NSWindowController {
     }
 
     private func updateActionbar() {
+        let fileCount = duplicateGroups.reduce(0) { $0 + $1.files.count }
+        summaryLabel.stringValue = "\(duplicateGroups.count) 组 · \(fileCount) 个文件"
         selectionCountLabel.stringValue = "已选择 \(allDeleteFilePaths.count) 个文件待删除"
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         spaceLabel.stringValue = "可释放 \(formatter.string(fromByteCount: Int64(totalReleasableSpace)))"
         confirmDeleteButton.isEnabled = !allDeleteFilePaths.isEmpty
         clearSelectionButton.isEnabled = !allDeleteFilePaths.isEmpty
+        selectDuplicatesButton?.isEnabled = !duplicateGroups.isEmpty
     }
 }
 

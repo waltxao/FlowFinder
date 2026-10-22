@@ -19,7 +19,7 @@ extension Notification.Name {
 
 // MARK: - SortField
 
-enum SortField: String, CaseIterable {
+enum SortField: String, CaseIterable, Equatable {
     case name = "名称"
     case modifiedAt = "修改日期"
     case type = "类型"
@@ -37,14 +37,20 @@ enum SortField: String, CaseIterable {
 
 // MARK: - ViewMode
 
-enum ViewMode: String, CaseIterable {
+enum ViewMode: String, CaseIterable, Equatable {
     case list = "list"
     case grid = "grid"
 }
 
+/// 面板内搜索的硬上限（与 performRecursiveSearch 共用）。
+enum FFSearchPolicy {
+    static let maxDepth = 3
+    static let maxResults = 500
+}
+
 // MARK: - PaneState
 
-struct PaneState {
+struct PaneState: Equatable {
     var path: String = ""
     var history: [String] = []
     var historyIndex: Int = 0
@@ -57,10 +63,13 @@ struct PaneState {
     var sortAscending: Bool = true
     var viewMode: ViewMode = .list
     var groupBy: String = "none"
-    /// 任务 F11-8: 当前活动标签筛选（点击侧边栏标签后设置）。
-    /// nil 表示未筛选；非 nil 表示仅显示含该标签的文件。
-    /// 再次点击同一标签时置 nil 取消筛选。
-    var tagFilter: Tag?
+    /// 2026-10-21 Phase 5：多标签 AND 筛选（⌘ 点选累加）。
+    var tagFilters: [Tag] = []
+    /// 兼容旧调用：单标签读写映射到数组首项。
+    var tagFilter: Tag? {
+        get { tagFilters.first }
+        set { tagFilters = newValue.map { [$0] } ?? [] }
+    }
     /// 任务 T10: 删除/撤销/重做文件系统操作进行中标志。
     /// 后台 I/O 执行期间为 true，完成回主线程后置 false。供 Wave4 T12 UI 展示进度/禁用重复操作。
     var isDeleting: Bool = false
@@ -127,6 +136,10 @@ public class PaneViewModel: ObservableObject {
     /// 每次发起新 loadDirectory 时自增，后台完成回主线程时校验代次一致才应用结果，
     /// 避免快速导航时旧后台加载覆盖新加载（竞态导致显示错误目录内容）。
     private var loadGeneration: Int = 0
+    /// 搜索双击定位：加载完成后自动选中的目标路径。
+    private var pendingSelectionPath: String?
+    /// 刷新同目录时按设置保留的选中路径（批次 1 B1-02）。
+    private var pendingRestoredSelectionPaths: [String]?
     /// 任务 T10: 删除/撤销/重做文件系统操作代次。
     /// 每次发起新的删除/撤销/重做时自增；后台完成回主线程时校验代次一致才应用结果，
     /// 避免快速连续操作（删除→删除、删除→撤销→重做）的后台完成回调互相覆盖 UI 状态。
@@ -145,15 +158,21 @@ public class PaneViewModel: ObservableObject {
 
     // MARK: - Navigation
 
-    func navigate(to path: String) {
+    func navigate(to path: String, selecting itemPath: String? = nil) {
         // 防重复：导航到当前路径时不产生新历史条目
         if path == state.path {
-            state.selectedFiles.removeAll()
             state.searchQuery = ""
             state.tagFilter = nil  // 任务 F11-8: 导航时清除标签筛选（与 searchQuery 一致）
             state.error = nil
+            if let itemPath,
+               let entry = state.files.first(where: { $0.path == itemPath }) {
+                state.selectedFiles = [entry]
+            } else {
+                state.selectedFiles.removeAll()
+            }
             return
         }
+        pendingSelectionPath = itemPath
         if state.historyIndex < state.history.count - 1 {
             state.history = Array(state.history.prefix(state.historyIndex + 1))
         }
@@ -203,9 +222,20 @@ public class PaneViewModel: ObservableObject {
     }
 
     func refresh() {
-        // 刷新前先失效缓存，确保读取最新文件系统状态而非过期缓存数据
-        try? CoreBridge.shared.invalidateCache(path: state.path)
-        loadDirectory()
+        // 批次 1 B1-02：刷新保持选中（默认关）。关闭时刷新即清空选中；
+        // 打开时先记下路径，加载完成后只恢复仍然存在的项。
+        if FFAppSettings.keepSelectionPosition() {
+            pendingRestoredSelectionPaths = state.selectedFiles.map(\.path)
+        } else {
+            pendingRestoredSelectionPaths = nil
+            state.selectedFiles = []
+        }
+        // 刷新前先失效缓存；FFI 放后台，完成后回主线程再重新加载，
+        // 既保证顺序又不在主线程等待信号量。
+        let path = state.path
+        CoreBridge.shared.invalidateCacheAsync(path: path) { [weak self] in
+            self?.loadDirectory()
+        }
     }
 
     // MARK: - 标签页会话（2026-10-18 #7）
@@ -431,6 +461,26 @@ public class PaneViewModel: ObservableObject {
             state.tagFilter = nil
         } else {
             state.tagFilter = tag
+        }
+        applyFilter()
+    }
+
+    /// ⌘ 点选：累加/移除一个标签；普通点选：只保留该标签（再点一次取消）。
+    func toggleTagFilter(_ tag: Tag, additive: Bool) {
+        let key = TagIndexStore.normalize(tag.name)
+        if additive {
+            if let index = state.tagFilters.firstIndex(where: {
+                TagIndexStore.normalize($0.name) == key
+            }) {
+                state.tagFilters.remove(at: index)
+            } else {
+                state.tagFilters.append(tag)
+            }
+        } else if state.tagFilters.count == 1,
+                  TagIndexStore.normalize(state.tagFilters[0].name) == key {
+            state.tagFilters = []
+        } else {
+            state.tagFilters = [tag]
         }
         applyFilter()
     }
@@ -959,10 +1009,19 @@ public class PaneViewModel: ObservableObject {
     /// - 两者同时激活时取交集（先标签后查询、先查询后标签结果一致）
     /// 不含显示配置过滤（隐藏/系统文件），由调用方 `applyDisplayFilter` 单独处理。
     static func filterEntries(_ entries: [FileEntry], tagFilter: Tag?, searchQuery: String) -> [FileEntry] {
+        filterEntries(entries,
+                      tagFilters: tagFilter.map { [$0] } ?? [],
+                      searchQuery: searchQuery)
+    }
+
+    /// 多标签 AND：每个筛选标签都必须出现在文件上（按 id 或名称匹配）。
+    static func filterEntries(_ entries: [FileEntry], tagFilters: [Tag], searchQuery: String) -> [FileEntry] {
         var result = entries
-        if let tagFilter = tagFilter {
+        if !tagFilters.isEmpty {
             result = result.filter { entry in
-                entry.tags.contains(where: { $0.id == tagFilter.id || $0.name == tagFilter.name })
+                tagFilters.allSatisfy { filter in
+                    entry.tags.contains { $0.id == filter.id || $0.name == filter.name }
+                }
             }
         }
         if !searchQuery.isEmpty {
@@ -1032,6 +1091,21 @@ public class PaneViewModel: ObservableObject {
                     } else {
                         self.applyFilterPaginated()
                     }
+                    if let target = self.pendingSelectionPath {
+                        self.pendingSelectionPath = nil
+                        self.pendingRestoredSelectionPaths = nil
+                        if let entry = self.state.files.first(where: { $0.path == target }) {
+                            self.state.selectedFiles = [entry]
+                        }
+                    } else if let restore = self.pendingRestoredSelectionPaths {
+                        self.pendingRestoredSelectionPaths = nil
+                        let byPath = Dictionary(self.state.files.map { ($0.path, $0) },
+                                                uniquingKeysWith: { first, _ in first })
+                        self.state.selectedFiles = FFSelectionRestore
+                            .pathsToRestore(previous: restore,
+                                            available: self.state.files.map(\.path))
+                            .compactMap { byPath[$0] }
+                    }
                     // 诊断：记录加载完成后 state.files 是否包含预期文件名（验证数据层是否读到新名字）
                     // 小目录打印完整列表；大目录只打印前 8 个
                     if self.state.files.count <= 30 {
@@ -1069,23 +1143,10 @@ public class PaneViewModel: ObservableObject {
     /// 在后台线程排序（不触发 @Published 变更）。
     /// 排序字段与方向通过参数传入（快照），避免读取 `state` 造成数据竞争。
     private func sortEntries(_ entries: [FileEntry], field: SortField, ascending: Bool) -> [FileEntry] {
-        return entries.sorted { a, b in
-            // 文件夹始终排在最前（与 Finder 行为一致），不受升降序影响
-            if a.isDirectory != b.isDirectory {
-                return a.isDirectory && !b.isDirectory
-            }
-            let comparison: Bool
-            switch field {
-            case .name:
-                comparison = a.sortName.localizedCaseInsensitiveCompare(b.sortName) == .orderedAscending
-            case .modifiedAt:
-                comparison = a.modificationDate < b.modificationDate
-            case .type:
-                comparison = a.fileExtension.localizedCaseInsensitiveCompare(b.fileExtension) == .orderedAscending
-            case .size:
-                comparison = a.size < b.size
-            }
-            return ascending ? comparison : !comparison
+        let folderFirst = FFAppSettings.folderFirstSort()
+        return entries.sorted {
+            FFSortPolicy.isOrderedBefore($0, $1, field: field,
+                                         ascending: ascending, folderFirst: folderFirst)
         }
     }
 
@@ -1120,14 +1181,14 @@ public class PaneViewModel: ObservableObject {
         // （loadDirectory 的初始分页走 applyFilterPaginated，不经过此处）
         cancelPagination()
         // 任务 F11-8: 综合应用标签筛选 + 搜索过滤，结果均基于 allFiles（原始列表）
-        let tagFilter = state.tagFilter
+        let tagFilters = state.tagFilters
         let searchQuery = state.searchQuery
         // v0.6.9: 显示配置过滤（隐藏文件 / 系统文件）
         let displayFiltered = applyDisplayFilter(allFiles)
 
         // 无标签筛选：直接走纯函数过滤（搜索 + 标签交集），同步完成
-        guard let tagFilter = tagFilter else {
-            state.files = Self.filterEntries(displayFiltered, tagFilter: nil, searchQuery: searchQuery)
+        guard !tagFilters.isEmpty else {
+            state.files = Self.filterEntries(displayFiltered, tagFilters: [], searchQuery: searchQuery)
             return
         }
 
@@ -1138,7 +1199,7 @@ public class PaneViewModel: ObservableObject {
 
         if uncached.isEmpty {
             // 全部已缓存，主线程直接过滤（纯内存操作）
-            state.files = Self.filterEntries(cached, tagFilter: tagFilter, searchQuery: searchQuery)
+            state.files = Self.filterEntries(cached, tagFilters: tagFilters, searchQuery: searchQuery)
             return
         }
 
@@ -1154,7 +1215,7 @@ public class PaneViewModel: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard self.loadGeneration == generation else { return }
-                guard self.state.tagFilter?.id == tagFilter.id else { return }
+                guard self.state.tagFilters.map(\.name) == tagFilters.map(\.name) else { return }
                 guard self.state.searchQuery == capturedQuery else { return }
                 // 用后台读取的标签补齐 entry.tags，再做标签+搜索交集过滤
                 let completed = displayFiltered.map { entry -> FileEntry in
@@ -1163,7 +1224,7 @@ public class PaneViewModel: ObservableObject {
                     updated.tags = tags
                     return updated
                 }
-                self.state.files = Self.filterEntries(completed, tagFilter: tagFilter, searchQuery: searchQuery)
+                self.state.files = Self.filterEntries(completed, tagFilters: tagFilters, searchQuery: searchQuery)
             }
         }
     }
@@ -1238,14 +1299,15 @@ public class PaneViewModel: ObservableObject {
     /// 任务 F11-8: 异步递归搜索子目录，将匹配项追加到当前结果。
     /// 修复问题11：此前搜索仅匹配当前目录直接子项，搜索深层文件时一片空白。
     /// 性能策略：限制递归深度为 3 层，限制最大结果数为 500，避免大目录卡顿。
+    /// 数值同时暴露给测试，避免文档与实现漂移。
     /// 仅当 searchQuery 非空且未设置标签筛选时执行（标签筛选为精确集合，不递归）。
     private func performRecursiveSearch(query: String) {
         guard !query.isEmpty, state.tagFilter == nil else { return }
         // 在派发到后台前捕获不可变快照，避免数据竞争
         let basePath = state.path
         let loweredQuery = query.lowercased()
-        let maxDepth = 3
-        let maxResults = 500
+        let maxDepth = FFSearchPolicy.maxDepth
+        let maxResults = FFSearchPolicy.maxResults
         // 已在当前目录过滤中存在的路径集合（避免重复）
         let existingPaths = Set(allFiles.map { $0.path })
 

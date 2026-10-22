@@ -472,35 +472,35 @@ final class FFDividerGlowMathTests: XCTestCase {
     }
 
     func testClampedDividerPositionEnforcesMinPaneWidth() {
-        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 1400), 450)
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 1400), 400)
     }
 
     func testClampedDividerPositionEnforcesMaxPaneWidth() {
-        // 左侧最大 = 总宽 - 450（右面板最小宽度）
-        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 1300, boundsWidth: 1400), 950)
+        // 左侧最大 = 总宽 - 400（右面板最小宽度）
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 1300, boundsWidth: 1400), 1000)
     }
 
     func testClampedDividerPositionNarrowWindow() {
-        // 窗口过窄（<900pt）时上下限收敛到 450
-        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 700, boundsWidth: 800), 450)
-        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 800), 450)
+        // 窗口过窄（<800pt）时上下限收敛到 400
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 700, boundsWidth: 800), 400)
+        XCTAssertEqual(FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 800), 400)
     }
 
-    /// DESIGN-SPEC B-01：侧栏分隔用 160 最小宽，右侧仍是操作区 450 保底。
-    /// 侧栏可拖 160–280，故 160 不能被双操作区的 450 覆盖。
+    /// DESIGN-SPEC B-01：侧栏分隔用 180 最小宽，右侧仍是操作区 400 保底。
+    /// 侧栏可拖 180–280，故 180 不能被双操作区的 400 覆盖。
     func testClampedDividerPositionSidebarLeadingMin() {
         XCTAssertEqual(
-            FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 1400, leadingMin: 160),
-            160
+            FFDividerGlowMath.clampedDividerPosition(mouseX: 100, boundsWidth: 1400, leadingMin: 180),
+            180
         )
         XCTAssertEqual(
-            FFDividerGlowMath.clampedDividerPosition(mouseX: 240, boundsWidth: 1400, leadingMin: 160),
+            FFDividerGlowMath.clampedDividerPosition(mouseX: 240, boundsWidth: 1400, leadingMin: 180),
             240
         )
-        // 上限仍受右侧 450 保底约束
+        // 上限仍受右侧 400 保底约束
         XCTAssertEqual(
-            FFDividerGlowMath.clampedDividerPosition(mouseX: 1200, boundsWidth: 1400, leadingMin: 160),
-            950
+            FFDividerGlowMath.clampedDividerPosition(mouseX: 1200, boundsWidth: 1400, leadingMin: 180),
+            1000
         )
     }
 }
@@ -650,8 +650,9 @@ final class FFDetailsBarLayoutTests: XCTestCase {
         bar.isExpanded = true
         bar.layoutSubtreeIfNeeded()
 
-        // 期望值由栏自身尺寸推导，不依赖默认展开高度记忆值
-        let expected = bar.frame.height - 6 - 18
+        // 期望值由栏自身实际高度推导（紧凑检查器默认展开 120pt）
+        XCTAssertEqual(bar.currentHeight, FFDetailsLayoutPolicy.minimumExpandedHeight, accuracy: 1.0)
+        let expected = bar.currentHeight - 6 - 18
         XCTAssertEqual(bar.dividerIconToCol1.bounds.height, expected, accuracy: 1.0)
         // D-05 起信息区内部不再有分界线（列宽等分、列数按高度推导），
         // 改为核对各可见列高度一致（等分后并排、同一 top/bottom）
@@ -666,6 +667,17 @@ final class FFDetailsBarLayoutTests: XCTestCase {
 // MARK: - 类型专属行注册表 × 流动填充 回归（审查 Critical 修复）
 
 final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
+
+    private final class ImmediateMetadataProvider: FFMetadataProviding {
+        let metadata: FFFileMetadata
+        init(_ metadata: FFFileMetadata) { self.metadata = metadata }
+        func load(path: String,
+                  completion: @escaping (Result<FFFileMetadata, Error>) -> Void) -> UUID {
+            completion(.success(metadata))
+            return UUID()
+        }
+        func cancel(_ token: UUID) {}
+    }
 
     /// 记忆键快照（测试清理用，复核 Minor 2）
     private var barDefaultsSnapshot: Any?
@@ -710,6 +722,10 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         container.addSubview(bar)
         bar.isExpanded = true
+        bar.metadataProvider = ImmediateMetadataProvider(
+            FFFileMetadata(path: entry.path, kind: "PNG 图像", size: 1,
+                           imagePixelWidth: 8, imagePixelHeight: 8)
+        )
 
         bar.update(with: [entry])
         container.layoutSubtreeIfNeeded()
@@ -718,10 +734,10 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         bar.rearrangeFlow()
         bar.rearrangeFlow()
 
-        // 6 常规行 + ≥1 专属行 + 3 常规行：专属行必须仍在流动顺序中
+        // 6 常规行 + ≥1 专属行 + 2 常规行：专属行必须仍在流动顺序中
         let flow = bar.flowOrderedRows
-        XCTAssertTrue(flow.count > 9,
-                      "专属信息行应保留在流动顺序中（6 常规 + ≥1 专属 + 3 常规），实际 \(flow.count)")
+        XCTAssertTrue(flow.count > 8,
+                      "专属信息行应保留在流动顺序中（6 常规 + ≥1 专属 + 2 常规），实际 \(flow.count)")
 
         // 且至少一个类型专属行仍被某一列持有（不在 infoRows/multiRows 中的行）
         let attached = bar.infoColumns.flatMap { $0.arrangedSubviews }
@@ -730,15 +746,15 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
             "至少一个类型专属行应被列持有")
     }
 
-    /// 终审建议 3 回归（验收 4 接线）：栏变矮时溢出行被摘除（可见行数由
-    /// FFDetailsFlowLayout 按 availableHeight 分配），栏变高后重新挂回，行不丢失。
+    /// 紧凑检查器回归：高度变化不再摘除信息行；所有行留在列中，超出可视高度时
+    /// 由信息区滚动容器承载，行不丢失。
     ///
     /// 驱动方式说明：host 窗口直接缩放 contentView 会与栏的 required 高度约束打架
     /// （contentView frame 由窗口接管，heightConstraint 无法跟随），故走真实的远端同步
     /// 接线驱动高度：写记忆 key + 广播 FFDetailsBarLayoutChanged → layoutChangedRemotely
     /// 应用 clamp 后高度并重排（与「另一栏拖拽同步」同一条路径）。
     @MainActor
-    func testOverflowRowsDetachAndReturnWithHeight() throws {
+    func testRowsStayAttachedWithScrollableOverflow() throws {
         // 写一个真实 PNG 到临时目录（与类型专属行测试同构，保证有 ≥1 条专属信息行）
         let ctx = CGContext(
             data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32,
@@ -775,9 +791,12 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
             }
         }
 
-        let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
+        // 跳过一次性紧凑高度迁移，直接以 216（480 面板的 45%）作为初始高度
+        UserDefaults.standard.set(true, forKey: "FFDetailsBarCompactHeightV1")
+        UserDefaults.standard.set(CGFloat(216), forKey: "FFDetailsBarExpandedHeight")
+        let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 216))
         // 用普通容器承载（不用 NSWindow：窗口簿记延迟块与测试裸释放竞态，曾致运行器 SIGSEGV）
-        // 底边贴容器、高度由栏自身高度约束驱动；面板高 480（> 记忆值 210 + 让位 120），初始不触发 clamp
+        // 底边贴容器、高度由栏自身高度约束驱动；面板高 480 → 展开上限 216
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         bar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(bar)
@@ -787,6 +806,10 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
             bar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         bar.isExpanded = true
+        bar.metadataProvider = ImmediateMetadataProvider(
+            FFFileMetadata(path: entry.path, kind: "PNG 图像", size: 1,
+                           imagePixelWidth: 8, imagePixelHeight: 8)
+        )
         bar.update(with: [entry])
         container.layoutSubtreeIfNeeded()
 
@@ -795,24 +818,26 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
             bar.infoColumns.reduce(0) { $0 + $1.arrangedSubviews.count }
         }
 
-        // 初始：栏高 210，行按可用高度分配（放不下的已摘除隐藏）
-        let count1 = attachedCount()
+        // 初始：栏高 216，所有行都应在列中
         let flowCount = bar.flowOrderedRows.count
-        XCTAssertGreaterThan(count1, 0, "展开态应有可见行")
+        let count1 = attachedCount()
+        XCTAssertGreaterThan(count1, 0, "展开态应有信息行")
+        XCTAssertEqual(count1, flowCount, "所有信息行都应保留在列中")
+        XCTAssertTrue(bar.infoScrollViewForTesting.hasVerticalScroller,
+                      "信息区应具备纵向滚动能力")
 
-        // 栏变矮（记忆 100，面板 480 不截断 clamp）：溢出行被摘除
-        UserDefaults.standard.set(CGFloat(100), forKey: "FFDetailsBarExpandedHeight")
+        // 栏变矮到 120：行不摘除，交给滚动容器
+        UserDefaults.standard.set(CGFloat(120), forKey: "FFDetailsBarExpandedHeight")
         NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: nil)
         container.layoutSubtreeIfNeeded()
-        let count2 = attachedCount()
-        XCTAssertLessThan(count2, count1, "栏变矮后可见行数应减少（溢出行被摘除）")
+        XCTAssertEqual(bar.currentHeight, 132, accuracy: 1.0, "展开高度下限应为 132")
+        XCTAssertEqual(attachedCount(), count1, "栏变矮后行不得丢失（由滚动承载）")
 
-        // 栏变高回 210：行重新挂回
-        UserDefaults.standard.set(CGFloat(210), forKey: "FFDetailsBarExpandedHeight")
+        // 栏变高回 216：仍是同一批行
+        UserDefaults.standard.set(CGFloat(216), forKey: "FFDetailsBarExpandedHeight")
         NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: nil)
         container.layoutSubtreeIfNeeded()
-        XCTAssertEqual(attachedCount(), count1, "栏变高后可见行应恢复原数量（行回归）")
-        // 全程行不得丢失：流动顺序注册表数量恒定
+        XCTAssertEqual(attachedCount(), count1, "栏变高后行数保持不变")
         XCTAssertEqual(bar.flowOrderedRows.count, flowCount, "行不得丢失（流动顺序注册表数量恒定）")
     }
 

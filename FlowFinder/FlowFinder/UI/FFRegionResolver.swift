@@ -24,10 +24,25 @@ enum FFAreaResolver {
     /// 这样「标签胶囊在标签条里」会先命中胶囊自己（.tab），
     /// 而「标签条空白」会跳过标签、命中标签条（.title）。
     static func region(of hit: NSView?) -> FFRegion? {
+        guard let hit else { return nil }
+
+        // 控件与带点击手势的自绘控件自己消费鼠标事件。
+        // 但只在祖先区域是 .window / .title 时才短路——这两类区域会把按下翻译成
+        // 「拖窗口」，并吞掉 mouseUp，侧栏按钮 / 标签条「+」就永远不触发。
+        // .panel / .tab 必须保留原区域：拖标签落到文件列表上仍要能命中操作区。
         var view: NSView? = hit
+        var interactive = false
         while let current = view {
+            if current is NSControl { interactive = true }
+            if current.gestureRecognizers.contains(where: { $0 is NSClickGestureRecognizer }) {
+                interactive = true
+            }
             if let aware = current as? FFRegionAware {
-                return aware.ffRegion
+                let region = aware.ffRegion
+                if interactive && (region == .window || region == .title) {
+                    return nil
+                }
+                return region
             }
             view = current.superview
         }

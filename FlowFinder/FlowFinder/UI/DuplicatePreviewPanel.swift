@@ -16,6 +16,8 @@ class DuplicatePreviewPanel: NSView {
     private let divider = NSBox()
     private let compareScrollView = NSScrollView()
     private let compareStack = NSStackView()
+    private let contentStack = NSStackView()
+    private let emptyLabel = NSTextField(wrappingLabelWithString: "选择左侧的重复组\n查看文件预览与对比")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -65,38 +67,61 @@ class DuplicatePreviewPanel: NSView {
         compareScrollView.documentView = compareStack
 
         // 容器
-        let container = NSStackView(views: [previewBox, fileNameLabel, metaStack, divider, compareScrollView])
-        container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 8
-        container.detachesHiddenViews = false
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.edgeInsets = NSEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
-        addSubview(container)
+        contentStack.addArrangedSubview(previewBox)
+        contentStack.addArrangedSubview(fileNameLabel)
+        contentStack.addArrangedSubview(metaStack)
+        contentStack.addArrangedSubview(divider)
+        contentStack.addArrangedSubview(compareScrollView)
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 8
+        contentStack.detachesHiddenViews = false
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.edgeInsets = NSEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
+        addSubview(contentStack)
+
+        emptyLabel.font = NSFont.systemFont(ofSize: 12)
+        emptyLabel.textColor = NSColor.tertiaryLabelColor
+        emptyLabel.alignment = .center
+        emptyLabel.maximumNumberOfLines = 2
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(emptyLabel)
 
         NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: trailingAnchor),
-            container.topAnchor.constraint(equalTo: topAnchor),
-            container.bottomAnchor.constraint(equalTo: bottomAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             previewBox.widthAnchor.constraint(equalToConstant: 56),
             previewBox.heightAnchor.constraint(equalToConstant: 56),
-            previewBox.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            fileNameLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            fileNameLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            metaStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            metaStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            divider.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            divider.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            previewBox.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: 12),
+            fileNameLabel.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: 12),
+            fileNameLabel.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor, constant: -12),
+            metaStack.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: 12),
+            metaStack.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor, constant: -12),
+            divider.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: 12),
+            divider.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor, constant: -12),
             divider.heightAnchor.constraint(equalToConstant: 0.5),
-            compareScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            compareScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            compareScrollView.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: 12),
+            compareScrollView.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor, constant: -12),
             compareStack.leadingAnchor.constraint(equalTo: compareScrollView.contentView.leadingAnchor),
             compareStack.trailingAnchor.constraint(equalTo: compareScrollView.contentView.trailingAnchor),
             compareStack.topAnchor.constraint(equalTo: compareScrollView.contentView.topAnchor),
             compareStack.widthAnchor.constraint(equalTo: compareScrollView.contentView.widthAnchor),
+
+            emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            emptyLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -32),
         ])
+
+        showEmptyState()
+    }
+
+    func showEmptyState() {
+        currentGroup = nil
+        contentStack.isHidden = true
+        emptyLabel.isHidden = false
     }
 
     /// 更新预览面板内容
@@ -104,6 +129,8 @@ class DuplicatePreviewPanel: NSView {
     func update(with group: FFDuplicateGroup) {
         currentGroup = group
         guard let firstFile = group.files.first else { return }
+        contentStack.isHidden = false
+        emptyLabel.isHidden = true
 
         // 大图标 + 文件名
         previewBox.image = FFIcon.image(iconForFile(firstFile.name), size: 64,

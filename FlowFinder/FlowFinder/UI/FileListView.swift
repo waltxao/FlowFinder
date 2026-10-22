@@ -680,15 +680,6 @@ public class FileListView: NSView, FFRegionAware {
         var rows: [FFDisplayRow] = []
         let groups = viewModel.groupedFiles
 
-        // v0.7.4 决定性诊断：rebuildDisplayRows 时对比 groupedFiles 与 state.files
-        let groupNames = groups.flatMap { $0.entries.map { $0.name } }
-        let stateNames = viewModel.state.files.map { $0.name }
-        if groupNames != stateNames {
-            FFDebug.log("[RENDER-DIAG] rebuildDisplayRows: groupedFiles 与 state.files 不一致!")
-            FFDebug.log("[RENDER-DIAG]   groupedFiles=\(groupNames)")
-            FFDebug.log("[RENDER-DIAG]   state.files=\(stateNames)")
-        }
-
         // 预构建 path → index 字典，避免循环内 firstIndex(where:) 的 O(n²) 搜索
         var pathToIndex: [String: Int] = [:]
         pathToIndex.reserveCapacity(viewModel.state.files.count)
@@ -1094,6 +1085,8 @@ public class FileListView: NSView, FFRegionAware {
     /// 因面板太窄被**临时**收起的列（不写进用户设置，窗口变宽会自动回来）
     private var fittedOutColumns: [String] = []
     private var isApplyingColumnFit = false
+    /// 上次触发列宽重算时的可用宽度。宽度没变就不重算，避免拖动/布局抖动级联到列重建。
+    private var lastColumnFitWidth: CGFloat = -1
 
     /// 按面板可用宽度分配列宽：先压到最小宽，仍放不下才整列收起。
     ///
@@ -1145,6 +1138,11 @@ public class FileListView: NSView, FFRegionAware {
         if droppedIDs != fittedOutColumns {
             fittedOutColumns = droppedIDs
             rebuildColumns()
+            // 列集合变了，下一轮把名称列宽度补齐；fittedOutColumns 已记录，
+            // 不会再次触发 drop，因此不会无限递归。
+            DispatchQueue.main.async { [weak self] in
+                self?.applyColumnFit()
+            }
             return
         }
 
@@ -1170,8 +1168,11 @@ public class FileListView: NSView, FFRegionAware {
     @objc private func listColumnsDidChange() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // 可见列变了：即使宽度没变也要重新 fit 一次。
+            self.lastColumnFitWidth = -1
             self.rebuildColumns()
             self.tableView.reloadData()
+            self.needsLayout = true
         }
     }
 
@@ -1487,6 +1488,8 @@ public class FileListView: NSView, FFRegionAware {
     }
 
     public func reloadData() {
+        let signpost = FFPerf.begin("Render.list")
+        defer { FFPerf.end("Render.list", signpost) }
         // Wave3 Task 1/2: reload 后行视图全部重建，Drop 高亮与驻留计时一并复位
         clearDragVisualState()
         // 任务 F10-8: 重建分组显示行映射后再 reload tableView
@@ -1643,8 +1646,12 @@ public class FileListView: NSView, FFRegionAware {
         // 任务 F11-5: 布局变化（列宽/窗口尺寸）后刷新粘性标题宽度与位置
         updateStickyHeader()
         // 2026-10-20 #3：列宽要在布局稳定后才算得准，且改列会再触发布局
-        // —— 用异步 + 标志位断开递归
-        guard !isApplyingColumnFit else { return }
+        // —— 用异步 + 标志位断开递归。
+        // 2026-10-20 第七轮：只有宽度真正变化才重算；插入线/拖动不再触发列重建。
+        guard !isApplyingColumnFit,
+              FFColumnFitPolicy.shouldFit(previousWidth: lastColumnFitWidth,
+                                          currentWidth: bounds.width) else { return }
+        lastColumnFitWidth = bounds.width
         isApplyingColumnFit = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -2087,6 +2094,22 @@ extension FileListView: NSTableViewDelegate {
         // 检查拖拽内容是否包含文件 URL
         guard let items = info.draggingPasteboard.pasteboardItems, !items.isEmpty else { return [] }
         let hasFileURL = items.contains { $0.types.contains(.fileURL) }
+
+        // 同目录 / 文件夹拖进自身或子目录 → 整次拖放无操作，连高亮都不出现。
+        let draggedURLs = (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+        var validationDest = viewModel?.currentPath ?? ""
+        if dropOperation == .on, row >= 0, row < displayRows.count {
+            let rowData = displayRows[row]
+            if !rowData.isHeader, rowData.fileIndex < viewModel?.files.count ?? 0 {
+                let entry = viewModel!.files[rowData.fileIndex]
+                if entry.isDirectory { validationDest = entry.path }
+            }
+        }
+        if !draggedURLs.isEmpty,
+           FFFileDropPolicy.validSources(draggedURLs.map { $0.path }, destination: validationDest).isEmpty {
+            clearDragVisualState()
+            return []
+        }
         // Wave3 Task 1: 计算 Drop 目标高亮行——仅当提案为 .on 且命中文件夹行时高亮该行；
         // 行间（.above，系统插入线）/文件行/标题行不高亮。无 fileURL 内容时清除高亮。
         // Wave3 Task 2: 同时解析驻留展开目标（命中文件夹行时启动 1.0s 驻留计时）。
@@ -2166,15 +2189,28 @@ extension FileListView: NSTableViewDelegate {
         }
         guard !destPath.isEmpty else { return false }
 
+        let validURLs = urls.filter {
+            !FFFileDropPolicy.isNoOp(source: $0.path, destination: destPath)
+        }
+        guard !validURLs.isEmpty else { return false }
+
         let isMove = isMoveOperation(info, destPath: destPath)
 
         // 任务 10：冲突预检与解决（替换/保留两者/跳过）
         let conflictPlan = ConflictResolver.resolveConflicts(
-            srcPaths: urls.map { $0.path },
+            srcPaths: validURLs.map { $0.path },
             destDir: destPath,
             window: window
         )
         guard !conflictPlan.isEmpty else { return true }
+
+        // 批次 1 B1-05：移动前确认（开关默认关闭；复制不受影响）
+        if MoveConfirmation.shouldAsk(enabled: FFAppSettings.confirmMove(), isMove: isMove),
+           !MoveConfirmation.confirmSynchronously(count: validURLs.count,
+                                                  destination: destPath,
+                                                  window: window) {
+            return true
+        }
 
         // Wave3 Task 3: 直连进度模式（照抄粘贴路径 MainWindowController+MenuActions.performPasteOperation）：
         // 主线程启动进度栏 → 后台批量操作经 progress 回调切主线程更新 → 完成后延迟收起。
@@ -2456,8 +2492,10 @@ extension FileListView {
               let srcPath = urls.first?.path else { return false }
         let sameVolume = isSameVolume(srcPath: srcPath, destPath: dest)
 
-        // ⌘ 按下时反转默认行为（复制↔移动切换，访达语义）
-        return commandPressed ? !sameVolume : sameVolume
+        // 批次 1 B1-06：默认操作行为三选（跟随访达 / 总是复制 / 总是移动），⌘ 反转
+        return FFDragBehaviorPolicy.shouldMove(behavior: FFAppSettings.dragBehavior(),
+                                               commandPressed: commandPressed,
+                                               sameVolume: sameVolume)
     }
 
     /// 检查两个路径是否在同一卷（通过 statfs）
@@ -2537,6 +2575,10 @@ extension FileListView: FFPaneViewHost {
     /// 预留同等空白（额外 +8pt 对应浮层距容器底部的边距），使列表能滚出遮挡区。
     ///
     /// - Parameter height: 详情栏当前高度（收起 54 / 展开为可调高度）
+    var bottomOverlayInsetForTesting: CGFloat {
+        scrollView?.contentInsets.bottom ?? 0
+    }
+
     func setBottomOverlayInset(_ height: CGFloat) {
         guard let sv = scrollView else { return }
         // 浮层底部距容器 8pt，留白需一并覆盖

@@ -63,6 +63,11 @@ public class SettingsWindowController: NSWindowController {
 
     public static let shared = SettingsWindowController()
 
+    /// ⌘W 命中设置窗口时关闭自身，而不是落到主窗口的标签逻辑。
+    @objc func menuCloseTab(_ sender: Any?) {
+        close()
+    }
+
     // MARK: - UI 引用
 
     private var sidebarTableView: NSTableView!
@@ -451,25 +456,51 @@ public class SettingsWindowController: NSWindowController {
         // let rememberPaneRow = SettingsRowView.toggleRow(...)
 
         let confirmOpsRow = SettingsRowView.toggleRow(
-            title: "文件操作确认",
-            desc: "移动或删除文件前弹出确认对话框",
-            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.confirmFileOperations) as? Bool ?? false,
+            title: "移动前确认",
+            desc: "移动到另一目录前弹出确认对话框（删除确认在「删除与安全」）",
+            state: FFAppSettings.confirmMove(),
             action: { state in
                 UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.confirmFileOperations)
             }
         )
         fileOpsSection.addRow(confirmOpsRow)
 
+        let behaviors: [FFDragBehavior] = [.finder, .alwaysCopy, .alwaysMove]
+        let currentBehavior = FFAppSettings.dragBehavior()
         let defaultBehaviorRow = SettingsRowView.segmentedRow(
             title: "默认操作行为",
-            desc: "同盘拖拽时移动，跨盘拖拽时复制（Finder 风格）",
-            labels: ["同盘移动", "跨盘复制"],
-            selected: UserDefaults.standard.integer(forKey: FFUserDefaultsKeys.defaultFileBehavior)
+            desc: "拖拽时默认移动还是复制；按住 ⌘ 临时反转",
+            labels: ["跟随访达", "总是复制", "总是移动"],
+            selected: behaviors.firstIndex(of: currentBehavior) ?? 0
         ) { idx in
-            UserDefaults.standard.set(idx, forKey: FFUserDefaultsKeys.defaultFileBehavior)
+            guard behaviors.indices.contains(idx) else { return }
+            UserDefaults.standard.set(behaviors[idx].rawValue,
+                                      forKey: FFUserDefaultsKeys.defaultFileBehavior)
         }
         fileOpsSection.addRow(defaultBehaviorRow)
-        registerForSearch(fileOpsSection, rows: [defaultViewRow, showHiddenRow, confirmOpsRow, defaultBehaviorRow])
+
+        let folderFirstRow = SettingsRowView.toggleRow(
+            title: "文件夹优先排序",
+            desc: "文件夹始终排在文件前；关闭后完全按字段排序",
+            state: FFAppSettings.folderFirstSort(),
+            action: { state in
+                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.folderFirstSort)
+                NotificationCenter.default.post(name: .sortPreferencesChanged, object: nil)
+            }
+        )
+        fileOpsSection.addRow(folderFirstRow)
+
+        let keepSelectionRow = SettingsRowView.toggleRow(
+            title: "刷新保持选中",
+            desc: "同目录刷新后保留仍存在的选中项",
+            state: FFAppSettings.keepSelectionPosition(),
+            action: { state in
+                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.keepSelectionPosition)
+            }
+        )
+        fileOpsSection.addRow(keepSelectionRow)
+        registerForSearch(fileOpsSection, rows: [defaultViewRow, showHiddenRow, confirmOpsRow,
+                                                 defaultBehaviorRow, folderFirstRow, keepSelectionRow])
 
         let stack = NSStackView(views: [startupSection, fileOpsSection])
         stack.orientation = .vertical
@@ -543,7 +574,19 @@ public class SettingsWindowController: NSWindowController {
             NotificationCenter.default.post(name: .gridIconSizeChanged, object: nil)
         }
         densitySection.addRow(iconSizeRow)
-        registerForSearch(densitySection, rows: [listDensityRow, iconSizeRow])
+
+        let detailsPreviewRow = SettingsRowView.sliderRow(
+            title: "详情预览大小",
+            desc: "文件详情展开时的预览图标尺寸（48–96pt）",
+            minValue: 48,
+            maxValue: 96,
+            value: Double(FFDetailsLayoutPolicy.storedIconSize())
+        ) { value in
+            UserDefaults.standard.set(value, forKey: FFUserDefaultsKeys.detailsPreviewSize)
+            NotificationCenter.default.post(name: .detailsPreviewSizeChanged, object: nil)
+        }
+        densitySection.addRow(detailsPreviewRow)
+        registerForSearch(densitySection, rows: [listDensityRow, iconSizeRow, detailsPreviewRow])
 
         let stack = NSStackView(views: [themeSection, accentSection, densitySection])
         stack.orientation = .vertical
@@ -561,30 +604,25 @@ public class SettingsWindowController: NSWindowController {
     private func buildFileManageSection() -> NSView {
         let container = makeScrollContainer()
 
-        // 排序与显示 section
-        let sortSection = SettingsSectionView(title: "排序与显示", icon: .arrowUpDown)
-        let folderFirstRow = SettingsRowView.toggleRow(
-            title: "智能排序",
-            desc: "文件夹自动置顶",
-            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.folderFirstSort) as? Bool ?? true,
+        // 排序与显示：原「智能排序 / 保留选择位置」没有代码读取，属于死开关，已移除。
+        let safetySection = SettingsSectionView(title: "删除与安全", icon: .trash2)
+        let confirmRow = SettingsRowView.toggleRow(
+            title: "删除前确认",
+            desc: "移到废纸篓前显示确认弹窗",
+            state: !UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.deleteConfirmDisabled),
             action: { state in
-                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.folderFirstSort)
+                UserDefaults.standard.set(!state, forKey: FFUserDefaultsKeys.deleteConfirmDisabled)
             }
         )
-        sortSection.addRow(folderFirstRow)
-
-        let keepSelectionRow = SettingsRowView.toggleRow(
-            title: "保留选择位置",
-            desc: "刷新后保持已选文件",
-            state: UserDefaults.standard.object(forKey: FFUserDefaultsKeys.keepSelectionPosition) as? Bool ?? true,
-            action: { state in
-                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.keepSelectionPosition)
-            }
+        safetySection.addRow(confirmRow)
+        let permanentRow = SettingsRowView.labelRow(
+            title: "永久删除",
+            desc: "跳过废纸篓的永久删除始终二次确认，且无法撤销"
         )
-        sortSection.addRow(keepSelectionRow)
-        registerForSearch(sortSection, rows: [folderFirstRow, keepSelectionRow])
+        safetySection.addRow(permanentRow)
+        registerForSearch(safetySection, rows: [confirmRow, permanentRow])
 
-        let stack = NSStackView(views: [sortSection])
+        let stack = NSStackView(views: [safetySection])
         stack.orientation = .vertical
         stack.spacing = 12
         stack.detachesHiddenViews = false
@@ -689,9 +727,9 @@ public class SettingsWindowController: NSWindowController {
         resetRow.translatesAutoresizingMaskIntoConstraints = false
 
         let shortcuts: [(String, String, String)] = [
-            ("新建文件夹", "⌘N", FFUserDefaultsKeys.shortcutNewFolder),
+            ("新建文件夹", "⌘⇧N", FFUserDefaultsKeys.shortcutNewFolder),
             ("打开文件", "⌘O", FFUserDefaultsKeys.shortcutOpenFile),
-            ("关闭窗口", "⌘W", FFUserDefaultsKeys.shortcutCloseWindow),
+            ("关闭窗口", "⌘⇧W", FFUserDefaultsKeys.shortcutCloseWindow),
             ("复制", "⌘C", FFUserDefaultsKeys.shortcutCopy),
             ("剪切", "⌘X", FFUserDefaultsKeys.shortcutCut),
             ("粘贴", "⌘V", FFUserDefaultsKeys.shortcutPaste),
@@ -699,8 +737,8 @@ public class SettingsWindowController: NSWindowController {
             ("移动到废纸篓", "⌘⌫", FFUserDefaultsKeys.shortcutTrash),
             ("撤销", "⌘Z", FFUserDefaultsKeys.shortcutUndo),
             ("重做", "⌘⇧Z", FFUserDefaultsKeys.shortcutRedo),
-            ("列表视图", "⌘1", FFUserDefaultsKeys.shortcutListView),
-            ("图标视图", "⌘2", FFUserDefaultsKeys.shortcutGridView),
+            ("列表视图", "⌥⌘1", FFUserDefaultsKeys.shortcutListView),
+            ("图标视图", "⌥⌘2", FFUserDefaultsKeys.shortcutGridView),
             ("刷新", "⌘R", FFUserDefaultsKeys.shortcutRefresh),
             ("搜索", "⌘F", FFUserDefaultsKeys.shortcutSearch),
             ("重复文件扫描", "⌘⇧D", FFUserDefaultsKeys.shortcutDuplicateScan),
@@ -785,6 +823,10 @@ public class SettingsWindowController: NSWindowController {
 
     // MARK: - 内容构建：关于
 
+    @objc private func checkForUpdatesClicked() {
+        FFUpdateChecker.shared.checkManually()
+    }
+
     private func buildAboutSection() -> NSView {
         let container = makeScrollContainer()
 
@@ -802,12 +844,25 @@ public class SettingsWindowController: NSWindowController {
         appName.font = NSFont.boldSystemFont(ofSize: 20)
         appName.translatesAutoresizingMaskIntoConstraints = false
 
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        let versionLabel = NSTextField(labelWithString: "版本 \(version) (\(build))")
+        let versionLabel = NSTextField(labelWithString: "版本 \(FFBuildInfo.displayVersion)")
         versionLabel.font = NSFont.systemFont(ofSize: 12)
         versionLabel.textColor = NSColor.secondaryLabelColor
         versionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let checkUpdateButton = NSButton(title: "检查更新",
+                                         target: self,
+                                         action: #selector(checkForUpdatesClicked))
+        checkUpdateButton.bezelStyle = .inline
+        checkUpdateButton.controlSize = .small
+        checkUpdateButton.font = NSFont.systemFont(ofSize: 12)
+        checkUpdateButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let buildLabel = NSTextField(labelWithString: FFBuildInfo.aboutBuildLine)
+        buildLabel.font = NSFont.systemFont(ofSize: 11)
+        buildLabel.textColor = NSColor.tertiaryLabelColor
+        buildLabel.lineBreakMode = .byTruncatingMiddle
+        buildLabel.toolTip = FFBuildInfo.aboutBuildLine
+        buildLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let descLabel = NSTextField(labelWithString: "原生 macOS 文件管理器，双面板、标签、查重、AI 智能分类")
         descLabel.font = NSFont.systemFont(ofSize: 12)
@@ -823,7 +878,8 @@ public class SettingsWindowController: NSWindowController {
         let infoContainer = NSView()
         infoContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        let infoStack = NSStackView(views: [appIcon, appName, versionLabel, descLabel, copyrightLabel])
+        let infoStack = NSStackView(views: [appIcon, appName, versionLabel, checkUpdateButton,
+                                            buildLabel, descLabel, copyrightLabel])
         infoStack.orientation = .vertical
         infoStack.spacing = 8
         // v0.7.4 关于页居中修复：
@@ -840,6 +896,7 @@ public class SettingsWindowController: NSWindowController {
             infoStack.centerXAnchor.constraint(equalTo: infoContainer.centerXAnchor),
             infoStack.topAnchor.constraint(equalTo: infoContainer.topAnchor, constant: 16),
             infoStack.bottomAnchor.constraint(equalTo: infoContainer.bottomAnchor, constant: -16),
+            buildLabel.widthAnchor.constraint(lessThanOrEqualTo: infoContainer.widthAnchor, constant: -32),
         ])
 
         let aboutRow = SettingsRowView(title: "", desc: "")
@@ -942,6 +999,11 @@ public class SettingsWindowController: NSWindowController {
     public func showAboutSection() {
         showWindow()
         selectSection(.about)
+    }
+
+    public func showTagManagementSection() {
+        showWindow()
+        selectSection(.tagManage)
     }
 }
 
@@ -1116,6 +1178,20 @@ class ShortcutRecorderView: NSView {
             return
         }
 
+        let stored = FFShortcutSettings.storedShortcuts()
+        if let conflictKey = FFShortcutSettings.conflict(for: shortcutStr,
+                                                         storageKey: storageKey,
+                                                         stored: stored) {
+            let alert = NSAlert()
+            alert.messageText = "快捷键冲突"
+            alert.informativeText = "\(shortcutStr) 已用于「\(FFShortcutSettings.title(for: conflictKey))」。请换一个组合。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+            cancelRecording()
+            return
+        }
+
         currentShortcut = shortcutStr
         button.title = shortcutStr
         UserDefaults.standard.set(shortcutStr, forKey: storageKey)
@@ -1185,7 +1261,6 @@ class ShortcutRecorderView: NSView {
 /// 使用 UserDefaults "SidebarTags" key 与侧边栏标签同步
 class TagManagementRowView: SettingsRowView {
 
-    private let tagsKey = FFUserDefaultsKeys.sidebarTags
     private var tags: [Tag] = []
     private let tagsStack = NSStackView()
     private let availableColors = ["#FF453A", "#FF9F0A", "#FFD60A", "#30D158", "#0A84FF", "#BF5AF2", "#8E8E93"]
@@ -1194,32 +1269,25 @@ class TagManagementRowView: SettingsRowView {
         super.init(title: "", desc: "")
         loadTags()
         setupTagUI()
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(catalogDidChange(_:)),
+                                               name: .sidebarTagsDidRefresh,
+                                               object: nil)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit { NotificationCenter.default.removeObserver(self) }
+
     private func loadTags() {
-        if let data = UserDefaults.standard.data(forKey: tagsKey),
-           let decoded = try? JSONDecoder().decode([Tag].self, from: data) {
-            tags = decoded
-        } else {
-            tags = [
-                Tag(name: "重要", color: "#FF453A"),
-                Tag(name: "工作", color: "#0A84FF"),
-                Tag(name: "个人", color: "#30D158"),
-            ]
-            saveTags()
-        }
+        tags = TagCatalog.shared.tags
     }
 
-    private func saveTags() {
-        if let data = try? JSONEncoder().encode(tags) {
-            UserDefaults.standard.set(data, forKey: tagsKey)
-            // 通知侧边栏刷新
-            NotificationCenter.default.post(name: NSNotification.Name("SidebarTagsDidRefresh"), object: nil)
-        }
+    @objc private func catalogDidChange(_ notification: Notification) {
+        loadTags()
+        refreshTagList()
     }
 
     private func setupTagUI() {
@@ -1277,46 +1345,49 @@ class TagManagementRowView: SettingsRowView {
         let row = NSView()
         row.translatesAutoresizingMaskIntoConstraints = false
 
-        // 颜色圆点
         let dot = NSView()
         dot.wantsLayer = true
         dot.layer?.backgroundColor = (NSColor(hex: tag.color) ?? .systemBlue).cgColor
         dot.layer?.cornerRadius = 7
         dot.translatesAutoresizingMaskIntoConstraints = false
 
-        // 标签名
         let nameLabel = NSTextField(labelWithString: tag.name)
         nameLabel.font = NSFont.systemFont(ofSize: 13)
+        nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // 编辑颜色按钮
-        let editButton = NSButton()
-        editButton.image = FFIcon.template(.palette, size: 13)
-        editButton.contentTintColor = .secondaryLabelColor
-        editButton.isBordered = false
-        editButton.controlSize = .small
-        editButton.tag = index
-        editButton.target = self
-        editButton.action = #selector(editColorClicked(_:))
-        editButton.toolTip = "编辑颜色"
-        editButton.translatesAutoresizingMaskIntoConstraints = false
+        func iconButton(_ icon: FFIconName, _ action: Selector, _ tip: String, enabled: Bool = true) -> NSButton {
+            let button = NSButton()
+            button.image = FFIcon.template(icon, size: 13)
+            button.contentTintColor = .secondaryLabelColor
+            button.isBordered = false
+            button.controlSize = .small
+            button.tag = index
+            button.target = self
+            button.action = action
+            button.toolTip = tip
+            button.isEnabled = enabled
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.widthAnchor.constraint(equalToConstant: 20).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 20).isActive = true
+            return button
+        }
 
-        // 删除按钮
-        let deleteButton = NSButton()
-        deleteButton.image = FFIcon.template(.trash2, size: 13)
-        deleteButton.contentTintColor = .secondaryLabelColor
-        deleteButton.isBordered = false
-        deleteButton.controlSize = .small
-        deleteButton.tag = index
-        deleteButton.target = self
-        deleteButton.action = #selector(deleteTagClicked(_:))
-        deleteButton.toolTip = "删除标签"
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        let renameButton = iconButton(.pencil, #selector(renameTagClicked(_:)), "重命名")
+        let editButton = iconButton(.palette, #selector(editColorClicked(_:)), "编辑颜色")
+        let upButton = iconButton(.chevronUp, #selector(moveTagUp(_:)), "上移", enabled: index > 0)
+        let downButton = iconButton(.chevronDown, #selector(moveTagDown(_:)), "下移", enabled: index < tags.count - 1)
+        let deleteButton = iconButton(.trash2, #selector(deleteTagClicked(_:)), "删除标签")
+
+        let actions = NSStackView(views: [renameButton, editButton, upButton, downButton, deleteButton])
+        actions.orientation = .horizontal
+        actions.spacing = 2
+        actions.alignment = .centerY
+        actions.translatesAutoresizingMaskIntoConstraints = false
 
         row.addSubview(dot)
         row.addSubview(nameLabel)
-        row.addSubview(editButton)
-        row.addSubview(deleteButton)
+        row.addSubview(actions)
 
         NSLayoutConstraint.activate([
             dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 4),
@@ -1326,12 +1397,10 @@ class TagManagementRowView: SettingsRowView {
 
             nameLabel.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
             nameLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
 
-            deleteButton.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -4),
-            deleteButton.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-
-            editButton.trailingAnchor.constraint(equalTo: deleteButton.leadingAnchor, constant: -8),
-            editButton.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            actions.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -4),
+            actions.centerYAnchor.constraint(equalTo: row.centerYAnchor),
 
             row.heightAnchor.constraint(equalToConstant: 32),
         ])
@@ -1342,23 +1411,33 @@ class TagManagementRowView: SettingsRowView {
     // MARK: - Actions
 
     @objc private func addTagClicked() {
-        // v0.7.4 项 1：统一改用共享模块 FFCreateTagDialog（预设色块 + 自定义系统颜色选择器）
         guard let window = self.window else { return }
-        FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { [weak self] tag in
-            guard let self = self else { return }
-            // 同步到本地 tags 数组并刷新列表
-            if !self.tags.contains(where: { $0.name == tag.name }) {
-                self.tags.append(tag)
-                self.saveTags()
-            }
-            self.refreshTagList()
+        FFCreateTagDialog.showCreateTagDialogAndSave(on: window) { tag in
+            _ = TagCatalog.shared.add(name: tag.name, color: tag.color)
+        }
+    }
+
+    @objc private func renameTagClicked(_ sender: NSButton) {
+        let index = sender.tag
+        guard tags.indices.contains(index) else { return }
+        let tag = tags[index]
+        let alert = NSAlert()
+        alert.messageText = "重命名标签"
+        alert.informativeText = "改名后，所有已打此标签的文件会同步更新；若新名称已存在，将合并到该标签。"
+        alert.alertStyle = .informational
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = tag.name
+        alert.accessoryView = field
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn {
+            _ = TagCatalog.shared.rename(id: tag.id, to: field.stringValue)
         }
     }
 
     @objc private func editColorClicked(_ sender: NSButton) {
         let index = sender.tag
-        guard index < tags.count else { return }
-
+        guard tags.indices.contains(index) else { return }
         let alert = NSAlert()
         alert.messageText = "编辑标签颜色"
         alert.informativeText = "为标签「\(tags[index].name)」选择新颜色"
@@ -1379,33 +1458,44 @@ class TagManagementRowView: SettingsRowView {
         }
         colorPopup.selectItem(at: selectedIdx)
         alert.accessoryView = colorPopup
-
         alert.addButton(withTitle: "确定")
         alert.addButton(withTitle: "取消")
 
         if alert.runModal() == .alertFirstButtonReturn {
             let colorIdx = max(0, min(colorPopup.indexOfSelectedItem, availableColors.count - 1))
-            tags[index].color = availableColors[colorIdx]
-            saveTags()
-            refreshTagList()
+            TagCatalog.shared.recolor(id: tags[index].id, hex: availableColors[colorIdx])
         }
+    }
+
+    @objc private func moveTagUp(_ sender: NSButton) {
+        let index = sender.tag
+        guard tags.indices.contains(index), index > 0 else { return }
+        TagCatalog.shared.move(id: tags[index].id, to: index - 1)
+    }
+
+    @objc private func moveTagDown(_ sender: NSButton) {
+        let index = sender.tag
+        guard tags.indices.contains(index), index < tags.count - 1 else { return }
+        TagCatalog.shared.move(id: tags[index].id, to: index + 1)
     }
 
     @objc private func deleteTagClicked(_ sender: NSButton) {
         let index = sender.tag
-        guard index < tags.count else { return }
-
-        let alert = NSAlert()
-        alert.messageText = "删除标签"
-        alert.informativeText = "确定要删除标签「\(tags[index].name)」吗？"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            tags.remove(at: index)
-            saveTags()
-            refreshTagList()
+        guard tags.indices.contains(index) else { return }
+        let tag = tags[index]
+        TagCatalog.shared.affectedPathCount(forTagNamed: tag.name) { [weak self] count in
+            guard let self else { return }
+            let alert = NSAlert()
+            alert.messageText = "删除标签"
+            alert.informativeText = count > 0
+                ? "标签「\(tag.name)」将从 \(count) 个已索引文件中移除，标签定义也会删除。此操作不可撤销。"
+                : "确定要删除标签「\(tag.name)」吗？此操作不可撤销。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "删除")
+            alert.addButton(withTitle: "取消")
+            if alert.runModal() == .alertFirstButtonReturn {
+                TagCatalog.shared.delete(id: tag.id)
+            }
         }
     }
 }

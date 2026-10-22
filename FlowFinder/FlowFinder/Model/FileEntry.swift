@@ -115,6 +115,7 @@ public struct FileEntry: Identifiable, Equatable, Hashable {
 
     /// Sort-friendly name (directories first, then alphabetically)
     public var sortName: String {
-        return isDirectory ? "0_\(name.lowercased())" : "1_\(name.lowercased())"
+        // 文件夹置顶由 FFSortPolicy 负责；这里只提供纯名称，避免两处同时决定顺序。
+        return name.lowercased()
     }
 }

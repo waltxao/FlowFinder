@@ -47,6 +47,7 @@ final class PaneTabsStore {
 
     @discardableResult
     func add(_ session: PaneTabSession, at index: Int? = nil) -> Int {
+        removeLonePlaceholder()
         let target = min(max(index ?? tabs.count, 0), tabs.count)
         tabs.insert(session, at: target)
         activeIndex = target
@@ -91,13 +92,22 @@ final class PaneTabsStore {
     }
 
     func insert(_ session: PaneTabSession, at index: Int, activate: Bool = true) {
+        removeLonePlaceholder()
         let target = min(max(index, 0), tabs.count)
         tabs.insert(session, at: target)
-        if activate {
+        if activate || tabs.count == 1 {
             activeIndex = target
         } else if target <= activeIndex {
             activeIndex += 1
         }
+    }
+
+    /// 占位标签只代表「这个面板空了」。真实标签进来时填回占位，
+    /// 而不是留下「占位 + 标签」——否则单标签拖回自己的标签条会多出一个标签。
+    private func removeLonePlaceholder() {
+        guard tabs.count == 1, tabs[0].isPlaceholder else { return }
+        tabs.removeAll()
+        activeIndex = 0
     }
 
     // MARK: B5 整组合并 / 拆分
@@ -143,6 +153,65 @@ final class PaneTabsStore {
     }
 }
 
+// MARK: - 标签重排的插入位置
+
+/// 标签条重排的纯几何判定。
+/// 指针允许落在标签条外扩 `buffer` 的缓冲区内，超出缓冲才算离开。
+enum FFTabMetrics {
+    static let closeVisualSize: CGFloat = 20
+    static let closeHitSize: CGFloat = 24
+}
+
+/// 标签关闭按钮：命中 24×24，悬停时绘制 20×20 的柔和底色。
+final class FFTabCloseButton: NSButton {
+    private var hovering = false {
+        didSet { needsDisplay = true }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if hovering || isHighlighted {
+            let visual = FFTabMetrics.closeVisualSize
+            let rect = NSRect(x: (bounds.width - visual) / 2,
+                              y: (bounds.height - visual) / 2,
+                              width: visual, height: visual)
+            NSColor.labelColor.withAlphaComponent(0.10).setFill()
+            NSBezierPath(ovalIn: rect).fill()
+        }
+        super.draw(dirtyRect)
+    }
+}
+
+enum FFTabReorder {
+    static func insertionIndex(localPoint: NSPoint,
+                               stripBounds: NSRect,
+                               buffer: CGFloat,
+                               itemMidXs: [CGFloat]) -> Int? {
+        let zone = stripBounds.insetBy(dx: -buffer, dy: -buffer)
+        guard zone.contains(localPoint) else { return nil }
+        let x = min(max(localPoint.x, stripBounds.minX), stripBounds.maxX)
+        for (i, midX) in itemMidXs.enumerated() where x < midX {
+            return i
+        }
+        return itemMidXs.count
+    }
+}
+
 // MARK: - 单个标签
 
 final class PaneTabItemView: NSView, FFRegionAware {
@@ -153,11 +222,15 @@ final class PaneTabItemView: NSView, FFRegionAware {
     /// 标签本体：唯一能拖面板的把手（条内重排 / 出缓冲搬整块面板）
     var ffRegion: FFRegion { .tab }
 
+    private let folderIcon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let closeButton = NSButton()
+    private let closeButton = FFTabCloseButton()
     private var mouseDownPoint: NSPoint?
-    /// 高度约束：活动 28（焊死）/ 非活动 22（上浮）
+    /// 高度约束：活动 28（焊死）/ 非活动 24（在 28pt 栈内垂直居中）
     private var heightConstraint: NSLayoutConstraint!
+    private var isHovering = false {
+        didSet { if isHovering != oldValue { updateAppearance() } }
+    }
 
     var tabSession: PaneTabSession
     var index: Int
@@ -165,9 +238,6 @@ final class PaneTabItemView: NSView, FFRegionAware {
     var side: PaneSide = .left
     /// 所在标签条（2026-10-20 #1：拖动统一由窗口级控制器处理，需要反查标签条）
     weak var strip: PaneTabStripView?
-    /// B5：源面板只剩 1 个标签时禁止拖出（拖走了面板就没有会话可显示）。
-    /// 由标签条在每次 refresh 时按当前数量写入。
-    var canDragOut: Bool = true
     var isActive: Bool = false {
         didSet { updateAppearance() }
     }
@@ -186,11 +256,15 @@ final class PaneTabItemView: NSView, FFRegionAware {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private func setupUI() {
-        wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.masksToBounds = true
+        // 标签本身不再画背景：A1 焊接轮廓由 PaneTabStripBackdrop 统一绘制，
+        // 否则活动标签的直角底边会盖住内凹肩线。
+        folderIcon.image = FFIcon.template(.folder, size: 14)
+        folderIcon.contentTintColor = NSColor.secondaryLabelColor
+        folderIcon.imageScaling = .scaleProportionallyDown
+        folderIcon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(folderIcon)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 12)
+        titleLabel.font = NSFont.systemFont(ofSize: FFSizePreference.current.bodyFontSize)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
@@ -198,15 +272,13 @@ final class PaneTabItemView: NSView, FFRegionAware {
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
         closeButton.imagePosition = .imageOnly
-        closeButton.image = FFIcon.template(.x, size: 9)
+        closeButton.image = FFIcon.template(.x, size: FFInteractionPolicy.closeGlyphSize)
         closeButton.contentTintColor = NSColor.secondaryLabelColor
         closeButton.target = self
         closeButton.action = #selector(handleClose)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
-        // 2026-10-20 #4：活动标签 28（底边焊在面板顶边）、非活动 22（上浮 6pt）。
-        // 高度在这里建、在 updateAppearance 里切换。
         heightConstraint = heightAnchor.constraint(
             equalToConstant: FFInteractionPolicy.inactiveTabHeight)
 
@@ -215,14 +287,24 @@ final class PaneTabItemView: NSView, FFRegionAware {
             widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
             widthAnchor.constraint(lessThanOrEqualToConstant: 200),
 
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -2),
+            // 标签在 NSStackView（flipped）里：正 constant 向下。
+            // 内容需要比标签框中心高 3pt 才能落在 22pt 共用中线，因此用负值。
+            folderIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            folderIcon.centerYAnchor.constraint(equalTo: centerYAnchor,
+                                                constant: -FFTopBarMetrics.tabContentOffset),
+            folderIcon.widthAnchor.constraint(equalToConstant: 14),
+            folderIcon.heightAnchor.constraint(equalToConstant: 14),
+
+            titleLabel.leadingAnchor.constraint(equalTo: folderIcon.trailingAnchor, constant: 5),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor,
+                                                constant: -FFTopBarMetrics.tabContentOffset),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
 
-            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -2),
-            closeButton.widthAnchor.constraint(equalToConstant: 14),
-            closeButton.heightAnchor.constraint(equalToConstant: 14),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor,
+                                                constant: -FFTopBarMetrics.tabContentOffset),
+            closeButton.widthAnchor.constraint(equalToConstant: FFTabMetrics.closeHitSize),
+            closeButton.heightAnchor.constraint(equalToConstant: FFTabMetrics.closeHitSize),
         ])
     }
 
@@ -234,34 +316,43 @@ final class PaneTabItemView: NSView, FFRegionAware {
     }
 
     private func updateAppearance() {
-        // 2026-10-20 #4：活动标签与面板同色，**形状与填充由标签条背板统一绘制**
-        // （背板在标签之下，画的是一条「面板 + 凸起 + 两处内凹」的合并轮廓）。
-        // 这里必须保持透明，否则会盖住背板、在接缝处留一条色差。
         heightConstraint?.constant = isActive
             ? FFInteractionPolicy.activeTabHeight
             : FFInteractionPolicy.inactiveTabHeight
-        layer?.cornerRadius = isActive ? 0 : 8
 
-        // 颜色必须在当前外观下解析：CALayer.backgroundColor 是静态 CGColor，
-        // 直接取色会定格在创建时的明暗模式上，夜间模式下就成了「白底 + 白字」。
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = isActive
-                ? NSColor.clear.cgColor
-                : NSColor.controlBackgroundColor.withAlphaComponent(0.55).cgColor
-        }
         if isActive {
             titleLabel.textColor = NSColor.labelColor
-            titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            titleLabel.font = NSFont.systemFont(ofSize: FFSizePreference.current.bodyFontSize,
+                                                weight: .medium)
+            folderIcon.contentTintColor = FFAccent.current
         } else {
             titleLabel.textColor = NSColor.secondaryLabelColor
-            titleLabel.font = NSFont.systemFont(ofSize: 12)
+            titleLabel.font = NSFont.systemFont(ofSize: FFSizePreference.current.bodyFontSize)
+            folderIcon.contentTintColor = NSColor.secondaryLabelColor
         }
-        closeButton.isHidden = !isActive
+        // 活动标签常显关闭；非活动标签 hover 时才出现（与访达/浏览器一致）。
+        closeButton.isHidden = !(isActive || isHovering)
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateAppearance()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero,
+                                       options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
     }
 
     @objc private func handleClose() {
@@ -342,7 +433,7 @@ final class PaneTabStripView: NSView, FFRegionAware {
     var side: PaneSide = .left
 
     private let stack = NSStackView()
-    private let addButton = NSButton()
+    private let addButton = FFHoverIconButton()
     /// 活动标签与面板的焊接背板（在标签之下）
     private let backdrop = PaneTabStripBackdrop()
     private var items: [PaneTabItemView] = []
@@ -386,28 +477,30 @@ final class PaneTabStripView: NSView, FFRegionAware {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // 背板铺满整条，位于所有标签之下
+        // 背板铺满整条，位于所有标签之下；A1 焊接轮廓（含 9pt 内凹肩线）由它绘制。
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(backdrop)
+        backdrop.isHidden = false
 
         stack.orientation = .horizontal
-        // 2026-10-20 #4：改为顶部对齐——活动标签 28、非活动 22，
-        // 顶部对齐后非活动自然比活动矮 6pt、底边离面板 6pt。
-        stack.alignment = .top
-        stack.spacing = 2
+        // 活动 28 填满栈；非活动 24 在栈内垂直居中 → 两者中心线都是 16pt。
+        stack.alignment = .centerY
+        stack.spacing = 1
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
-        addButton.bezelStyle = .inline
-        addButton.isBordered = false
-        addButton.imagePosition = .imageOnly
-        addButton.image = FFIcon.template(.plus, size: 11)
-        addButton.contentTintColor = NSColor.secondaryLabelColor
-        addButton.toolTip = "新建标签页"
-        addButton.target = self
-        addButton.action = #selector(handleNewTab)
-        addButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(addButton)
+        let plusButton = addButton
+        plusButton.bezelStyle = .inline
+        plusButton.isBordered = false
+        plusButton.imagePosition = .imageOnly
+        plusButton.image = FFIcon.template(.plus, size: FFInteractionPolicy.plusGlyphSize)
+        plusButton.contentTintColor = NSColor.secondaryLabelColor
+        plusButton.hoverCornerRadius = 6
+        plusButton.toolTip = "新建标签页"
+        plusButton.target = self
+        plusButton.action = #selector(handleNewTab)
+        plusButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(plusButton)
 
         NSLayoutConstraint.activate([
             backdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -415,23 +508,24 @@ final class PaneTabStripView: NSView, FFRegionAware {
             backdrop.topAnchor.constraint(equalTo: topAnchor),
             backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // 首标签左缘：面板左缘（卡片留白 8）+ 20。
-            // 面板圆角是 16，再近的话根部内凹（r2=8）会与圆角打架。
+            // 首标签左缘：面板左缘（卡片留白 8）+ 26。
+            // 面板圆角 16 + 内凹 9 = 25，26 再留 1pt 平段。
             stack.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
                 constant: FFActivePaneBorderView.edgeOutset + FFInteractionPolicy.tabInsetFromPanel),
-            // 顶部留出「标签上方间隙」（标题带 36 − 活动标签 28 = 8）
+            // 顶部留出「标签上方间隙」（标题带 30 − 活动标签 28 = 2）
             stack.topAnchor.constraint(
                 equalTo: topAnchor,
                 constant: FFInteractionPolicy.tabTopGap),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
 
-            // 「+」紧跟最后一个标签（Chrome 式），而不是钉在面板最右侧
-            addButton.leadingAnchor.constraint(equalTo: stack.trailingAnchor, constant: 6),
-            addButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-            addButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            addButton.widthAnchor.constraint(equalToConstant: 20),
-            addButton.heightAnchor.constraint(equalToConstant: 20),
+            // 「+」紧跟最后一个标签（Chrome 式），中心线与标签一致
+            plusButton.leadingAnchor.constraint(equalTo: stack.trailingAnchor, constant: 6),
+            plusButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            plusButton.bottomAnchor.constraint(equalTo: bottomAnchor,
+                                               constant: -FFInteractionPolicy.addButtonBottomInset),
+            plusButton.widthAnchor.constraint(equalToConstant: FFInteractionPolicy.topBarHitSize),
+            plusButton.heightAnchor.constraint(equalToConstant: FFInteractionPolicy.topBarHitSize),
         ])
     }
 
@@ -453,6 +547,12 @@ final class PaneTabStripView: NSView, FFRegionAware {
 
     /// 当前所有标签项（自检用）
     func allTabItems() -> [PaneTabItemView] { items }
+
+    /// “+”按钮在标签条坐标系里的矩形；落点判定把它当无效区。
+    var addButtonFrame: NSRect? {
+        guard addButton.superview != nil else { return nil }
+        return addButton.convert(addButton.bounds, to: self)
+    }
 
     /// 活动标签在本标签条坐标系里的矩形；nil = 没有活动标签
     var activeTabFrame: NSRect? {
@@ -487,7 +587,6 @@ final class PaneTabStripView: NSView, FFRegionAware {
         }
         for (i, item) in items.enumerated() {
             item.update(session: sessions[i], index: i, active: i == activeIndex)
-            item.canDragOut = sessions.count > 1
         }
         needsLayout = true
         layoutSubtreeIfNeeded()
@@ -503,7 +602,6 @@ final class PaneTabStripView: NSView, FFRegionAware {
             item.side = side
             item.strip = self
             item.isActive = (i == activeIndex)
-            item.canDragOut = sessions.count > 1
             item.onSelect = { [weak self] in
                 guard let self = self else { return }
                 self.delegate?.tabStrip(self, didSelect: i)
@@ -532,25 +630,24 @@ final class PaneTabStripView: NSView, FFRegionAware {
     /// 标签重排的插入指示线
     private var insertionIndicator: FFTabInsertionIndicator?
 
-    /// 在指定插入位置显示一条竖线指示
+    var insertionIndicatorForTesting: FFTabInsertionIndicator? { insertionIndicator }
+
+    /// 在指定插入位置显示一条竖线指示。
+    ///
+    /// 2026-10-20 第七轮：改为 **frame-based**。旧实现每事件改 `centerX` 约束，
+    /// 会让整个窗口布局失效，级联到 FileListView 的列重算——拖动卡顿的主因。
     func showInsertionIndicator(atIndex index: Int) {
         guard let x = insertionIndicatorX(forIndex: index) else { return }
         if insertionIndicator == nil {
             let view = FFTabInsertionIndicator()
-            view.translatesAutoresizingMaskIntoConstraints = false
+            view.translatesAutoresizingMaskIntoConstraints = true
             addSubview(view)
-            NSLayoutConstraint.activate([
-                view.topAnchor.constraint(equalTo: topAnchor, constant: 3),
-                view.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-                view.widthAnchor.constraint(equalToConstant: 2),
-                view.centerXAnchor.constraint(equalTo: leadingAnchor, constant: x),
-            ])
             insertionIndicator = view
-        } else if let view = insertionIndicator {
-            for c in view.constraints where c.firstAttribute == .centerX {
-                c.constant = x
-            }
         }
+        guard let view = insertionIndicator else { return }
+        view.frame = NSRect(x: x - 1, y: 3, width: 2, height: bounds.height - 6)
+        view.isHidden = false
+        view.needsDisplay = true
     }
 
     /// 移除插入指示线
@@ -560,11 +657,20 @@ final class PaneTabStripView: NSView, FFRegionAware {
     }
 
     /// 插入指示线的 x（相对本视图左缘）
+    ///
+    /// 标签的 frame 在 `stack` 坐标系里，而指示线挂在标签条上；
+    /// 必须换算，否则会画到标签条最左端（被 stack 的 34pt 前导偏移吃掉）。
     private func insertionIndicatorX(forIndex index: Int) -> CGFloat? {
         guard !items.isEmpty else { return 8 }
-        if index <= 0 { return items[0].frame.minX }
-        if index >= items.count { return items.last!.frame.maxX }
-        return items[index].frame.minX
+        let x: CGFloat
+        if index <= 0 {
+            x = items[0].frame.minX
+        } else if index >= items.count {
+            x = items.last!.frame.maxX
+        } else {
+            x = items[index].frame.minX
+        }
+        return stack.convert(NSPoint(x: x, y: 0), to: self).x
     }
 
     /// 把窗口坐标点换算成插入索引；返回 nil 表示该点不在本标签条内。
@@ -573,16 +679,201 @@ final class PaneTabStripView: NSView, FFRegionAware {
     func insertionIndex(atWindowPoint point: NSPoint) -> Int? {
         guard !isHidden, window != nil else { return nil }
         let local = convert(point, from: nil)
-        guard bounds.contains(local) else {
-            FFDebug.log("[TAB] strip hit miss side=\(side) winPoint=\(point) local=\(local) bounds=\(bounds)")
+        let itemMidXs = items.map { item in
+            stack.convert(NSPoint(x: item.frame.midX, y: 0), to: self).x
+        }
+        guard let index = FFTabReorder.insertionIndex(
+            localPoint: local,
+            stripBounds: bounds,
+            buffer: FFPaneDrag.stripBuffer,
+            itemMidXs: itemMidXs
+        ) else {
             return nil
         }
-        let stackPoint = stack.convert(point, from: nil)
-        for (i, item) in items.enumerated() where stackPoint.x < item.frame.midX {
-            FFDebug.log("[TAB] strip hit side=\(side) index=\(i) stackX=\(stackPoint.x)")
-            return i
-        }
-        FFDebug.log("[TAB] strip hit side=\(side) index=\(items.count) (append) stackX=\(stackPoint.x)")
-        return items.count
+        return index
     }
+}
+
+// MARK: - 全局顶栏（2026-10-21 C2）
+
+/// 窗口级顶栏：工具 → 侧栏 → 左标签组 → 右标签组 → 分隔线 → 主题 → 单双栏。
+///
+/// 标签组按面板实际宽度手动布局（跨 NSSplitView 的 Auto Layout 不可靠），
+/// 其余控件同样手动布局，保证所有元素落在 22pt 共用中线上。
+final class FFGlobalTopBar: NSView, FFRegionAware {
+    var ffRegion: FFRegion { .title }
+
+    let sidebarButton = FFHoverIconButton()
+    let themeButton = FFHoverIconButton()
+    let paneModeButton = FFHoverIconButton()
+    let leftTabStrip: PaneTabStripView
+    let rightTabStrip: PaneTabStripView
+
+    var onSidebarToggle: (() -> Void)?
+    var onThemeToggle: (() -> Void)?
+    var onPaneModeToggle: (() -> Void)?
+
+    /// 单测用：不改变窗口状态，只驱动全屏边距几何。
+    var fullScreenOverride: Bool? {
+        didSet { needsLayout = true }
+    }
+
+    private let controlsDivider = NSView()
+    private var leftPaneFrame: NSRect?
+    private var rightPaneFrame: NSRect?
+    private var isSinglePane = false
+    private var activePane: PaneSide = .left
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    init() {
+        leftTabStrip = PaneTabStripView(frame: .zero)
+        rightTabStrip = PaneTabStripView(frame: .zero)
+        super.init(frame: .zero)
+        setupUI()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("FFGlobalTopBar 不支持 IB 初始化")
+    }
+
+    private func setupUI() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+
+        for strip in [leftTabStrip, rightTabStrip] {
+            strip.translatesAutoresizingMaskIntoConstraints = true
+            strip.autoresizingMask = []
+            strip.wantsLayer = true
+            strip.layer?.masksToBounds = true
+            addSubview(strip)
+        }
+
+        controlsDivider.wantsLayer = true
+        controlsDivider.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        addSubview(controlsDivider)
+
+        configure(sidebarButton, icon: .panelLeftClose, tooltip: "隐藏侧边栏 (⌥⌘S)",
+                  action: #selector(sidebarTapped))
+        configure(themeButton, icon: SidebarView.themeIcon(for: ThemeManager.shared.currentMode),
+                  tooltip: "切换主题", action: #selector(themeTapped))
+        configure(paneModeButton, icon: .columns2, tooltip: "切换到单窗口",
+                  action: #selector(paneModeTapped))
+    }
+
+    private func configure(_ button: FFHoverIconButton,
+                           icon: FFIconName,
+                           tooltip: String,
+                           action: Selector) {
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.image = FFIcon.template(icon, size: FFTopBarMetrics.iconSize)
+        button.contentTintColor = NSColor.secondaryLabelColor
+        button.hoverCornerRadius = 6
+        button.toolTip = tooltip
+        button.target = self
+        button.action = action
+        button.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(button)
+    }
+
+    /// 由控制器在每次布局/切换后写入面板矩形（已换算到顶栏坐标系）。
+    func update(paneFrames: (left: NSRect?, right: NSRect?),
+                isSinglePane: Bool,
+                activePane: PaneSide,
+                sidebarVisible: Bool) {
+        leftPaneFrame = paneFrames.left
+        rightPaneFrame = paneFrames.right
+        self.isSinglePane = isSinglePane
+        self.activePane = activePane
+        setSidebarVisible(sidebarVisible)
+        needsLayout = true
+    }
+
+    func setSidebarVisible(_ visible: Bool) {
+        sidebarButton.image = FFIcon.template(visible ? .panelLeftClose : .panelLeftOpen,
+                                              size: FFTopBarMetrics.iconSize)
+        sidebarButton.toolTip = visible ? "隐藏侧边栏 (⌥⌘S)" : "显示侧边栏 (⌥⌘S)"
+    }
+
+    func setSinglePaneMode(_ single: Bool) {
+        paneModeButton.image = FFIcon.template(single ? .square : .columns2,
+                                               size: FFTopBarMetrics.iconSize)
+        paneModeButton.toolTip = single ? "切换到双窗口" : "切换到单窗口"
+    }
+
+    func setThemeIcon(for mode: AppearanceMode) {
+        themeButton.image = FFIcon.template(SidebarView.themeIcon(for: mode),
+                                            size: FFTopBarMetrics.iconSize)
+    }
+
+    override func layout() {
+        super.layout()
+        guard bounds.width > 1, bounds.height > 1 else { return }
+
+        let hit = FFInteractionPolicy.topBarHitSize
+        let centerY = bounds.height - FFTopBarMetrics.centerline
+        let leftInset = contentStartX()
+        sidebarButton.frame = NSRect(x: leftInset,
+                                     y: centerY - hit / 2, width: hit, height: hit)
+
+        paneModeButton.frame = NSRect(x: bounds.width - FFTopBarMetrics.horizontalMargin - hit,
+                                      y: centerY - hit / 2, width: hit, height: hit)
+        themeButton.frame = NSRect(x: paneModeButton.frame.minX - 4 - hit,
+                                   y: centerY - hit / 2, width: hit, height: hit)
+        controlsDivider.frame = NSRect(x: themeButton.frame.minX - 10,
+                                       y: centerY - 10, width: 1, height: 20)
+
+        let contentStart = sidebarButton.frame.maxX + 12
+        let rightLimit = controlsDivider.frame.minX - 10
+
+        let showLeft = leftPaneFrame != nil && (!isSinglePane || activePane == .left)
+        let showRight = rightPaneFrame != nil && (!isSinglePane || activePane == .right)
+        leftTabStrip.isHidden = !showLeft
+        rightTabStrip.isHidden = !showRight
+
+        if showLeft, let pane = leftPaneFrame {
+            leftTabStrip.frame = groupFrame(for: pane, contentStart: contentStart, rightLimit: rightLimit)
+        }
+        if showRight, let pane = rightPaneFrame {
+            rightTabStrip.frame = groupFrame(for: pane, contentStart: contentStart, rightLimit: rightLimit)
+        }
+    }
+
+    private func groupFrame(for pane: NSRect,
+                            contentStart: CGFloat,
+                            rightLimit: CGFloat) -> NSRect {
+        let normalized = NSRect(x: pane.minX, y: 0,
+                                width: pane.width, height: bounds.height)
+        return FFTopBarLayout.tabGroupFrame(pane: normalized,
+                                            contentStart: contentStart,
+                                            rightLimit: rightLimit)
+    }
+
+    /// 全屏 16pt；窗口模式紧跟系统红绿灯后的缩放键。
+    private func contentStartX() -> CGFloat {
+        if fullScreenOverride ?? (window?.styleMask.contains(.fullScreen) ?? false) {
+            return FFTopBarMetrics.horizontalMargin
+        }
+        if let zoom = window?.standardWindowButton(.zoomButton),
+           let superview = zoom.superview {
+            let rect = superview.convert(zoom.frame, to: nil)
+            let inSelf = convert(rect, from: nil)
+            if inSelf.maxX.isFinite, inSelf.maxX > 20 {
+                return inSelf.maxX + 10
+            }
+        }
+        return 84
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard frame.contains(point) else { return nil }
+        return super.hitTest(point) ?? self
+    }
+
+    @objc private func sidebarTapped() { onSidebarToggle?() }
+    @objc private func themeTapped() { onThemeToggle?() }
+    @objc private func paneModeTapped() { onPaneModeToggle?() }
 }

@@ -766,6 +766,21 @@ public final class CoreBridge {
         }
     }
 
+    /// 异步失效目录缓存：不阻塞主线程；完成后回主线程回调。
+    /// 用于「先失效再重新加载」的刷新路径，保持顺序而不让 UI 等 FFI。
+    func invalidateCacheAsync(path: String, completion: (() -> Void)? = nil) {
+        guard !path.isEmpty else {
+            DispatchQueue.main.async { completion?() }
+            return
+        }
+        ffiQueue.async {
+            _ = path.withCString { ff_cache_invalidate($0) }
+            if let completion {
+                DispatchQueue.main.async(execute: completion)
+            }
+        }
+    }
+
     // MARK: - FSEvents Watcher (Sub-project 5)
 
     /// Start watching a path for filesystem changes（Wave1 P0-1：启动握手异步化）

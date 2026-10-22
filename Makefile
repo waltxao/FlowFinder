@@ -52,14 +52,20 @@ RED := \033[0;31m
 NC := \033[0m
 
 .PHONY: build app release test rust-test swift-test integration-test \
-	clean setup run demo beta version warnings help
+	clean setup run demo beta version bump-version warnings help
 
 # =============================================================================
 # 构建
 # =============================================================================
 
-## build: Debug 构建（Rust + Swift）
+## bump-version: 按 A.B.C-yymmddxx 规则递增内部构建号（CFBundleVersion）
+bump-version:
+	@bash $(SCRIPT_DIR)/bump-version.sh
+
+## build: Debug 构建（Rust + Swift），构建号自动递增
 build: rust
+	@echo "$(BLUE)Bumping build number...$(NC)"
+	@echo "$(GREEN)✓ 版本 $$(bash $(SCRIPT_DIR)/bump-version.sh)$(NC)"
 	@echo "$(BLUE)Building Swift (Debug)...$(NC)"
 	@$(XCB) -configuration Debug build 2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" || true
 	@test -d "$(APP_DEBUG)" && echo "$(GREEN)✓ $(APP_DEBUG)$(NC)" || (echo "$(RED)✗ 构建失败$(NC)"; exit 1)
@@ -67,8 +73,9 @@ build: rust
 ## app: build 的别名
 app: build
 
-## release: Release 构建（可直接分发）
+## release: Release 构建（可直接分发），构建号自动递增
 release: 
+	@echo "$(GREEN)✓ 版本 $$(bash $(SCRIPT_DIR)/bump-version.sh)$(NC)"
 	@echo "$(BLUE)Building Rust (Release)...$(NC)"
 	@bash $(BUILD_SCRIPT) Release >/dev/null
 	@echo "$(BLUE)Building Swift (Release)...$(NC)"
@@ -87,8 +94,9 @@ demo: build
 	@echo "$(GREEN)✓ 已复制到桌面：$(DESKTOP_APP)$(NC)"
 	@echo "$(YELLOW)  首次打开需右键 → 打开（ad-hoc 签名）$(NC)"
 
-## beta: 打测试版 DMG/ZIP 到 build-beta/
+## beta: 打测试版 DMG/ZIP 到 build-beta/，构建号自动递增
 beta:
+	@bash $(SCRIPT_DIR)/bump-version.sh >/dev/null
 	@bash $(SCRIPT_DIR)/package-beta.sh
 
 # =============================================================================
@@ -111,6 +119,7 @@ swift-test:
 	@pkill -f "MacOS/FlowFinder" 2>/dev/null || true
 	@xcodebuild test -project $(XCODEPROJ) -scheme FlowFinderTests \
 		-destination 'platform=macOS' \
+		-derivedDataPath /tmp/flowfinder-xctest-derived \
 		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO 2>&1 \
 		| grep -E "error:|Executed .* tests|TEST SUCCEEDED|TEST FAILED" | tail -8
 
@@ -124,7 +133,7 @@ integration-test: rust
 
 ## version: 打印当前版本（唯一真源：Xcode 工程）
 version:
-	@bash -c 'source $(SCRIPT_DIR)/lib-version.sh; echo "版本: $$FF_VERSION ($$FF_BUILD)"'
+	@bash -c 'source $(SCRIPT_DIR)/lib-version.sh; echo "版本: $$FF_DISPLAY_VERSION Beta（A.B.C-yymmddxx）"'
 
 ## warnings: 统计编译警告数
 warnings:

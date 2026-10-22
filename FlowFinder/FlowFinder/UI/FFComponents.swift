@@ -211,15 +211,16 @@ final class FFActivePaneBorderView: NSView {
         }
     }
 
-    /// 发光颜色（随强调色设置变化）
-    var ringColor: NSColor = FFAccent.current {
-        didSet { needsDisplay = true }
-    }
+    /// 活动面板强调色（保留 API；实际发光由 FFPaneGlow 的阴影实现）。
+    var ringColor: NSColor = FFAccent.current
+
+    /// 活动面板边缘高度（D-06：2px 细边，不再画 14 层发光）。
+    var edgeHeight: CGFloat { FFVisualTokens.activePaneEdge }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        // 颜色由 draw(_:) 自行绘制，不使用 layer 边框
+        // 颜色由 FFPaneGlow 的阴影绘制，本视图不再画描边。
     }
 
     required init?(coder: NSCoder) {
@@ -232,44 +233,31 @@ final class FFActivePaneBorderView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard !isHidden else { return }
-        // 中心线 = 卡片边缘；描边向两侧各扩一半，内侧被卡片盖住。
-        //
-        // 2026-10-20 #4：面板顶边在标题带下方，发光沿「面板 + 活动标签」
-        // 的合并轮廓走——标签凸起处的光才跟得上。
-        // 底边留 8；顶边让出整条标题带（标题带去掉了旧的 8pt 留白，
-        // 标签底边就落在带底 = 面板顶边上）。
-        let rect = NSRect(x: Self.edgeOutset,
-                          y: Self.edgeOutset,
-                          width: bounds.width - Self.edgeOutset * 2,
-                          height: bounds.height - Self.edgeOutset
-                                  - FFInteractionPolicy.titleBandHeight)
-        guard rect.width > 0, rect.height > 0 else { return }
+        // 顶部不画强调线：活动面板只由左/右/下三边微光提示，标签区保持干净。
+    }
+}
 
-        let path = FFTabSilhouette.composite(panel: rect,
-                                            tab: tabRect,
-                                            panelCorner: Self.cornerRadius)
+/// 活动面板的柔和边缘光：原生 layer 阴影，不画描边。
+/// 阴影向下偏移，让底部/左右更明显、顶部尽量弱；颜色统一取应用强调色。
+enum FFPaneGlow {
+    static func apply(to view: NSView, active: Bool, color: NSColor = FFAccent.current) {
+        guard let layer = view.layer else { return }
+        let spec = FFGlowSpec.standard
+        layer.masksToBounds = false
+        layer.shadowColor = color.cgColor
+        layer.shadowOpacity = active ? Float(spec.opacity * 0.62) : 0
+        layer.shadowRadius = spec.blurRadius + 4
+        // 负 y = 向下偏移，顶部光更少；底部/左右形成柔和光晕。
+        layer.shadowOffset = CGSize(width: 0, height: -5)
+        updateShadowPath(for: view)
+    }
 
-        if NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast {
-            ringColor.setStroke()
-            path.lineWidth = 2
-            path.stroke()
-            return
-        }
-
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let boost: CGFloat = isDark ? 1.15 : 1.0
-        // 由内到外 14 层同心描边：越靠外越宽越淡，叠出来的边缘是连续衰减、没有单根实线。
-        // 内侧一半被卡片遮住，实际可见的只有外侧羽化，因此 alpha 比「全在卡片内」时略高。
-        let steps = 14
-        for i in 0..<steps {
-            let t = CGFloat(i) / CGFloat(steps - 1)      // 0 = 最贴边（最亮）
-            let width = 1.0 + t * 12.0                    // 1 → 13pt
-            let alpha = 0.055 * boost * (1 - t * 0.72)    // 最内层最亮，向外快速衰减
-            ringColor.withAlphaComponent(alpha).setStroke()
-            path.lineWidth = width
-            path.stroke()
-        }
+    static func updateShadowPath(for view: NSView) {
+        guard let layer = view.layer, layer.shadowOpacity > 0 else { return }
+        layer.shadowPath = CGPath(roundedRect: view.bounds.insetBy(dx: 8, dy: 8),
+                                  cornerWidth: FFVisualTokens.Radius.panel,
+                                  cornerHeight: FFVisualTokens.Radius.panel,
+                                  transform: nil)
     }
 }
 

@@ -25,11 +25,7 @@ extension MainWindowController: PaneTabStripDelegate {
         guard let store = tabsStore(for: side) else { return }
         let strip = tabStrip(for: side)
         strip?.refresh(sessions: store.tabs, activeIndex: store.activeIndex)
-        // 2026-10-20 #1：标签条常显（原来只有 ≥2 个标签才显示）。
-        // 它现在是面板唯一的拖动把手，也是红绿灯的对齐基准，必须始终在场。
-        let heightConstraint = (side == .left) ? leftTabStripHeight : rightTabStripHeight
-        heightConstraint?.constant = MainWindowController.tabStripHeight
-        // 2026-10-20 #3：标签条是窗口级浮层，位置由 updateTabStripFrames 计算
+        // 2026-10-21 C2：标签条常显在全局顶栏内，位置由 updateTabStripFrames 计算。
         updateTabStripFrames()
         // 诊断：各标签的实际位置（自动化拖拽测试用）
         for (i, item) in (strip?.allTabItems() ?? []).enumerated() {
@@ -178,6 +174,7 @@ extension MainWindowController: PaneTabStripDelegate {
             store.insert(session, at: index ?? store.count)
             refreshTabStrip(side: side)
             loadActiveTab(side: side)
+            activatePane(side)
         case .paneContent(_, let side):
             acceptTabIntoPane(session, side: side)
         }
@@ -189,30 +186,38 @@ extension MainWindowController: PaneTabStripDelegate {
     /// 原面板挪到另一侧——旧实现固定出在活动面板对侧，与落点语义相反。
     private func acceptTabIntoPane(_ session: PaneTabSession, side: PaneSide) {
         if isSinglePaneMode {
-            // 单栏：新面板 = 落点侧；原面板 = 另一侧
-            let newSide = side
-            let originalSide: PaneSide = side == .left ? .right : .left
-            guard let newStore = tabsStore(for: newSide),
-                  let originalStore = tabsStore(for: originalSide) else { return }
-            // 原面板的标签（非占位）挪到另一侧
-            let originalTabs = originalStore.tabs.filter { !$0.isPlaceholder }
+            let active = activePane
+            let otherSide: PaneSide = side == .left ? .right : .left
+            guard let activeStore = tabsStore(for: active),
+                  let newStore = tabsStore(for: side),
+                  tabsStore(for: otherSide) != nil else { return }
+
+            // 必须在 newStore.replaceAll 之前读取：落点与活动面板同侧时 newStore === activeStore。
+            let existingTabs = activeStore.tabs.filter { !$0.isPlaceholder }
+            if existingTabs.isEmpty {
+                // 目标面板本来是空的：直接填回，不拆出一个空面板。
+                activeStore.replaceAll([session])
+                loadActiveTab(side: active)
+                return
+            }
+
             newStore.replaceAll([session])
-            originalStore.replaceAll(originalTabs.isEmpty
-                                     ? [placeholderSession()]
-                                     : originalTabs)
+            tabsStore(for: otherSide)?.replaceAll(existingTabs)
             isSinglePaneMode = false
             UserDefaults.standard.set(false, forKey: Self.singlePaneModeKey)
-            activePane = newSide
+            activePane = side
             applyPaneMode()
-            widenWindowForSecondPane(newSide: newSide)
-            loadActiveTab(side: newSide)
-        } else {
-            guard let store = tabsStore(for: side) else { return }
-            store.insert(session, at: store.count)
-            refreshTabStrip(side: side)
+            widenWindowForSecondPane(newSide: side)
             loadActiveTab(side: side)
-            activatePane(side)
+            loadActiveTab(side: otherSide)
+            return
         }
+
+        guard let store = tabsStore(for: side) else { return }
+        store.insert(session, at: store.count)
+        refreshTabStrip(side: side)
+        loadActiveTab(side: side)
+        activatePane(side)
     }
 
     /// 窗口加宽到能放下第二块面板（2026-10-20 第五轮 C 重写）
@@ -224,7 +229,7 @@ extension MainWindowController: PaneTabStripDelegate {
     ///   只改宽度与对应侧 origin，高度绝不动；向左加宽时左缘贴屏幕边保护。
     private func widenWindowForSecondPane(newSide: PaneSide) {
         guard let window, let screen = window.screen else { return }
-        let sidebarWidth = sidebarView?.frame.width ?? 0
+        let sidebarWidth = sidebarView.frame.width
         let opWidth = max(FFDividerGlowMath.minPaneWidth, paneSplitView?.bounds.width ?? 0)
         let visibleW = screen.visibleFrame.width
         // 理想：侧栏 + 两倍操作区 + 两侧卡片留白
@@ -255,15 +260,22 @@ extension MainWindowController: PaneTabStripDelegate {
         guard let session = takeTabOut(side: side, index: index) else { return }
         let sourceEmpty = isPaneEmpty(side: side)
 
-        let controller = MainWindowController()
+        // 先注入标签、定位，再显示；避免新窗口在默认位置用默认内容闪一下。
+        // 自检必须关掉：派生窗口若再跑拖拽自检，会无限递归创建窗口。
+        let controller = MainWindowController(startsWithSinglePane: true,
+                                              showImmediately: false,
+                                              runsSelfTests: false)
         controller.leftTabsStore?.replaceAll([session])
         controller.refreshTabStrip(side: .left)
         if let newWindow = controller.window {
             newWindow.setFrameOrigin(NSPoint(x: point.x - 60, y: point.y - 60))
         }
-        (NSApp.delegate as? AppDelegate)?.registerWindowController(controller)
-        controller.showWindow(nil)
         controller.loadActiveTab(side: .left)
+        (NSApp.delegate as? AppDelegate)?.registerWindowController(controller)
+        controller.prepareForInitialDisplay()
+        controller.showWindow(nil)
+        FFLayoutDiagnostics.logTransition("拖出新窗口后", controller)
+        FFLayoutDiagnostics.logNextRunLoop("拖出新窗口下一拍", controller)
         FFDebug.log("[TABDRAG] 标签拖出成独立窗口 title=\(session.title)")
 
         guard sourceEmpty else { return }
@@ -320,6 +332,11 @@ extension MainWindowController: PaneTabStripDelegate {
     }
 
     @objc func menuCloseTab(_ sender: Any?) {
+        // ⌘W 在辅助窗口（设置/搜索/查重）里应关闭该窗口，而不是操作主窗口标签。
+        if let key = NSApp.keyWindow, key !== window {
+            key.performClose(sender)
+            return
+        }
         guard let store = tabsStore(for: activePane), store.canClose else {
             // 最后一个标签：退回关窗语义
             window?.performClose(sender)
@@ -366,6 +383,10 @@ extension MainWindowController {
             FFDebug.log("[SELFTEST] 缺少标签组，跳过")
             return
         }
+        // 自检会临时改写标签和路径；结束后必须还原本来的会话，
+        // 否则后续的列表/外壳自检会在 /tmp 空目录上跑，误报列内容为空。
+        let originalLeftTab = leftStore.active
+        let originalRightTab = rightStore.active
 
         // 准备：双栏，左 2 个标签、右 1 个标签
         if isSinglePaneMode {
@@ -392,22 +413,41 @@ extension MainWindowController {
         let mergeOK = rightStore.count == rightBefore + 1
         FFDebug.log("[SELFTEST] ② 并入右面板标签条 \(mergeOK ? "PASS" : "FAIL") 右=\(rightStore.count) 期望=\(rightBefore + 1)")
 
-        // ③ 单栏拖到「右半区」→ 新面板出现在右（落点侧），原面板标签留在左
-        // （2026-10-20 第五轮 C：新面板按落点侧，不再固定在活动面板对侧）
+        // ③ 单栏真实链路：左面板 A/B/C，拖 B 到右半区 → 右面板只放 B，左面板保留 A/C
+        // 关键：走 FFDropResolver + 真实 panContents，不再直接传 side 绕过落点判定。
         isSinglePaneMode = true
         UserDefaults.standard.set(true, forKey: Self.singlePaneModeKey)
         activePane = .left
-        applyPaneMode()
-        let leftCountBefore3 = leftStore.count
-        if let session = rightStore.tabs.last {
-            acceptTab(session, into: .paneContent(window: self, side: .right))
+        func tab(_ path: String) -> PaneTabSession {
+            PaneTabSession(state: PaneState(path: path))
         }
-        // 落点侧（右）= 只有拖入的这一个标签；原面板标签留在左
-        let splitOK = !isSinglePaneMode
-            && activePane == .right
-            && rightStore.count == 1
-            && leftStore.count == leftCountBefore3
-        FFDebug.log("[SELFTEST] ③ 拖到右半→新面板在右 \(splitOK ? "PASS" : "FAIL") 单栏=\(isSinglePaneMode) 右=\(rightStore.count) 期望=1 左=\(leftStore.count) 期望=\(leftCountBefore3)")
+        leftStore.replaceAll([tab("/tmp/a"), tab("/tmp/b"), tab("/tmp/c")], activeAt: 0)
+        rightStore.replaceAll([placeholderSession()])
+        refreshTabStrip(side: .left)
+        refreshTabStrip(side: .right)
+        applyPaneMode()
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        var splitOK = false
+        if let geometry = dragGeometry(),
+           let pane = geometry.paneContents[.left] {
+            let pointer = CGPoint(x: pane.rect.midX + 40, y: pane.rect.midY)
+            let source = FFDragSource(windowID: geometry.windowID, side: .left, index: 1)
+            let decision = FFDropResolver.resolve(source: source,
+                                                  pointer: pointer,
+                                                  geometries: [geometry])
+            if case .split(let windowID, let dropSide) = decision,
+               windowID == geometry.windowID,
+               dropSide == .right,
+               let taken = takeTabOut(side: .left, index: 1) {
+                acceptTab(taken, into: .paneContent(window: self, side: dropSide))
+                splitOK = !isSinglePaneMode
+                    && activePane == .right
+                    && leftStore.tabs.map { $0.state.path } == ["/tmp/a", "/tmp/c"]
+                    && rightStore.tabs.map { $0.state.path } == ["/tmp/b"]
+            }
+        }
+        FFDebug.log("[SELFTEST] ③ 单栏右半拆双栏 \(splitOK ? "PASS" : "FAIL") 单栏=\(isSinglePaneMode) 活动=\(activePane) 左=\(leftStore.tabs.map { $0.state.path }) 右=\(rightStore.tabs.map { $0.state.path })")
 
         // ④ 面板被搬空 → 应判定为「空」（用于关窗）
         let emptyProbe = tabsStore(for: .left)
@@ -435,7 +475,129 @@ extension MainWindowController {
             && rightStore.count == 2
         FFDebug.log("[SELFTEST] ⑤ 搬空源面板折叠 \(collapseOK ? "PASS" : "FAIL") 单栏=\(isSinglePaneMode) 活动侧=\(activePane) 右=\(rightStore.count) 期望=2")
 
-        // 复原到双栏
+        // ⑥ 拖出新窗口：源窗口是双栏时，新窗口仍必须是单栏，且只含被拖的标签
+        // （旧实现让新窗口继承源窗口的 single_pane_mode，会开出一个带默认右栏的双栏窗口）
+        isSinglePaneMode = false
+        UserDefaults.standard.set(false, forKey: Self.singlePaneModeKey)
+        applyPaneMode()
+        while leftStore.count < 2 { _ = newTab(in: .left) }
+        let windowsBefore = Set(NSApp.windows.map { ObjectIdentifier($0) })
+        let detachedSession = leftStore.tabs.first
+        let leftBefore = leftStore.count
+        if detachedSession != nil {
+            detachTabToNewWindow(side: .left, index: 0, atScreenPoint: NSPoint(x: 160, y: 160))
+        }
+        let newWindow = NSApp.windows.first {
+            !windowsBefore.contains(ObjectIdentifier($0))
+                && $0.windowController is MainWindowController
+        }
+        let newController = newWindow?.windowController as? MainWindowController
+        let detachedOK = detachedSession != nil
+            && leftStore.count == leftBefore - 1
+            && newController?.isSinglePaneMode == true
+            && newController?.leftTabsStore?.count == 1
+            && newController?.leftTabsStore?.tabs.first?.id == detachedSession?.id
+        FFDebug.log("[SELFTEST] ⑥ 拖出新窗口为单栏 \(detachedOK ? "PASS" : "FAIL") 单栏=\(String(describing: newController?.isSinglePaneMode)) 左标签=\(String(describing: newController?.leftTabsStore?.count)) 期望=1")
+        newController?.close()
+
+        // ⑦ 无效落点：侧栏/红绿灯内松手 → returnToSource，不新建窗口
+        var invalidOK = false
+        if let geometry = dragGeometry(),
+           let invalid = geometry.invalidRects.first {
+            let source = FFDragSource(windowID: geometry.windowID, side: .left, index: 0)
+            let decision = FFDropResolver.resolve(source: source,
+                                                  pointer: CGPoint(x: invalid.midX, y: invalid.midY),
+                                                  geometries: [geometry])
+            invalidOK = (decision == .returnToSource)
+        }
+        FFDebug.log("[SELFTEST] ⑦ 无效落点回原位 \(invalidOK ? "PASS" : "FAIL")")
+
+        // ⑧ 目标单栏拆双栏：目标原有标签完整保留
+        var targetSplitOK = false
+        let target = MainWindowController(startsWithSinglePane: true,
+                                          showImmediately: false,
+                                          runsSelfTests: false)
+        if let sourceWindow = window {
+            target.window?.setFrameOrigin(NSPoint(x: sourceWindow.frame.maxX + 100,
+                                                  y: sourceWindow.frame.minY))
+        }
+        target.leftTabsStore?.replaceAll([tab("/tmp/x"), tab("/tmp/y")], activeAt: 0)
+        target.refreshTabStrip(side: .left)
+        target.window?.contentView?.layoutSubtreeIfNeeded()
+        if let sourceGeo = dragGeometry(),
+           let targetGeo = target.dragGeometry(),
+           let targetPane = targetGeo.paneContents[.left],
+           let taken = takeTabOut(side: .left, index: 0) {
+            let source = FFDragSource(windowID: sourceGeo.windowID, side: .left, index: 0)
+            let pointer = CGPoint(x: targetPane.rect.midX + 40, y: targetPane.rect.midY)
+            let decision = FFDropResolver.resolve(source: source,
+                                                  pointer: pointer,
+                                                  geometries: [sourceGeo, targetGeo])
+            if case .split(let windowID, let dropSide) = decision,
+               windowID == targetGeo.windowID,
+               dropSide == .right {
+                target.acceptTab(taken, into: .paneContent(window: target, side: dropSide))
+                targetSplitOK = target.leftTabsStore?.tabs.map { $0.state.path } == ["/tmp/x", "/tmp/y"]
+                    && target.rightTabsStore?.tabs.map { $0.state.path } == [taken.state.path]
+                    && !target.isSinglePaneMode
+            }
+        }
+        FFDebug.log("[SELFTEST] ⑧ 目标单栏拆双栏保留标签 \(targetSplitOK ? "PASS" : "FAIL") 左=\(String(describing: target.leftTabsStore?.tabs.map { $0.state.path })) 右=\(String(describing: target.rightTabsStore?.tabs.map { $0.state.path }))")
+        target.close()
+
+        // ⑨ 最后一个标签拖出 → 源面板空
+        if leftStore.tabs.allSatisfy({ $0.isPlaceholder }) {
+            _ = newTab(in: .left)
+        }
+        var lastTabOK = false
+        if let last = leftStore.tabs.first {
+            while leftStore.count > 1 { leftStore.close(at: leftStore.count - 1) }
+            _ = takeTabOut(side: .left, index: 0)
+            lastTabOK = isPaneEmpty(side: .left)
+            leftStore.replaceAll([last])
+            refreshTabStrip(side: .left)
+        }
+        FFDebug.log("[SELFTEST] ⑨ 最后标签拖出源面板空 \(lastTabOK ? "PASS" : "FAIL")")
+
+        // ⑩ 跨窗口标签条：按指针位置并入目标
+        var crossOK = false
+        let crossTarget = MainWindowController(startsWithSinglePane: true,
+                                               showImmediately: false,
+                                               runsSelfTests: false)
+        if let sourceWindow = window {
+            crossTarget.window?.setFrameOrigin(NSPoint(x: sourceWindow.frame.maxX + 100,
+                                                       y: sourceWindow.frame.minY))
+        }
+        crossTarget.leftTabsStore?.replaceAll([tab("/tmp/x")], activeAt: 0)
+        crossTarget.refreshTabStrip(side: .left)
+        crossTarget.window?.contentView?.layoutSubtreeIfNeeded()
+        if let sourceGeo = dragGeometry(),
+           let targetGeo = crossTarget.dragGeometry(),
+           let strip = targetGeo.tabStrips[.left],
+           let taken = takeTabOut(side: .left, index: 0) {
+            let lastMid = strip.tabRects.last?.midX ?? strip.rect.midX
+            let source = FFDragSource(windowID: sourceGeo.windowID, side: .left, index: 0)
+            let pointer = CGPoint(x: lastMid + 5, y: strip.rect.midY)
+            let decision = FFDropResolver.resolve(source: source,
+                                                  pointer: pointer,
+                                                  geometries: [sourceGeo, targetGeo])
+            if case .merge(let windowID, let side, let index) = decision,
+               windowID == targetGeo.windowID,
+               side == .left {
+                crossTarget.acceptTab(taken, into: .tabStrip(window: crossTarget, side: .left, index: index))
+                crossOK = crossTarget.leftTabsStore?.tabs.map { $0.state.path } == ["/tmp/x", taken.state.path]
+            }
+        }
+        FFDebug.log("[SELFTEST] ⑩ 跨窗口标签条并入 \(crossOK ? "PASS" : "FAIL") 目标=\(String(describing: crossTarget.leftTabsStore?.tabs.map { $0.state.path }))")
+        crossTarget.close()
+
+        // 复原：把自检前的真实会话放回主窗口，再回到双栏
+        leftStore.replaceAll([originalLeftTab])
+        rightStore.replaceAll([originalRightTab])
+        refreshTabStrip(side: .left)
+        refreshTabStrip(side: .right)
+        loadActiveTab(side: .left)
+        loadActiveTab(side: .right)
         isSinglePaneMode = false
         UserDefaults.standard.set(false, forKey: Self.singlePaneModeKey)
         applyPaneMode()
@@ -509,14 +671,17 @@ extension MainWindowController {
             }
         }
 
-        // ⑥ 几何常量：避让量与标题区高度
-        if FFInteractionPolicy.titleContentInset(sidebarVisible: true) == 8,
-           FFInteractionPolicy.titleContentInset(sidebarVisible: false) == 106,
-           FFInteractionPolicy.titleBandHeight == 36 {
+        // ⑥ 几何常量：C2 全局顶栏
+        if FFInteractionPolicy.titleBandHeight == 36,
+           FFInteractionPolicy.activeTabHeight == 30,
+           FFInteractionPolicy.inactiveTabHeight == 26,
+           FFInteractionPolicy.tabTopGap == 6,
+           FFInteractionPolicy.topBarHitSize == 28,
+           FFInteractionPolicy.tabSeamFillet == 10 {
             pass += 1
         } else {
             fail += 1
-            FFDebug.log("[POLICY] FAIL 几何常量：避让量应为 8/106，标题区 36")
+            FFDebug.log("[POLICY] FAIL 几何常量：第二轮应为 36/30/26/6/28/10")
         }
 
         FFDebug.log("[POLICY] 决策表穷举自检 通过\(pass) 失败\(fail)（区域\(FFRegion.allCases.count) × 状态\(FFInteractionState.allCombinations.count) + 规则可达性）")
@@ -550,7 +715,7 @@ extension MainWindowController {
         // 找各区域的实际代表点（用真实视图 frame 反推，不靠硬编码坐标）
         let strip = leftTabStrip
         let toolbar = leftPaneToolbar
-        let list = leftPaneContainer?.subviews.compactMap { $0 as? FileListView }.first
+        let list = leftFileListView
 
         if let strip, let frame = strip.superview?.convert(strip.frame, to: contentView) {
             // 标签条空白处（远离标签胶囊，取右端）
@@ -572,7 +737,7 @@ extension MainWindowController {
         }
 
         // 侧栏空白（底部）
-        if let sidebar = sidebarView, let frame = sidebar.superview?.convert(sidebar.frame, to: contentView) {
+        if let frame = sidebarView.superview?.convert(sidebarView.frame, to: contentView) {
             expect(NSPoint(x: frame.midX, y: frame.minY + 20), .window, "侧栏底部空白")
         }
 
@@ -581,28 +746,27 @@ extension MainWindowController {
             expect(NSPoint(x: frame.minX + 3, y: frame.midY), .panel, "卡片左缘留白（第五轮 C：不再拖窗口）")
         }
 
-        // ⑥ 调宽把手的 Y 排除：标题带（顶部 36pt）内的缝隙 X 不算把手
-        // （否则点缝隙附近的标签会被判成调宽，标签激活失效）
-        if let split = paneSplitView, split.subviews.count >= 2,
+        // ⑥ 调宽把手：C2 顶栏内不算把手，分栏内部同一 X 才算
+        if let split = paneSplitView, split.arrangedSubviews.count >= 2,
            let handleX = split.handleXPositions.first {
             let cv = contentView
             // 把手在「卡片外沿」，不是分隔线本身（分隔线在缝隙正中，差 8pt）
             let seamInCV = cv.convert(NSPoint(x: handleX, y: 0), from: split).x
-            // 标题带内：不应命中
-            let inBand = NSPoint(x: seamInCV, y: cv.bounds.height - 14)
-            if !isPointOnResizeHandle(windowPoint: inBand) {
+            // 全局顶栏内：超出分栏 bounds，不应命中
+            let inBar = NSPoint(x: seamInCV, y: cv.bounds.height - 14)
+            if !isPointOnResizeHandle(windowPoint: inBar) {
                 pass += 1
             } else {
                 fail += 1
-                FFDebug.log("[REGION] FAIL 标题带内的缝隙 X 不应命中把手")
+                FFDebug.log("[REGION] FAIL 全局顶栏内的缝隙 X 不应命中把手")
             }
-            // 标题带以下：应命中
-            let belowBand = NSPoint(x: seamInCV, y: cv.bounds.height - 100)
-            if isPointOnResizeHandle(windowPoint: belowBand) {
+            // 分栏内部：应命中
+            let inPane = NSPoint(x: seamInCV, y: cv.bounds.height - 100)
+            if isPointOnResizeHandle(windowPoint: inPane) {
                 pass += 1
             } else {
                 fail += 1
-                FFDebug.log("[REGION] FAIL 标题带以下的缝隙 X 应命中把手")
+                FFDebug.log("[REGION] FAIL 分栏内部的缝隙 X 应命中把手")
             }
         }
 
@@ -648,8 +812,7 @@ extension MainWindowController {
         }
 
         // ② 侧栏空白 → 拖窗口
-        if let sidebar = sidebarView,
-           let frame = sidebar.superview?.convert(sidebar.frame, to: contentView) {
+        if let frame = sidebarView.superview?.convert(sidebarView.frame, to: contentView) {
             expect(NSPoint(x: frame.midX, y: frame.minY + 20), .dragWindow, "侧栏空白→拖窗口")
         }
 
@@ -680,12 +843,151 @@ extension MainWindowController {
         }
 
         // ⑤ 文件列表 → 面板区（框选，不拖动）
-        if let list = leftPaneContainer?.subviews.compactMap({ $0 as? FileListView }).first,
+        if let list = leftFileListView,
            let frame = list.superview?.convert(list.frame, to: contentView) {
             expect(NSPoint(x: frame.midX, y: frame.midY), .pressFeedback, "文件列表→不拖动")
         }
 
         FFDebug.log("[BEHAVIOR] 拖动行为自检 通过\(pass) 失败\(fail)")
+    }
+
+    /// 面板宽度自检（Phase 3）：12pt 热区 / 软最小 / 吸附 / 双击 50/50。
+    func runPaneWidthSelfTest() {
+        var pass = 0
+        var fail = 0
+        func check(_ ok: Bool, _ label: String) {
+            if ok { pass += 1 } else { fail += 1; FFDebug.log("[WIDTH] FAIL \(label)") }
+        }
+
+        check(abs(FFDividerGlowMath.hotZoneRadius * 2 - 12) < 0.01,
+              "分栏热区应为 12pt（实为 \(FFDividerGlowMath.hotZoneRadius * 2)）")
+        check(FFPaneWidthMath.effectiveMin(total: 1200) == 400,
+              "宽窗口首选最小应为 400")
+        check(FFPaneWidthMath.effectiveMin(total: 780) == 390,
+              "1060 窗口 + 280 侧栏时应软降到 390")
+        check(FFPaneWidthMath.effectiveMin(total: 720) == 360,
+              "窄窗口硬下限应为 360")
+        check(abs(FFPaneWidthMath.snappedRatio(0.494, total: 1000) - 0.5) < 0.001,
+              "49.4% 应吸附到 50%")
+        check(abs(FFPaneWidthMath.doubleClickLeft(total: 1200) - 600) < 0.01,
+              "双击应回到 50/50")
+        if let split = paneSplitView {
+            check(split.adaptivePaneMinimum, "双面板分栏应启用软最小")
+            check(split.allowsRatioGestures, "双面板分栏应启用吸附/双击")
+            check(split.handleXPositions.count == 2,
+                  "双栏应有两个调宽把手（实为 \(split.handleXPositions.count)）")
+        } else {
+            check(false, "缺少双面板分栏")
+        }
+        FFDebug.log("[WIDTH] 面板宽度自检 通过\(pass) 失败\(fail)")
+    }
+
+    /// 图二压力自检（Phase 0）：20 轮隐藏/显示侧栏 × 单/双栏 × 左右活动面板。
+    ///
+    /// 每轮只读快照，不主动重绘；结束后恢复用户原来的侧栏/单双栏/活动面板/窗口尺寸。
+    func runLayoutStressSelfTest() {
+        guard let window, paneSplitView != nil else {
+            FFDebug.log("[LAYOUT] FAIL 无窗口或分栏")
+            return
+        }
+        let wasSingle = isSinglePaneMode
+        let wasSidebar = isSidebarVisible
+        let wasActive = activePane
+        let wasFrame = window.frame
+        let defaults = UserDefaults.standard
+        let oldSidebarHidden = defaults.object(forKey: "sidebar_hidden")
+
+        var failures: [String] = []
+        func check(_ phase: String) {
+            window.contentView?.layoutSubtreeIfNeeded()
+            failures.append(contentsOf: layoutAnomalies(phase: phase).map { "\(phase): \($0)" })
+        }
+
+        for cycle in 0..<20 {
+            setSidebarVisible(false, animated: false)
+            check("第\(cycle)轮-隐藏侧栏")
+            activePane = (cycle % 2 == 0) ? .right : .left
+            isSinglePaneMode = true
+            applyPaneMode()
+            check("第\(cycle)轮-单栏-\(activePane)")
+            setSidebarVisible(true, animated: false)
+            check("第\(cycle)轮-显示侧栏")
+            isSinglePaneMode = false
+            applyPaneMode()
+            check("第\(cycle)轮-双栏")
+        }
+
+        activePane = wasActive
+        isSinglePaneMode = wasSingle
+        applyPaneMode()
+        if isSidebarVisible != wasSidebar {
+            setSidebarVisible(wasSidebar, animated: false)
+        }
+        window.setFrame(wasFrame, display: false)
+        window.contentView?.layoutSubtreeIfNeeded()
+        if let oldSidebarHidden {
+            defaults.set(oldSidebarHidden, forKey: "sidebar_hidden")
+        } else {
+            defaults.removeObject(forKey: "sidebar_hidden")
+        }
+
+        for failure in failures.prefix(20) {
+            FFDebug.log("[LAYOUT] FAIL \(failure)")
+        }
+        FFDebug.log("[LAYOUT] 布局压力自检 20轮 失败\(failures.count)")
+    }
+
+    /// 侧栏隐藏后的标签避让自检（2026-10-21 C2）。
+    ///
+    /// 真实路径：setSidebarVisible(false) → 顶栏工具/侧栏键常驻 →
+    /// 标签组整体右移让开按钮；面板工具栏仍保持 8pt 缩进。
+    func runSidebarAvoidanceSelfTest() {
+        guard let window, let bar = globalTopBar else {
+            FFDebug.log("[AVOID] FAIL 无窗口或全局顶栏")
+            return
+        }
+        let wasVisible = isSidebarVisible
+        let testSide: PaneSide = (!isSinglePaneMode || activePane == .left) ? .left : .right
+        guard let strip = tabStrip(for: testSide) else {
+            FFDebug.log("[AVOID] FAIL 无可用标签条")
+            return
+        }
+
+        setSidebarVisible(false, animated: false)
+        window.contentView?.layoutSubtreeIfNeeded()
+        updateTabStripFrames()
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        var pass = 0
+        var fail = 0
+        func check(_ ok: Bool, _ label: String) {
+            if ok { pass += 1 } else { fail += 1; FFDebug.log("[AVOID] FAIL \(label)") }
+        }
+
+        let tabLeading = FFActivePaneBorderView.edgeOutset + FFInteractionPolicy.tabInsetFromPanel
+        let stripFrame = strip.convert(strip.bounds, to: nil)
+        let sidebarFrame = bar.convert(bar.sidebarButton.frame, to: nil)
+        let themeFrame = bar.convert(bar.themeButton.frame, to: nil)
+        let active = strip.allTabItems().first(where: { $0.isActive })
+        let tabFrame = active?.convert(active?.bounds ?? .zero, to: nil) ?? .zero
+
+        check(stripFrame.minX >= sidebarFrame.maxX,
+              "隐藏侧栏后标签组必须让开侧栏键（\(stripFrame.minX) vs \(sidebarFrame.maxX)）")
+        check(tabFrame.minX >= stripFrame.minX + tabLeading - 1,
+              "首个标签应对齐标签组内缩 \(tabLeading)（\(tabFrame.minX) vs \(stripFrame.minX)）")
+        check(stripFrame.maxX <= themeFrame.minX + 1,
+              "标签组右缘不能进入右侧按钮区（\(stripFrame.maxX) vs \(themeFrame.minX)）")
+        check(tabFrame.height >= FFInteractionPolicy.activeTabHeight - 0.5,
+              "隐藏侧栏后活动标签仍应是 30pt（实为 \(tabFrame.height)）")
+        check(leftPaneToolbar.leadingInset == 8 && rightPaneToolbar.leadingInset == 8,
+              "隐藏侧栏后两侧工具栏仍应保持 8pt 缩进")
+
+        if wasVisible {
+            setSidebarVisible(true, animated: false)
+        }
+        window.contentView?.layoutSubtreeIfNeeded()
+        refreshTabStrip(side: testSide)
+        FFDebug.log("[AVOID] 侧栏隐藏避让自检 通过\(pass) 失败\(fail)")
     }
 
     /// 标签焊接自检（2026-10-20 #4）
@@ -701,20 +1003,40 @@ extension MainWindowController {
             if ok { pass += 1 } else { fail += 1; FFDebug.log("[WELD] FAIL \(label)") }
         }
 
-        // ① 常量
-        check(FFInteractionPolicy.titleBandHeight == 36, "标题带应为 36")
-        check(FFInteractionPolicy.activeTabHeight == 28, "活动标签应为 28")
-        check(FFInteractionPolicy.tabTopGap == 8, "上方间隙应为 8")
-        check(FFInteractionPolicy.inactiveTabHeight == 22, "非活动标签应为 22")
-        check(FFInteractionPolicy.tabTopGap
+        // 焊接自检需要「活动 + 非活动」同屏才有意义。
+        // 自检会临时补标签，结束后还原，避免污染用户会话。
+        let leftStore = tabsStore(for: .left)
+        let rightStore = tabsStore(for: .right)
+        let originalLeftTabs = leftStore?.tabs ?? []
+        let originalRightTabs = rightStore?.tabs ?? []
+        let originalLeftActive = leftStore?.activeIndex ?? 0
+        let originalRightActive = rightStore?.activeIndex ?? 0
+        if let leftStore, leftStore.count < 2 { _ = newTab(in: .left) }
+        if let rightStore, rightStore.count < 2 { _ = newTab(in: .right) }
+        window?.contentView?.layoutSubtreeIfNeeded()
+        defer {
+            leftStore?.replaceAll(originalLeftTabs, activeAt: originalLeftActive)
+            rightStore?.replaceAll(originalRightTabs, activeAt: originalRightActive)
+            refreshTabStrip(side: .left)
+            refreshTabStrip(side: .right)
+            loadActiveTab(side: .left)
+            loadActiveTab(side: .right)
+        }
+
+        // ① 常量（C2）
+        check(FFInteractionPolicy.titleBandHeight == 36, "顶栏应为 36")
+        check(FFInteractionPolicy.activeTabHeight == 30, "活动标签应为 30")
+        check(FFInteractionPolicy.tabTopGap == 6, "上方空条应为 6")
+        check(FFInteractionPolicy.inactiveTabHeight == 26, "非活动标签应为 26")
+        check(FFInteractionPolicy.inactiveTabTopGap
               + FFInteractionPolicy.inactiveTabHeight
               + FFInteractionPolicy.inactiveTabBottomGap
               == FFInteractionPolicy.titleBandHeight,
-              "非活动：8 上间隙 + 22 高 + 6 下空隙 应等于 36")
+              "非活动：8 上间隙 + 26 高 + 2 下空隙 应等于 36")
         // 内凹不能压进面板圆角
         check(FFInteractionPolicy.tabInsetFromPanel
               >= FFTabSilhouette.panelCorner + FFInteractionPolicy.tabSeamFillet,
-              "标签左缘退让 \(FFInteractionPolicy.tabInsetFromPanel) 应 ≥ 面板圆角 16 + 内凹 8")
+              "标签左缘退让 \(FFInteractionPolicy.tabInsetFromPanel) 应 ≥ 面板圆角 16 + 内凹 10")
 
         // ② 活动标签几何：底边贴 0、顶边 = 带高 − 上间隙
         for (name, strip) in [("左", leftTabStrip), ("右", rightTabStrip)] {
@@ -726,7 +1048,7 @@ extension MainWindowController {
                   "\(name)标签左缘应 ≥ 退让量（实为 \(tab.minX)）")
         }
 
-        // ③ 非活动标签：顶部与活动对齐，底边比活动高 6
+        // ③ 非活动标签：在 38pt 栈内垂直居中，中心线与活动标签一致
         for (name, strip) in [("左", leftTabStrip), ("右", rightTabStrip)] {
             guard let strip, strip.subviews.count > 0 else { continue }
             let items = strip.allTabItems()
@@ -735,9 +1057,11 @@ extension MainWindowController {
             for item in inactive {
                 let f = item.convert(item.bounds, to: strip)
                 let a = active.convert(active.bounds, to: strip)
-                check(abs(f.maxY - a.maxY) < 0.5, "\(name)非活动标签顶边应与活动对齐")
+                check(abs(f.midY - a.midY) < 0.5, "\(name)非活动标签中心线应与活动对齐")
                 check(abs(f.minY - FFInteractionPolicy.inactiveTabBottomGap) < 0.5,
-                      "\(name)非活动标签底边应离面板 6（实为 \(f.minY)）")
+                      "\(name)非活动标签底边应离面板 2（实为 \(f.minY)）")
+                check(abs(f.maxY - (FFInteractionPolicy.titleBandHeight - FFInteractionPolicy.inactiveTabTopGap)) < 0.5,
+                      "\(name)非活动标签顶边应留 2（实为 \(f.maxY)）")
             }
         }
 
@@ -745,12 +1069,12 @@ extension MainWindowController {
         if let strip = leftTabStrip, let glow = leftActiveBorder,
            let wrapper = leftPaneWrapper, let tab = strip.activeTabFrame {
             if let got = glow.tabRect {
-                // 标签底边（minY）应等于面板顶边：wrapper 高 − 带高
-                check(abs(got.minY - (glow.bounds.height - FFInteractionPolicy.titleBandHeight)) < 1,
-                      "发光收到的标签底边应等于面板顶边（实为 \(got.minY) vs \(glow.bounds.height - FFInteractionPolicy.titleBandHeight)）")
-                // 标签顶边应等于 视图高 − 上间隙
-                check(abs(got.maxY - (glow.bounds.height - FFInteractionPolicy.tabTopGap)) < 1,
-                      "发光收到的标签顶边应等于 视图高 − 上间隙（实为 \(got.maxY) vs \(glow.bounds.height - FFInteractionPolicy.tabTopGap)）")
+                // C2：标签底边 = 顶栏底边 = 面板顶边（wrapper 顶部，y = wrapper 高度）
+                check(abs(got.minY - glow.bounds.height) < 1,
+                      "发光收到的标签底边应等于面板顶边（实为 \(got.minY) vs \(glow.bounds.height)）")
+                // 标签向上高出面板一个活动标签高度
+                check(abs(got.maxY - (glow.bounds.height + FFInteractionPolicy.activeTabHeight)) < 1,
+                      "发光收到的标签顶边应高出面板 \(FFInteractionPolicy.activeTabHeight)（实为 \(got.maxY) vs \(glow.bounds.height + FFInteractionPolicy.activeTabHeight)）")
                 check(abs(got.width - tab.width) < 1, "发光收到的标签宽度应与标签一致")
                 // 横向：与 activeTabFrame 换算后一致
                 let converted = wrapper.convert(tab, from: strip)
@@ -762,12 +1086,43 @@ extension MainWindowController {
 
         // ⑤ 合并轮廓真的带凸起（不是退化成矩形）
         let panel = NSRect(x: 8, y: 8, width: 540, height: 800)
-        let tab = NSRect(x: 34, y: panel.maxY, width: 120,
+        let tab = NSRect(x: 36, y: panel.maxY, width: 120,
                          height: FFInteractionPolicy.activeTabHeight)
         let withTab = FFTabSilhouette.composite(panel: panel, tab: tab)
         let withoutTab = FFTabSilhouette.composite(panel: panel, tab: nil)
         check(withTab.bounds.height > withoutTab.bounds.height + 20,
               "有标签的轮廓应比无标签高出一个标签高度（\(withTab.bounds.height) vs \(withoutTab.bounds.height)）")
+
+        // ⑥ A1 背板接线：背板必须可见、拿到活动标签矩形并填卡片色；
+        // 活动标签自己不能再画背景，否则会盖住内凹肩线。
+        for (name, strip) in [("左", leftTabStrip), ("右", rightTabStrip)] {
+            guard let strip else { continue }
+            guard let backdrop = strip.subviews.compactMap({ $0 as? PaneTabStripBackdrop }).first else {
+                check(false, "\(name)标签条缺少焊接背板")
+                continue
+            }
+            check(!backdrop.isHidden, "\(name)焊接背板应可见")
+            check(backdrop.tabRect != nil, "\(name)焊接背板应拿到活动标签矩形")
+            let alpha = backdrop.fillColor.usingColorSpace(.deviceRGB)?.alphaComponent ?? 0
+            check(alpha > 0.9, "\(name)焊接背板应填不透明卡片色（alpha=\(alpha)）")
+            let activeItem = strip.allTabItems().first(where: { $0.isActive })
+            let tabAlpha = activeItem?.layer?.backgroundColor?.alpha ?? 0
+            check(tabAlpha < 0.01, "\(name)活动标签不应自己画背景（alpha=\(tabAlpha)）")
+            let contentCenter = strip.bounds.height - FFTopBarMetrics.centerline
+            if let plus = strip.subviews.compactMap({ $0 as? FFHoverIconButton }).first {
+                let plusRect = plus.alignmentRect(forFrame: plus.frame)
+                let plusFrame = strip.convert(plusRect, from: plus.superview)
+                check(abs(plusFrame.midY - contentCenter) < 0.5,
+                      "\(name)＋中心应落在 18pt 中线（\(plusFrame.midY) vs \(contentCenter)）")
+            }
+            if let activeItem,
+               let close = activeItem.subviews.compactMap({ $0 as? FFTabCloseButton }).first {
+                let closeRect = close.alignmentRect(forFrame: close.frame)
+                let closeFrame = strip.convert(closeRect, from: close.superview)
+                check(abs(closeFrame.midY - contentCenter) < 0.5,
+                      "\(name)关闭×中心应落在 18pt 中线（\(closeFrame.midY) vs \(contentCenter)）")
+            }
+        }
 
         FFDebug.log("[WELD] 标签焊接自检 通过\(pass) 失败\(fail)")
     }
@@ -828,25 +1183,36 @@ extension MainWindowController {
         check(abs(FFPaneModeAnimator.duration - 0.36) < 0.001, "切换时长应为 0.36s")
 
         // ⑦ 垂直中线：名称列图标/文字与各元信息列都用 centerY（R-10）
-        if let list = leftPaneContainer?.subviews.compactMap({ $0 as? FileListView }).first {
+        if let list = leftFileListView {
             check(list.usesSharedRowMidline, "名称列图标与文字应共用行中线")
             check(list.visibleColumnIDs.contains(FFListColumn.size.rawValue)
                   || !FFListColumnsState.isVisible(.size),
                   "可见列与状态应一致")
         }
 
-        // ⑧ 可选列真的能渲染出内容（不是空列）
-        if let list = leftPaneContainer?.subviews.compactMap({ $0 as? FileListView }).first,
-           list.tableRowCount > 0 {
-            let kind = list.debugCellText(for: .kind, row: 0) ?? ""
-            let size = list.debugCellText(for: .size, row: 0) ?? ""
-            let modified = list.debugCellText(for: .modified, row: 0) ?? ""
-            let created = list.debugCellText(for: .created, row: 0) ?? ""
-            check(!kind.isEmpty, "类型列应有内容（实为「\(kind)」）")
-            check(!size.isEmpty, "大小列应有内容")
-            check(!modified.isEmpty, "修改日期列应有内容")
-            check(!created.isEmpty, "创建日期列应有内容（可选列渲染路径）")
-        }
+        // ⑧ 可选列真的能渲染出内容（用独立探针，不依赖当前目录里恰好有文件）
+        let probe = FileListView(frame: NSRect(x: 0, y: 0, width: 700, height: 400))
+        let probeVM = PaneViewModel()
+        probe.viewModel = probeVM
+        probeVM.state.path = "/tmp"
+        probeVM.state.files = [
+            FileEntry(path: "/tmp/self-test.txt",
+                      name: "self-test.txt",
+                      isDirectory: false,
+                      size: 1234,
+                      modificationDate: Date(),
+                      creationDate: Date())
+        ]
+        probe.reloadData()
+        probe.layoutSubtreeIfNeeded()
+        let kind = probe.debugCellText(for: .kind, row: 0) ?? ""
+        let size = probe.debugCellText(for: .size, row: 0) ?? ""
+        let modified = probe.debugCellText(for: .modified, row: 0) ?? ""
+        let created = probe.debugCellText(for: .created, row: 0) ?? ""
+        check(!kind.isEmpty, "类型列应有内容（实为「\(kind)」）")
+        check(!size.isEmpty, "大小列应有内容")
+        check(!modified.isEmpty, "修改日期列应有内容")
+        check(!created.isEmpty, "创建日期列应有内容（可选列渲染路径）")
 
         FFDebug.log("[SHELL] 列表与外壳自检 通过\(pass) 失败\(fail)")
     }
@@ -854,8 +1220,8 @@ extension MainWindowController {
     /// 操作区左半 / 右半各取一个窗口坐标点
     private func windowPointInOperationHalf(side: PaneSide) -> NSPoint {
         guard let cv = window?.contentView else { return NSPoint(x: 100, y: 100) }
-        let sidebarRight = sidebarView.flatMap { view in
-            view.superview.map { cv.convert(view.frame, from: $0).maxX }
+        let sidebarRight = sidebarView.superview.map {
+            cv.convert(sidebarView.frame, from: $0).maxX
         } ?? 0
         let midX = (sidebarRight + cv.bounds.width) / 2
         let x = side == .left ? (sidebarRight + midX) / 2 : (midX + cv.bounds.width) / 2

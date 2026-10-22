@@ -11,6 +11,116 @@ class FFOpaqueContainerView: NSView {
     override var isOpaque: Bool { return false }
 }
 
+/// 无边框图标按钮：统一 24pt 命中、hover 圆角底色与按下反馈。
+/// 用于侧栏顶部三图标与标签条「+」，让它们和标签关闭 × 的交互层级一致。
+final class FFHoverIconButton: NSButton {
+
+    var hoverCornerRadius: CGFloat = 6
+    var hoverAlpha: CGFloat = 0.07
+
+    private var hovering = false {
+        didSet { if hovering != oldValue { needsDisplay = true } }
+    }
+    private var hoverTracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let area = NSTrackingArea(rect: .zero,
+                                  options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverTracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if isEnabled { hovering = true }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isEnabled, hovering || isHighlighted {
+            let alpha = isHighlighted ? hoverAlpha + 0.04 : hoverAlpha
+            NSColor.labelColor.withAlphaComponent(alpha).setFill()
+            NSBezierPath(roundedRect: bounds,
+                         xRadius: hoverCornerRadius,
+                         yRadius: hoverCornerRadius).fill()
+        }
+        super.draw(dirtyRect)
+    }
+}
+
+/// 操作面板内容裁切层：卡片外层的阴影/微光不裁切，内层工具栏/列表按 12pt 连续曲率裁切，
+/// 避免整幅工具栏背景把卡片圆角盖成直角。
+final class FFPaneContentClipView: NSView {
+    init(cornerRadius: CGFloat) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("FFPaneContentClipView 不支持 IB 初始化")
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+/// 外观感知的实体表面：背景/边框用动态 NSColor，主题切换时重新解析 cgColor。
+/// 解决辅助窗口复用单例时静态快照导致的“白底白字”。
+class FFSolidSurfaceView: NSView {
+    var surfaceColor: NSColor {
+        didSet { applySurface() }
+    }
+    var borderColor: NSColor? {
+        didSet { applySurface() }
+    }
+
+    init(color: NSColor = .controlBackgroundColor) {
+        surfaceColor = color
+        super.init(frame: .zero)
+        wantsLayer = true
+        applySurface()
+    }
+
+    required init?(coder: NSCoder) {
+        surfaceColor = .controlBackgroundColor
+        super.init(coder: coder)
+        wantsLayer = true
+        applySurface()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applySurface()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applySurface()
+    }
+
+    override func layout() {
+        super.layout()
+        applySurface()
+    }
+
+    private func applySurface() {
+        wantsLayer = true
+        let appearance = window?.effectiveAppearance ?? effectiveAppearance
+        appearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = surfaceColor.cgColor
+            layer?.borderColor = borderColor?.cgColor
+        }
+    }
+}
+
 // MARK: - 窗口拖动拦截（2026-10-20 #1）
 
 /// 不参与窗口拖动的普通视图。
@@ -120,6 +230,8 @@ extension Notification.Name {
     // Wave4 Task 4: 列表密度 / 网格图标大小变更广播（设置页与手势双入口共用，
     // 所有 FileListView / FileGridView / 设置滑杆监听后同步刷新）
     static let listDensityChanged = Notification.Name("FFListDensityChanged")
+    /// 批次 1：文件夹优先排序偏好变化，窗口收到后刷新两侧面板
+    static let sortPreferencesChanged = Notification.Name("FFSortPreferencesChanged")
     static let gridIconSizeChanged = Notification.Name("FFGridIconSizeChanged")
 }
 
@@ -192,6 +304,8 @@ enum FFUserDefaultsKeys {
     // Wave4 Task 4: 视图密度与缩放（列表密度三档 + 网格图标大小，跨会话记忆）
     static let listDensity = "list_density"
     static let gridIconSize = "grid_icon_size"
+    // 2026-10-21 UI/UX 精修：详情检查器预览图标大小（48–96，默认 64）
+    static let detailsPreviewSize = "details_preview_size"
 }
 
 // MARK: - FFListDensity（Wave4 Task 4: 列表密度三档）
@@ -366,24 +480,54 @@ enum ShortcutCenter {
 enum FFAccent {
     /// UserDefaults key（hex 字符串，如 "#bf5af2"）
     static let storageKey = "accent_color"
-    /// 默认强调色（系统蓝）
+    /// 旧版默认蓝，仍供标签色板引用；当前强调色回退值改为系统强调色。
     static let defaultHex = "#0a84ff"
+    /// 一次性清理旧自定义强调色的迁移键。
+    static let unifiedMigrationKey = "accent_unified_migration_v1"
+    /// 用户是否在应用内显式选过强调色；旧版默认粉色不算用户选择。
+    static let explicitSelectionKey = "accent_explicit_selection_v1"
+
+    static var systemHex: String {
+        "#" + NSColor.controlAccentColor.ffHexString
+    }
+
+    static func color(forStoredHex hex: String?) -> NSColor {
+        guard let hex, let color = NSColor(hex: hex) else {
+            return .controlAccentColor
+        }
+        return color
+    }
+
+    static func resolvedHex(forStoredHex hex: String?) -> String {
+        hex ?? systemHex
+    }
+
+    /// 清除旧版默认强调色；用户显式选择过的颜色保留。
+    ///
+    /// 旧迁移键只跑一次，但历史安装里粉色可能在迁移之后又被写回，
+    /// 所以这里每次启动都检查「是否为用户显式选择」，而不是信任迁移键。
+    static func migrateToUnifiedAccent(defaults: UserDefaults = .standard) {
+        if !defaults.bool(forKey: explicitSelectionKey) {
+            defaults.removeObject(forKey: storageKey)
+        }
+        defaults.set(true, forKey: unifiedMigrationKey)
+    }
 
     /// 当前强调色。每次读取都从 UserDefaults 取最新值，保证设置改动即时生效。
     static var current: NSColor {
-        let hex = UserDefaults.standard.string(forKey: storageKey) ?? defaultHex
-        return NSColor(hex: hex) ?? .controlAccentColor
+        color(forStoredHex: UserDefaults.standard.string(forKey: storageKey))
     }
 
     /// 当前 hex 字符串（供 UI 颜色选择器高亮选中项）
     static var currentHex: String {
-        UserDefaults.standard.string(forKey: storageKey) ?? defaultHex
+        resolvedHex(forStoredHex: UserDefaults.standard.string(forKey: storageKey))
     }
 
     /// 设置新强调色并广播刷新全应用。
     /// 由设置页「强调色」颜色选择器调用。
-    static func set(hex: String) {
-        UserDefaults.standard.set(hex, forKey: storageKey)
+    static func set(hex: String, defaults: UserDefaults = .standard) {
+        defaults.set(hex, forKey: storageKey)
+        defaults.set(true, forKey: explicitSelectionKey)
         NotificationCenter.default.post(name: .accentColorChanged, object: nil, userInfo: ["hex": hex])
     }
 }
@@ -393,6 +537,8 @@ extension Notification.Name {
     static let accentColorChanged = Notification.Name("FFAccentColorChanged")
     /// 详情栏布局尺寸（高度/图标区宽/列宽）变更广播：左右两个面板的详情栏互相同步
     static let FFDetailsBarLayoutChanged = Notification.Name("FFDetailsBarLayoutChanged")
+    /// 详情预览图标大小变更广播（应用级设置，两个详情栏同步）
+    static let detailsPreviewSizeChanged = Notification.Name("FFDetailsPreviewSizeChanged")
 }
 
 // MARK: - FFSwipeThrottler（两指轻扫节流）
@@ -528,7 +674,8 @@ enum FFPaneMenuBuilder {
         // 21. 分隔线
         menu.addItem(.separator())
         // 22. 显示简介
-        let infoItem = menu.addItem(withTitle: "显示简介", action: #selector(FFPaneActionsController.showInfoMenu(_:)), keyEquivalent: "i")
+        // 不设 keyEquivalent：⌘I 归主菜单的区内详情栏，避免右键菜单抢占后弹出旧简介窗口
+        let infoItem = menu.addItem(withTitle: "显示简介", action: #selector(FFPaneActionsController.showInfoMenu(_:)), keyEquivalent: "")
         infoItem.image = FFIcon.template(.info, size: FFIcon.Metrics.menu)
 
         // 设置 target 与快捷键修饰键（与访达一致：⌘N 新建文件夹用 ⇧⌘N）
@@ -979,14 +1126,49 @@ enum FFMotion {
 /// 分隔线手柄光效纯计算（v0.7.6 发布后修复轮）。
 /// 设计文档：docs/superpowers/specs/2026-08-28-divider-handle-glow-follow-design.md
 /// FFSplitView 负责视觉接线，本枚举只做可单元测试的数学核心。
+/// 双面板宽度模型（2026-10-21 Phase 3 用户确认）：
+/// 首选最小 400，窗口较窄时软降到 360；25/50/75 吸附，双击 50/50。
+enum FFPaneWidthMath {
+    static let preferredMin: CGFloat = 400
+    static let hardMin: CGFloat = 360
+    static let snapPoints: [CGFloat] = [0.25, 0.5, 0.75]
+    /// 距离吸附点 12pt 内吸附
+    static let snapTolerance: CGFloat = 12
+
+    /// 当前窗口宽度下可用的最小面板宽（400 与一半宽度取小，且不低于 360）
+    static func effectiveMin(total: CGFloat) -> CGFloat {
+        guard total > 0 else { return hardMin }
+        return min(preferredMin, max(hardMin, total / 2))
+    }
+
+    static func clampLeft(_ proposed: CGFloat, total: CGFloat) -> CGFloat {
+        let minWidth = effectiveMin(total: total)
+        let maxLeft = max(minWidth, total - minWidth)
+        return min(max(proposed, minWidth), maxLeft)
+    }
+
+    static func snappedRatio(_ ratio: CGFloat, total: CGFloat) -> CGFloat {
+        guard total > 0 else { return ratio }
+        for point in snapPoints where abs(ratio - point) * total <= snapTolerance {
+            return point
+        }
+        return ratio
+    }
+
+    static func doubleClickLeft(total: CGFloat) -> CGFloat {
+        clampLeft(total / 2, total: total)
+    }
+}
+
 enum FFDividerGlowMath {
     /// 渐隐半径（pt）：亮点上下各 120pt 渐隐至透明（总高约 240pt）。
     /// 2026-08-29 用户验收反馈由 60 调大：原范围偏小。
     static let fadeRadius: CGFloat = 120
     /// 拖拽热区半径（pt）：分隔线 X ±6pt 内按下/悬停生效
     static let hotZoneRadius: CGFloat = 6
-    /// 每侧面板最小宽度（pt）：与 MainWindowController 的 NSSplitViewDelegate 约束一致
-    static let minPaneWidth: CGFloat = 450
+    /// 每侧面板最小宽度（pt）：与 MainWindowController 的 NSSplitViewDelegate 约束一致。
+    /// 400 让「侧栏 180 + 双面板 + 边距」在 1060 窗口内成立，同时保留两行工具栏可用宽度。
+    static let minPaneWidth: CGFloat = 400
 
     /// 鼠标 Y（视图坐标系）→ 渐变轴中心比例（0~1）。
     /// AppKit 对 layer-backed 视图保持 layer 与 view 翻转一致，
@@ -1005,7 +1187,7 @@ enum FFDividerGlowMath {
     }
 
     /// 鼠标 X → 分隔线目标位置（绝对跟随模型）：clamp 到每侧最小宽约束内。
-    /// - leadingMin: 左侧子视图最小宽（双操作区 450；侧栏分隔 160，见 DESIGN-SPEC B-01）
+    /// - leadingMin: 左侧子视图最小宽（双操作区 400；侧栏分隔 180，见 DESIGN-SPEC B-01）
     /// - trailingMin: 右侧子视图最小宽
     static func clampedDividerPosition(
         mouseX: CGFloat,
@@ -1149,5 +1331,109 @@ enum FFDetailsFlowLayout {
             total += addition
         }
         return result
+    }
+}
+
+// MARK: - 同目录拖放策略
+
+/// 文件拖放的无效目标判定：拖回原目录、文件夹拖进自身/子目录都应完全无操作。
+enum FFFileDropPolicy {
+
+    private static func normalized(_ path: String) -> String {
+        (path as NSString).standardizingPath
+    }
+
+    /// true = 这次拖放不产生任何文件操作。
+    static func isNoOp(source: String, destination: String) -> Bool {
+        let src = normalized(source)
+        let dst = normalized(destination)
+        guard !src.isEmpty, !dst.isEmpty else { return true }
+        if src == dst { return true }
+        if src == "/" { return true }
+        if (src as NSString).deletingLastPathComponent == dst { return true }
+        if dst.hasPrefix(src + "/") { return true }
+        return false
+    }
+
+    /// 过滤掉无操作源；返回空数组表示整次拖放应被拒绝。
+    static func validSources(_ sources: [String], destination: String) -> [String] {
+        sources.filter { !isNoOp(source: $0, destination: destination) }
+    }
+}
+
+// MARK: - 版本与构建来源
+
+enum FFBuildInfo {
+
+    static let channel = "Beta"
+
+    static var marketingVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.8.0"
+    }
+
+    /// 内部构建号 = `yymmddxx`（当日日期 + 当日序号），由 `scripts/bump-version.sh` 在每次迭代构建前写入工程。
+    static var buildNumber: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+    }
+
+    /// 显示规则 `A.B.C-yymmddxx`（+ 渠道），例：`0.8.0-26102101 Beta`。
+    static func displayVersion(marketing: String, build: String, channel: String) -> String {
+        "\(marketing)-\(build) \(channel)"
+    }
+
+    static var displayVersion: String {
+        displayVersion(marketing: marketingVersion, build: buildNumber, channel: channel)
+    }
+
+    static var bundlePath: String { Bundle.main.bundleURL.path }
+
+    static var buildDateText: String {
+        guard let executable = Bundle.main.executableURL,
+              let attrs = try? FileManager.default.attributesOfItem(atPath: executable.path),
+              let date = attrs[.modificationDate] as? Date else { return "未知" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
+
+    static func aboutBuildLine(buildDateText: String, bundlePath: String) -> String {
+        "构建 \(buildDateText) · \(bundlePath)"
+    }
+
+    static var aboutBuildLine: String {
+        aboutBuildLine(buildDateText: buildDateText, bundlePath: bundlePath)
+    }
+}
+
+// MARK: - 单实例提示
+
+enum FFInstanceGuard {
+
+    struct Instance: Equatable {
+        let pid: Int32
+        let path: String
+        let version: String
+    }
+
+    static func otherInstances(currentPID: Int32, instances: [Instance]) -> [Instance] {
+        instances.filter { $0.pid != currentPID }
+    }
+
+    static func warningText(for instances: [Instance]) -> String {
+        let lines = instances.map { "· \($0.path)（\($0.version)）" }.joined(separator: "\n")
+        return "检测到另一个 FlowFinder 正在运行：\n\(lines)\n\n建议退出旧实例，只保留当前 \(FFBuildInfo.displayVersion)。"
+    }
+
+    /// 读取同 Bundle ID 的其它运行进程；当前进程会被过滤。
+    static func runningInstances(bundleID: String, currentPID: Int32) -> [Instance] {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).compactMap { app in
+            guard app.processIdentifier != currentPID, let url = app.bundleURL else { return nil }
+            let bundle = Bundle(url: url)
+            let marketing = bundle?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+            let build = bundle?.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+            return Instance(pid: app.processIdentifier,
+                            path: url.path,
+                            version: "\(marketing)-\(build)")
+        }
     }
 }

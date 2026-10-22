@@ -37,12 +37,13 @@ class MainMenu {
         mainMenu.addItem(fileMenuItem)
         let fileMenu = NSMenu(title: "文件")
         fileMenuItem.submenu = fileMenu
-        fileMenu.addItem(withTitle: "新建文件夹", action: #selector(MainWindowController.menuNewFolder(_:)), keyEquivalent: "n")
+        let newFolder = fileMenu.addItem(withTitle: "新建文件夹", action: #selector(MainWindowController.menuNewFolder(_:)), keyEquivalent: "n")
+        // D-05：对齐 Finder——⇧⌘N 新建文件夹、⌘N 新窗口。
+        newFolder.keyEquivalentModifierMask = [.command, .shift]
         // #7：应用内标签页（⌘T 新建 / ⌘W 关闭标签，最后一个标签时退回关窗）
         fileMenu.addItem(withTitle: "新建标签页", action: #selector(MainWindowController.menuNewTab(_:)), keyEquivalent: "t")
-        // Wave2 P0-4：⌘⇧N 新窗口接通真多窗口实现（原 action: nil 永久禁用）
         let newWindow = fileMenu.addItem(withTitle: "新窗口", action: #selector(MainWindowController.menuNewWindow(_:)), keyEquivalent: "n")
-        newWindow.keyEquivalentModifierMask = [.command, .shift]
+        newWindow.keyEquivalentModifierMask = [.command]
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "打开", action: #selector(MainWindowController.menuOpen(_:)), keyEquivalent: "o")
         fileMenu.addItem(.separator())
@@ -52,7 +53,10 @@ class MainMenu {
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "移动到废纸篓", action: #selector(MainWindowController.menuMoveToTrash(_:)), keyEquivalent: "\u{8}")
         fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "添加标签...", action: #selector(MainWindowController.menuAddTag(_:)), keyEquivalent: "")
+        let editTagsItem = fileMenu.addItem(withTitle: "编辑标签…",
+                                            action: #selector(MainWindowController.menuEditTags(_:)),
+                                            keyEquivalent: "t")
+        editTagsItem.keyEquivalentModifierMask = [.command, .option]
         fileMenu.addItem(withTitle: "显示简介", action: #selector(MainWindowController.menuGetInfo(_:)), keyEquivalent: "i")
 
         // Edit menu
@@ -96,8 +100,11 @@ class MainMenu {
         mainMenu.addItem(viewMenuItem)
         let viewMenu = NSMenu(title: "显示")
         viewMenuItem.submenu = viewMenu
-        viewMenu.addItem(withTitle: "列表视图", action: #selector(MainWindowController.menuListView(_:)), keyEquivalent: "1")
-        viewMenu.addItem(withTitle: "图标视图", action: #selector(MainWindowController.menuGridView(_:)), keyEquivalent: "2")
+        // ⌘1/⌘2 留给面板聚焦（D-05），列表/图标视图改用 ⌥⌘1/⌥⌘2。
+        let listViewItem = viewMenu.addItem(withTitle: "列表视图", action: #selector(MainWindowController.menuListView(_:)), keyEquivalent: "1")
+        listViewItem.keyEquivalentModifierMask = [.command, .option]
+        let gridViewItem = viewMenu.addItem(withTitle: "图标视图", action: #selector(MainWindowController.menuGridView(_:)), keyEquivalent: "2")
+        gridViewItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: "显示隐藏文件", action: #selector(MainWindowController.menuToggleHiddenFiles(_:)), keyEquivalent: "")
         // 2026-10-19 #10：⌥⌘S 显示/隐藏侧边栏（与侧栏顶部按钮、左上角浮动开关同一入口）
@@ -169,6 +176,7 @@ class MainMenu {
         // Wave2 P0-4：帮助菜单接通真实 action（原 action: nil 永久禁用）
         helpMenu.addItem(withTitle: "FlowFinder 帮助", action: #selector(MainWindowController.menuHelp(_:)), keyEquivalent: "?")
         helpMenu.addItem(withTitle: "键盘快捷键", action: #selector(MainWindowController.menuKeyboardShortcutsHelp(_:)), keyEquivalent: "")
+        helpMenu.addItem(withTitle: "欢迎使用 FlowFinder", action: #selector(MainWindowController.menuShowWelcome(_:)), keyEquivalent: "")
 
         // Wave2 P0-3：记录映射菜单项的默认键位基线（供 applyShortcutSettings 回退/恢复默认）
         for entry in shortcutMenuMap {

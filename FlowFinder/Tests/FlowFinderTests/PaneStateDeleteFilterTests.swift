@@ -297,6 +297,22 @@ final class PaneStateFlowTests: XCTestCase {
         XCTAssertEqual(FFPaneStateDescriptor.make(from: vm.state).mode, .content)
     }
 
+    func testNavigateWithSelectingSelectsTargetAfterLoad() throws {
+        let dir = makeTempDir(prefix: "ff_t12_select")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let alpha = dir.appendingPathComponent("alpha.txt")
+        let beta = dir.appendingPathComponent("beta.txt")
+        try "a".write(to: alpha, atomically: true, encoding: .utf8)
+        try "b".write(to: beta, atomically: true, encoding: .utf8)
+
+        let vm = PaneViewModel()
+        vm.navigate(to: dir.path, selecting: beta.path)
+        waitUntil { !vm.state.isLoading }
+
+        XCTAssertEqual(vm.state.selectedFiles.map(\.path), [beta.path],
+                       "搜索双击定位后应选中目标文件")
+    }
+
     func testEmptyDirectoryShowsEmptyState() {
         let dir = makeTempDir(prefix: "ff_t12_empty")
 
@@ -499,6 +515,10 @@ final class DuplicateScanBrowseRegressionTests: XCTestCase {
             NSLog("[REPRO] === %@：childWindows=%d attachedSheet=%@",
                   label, window.childWindows?.count ?? -1,
                   window.attachedSheet.map { "\($0)" } ?? "nil")
+            // NSOpenPanel 在测试宿主长时间运行后可能因 App 非活跃而不弹出。
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
             wc.perform(NSSelectorFromString("browseClicked"))
             waitUntil(label) { window.attachedSheet != nil }
             if let sheet = window.attachedSheet {
@@ -520,6 +540,8 @@ final class DuplicateScanBrowseRegressionTests: XCTestCase {
         browseOnce("B 扫描后浏览", expectPresented: true)
 
         // C: 删除+自动重扫后浏览
+        // 安全默认不再预勾选；显式选择重复项后再走删除确认。
+        wc.selectDuplicatesForDeletion()
         wc.perform(NSSelectorFromString("deleteSelected"))
         waitUntil("C 删除确认弹窗出现") { window.attachedSheet != nil }
         let confirmDialog = try XCTUnwrap(window.attachedSheet, "删除确认弹窗应出现")

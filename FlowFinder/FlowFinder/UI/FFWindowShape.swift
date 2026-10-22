@@ -16,8 +16,8 @@ import AppKit
 /// 所以外面套一层普通容器 `FFWindowRootView`，圆角加在容器上。
 enum FFWindowShape {
 
-    /// 窗口圆角半径（面板卡片 16、操作区 10，窗口取 12）
-    static let cornerRadius: CGFloat = 12
+    /// 窗口圆角半径与操作面板同族，均为 12。
+    static let cornerRadius: CGFloat = FFVisualTokens.Radius.window
 
     /// 安装（幂等）
     static func install(on window: NSWindow) {
