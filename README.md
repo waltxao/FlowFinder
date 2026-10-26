@@ -7,15 +7,15 @@
 **流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 原生双栏
 
 ![Version](https://img.shields.io/badge/version-0.8.0--beta-blue)
-![Build](https://img.shields.io/badge/build-26102501-lightgrey)
+![Build](https://img.shields.io/badge/build-26102601-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-macOS-green)
 ![Swift](https://img.shields.io/badge/Swift-5.9+-F05138)
 ![Rust](https://img.shields.io/badge/Rust-2021+-DEA584)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
-🌐 [官方网站](https://waltxao.github.io/FlowFinder/) · 📦 [下载最新版](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1) · 📖 [交接文档](docs/HANDOVER.md) · 📝 [变更日志](CHANGELOG.md)
+🌐 [官方网站](https://waltxao.github.io/FlowFinder/) · 📦 [下载最新版](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b2) · 📖 [交接文档](docs/HANDOVER.md) · 📝 [变更日志](CHANGELOG.md)
 
-**当前状态：** 0.8.0 Beta · 构建 `0.8.0-26102501` · 分支 `feat/v0.9-overhaul` · 最新 Release [`v0.8.0-b1`](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1)
+**当前状态：** 0.8.0 Beta · 构建 `0.8.0-26102601` · 分支 `feat/v0.9-overhaul` · 最新 Release [`v0.8.0-b2`](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b2)
 
 </div>
 
@@ -122,9 +122,9 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 ## 更新日志
 
-### v0.8.0 Beta（2026-10-25，当前开发版）
+### v0.8.0 Beta（2026-10-26，当前版本）
 
-> 完整逐轮记录见 [CHANGELOG.md](CHANGELOG.md)。最新 Release 仍为 [`v0.8.0-b1`](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1)（2026-10-22，构建 `26102209`）；当前开发构建 `0.8.0-26102501` 包含以下未发版内容。
+> 完整逐轮记录见 [CHANGELOG.md](CHANGELOG.md)。最新 Release 为 [`v0.8.0-b2`](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b2)（2026-10-26，构建 `26102601`）；上一版 [`v0.8.0-b1`](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1)（2026-10-22，构建 `26102209`）。
 
 **侧栏与搜索**
 - 侧栏保留 个人收藏 / 位置 / 标签 三段；收藏右键支持 显示简介 / 在新标签页中打开 / 在新窗口中打开 / 上移 / 下移 / 从边栏中移除
@@ -237,13 +237,13 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 ### 下载方式
 
-前往 [`v0.8.0-b1` Release](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1) 页面下载：
+前往 [`v0.8.0-b2` Release](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b2) 页面下载：
 
 | 文件 | 说明 | 适用架构 |
 |------|------|---------|
-| `FlowFinder-0.8.0-b1.dmg` | DMG 安装镜像 | Apple Silicon |
-| `FlowFinder-0.8.0-b1.zip` | ZIP 压缩包（含 .app） | Apple Silicon |
-| `FlowFinder-0.8.0-b1.sha256` | 发布产物校验和 | — |
+| `FlowFinder-0.8.0-b2.dmg` | DMG 安装镜像 | Apple Silicon |
+| `FlowFinder-0.8.0-b2.zip` | ZIP 压缩包（含 .app） | Apple Silicon |
+| `FlowFinder-0.8.0-b2.sha256` | 发布产物校验和 | — |
 
 ### 安装步骤
 
@@ -397,6 +397,7 @@ Tools），`xcodebuild` 不可用，Swift XCTest 无法运行 —— 这是环�
 | 2026-10-25 新增回归 | `testSearchEnterWithEmptyQueryDoesNotOpenFirstItem` 通过（0.914s；全套未重跑） |
 | 应用内自检 | 153 项 + 20 轮布局压力 0 失败 |
 | Rust | 200 通过 0 失败 |
+| Release 产物 | `0.8.0-26102601`：CFBundleShortVersionString 0.8.0 / CFBundleVersion 26102601；codesign 校验通过；DMG/ZIP sha256 校验 OK（2026-10-26） |
 
 ### 项目结构
 
