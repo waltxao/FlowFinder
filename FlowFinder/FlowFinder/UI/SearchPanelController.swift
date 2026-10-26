@@ -44,7 +44,7 @@ private class FFSearchNameCell: NSTableCellView {
         nameLabel.cell?.truncatesLastVisibleLine = true
 
         pathLabel.font = NSFont.systemFont(ofSize: 10)
-        pathLabel.textColor = NSColor.tertiaryLabelColor
+        pathLabel.textColor = FFVisualTokens.hint
         pathLabel.lineBreakMode = .byTruncatingMiddle
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
         pathLabel.cell?.truncatesLastVisibleLine = true
@@ -88,7 +88,6 @@ public class SearchPanelController: NSWindowController {
     private var searchField: NSSearchField!
     private var modeSegmentedControl: NSSegmentedControl!
     private var scopePopup: NSPopUpButton!
-    private var typePopup: NSPopUpButton!
     private var timePopup: NSPopUpButton!
     private var filterSidebar: SearchFilterSidebar!
     private var resultsTableView: NSTableView!
@@ -121,9 +120,25 @@ public class SearchPanelController: NSWindowController {
     /// 内容查询是否在途（避免重复发起）
     private var contentQueryInFlight: Bool = false
 
+    // MARK: - 筛选口径（R4-17）
+
+    /// 工具栏筛选控件的种类。类型筛选此前同时存在于工具栏 popup 与左侧
+    /// 「文件类型」复选框组，两处取交集，用户看不出它们的关系；工具栏只留时间。
+    enum ToolbarFilterKind: String, CaseIterable {
+        case time
+    }
+
+    static let toolbarFilterKinds: [ToolbarFilterKind] = [.time]
+
+    /// 「当前目录 / 全局搜索」段控件已经决定搜索位置，范围 popup 在全局模式下
+    /// 才是在细化位置，在本地模式下与段控件同义——因此本地模式隐藏它。
+    static func showsScopePopup(for mode: SearchMode) -> Bool {
+        mode == .global
+    }
+
     // MARK: - 数据
 
-    /// F9-D: scopePopup 选项索引（工具栏范围筛选 popup，与 typePopup/timePopup 配合缩小结果集）
+    /// F9-D: scopePopup 选项索引（工具栏范围筛选 popup，与 timePopup 配合缩小结果集）
     private enum ScopePopupIndex: Int {
         case all = 0              // 全部范围
         case currentLocation = 1  // 当前位置
@@ -136,7 +151,7 @@ public class SearchPanelController: NSWindowController {
     private var currentMode: SearchMode = .local
     private var currentQuery: String = ""
     private var currentPath: String = ""
-    /// scopePopup 选中"指定位置..."时用户选择的路径（nil 表示未选择）
+    /// scopePopup 选中"指定位置…"时用户选择的路径（nil 表示未选择）
     private var customScopePath: String? = nil
     private var searchStartTime: Date?
 
@@ -313,7 +328,7 @@ public class SearchPanelController: NSWindowController {
         detailsBar.translatesAutoresizingMaskIntoConstraints = false
         detailsLabel = NSTextField(wrappingLabelWithString: "选择一个结果以查看详情")
         detailsLabel.font = NSFont.systemFont(ofSize: 11)
-        detailsLabel.textColor = NSColor.tertiaryLabelColor
+        detailsLabel.textColor = FFVisualTokens.hint
         detailsLabel.maximumNumberOfLines = 2
         detailsLabel.translatesAutoresizingMaskIntoConstraints = false
         detailsBar.addSubview(detailsLabel)
@@ -495,7 +510,7 @@ public class SearchPanelController: NSWindowController {
 
         // 大搜索框（32pt 高）
         searchField = NSSearchField()
-        searchField.placeholderString = "输入搜索关键词..."
+        searchField.placeholderString = "输入搜索关键词…"
         searchField.setAccessibilityLabel("搜索关键词")
         searchField.target = self
         searchField.action = #selector(searchClicked)
@@ -511,18 +526,11 @@ public class SearchPanelController: NSWindowController {
         modeSegmentedControl.translatesAutoresizingMaskIntoConstraints = false
 
         scopePopup = NSPopUpButton()
-        scopePopup.addItems(withTitles: ["全部范围", "当前位置", "指定位置..."])
+        scopePopup.addItems(withTitles: ["全部范围", "当前位置", "指定位置…"])
         scopePopup.controlSize = .small
         scopePopup.translatesAutoresizingMaskIntoConstraints = false
         scopePopup.target = self
         scopePopup.action = #selector(filterPopupChanged(_:))
-
-        typePopup = NSPopUpButton()
-        typePopup.addItems(withTitles: ["全部类型", "PDF", "图片", "视频", "文档", "音频"])
-        typePopup.controlSize = .small
-        typePopup.translatesAutoresizingMaskIntoConstraints = false
-        typePopup.target = self
-        typePopup.action = #selector(filterPopupChanged(_:))
 
         timePopup = NSPopUpButton()
         timePopup.addItems(withTitles: ["任意时间", "今天", "本周", "本月", "今年"])
@@ -531,7 +539,9 @@ public class SearchPanelController: NSWindowController {
         timePopup.target = self
         timePopup.action = #selector(filterPopupChanged(_:))
 
-        let controlsStack = NSStackView(views: [modeSegmentedControl, scopePopup, typePopup, timePopup])
+        let controlsStack = NSStackView(views: [modeSegmentedControl, scopePopup, timePopup])
+        // 面板默认停在「当前目录」，范围 popup 与段控件同义，初始即隐藏（R4-17）
+        scopePopup.isHidden = !Self.showsScopePopup(for: currentMode)
         controlsStack.orientation = .horizontal
         controlsStack.spacing = 8
         controlsStack.alignment = .centerY
@@ -613,6 +623,7 @@ public class SearchPanelController: NSWindowController {
 
     @objc private func modeChanged() {
         currentMode = SearchMode(rawValue: modeSegmentedControl.selectedSegment) ?? .local
+        scopePopup.isHidden = !Self.showsScopePopup(for: currentMode)
         if !currentQuery.isEmpty {
             performSearch()
         }
@@ -628,8 +639,7 @@ public class SearchPanelController: NSWindowController {
     }
 
     @objc private func emptyStateNameOnlyClicked() {
-        scopePopup.selectItem(at: ScopePopupIndex.currentLocation.rawValue)
-        searchField.placeholderString = "输入文件名..."
+        searchField.placeholderString = "输入文件名…"
         window?.makeFirstResponder(searchField)
     }
 
@@ -684,7 +694,7 @@ public class SearchPanelController: NSWindowController {
         resultsTableView.reloadData()
         isSearching = true
         progressIndicator.startAnimation(nil)
-        resultsHeader.stringValue = "搜索中..."
+        resultsHeader.stringValue = "搜索中…"
         searchStartTime = Date()
         updateEmptyState()
 
@@ -758,9 +768,9 @@ public class SearchPanelController: NSWindowController {
 
     // MARK: - 筛选应用
 
-    /// F9-D: 工具栏 popup 变更时触发重新筛选（scopePopup 切到"指定位置..."时先弹路径选择器）
+    /// F9-D: 工具栏 popup 变更时触发重新筛选（scopePopup 切到"指定位置…"时先弹路径选择器）
     @objc private func filterPopupChanged(_ sender: NSPopUpButton) {
-        // "指定位置..." 选中时弹出路径选择器，让用户选择目标目录
+        // "指定位置…" 选中时弹出路径选择器，让用户选择目标目录
         if sender === scopePopup,
            ScopePopupIndex(rawValue: scopePopup.indexOfSelectedItem) == .customLocation {
             promptForCustomScopePath()
@@ -840,7 +850,6 @@ public class SearchPanelController: NSWindowController {
     private func reloadFilteredResults() {
         let config = filterSidebar.config
         let scopeIndex = ScopePopupIndex(rawValue: scopePopup.indexOfSelectedItem) ?? .all
-        let typeIndex = typePopup.indexOfSelectedItem
         let timeIndex = timePopup.indexOfSelectedItem
         let now = Date()
         let calendar = Calendar.current
@@ -869,12 +878,6 @@ public class SearchPanelController: NSWindowController {
             if !config.enabledTypes.isEmpty {
                 let matched = fileTypeOf(result)
                 if !config.enabledTypes.contains(matched) { return false }
-            }
-            // 文件类型筛选（工具栏 popup，与侧边栏取交集）
-            if typeIndex > 0 {
-                let popupTypes: [FileTypeFilter] = [.pdf, .image, .video, .document, .audio]
-                let popupType = popupTypes[typeIndex - 1]
-                if fileTypeOf(result) != popupType { return false }
             }
             // 修改时间筛选（工具栏 popup）
             if timeIndex > 0 {
@@ -910,7 +913,7 @@ public class SearchPanelController: NSWindowController {
         resultsTableView.reloadData()
         if isSearching {
             // 搜索进行中：显示省略号表示仍在更新
-            resultsHeader.stringValue = "找到 \(filteredResults.count) 个结果..."
+            resultsHeader.stringValue = "找到 \(filteredResults.count) 个结果…"
         } else {
             resultsHeader.stringValue = "找到 \(filteredResults.count) 个结果"
         }

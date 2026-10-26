@@ -32,7 +32,8 @@ enum SettingsSection: Int, CaseIterable {
         switch self {
         case .general:      return "通用"
         case .appearance:   return "外观"
-        case .fileManage:   return "文件管理"
+        // R4-13：侧栏原名「文件管理」，页内却只有删除相关项——名实不符。
+        case .fileManage:   return "安全与确认"
         case .tagManage:    return "标签管理"
         case .smb:          return "网络存储"
         case .shortcuts:    return "快捷键"
@@ -40,12 +41,17 @@ enum SettingsSection: Int, CaseIterable {
         }
     }
 
+    /// 该分区是否有可被顶部搜索框过滤的设置行（R4-16：关于页没有，搜索框是假入口）。
+    var isSearchable: Bool {
+        return self != .about
+    }
+
     /// 侧栏分区图标（Lucide）
     var icon: FFIconName {
         switch self {
         case .general:      return .settings
         case .appearance:   return .palette
-        case .fileManage:   return .folder
+        case .fileManage:   return .trash2
         case .tagManage:    return .tag
         case .smb:          return .network
         case .shortcuts:    return .listChecks
@@ -211,7 +217,7 @@ public class SettingsWindowController: NSWindowController {
 
         // 搜索框（内容区顶部，过滤设置项）
         searchField = NSSearchField()
-        searchField.placeholderString = "搜索设置..."
+        searchField.placeholderString = "搜索设置…"
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.target = self
         searchField.action = #selector(searchFieldChanged(_:))
@@ -317,6 +323,10 @@ public class SettingsWindowController: NSWindowController {
         // 选中对应行
         sidebarTableView.selectRowIndexes(IndexSet(integer: section.rawValue), byExtendingSelection: false)
 
+        // R4-16：关于页没有任何可搜条目，搜索框摆在那里是个假入口。
+        searchField.isHidden = !section.isSearchable
+        if searchField.isHidden { searchField.stringValue = "" }
+
         // 移除旧内容视图
         currentContentView?.removeFromSuperview()
         currentRows = []
@@ -340,13 +350,17 @@ public class SettingsWindowController: NSWindowController {
             searchField.heightAnchor.constraint(equalToConstant: 28),
         ])
 
+        let newTop: NSLayoutConstraint = searchField.isHidden
+            // R4-16：搜索框隐藏的分区（关于）不能顶开 40pt 空档，内容直接贴顶。
+            ? newView.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: 12)
+            // 修复搜索栏下方大片空白：newView.top 紧贴 searchField.bottom（间距 0），
+            // 内部 stack 距 clipView.top 也只留 4pt——叠合为搜索框下方仅 4pt 视觉间距。
+            : newView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 0)
+
         NSLayoutConstraint.activate([
             newView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             newView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            // 修复搜索栏下方大片空白：newView.top 紧贴 searchField.bottom（间距 0），
-            // 内部 stack 距 clipView.top 也只留 4pt——叠合为搜索框下方仅 4pt 视觉间距，
-            // 内容紧贴搜索栏。
-            newView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 0),
+            newTop,
             newView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
         currentContentView = newView
@@ -455,15 +469,8 @@ public class SettingsWindowController: NSWindowController {
         // let dualPaneRow = SettingsRowView.toggleRow(...)  // 保留定义供未来接线恢复
         // let rememberPaneRow = SettingsRowView.toggleRow(...)
 
-        let confirmOpsRow = SettingsRowView.toggleRow(
-            title: "移动前确认",
-            desc: "移动到另一目录前弹出确认对话框（删除确认在「删除与安全」）",
-            state: FFAppSettings.confirmMove(),
-            action: { state in
-                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.confirmFileOperations)
-            }
-        )
-        fileOpsSection.addRow(confirmOpsRow)
+        // R4-13：删除/移动确认原先拆在「通用」与「文件管理」两处，同一类开关找不到齐。
+        // 移动前确认已并入「安全与确认」分区。
 
         let behaviors: [FFDragBehavior] = [.finder, .alwaysCopy, .alwaysMove]
         let currentBehavior = FFAppSettings.dragBehavior()
@@ -499,7 +506,7 @@ public class SettingsWindowController: NSWindowController {
             }
         )
         fileOpsSection.addRow(keepSelectionRow)
-        registerForSearch(fileOpsSection, rows: [defaultViewRow, showHiddenRow, confirmOpsRow,
+        registerForSearch(fileOpsSection, rows: [defaultViewRow, showHiddenRow,
                                                  defaultBehaviorRow, folderFirstRow, keepSelectionRow])
 
         let stack = NSStackView(views: [startupSection, fileOpsSection])
@@ -518,13 +525,14 @@ public class SettingsWindowController: NSWindowController {
     private func buildAppearanceSection() -> NSView {
         let container = makeScrollContainer()
 
-        // 主题切换 section：AppearanceSettingsView 自带标题/三个主题按钮/说明文字，
+        // 主题切换 section：AppearanceSettingsView 提供三张主题卡与界面尺寸，
         // 作为全宽内容嵌入分区卡片。
+        // R4-26：分区图标不再用月亮（与「深色」选项图标撞形）；视图内也不再重复「外观」标题。
         // v0.7.4 实测证据修复：主题卡片此前走 themeSection.addContentView(appearanceView)，
         // 运行时 LAYOUT-DIAG 显示主题卡片塌缩为 286pt（正常应全宽 531），按钮溢出。
         // 而关于页/标签列表走 addRow + setFullWidthContent 通道实测全宽正常（531）。
         // 故改为同一已验证通道：用 SettingsRowView 包住 appearanceView 再 addRow。
-        let themeSection = SettingsSectionView(title: "主题", icon: .moon)
+        let themeSection = SettingsSectionView(title: "主题", icon: FFSettingsIcons.themeSection)
         let appearanceView = AppearanceSettingsView(frame: .zero)
         let themeRow = SettingsRowView(title: "", desc: "")
         themeRow.setFullWidthContent(appearanceView)
@@ -577,9 +585,9 @@ public class SettingsWindowController: NSWindowController {
 
         let detailsPreviewRow = SettingsRowView.sliderRow(
             title: "详情预览大小",
-            desc: "文件详情展开时的预览图标尺寸（48–96pt）",
+            desc: "文件详情展开时的预览图标尺寸（48–200pt；也可在详情栏拖动手柄/右键/捏合）",
             minValue: 48,
-            maxValue: 96,
+            maxValue: 200,
             value: Double(FFDetailsLayoutPolicy.storedIconSize())
         ) { value in
             UserDefaults.standard.set(value, forKey: FFUserDefaultsKeys.detailsPreviewSize)
@@ -605,7 +613,7 @@ public class SettingsWindowController: NSWindowController {
         let container = makeScrollContainer()
 
         // 排序与显示：原「智能排序 / 保留选择位置」没有代码读取，属于死开关，已移除。
-        let safetySection = SettingsSectionView(title: "删除与安全", icon: .trash2)
+        let confirmSection = SettingsSectionView(title: "操作确认", icon: .circleCheck)
         let confirmRow = SettingsRowView.toggleRow(
             title: "删除前确认",
             desc: "移到废纸篓前显示确认弹窗",
@@ -614,15 +622,21 @@ public class SettingsWindowController: NSWindowController {
                 UserDefaults.standard.set(!state, forKey: FFUserDefaultsKeys.deleteConfirmDisabled)
             }
         )
-        safetySection.addRow(confirmRow)
-        let permanentRow = SettingsRowView.labelRow(
-            title: "永久删除",
-            desc: "跳过废纸篓的永久删除始终二次确认，且无法撤销"
+        confirmSection.addRow(confirmRow)
+        let moveConfirmRow = SettingsRowView.toggleRow(
+            title: "移动前确认",
+            desc: "移动到另一目录前弹出确认对话框",
+            state: FFAppSettings.confirmMove(),
+            action: { state in
+                UserDefaults.standard.set(state, forKey: FFUserDefaultsKeys.confirmFileOperations)
+            }
         )
-        safetySection.addRow(permanentRow)
-        registerForSearch(safetySection, rows: [confirmRow, permanentRow])
+        confirmSection.addRow(moveConfirmRow)
+        // R4-13：永久删除没有开关（不允许关掉二次确认），排成设置行会让用户去找控件。
+        confirmSection.addFootnote(FFNaming.permanentDeleteNotice)
+        registerForSearch(confirmSection, rows: [confirmRow, moveConfirmRow])
 
-        let stack = NSStackView(views: [safetySection])
+        let stack = NSStackView(views: [confirmSection])
         stack.orientation = .vertical
         stack.spacing = 12
         stack.detachesHiddenViews = false
@@ -663,8 +677,9 @@ public class SettingsWindowController: NSWindowController {
         let configSection = SettingsSectionView(title: "SMB 配置", icon: .server)
         let domainRow = SettingsRowView.textFieldRow(
             title: "默认域",
-            desc: "SMB 连接时使用的默认域",
-            placeholder: "WORKGROUP",
+            // R4-14：占位符写成 WORKGROUP 时，用户分不清那是提示还是已生效的默认值。
+            desc: "SMB 连接时预填的域；留空表示不使用域",
+            placeholder: "留空（不使用域）",
             value: UserDefaults.standard.string(forKey: FFUserDefaultsKeys.smbDefaultDomain) ?? ""
         ) { val in
             UserDefaults.standard.set(val, forKey: FFUserDefaultsKeys.smbDefaultDomain)
@@ -708,23 +723,19 @@ public class SettingsWindowController: NSWindowController {
     private func buildShortcutsSection() -> NSView {
         let container = makeScrollContainer()
 
-        // Wave2 P0-3：「恢复默认」入口——清空全部 shortcut_* 设置键并广播，
-        // 录制器显示与运行时键位（ShortcutCenter / 菜单展示）均回退默认值
-        let resetButton = NSButton(title: "恢复默认快捷键", target: self, action: #selector(resetShortcutsToDefaults(_:)))
+        // R4-15：恢复默认按钮此前是一条浮在卡片外的裸 stack，看着像上一张卡掉出来的碎片。
+        let resetSection = SettingsSectionView(title: "自定义", icon: .rotateCcw)
+        let resetButton = NSButton(title: "恢复默认快捷键",
+                                   target: self,
+                                   action: #selector(resetShortcutsToDefaults(_:)))
         resetButton.bezelStyle = .rounded
         resetButton.controlSize = .small
-        resetButton.translatesAutoresizingMaskIntoConstraints = false
-
-        let resetHint = NSTextField(labelWithString: "清除全部自定义快捷键，恢复系统默认键位")
-        resetHint.font = NSFont.systemFont(ofSize: 11)
-        resetHint.textColor = .secondaryLabelColor
-        resetHint.translatesAutoresizingMaskIntoConstraints = false
-
-        let resetRow = NSStackView(views: [resetButton, resetHint])
-        resetRow.orientation = .horizontal
-        resetRow.spacing = 10
-        resetRow.alignment = .centerY
-        resetRow.translatesAutoresizingMaskIntoConstraints = false
+        resetButton.heightAnchor.constraint(equalToConstant: FFSettingsMetrics.controlHeight).isActive = true
+        let resetRow = SettingsRowView(title: "恢复默认快捷键",
+                                       desc: "清除全部自定义键位，回到系统默认",
+                                       control: resetButton)
+        resetSection.addRow(resetRow)
+        registerForSearch(resetSection, rows: [resetRow])
 
         let shortcuts: [(String, String, String)] = [
             ("新建文件夹", "⌘⇧N", FFUserDefaultsKeys.shortcutNewFolder),
@@ -742,11 +753,11 @@ public class SettingsWindowController: NSWindowController {
             ("刷新", "⌘R", FFUserDefaultsKeys.shortcutRefresh),
             ("搜索", "⌘F", FFUserDefaultsKeys.shortcutSearch),
             ("重复文件扫描", "⌘⇧D", FFUserDefaultsKeys.shortcutDuplicateScan),
-            ("任务面板", "⌘0", FFUserDefaultsKeys.shortcutTaskPanel),
+            ("任务中心", "⌘0", FFUserDefaultsKeys.shortcutTaskPanel),
             ("QuickLook 预览", "空格键", FFUserDefaultsKeys.shortcutQuicklook),
             ("复制选中项", "⌘D", FFUserDefaultsKeys.shortcutDuplicate),
             ("连接服务器", "⌘K", FFUserDefaultsKeys.shortcutConnectServer),
-            ("偏好设置", "⌘,", FFUserDefaultsKeys.shortcutPreferences),
+            ("设置", "⌘,", FFUserDefaultsKeys.shortcutPreferences),
         ]
 
         // 文件操作快捷键 section
@@ -757,7 +768,7 @@ public class SettingsWindowController: NSWindowController {
         }
         for (name, defaultKey, key) in fileShortcuts {
             let saved = UserDefaults.standard.string(forKey: key) ?? defaultKey
-            let row = SettingsRowView(title: name, desc: "")
+            let row = SettingsRowView(title: name, desc: Self.shortcutRowHint[name] ?? "")
             let recorder = ShortcutRecorderView(storageKey: key, shortcut: saved)
             row.setControl(recorder)
             fileShortcutSection.addRow(row)
@@ -773,7 +784,7 @@ public class SettingsWindowController: NSWindowController {
         }
         for (name, defaultKey, key) in viewShortcuts {
             let saved = UserDefaults.standard.string(forKey: key) ?? defaultKey
-            let row = SettingsRowView(title: name, desc: "")
+            let row = SettingsRowView(title: name, desc: Self.shortcutRowHint[name] ?? "")
             let recorder = ShortcutRecorderView(storageKey: key, shortcut: saved)
             row.setControl(recorder)
             viewShortcutSection.addRow(row)
@@ -789,7 +800,7 @@ public class SettingsWindowController: NSWindowController {
         }
         for (name, defaultKey, key) in otherShortcuts {
             let saved = UserDefaults.standard.string(forKey: key) ?? defaultKey
-            let row = SettingsRowView(title: name, desc: "")
+            let row = SettingsRowView(title: name, desc: Self.shortcutRowHint[name] ?? "")
             let recorder = ShortcutRecorderView(storageKey: key, shortcut: saved)
             row.setControl(recorder)
             otherShortcutSection.addRow(row)
@@ -797,7 +808,7 @@ public class SettingsWindowController: NSWindowController {
         }
         registerForSearch(otherShortcutSection, rows: otherRows)
 
-        let stack = NSStackView(views: [resetRow, fileShortcutSection, viewShortcutSection, otherShortcutSection])
+        let stack = NSStackView(views: [resetSection, fileShortcutSection, viewShortcutSection, otherShortcutSection])
         stack.orientation = .vertical
         stack.spacing = 12
         stack.detachesHiddenViews = false
@@ -807,6 +818,13 @@ public class SettingsWindowController: NSWindowController {
         constrainStackInScroll(stack, in: container)
         return container
     }
+
+    /// R4-15：「复制」与「复制选中项」在快捷键列表里读起来像同一个动作，
+    /// 给这两行一句副标题说明它们分别对应剪贴板与就地副本。
+    private static let shortcutRowHint: [String: String] = [
+        "复制": "复制到剪贴板，再粘贴到别处",
+        "复制选中项": "在同一目录立即生成副本",
+    ]
 
     /// Wave2 P0-3：恢复全部快捷键默认值：清空 shortcut_* 设置键 → 广播 .shortcutsChanged
     /// （MainMenu 重绑菜单键位到默认）→ 重建当前分区（录制器按钮显示回默认值）
@@ -830,7 +848,9 @@ public class SettingsWindowController: NSWindowController {
     private func buildAboutSection() -> NSView {
         let container = makeScrollContainer()
 
-        let aboutSection = SettingsSectionView(title: "关于 FlowFinder", icon: .info)
+        // R4-16：侧栏已写「关于」、卡片内已有大号「FlowFinder」，
+        // 分区标题再叫「关于 FlowFinder」是第三处重复。改为「应用信息」。
+        let aboutSection = SettingsSectionView(title: "应用信息", icon: .info)
 
         // 应用图标（64x64pt）
         let appIcon = NSImageView()
@@ -861,10 +881,11 @@ public class SettingsWindowController: NSWindowController {
         buildLabel.font = NSFont.systemFont(ofSize: 11)
         buildLabel.textColor = NSColor.tertiaryLabelColor
         buildLabel.lineBreakMode = .byTruncatingMiddle
-        buildLabel.toolTip = FFBuildInfo.aboutBuildLine
+        // R4-16：bundle 原始路径不再摊在页面上，需要时悬停取用。
+        buildLabel.toolTip = "\(FFBuildInfo.aboutBuildLine) · \(FFBuildInfo.bundlePath)"
         buildLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let descLabel = NSTextField(labelWithString: "原生 macOS 文件管理器，双面板、标签、查重、AI 智能分类")
+        let descLabel = NSTextField(labelWithString: "原生 macOS 文件管理器，双面板、标签、查重、按类型自动分类")
         descLabel.font = NSFont.systemFont(ofSize: 12)
         descLabel.textColor = NSColor.secondaryLabelColor
         descLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1007,6 +1028,80 @@ public class SettingsWindowController: NSWindowController {
     }
 }
 
+// MARK: - 侧栏行视图
+
+/// R4-04：设置侧栏 7 个分区此前「同样无高亮」——选中态交给一层
+/// `FFGlassView(.component, .strokeOnly)` 描边，叠在侧栏底色上实测完全看不出来。
+/// 行自己画选中态：强调色淡底 + 描边 + 文字/图标同色，取消选中后整体还原。
+final class FFSettingsSidebarRow: NSTableCellView {
+
+    var isSelectedRow: Bool = false {
+        didSet { guard oldValue != isSelectedRow else { return }; refreshChrome() }
+    }
+
+    let iconView = NSImageView()
+    let titleLabel = NSTextField(labelWithString: "")
+
+    init(title: String, icon: FFIconName) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.stringValue = title
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        iconView.image = FFIcon.template(icon, size: 14)
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(iconView)
+        addSubview(titleLabel)
+        self.imageView = iconView
+        self.textField = titleLabel
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 18),
+            iconView.heightAnchor.constraint(equalToConstant: 18),
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+        ])
+
+        refreshChrome()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshChrome),
+            name: .appearanceChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshChrome),
+            name: .accentColorChanged, object: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func refreshChrome() {
+        let accent = FFAccent.current
+        layer?.cornerRadius = 7
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = isSelectedRow ? 1 : 0
+        layer?.borderColor = (isSelectedRow ? accent.withAlphaComponent(0.5)
+                                           : NSColor.clear).cgColor
+        layer?.backgroundColor = (isSelectedRow ? accent.withAlphaComponent(0.14)
+                                               : NSColor.clear).cgColor
+        titleLabel.textColor = isSelectedRow ? accent : NSColor.labelColor
+        titleLabel.font = NSFont.systemFont(ofSize: 13,
+                                            weight: isSelectedRow ? .semibold : .regular)
+        iconView.contentTintColor = isSelectedRow ? accent : NSColor.secondaryLabelColor
+    }
+}
+
 // MARK: - NSTableViewDataSource / Delegate
 
 extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
@@ -1029,54 +1124,31 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
         cell.imageView = nil
         cell.textField = nil
 
-        // 选中态玻璃背景层
-        let selectionBackground = FFGlassView(level: .component, cornerRadius: 8, decoration: .strokeOnly)
-        selectionBackground.translatesAutoresizingMaskIntoConstraints = false
-        selectionBackground.isHidden = (tableView.selectedRow != row)
-        selectionBackground.identifier = NSUserInterfaceItemIdentifier("selectionBg")
-
-        let icon = NSImageView()
-        icon.image = FFIcon.template(section.icon, size: 14)
-        icon.contentTintColor = NSColor.secondaryLabelColor
-        icon.imageScaling = .scaleProportionallyDown
-        icon.translatesAutoresizingMaskIntoConstraints = false
-
-        let label = NSTextField(labelWithString: section.title)
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.textColor = NSColor.labelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        cell.addSubview(selectionBackground)
-        cell.addSubview(icon)
-        cell.addSubview(label)
-        cell.textField = label
-
+        let rowView = FFSettingsSidebarRow(title: section.title, icon: section.icon)
+        rowView.isSelectedRow = (tableView.selectedRow == row)
+        cell.addSubview(rowView)
         NSLayoutConstraint.activate([
-            selectionBackground.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-            selectionBackground.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-            selectionBackground.topAnchor.constraint(equalTo: cell.topAnchor, constant: 2),
-            selectionBackground.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -2),
-
-            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 14),
-            icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            icon.heightAnchor.constraint(equalToConstant: 18),
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
-            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            rowView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            rowView.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+            rowView.topAnchor.constraint(equalTo: cell.topAnchor, constant: 2),
+            rowView.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -2),
         ])
+        cell.imageView = rowView.imageView
+        cell.textField = rowView.textField
 
         return cell
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
         guard let tableView = notification.object as? NSTableView else { return }
-        // 更新所有可见行的选中态玻璃背景
+        // 更新所有可见行的选中态
         let selectedRow = tableView.selectedRow
         for row in 0..<tableView.numberOfRows {
-            guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView else { continue }
-            if let bg = cell.subviews.first(where: { $0.identifier == NSUserInterfaceItemIdentifier("selectionBg") }) {
-                bg.isHidden = (row != selectedRow)
+            guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) else { continue }
+            for subview in cell.subviews {
+                if let rowView = subview as? FFSettingsSidebarRow {
+                    rowView.isSelectedRow = (row == selectedRow)
+                }
             }
         }
     }
@@ -1135,7 +1207,7 @@ class ShortcutRecorderView: NSView {
             return
         }
         isRecording = true
-        button.title = "按下快捷键..."
+        button.title = "按下快捷键…"
         button.highlight(true)
         // 让当前窗口接受键盘事件
         window?.makeFirstResponder(self)

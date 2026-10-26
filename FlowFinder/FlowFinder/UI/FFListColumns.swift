@@ -1,5 +1,4 @@
 import AppKit
-import CoreServices
 
 /// 列表列定义与可见性状态（2026-10-20 #3）。
 ///
@@ -204,6 +203,28 @@ enum FFListColumnsState {
         }
         return current
     }
+
+    // MARK: - 临时收起的列（R4-03）
+
+    /// 因面板太窄被**临时**收起的列，按面板分别记录。
+    /// 只存内存、不写 UserDefaults：用户勾过但被宽度挤掉的列不该变成持久设置。
+    private static var fittedOutBySide: [PaneSide: Set<FFListColumn>] = [:]
+
+    static func setFittedOut(_ columns: [FFListColumn], for side: PaneSide) {
+        fittedOutBySide[side] = Set(columns)
+    }
+
+    /// 任一侧收起即算收起：「显示列」菜单是双栏共用的，只报一侧会漏标。
+    static func fittedOutColumns() -> Set<FFListColumn> {
+        var result: Set<FFListColumn> = []
+        for set in fittedOutBySide.values { result.formUnion(set) }
+        return result
+    }
+
+    /// 列在菜单里的标题：被宽度挤掉时说明原因，不让列无声消失。
+    static func title(forDisplay column: FFListColumn) -> String {
+        fittedOutColumns().contains(column) ? "\(column.title)（面板太窄）" : column.title
+    }
 }
 
 /// 列头右键菜单 / 显示菜单 / 工具栏视图面板共用的菜单构建器。
@@ -217,7 +238,8 @@ enum FFListColumnMenu {
         let menu = NSMenu(title: "显示列")
         menu.autoenablesItems = false
         for column in FFListColumn.allCases {
-            let item = NSMenuItem(title: column.title, action: action, keyEquivalent: "")
+            let item = NSMenuItem(title: FFListColumnsState.title(forDisplay: column),
+                                  action: action, keyEquivalent: "")
             item.target = target
             item.representedObject = column.rawValue
             item.state = FFListColumnsState.isVisible(column) ? .on : .off
@@ -247,14 +269,152 @@ final class FFListColumnMenuDelegate: NSObject, NSMenuDelegate {
             guard let raw = item.representedObject as? String,
                   let column = FFListColumn(rawValue: raw) else { continue }
             item.state = FFListColumnsState.isVisible(column) ? .on : .off
+            item.title = FFListColumnsState.title(forDisplay: column)
         }
     }
 }
 
-/// Finder 说明（kMDItemFinderComment）缓存。
+/// Finder 说明（kMDItemFinderComment）读写与旧 UserDefaults 迁移。
 ///
-/// 说明列不在文件系统属性里，只能走 Spotlight 元数据；同步查询会拖慢滚动，
-/// 因此先返回缓存（未命中返回 nil，界面显示占位），后台取到后再回调刷新。
+/// Finder 的「显示简介 → 注释」把说明存成 `com.apple.metadata:kMDItemFinderComment`
+/// 扩展属性，值是 binary plist 字符串。直接走 xattr 比等 Spotlight 索引更可靠，
+/// 且文件改名/移动时 xattr 随文件走，不会像绝对路径 key 一样丢失。
+enum FFFinderCommentStore {
+
+    struct MigrationReport: Equatable {
+        var migrated = 0
+        var keptLegacy = 0
+        var failed = 0
+        var skipped = false
+    }
+
+    static let xattrName = "com.apple.metadata:kMDItemFinderComment"
+    static let legacyDefaultsKey = "fileDescriptions"
+    static let migrationDefaultsKey = "fileDescriptionsMigratedToFinderCommentV1"
+
+    static func read(path: String) -> String? {
+        guard let data = readXattr(path: path) else { return nil }
+        if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+           let text = plist as? String {
+            return nonEmpty(text)
+        }
+        // 兼容早期写入的纯文本 xattr
+        if let text = String(data: data, encoding: .utf8) {
+            return nonEmpty(text)
+        }
+        return nil
+    }
+
+    @discardableResult
+    static func write(path: String, comment: String) -> Bool {
+        guard nonEmpty(comment) != nil else {
+            return removeXattr(path: path)
+        }
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: comment,
+                                                             format: .binary,
+                                                             options: 0) else {
+            return false
+        }
+        return setXattr(path: path, data: data)
+    }
+
+    static func legacyDescription(path: String, defaults: UserDefaults = .standard) -> String? {
+        let dict = defaults.dictionary(forKey: legacyDefaultsKey) ?? [:]
+        return nonEmpty(dict[path] as? String ?? "")
+    }
+
+    static func removeLegacyDescription(path: String, defaults: UserDefaults = .standard) {
+        var dict = defaults.dictionary(forKey: legacyDefaultsKey) ?? [:]
+        guard dict.removeValue(forKey: path) != nil else { return }
+        if dict.isEmpty {
+            defaults.removeObject(forKey: legacyDefaultsKey)
+        } else {
+            defaults.set(dict, forKey: legacyDefaultsKey)
+        }
+    }
+
+    /// 首次启动把旧绝对路径字典迁移到 Finder 注释。
+    /// - 路径仍存在且 Finder 注释为空：写入并移除旧条目
+    /// - Finder 注释已有值：不覆盖，保留旧条目
+    /// - 路径失效或写入失败：保留旧条目，详情栏仍可回退读取
+    @discardableResult
+    static func migrateLegacyDescriptionsIfNeeded(
+        defaults: UserDefaults = .standard,
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        readComment: (String) -> String? = { FFFinderCommentStore.read(path: $0) },
+        writeComment: (String, String) -> Bool = { path, comment in
+            FFFinderCommentStore.write(path: path, comment: comment)
+        }
+    ) -> MigrationReport {
+        if defaults.bool(forKey: migrationDefaultsKey) {
+            return MigrationReport(skipped: true)
+        }
+
+        let raw = defaults.dictionary(forKey: legacyDefaultsKey) ?? [:]
+        let legacy = raw.compactMapValues { $0 as? String }
+        var remaining: [String: String] = [:]
+        var report = MigrationReport()
+
+        for (path, value) in legacy {
+            guard nonEmpty(value) != nil else { continue }
+            guard fileExists(path) else {
+                remaining[path] = value
+                report.keptLegacy += 1
+                continue
+            }
+            if nonEmpty(readComment(path) ?? "") != nil {
+                remaining[path] = value
+                report.keptLegacy += 1
+                continue
+            }
+            if writeComment(path, value) {
+                report.migrated += 1
+            } else {
+                remaining[path] = value
+                report.failed += 1
+            }
+        }
+
+        if remaining.isEmpty {
+            defaults.removeObject(forKey: legacyDefaultsKey)
+        } else {
+            defaults.set(remaining, forKey: legacyDefaultsKey)
+        }
+        defaults.set(true, forKey: migrationDefaultsKey)
+        return report
+    }
+
+    // MARK: - private
+
+    private static func nonEmpty(_ text: String) -> String? {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
+    private static func readXattr(path: String) -> Data? {
+        let length = getxattr(path, xattrName, nil, 0, 0, 0)
+        guard length > 0 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: length)
+        let result = getxattr(path, xattrName, &buffer, length, 0, 0)
+        guard result > 0 else { return nil }
+        return Data(buffer)
+    }
+
+    private static func setXattr(path: String, data: Data) -> Bool {
+        let result = data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) -> Int32 in
+            guard let baseAddress = buffer.baseAddress else { return -1 }
+            return setxattr(path, xattrName, baseAddress, data.count, 0, 0)
+        }
+        return result == 0
+    }
+
+    private static func removeXattr(path: String) -> Bool {
+        let result = removexattr(path, xattrName, 0)
+        return result == 0 || errno == ENOENT
+    }
+}
+
+/// Finder 说明缓存：列表滚动时先读内存，未命中再后台读 xattr。
+/// 写入说明后由详情栏调用 `setComment` 直接更新缓存，避免等下一次重读。
 final class FFFinderCommentCache {
 
     static let shared = FFFinderCommentCache()
@@ -286,21 +446,32 @@ final class FFFinderCommentCache {
         lock.unlock()
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            var comment: String?
-            if let item = MDItemCreateWithURL(nil, URL(fileURLWithPath: path) as CFURL),
-               let value = MDItemCopyAttribute(item, kMDItemFinderComment) as? String,
-               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                comment = value
-            }
+            let comment = FFFinderCommentStore.read(path: path)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.lock.lock()
                 self.pending.remove(path)
                 if let comment { self.cache[path] = comment }
+                else { self.cache.removeValue(forKey: path) }
                 self.lock.unlock()
                 completion(comment)
             }
         }
+    }
+
+    func setComment(_ comment: String?, for path: String) {
+        lock.lock(); defer { lock.unlock() }
+        if let comment, !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cache[path] = comment
+        } else {
+            cache.removeValue(forKey: path)
+        }
+    }
+
+    func removeAll() {
+        lock.lock(); defer { lock.unlock() }
+        cache.removeAll()
+        pending.removeAll()
     }
 }
 
@@ -308,5 +479,11 @@ final class FFFinderCommentCache {
 enum FFColumnFitPolicy {
     static func shouldFit(previousWidth: CGFloat, currentWidth: CGFloat) -> Bool {
         abs(currentWidth - previousWidth) > 0.5
+    }
+
+    /// 名称列下限 = 可用宽度的 40%，且不低于 160pt。
+    /// 类型/日期等次要列不得把主信息列挤得比它们更窄。
+    static func nameFloor(available: CGFloat) -> CGFloat {
+        max(160, available * 0.4)
     }
 }

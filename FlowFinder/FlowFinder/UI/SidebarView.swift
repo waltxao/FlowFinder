@@ -134,6 +134,23 @@ private class FFFNoDisclosureOutlineView: NSOutlineView {
     /// Enter 激活选中行（导航到收藏目录）
     var onActivateRow: (() -> Void)?
 
+    /// 已选中行再次单击（Finder 语义）：当前路径在其子目录时，复点仍应回到收藏根。
+    /// 导航目前只挂在 selection change 上，选中行不变时不会触发，需在这里补一次。
+    var onReselectRow: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = self.row(at: point)
+        let wasSelected = row >= 0 && row == selectedRow
+        super.mouseDown(with: event)
+        guard wasSelected, row >= 0, event.clickCount == 1,
+              let window else { return }
+        // 拖动收藏重排也会从已选中行按下：位移超过 3pt 视为拖拽，不导航。
+        let end = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        guard hypot(end.x - point.x, end.y - point.y) <= 3 else { return }
+        onReselectRow?()
+    }
+
     override func keyDown(with event: NSEvent) {
         // Enter 自带 .numericPad 标志，不能用 modifiers.isEmpty 判定
         let isReturn = event.keyCode == 36 || event.keyCode == 76
@@ -214,12 +231,8 @@ class SidebarView: NSView, FFRegionAware {
     /// 由 MainWindowController 注入：每次打开工具页时构建最新活动面板上下文。
     var toolContextProvider: (() -> FFToolContext?)?
 
-    /// 品牌旁的「工具」胶囊：点击进入/退出侧栏工具页
+    /// 品牌旁的「工具」胶囊：2026-10-24 起入口迁到底栏右侧圆钮，不再加入视图层级。
     private var toolPill: FFPillButton!
-    /// 宽侧栏（≥200pt）胶囊与名称同行，窄侧栏移到版本号所在行
-    private var pillWideConstraints: [NSLayoutConstraint] = []
-    private var pillNarrowConstraints: [NSLayoutConstraint] = []
-    private var pillIsWide = true
     /// 工具页只替换侧栏内容，收藏/位置/标签原样保留（返回时恢复滚动位置）
     private var toolPageView: SidebarToolPageView?
     private(set) var isToolPageShown = false
@@ -273,20 +286,8 @@ class SidebarView: NSView, FFRegionAware {
         setupUI()
     }
 
-    /// 宽度跨过 200pt 时把「工具」胶囊在名称行/版本行之间换边。
-    /// 用两套约束显式切换而不是靠优先级仲裁：两条 centerY 挂在不同锚点上，
-    /// 优先级会让窄侧栏下胶囊压到名称尾部。
-    override func layout() {
-        super.layout()
-        let wide = bounds.width >= 200
-        guard wide != pillIsWide else { return }
-        pillIsWide = wide
-        NSLayoutConstraint.deactivate(wide ? pillNarrowConstraints : pillWideConstraints)
-        NSLayoutConstraint.activate(wide ? pillWideConstraints : pillNarrowConstraints)
-    }
-
     private func setupUI() {
-        // 透明背景，依赖 MainWindowController 的 NSVisualEffectView 玻璃态
+        // 透明背景，依赖 MainWindowController 的窗口级液态玻璃（NSGlassEffectView / NSVisualEffectView 回退）
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
@@ -315,11 +316,11 @@ class SidebarView: NSView, FFRegionAware {
         let versionClick = NSClickGestureRecognizer(target: self, action: #selector(openSettings))
         brandVersionLabel.addGestureRecognizer(versionClick)
 
-        // R19-2 D-02：工具入口从顶栏搬回品牌右侧，做成 24pt 的 wrench 胶囊
+        // 2026-10-24：工具入口迁到底栏右侧圆钮；pill 保留对象仅供旧测试直接调用 onClick，不再显示
         toolPill = FFPillButton(title: "工具", icon: .wrench, height: 24)
         toolPill.onClick = { [weak self] in self?.toggleToolPage() }
         toolPill.setAccessibilityLabel("工具")
-        brandView.addSubview(toolPill)
+        toolPill.isHidden = true
 
         NSLayoutConstraint.activate([
             brandView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
@@ -338,19 +339,6 @@ class SidebarView: NSView, FFRegionAware {
             // 版本号同样不越界
             brandVersionLabel.trailingAnchor.constraint(lessThanOrEqualTo: brandView.trailingAnchor),
         ])
-
-        // 胶囊位置随侧栏宽度换行：宽侧栏贴名称行，窄侧栏让到版本号行，名称始终完整
-        pillWideConstraints = [
-            toolPill.trailingAnchor.constraint(equalTo: brandView.trailingAnchor),
-            toolPill.centerYAnchor.constraint(equalTo: appNameView.centerYAnchor),
-            appNameView.trailingAnchor.constraint(lessThanOrEqualTo: toolPill.leadingAnchor, constant: -8),
-        ]
-        pillNarrowConstraints = [
-            toolPill.trailingAnchor.constraint(equalTo: brandView.trailingAnchor),
-            toolPill.centerYAnchor.constraint(equalTo: brandVersionLabel.centerYAnchor),
-            brandVersionLabel.trailingAnchor.constraint(lessThanOrEqualTo: toolPill.leadingAnchor, constant: -8),
-        ]
-        NSLayoutConstraint.activate(pillWideConstraints)
 
         // v0.8.0 P1：「个人收藏」标题改为 outline 分区标题行（group row），不再用外置 label。
         // 2026-10-18 #4/#5：位置与标签也用同一套分区标题视图——同字号、同缩进、同行高，
@@ -395,6 +383,9 @@ class SidebarView: NSView, FFRegionAware {
         favoritesOutlineView.setDraggingSourceOperationMask(.move, forLocal: true)
         favoritesOutlineView.setDraggingSourceOperationMask([], forLocal: false)
         favoritesOutlineView.onActivateRow = { [weak self] in
+            self?.navigateToSelectedFavorite()
+        }
+        favoritesOutlineView.onReselectRow = { [weak self] in
             self?.navigateToSelectedFavorite()
         }
         // 右键菜单（多窗口/失效态均在 menuNeedsUpdate 中动态生成）
@@ -679,12 +670,22 @@ class SidebarView: NSView, FFRegionAware {
         onToolPageVisibilityChanged?()
     }
 
+    /// 工具页打开期间，活动面板的选择/目录变化后刷新工具可用性。
+    func refreshToolPageContext() {
+        guard isToolPageShown, let context = toolContextProvider?() else { return }
+        toolPageView?.updateContext(context)
+    }
+
     private func closeToolPage() {
         toolPageView?.removeFromSuperview()
         toolPageView = nil
         sidebarScrollView.isHidden = false
         isToolPageShown = false
         toolPill.isSelected = false
+        // P2：返回收藏后把键盘焦点还给胶囊，避免落到整个窗口
+        if !toolPill.isHiddenOrHasHiddenAncestor {
+            window?.makeFirstResponder(toolPill)
+        }
         onToolPageVisibilityChanged?()
     }
 
@@ -982,7 +983,8 @@ extension SidebarView: NSMenuDelegate {
                                       action: #selector(openFavoriteInNewTab(_:)), keyEquivalent: "")
         newTabItem.target = self
         newTabItem.representedObject = favoritePath(for: favoriteID)
-        newTabItem.isEnabled = (window?.tabbingMode ?? .disallowed) != .disallowed && !missing
+        // 使用应用内标签条；window.tabbingMode 被故意设为 .disallowed，不能据此禁用此入口。
+        newTabItem.isEnabled = !missing
 
         let newWindowItem = menu.addItem(withTitle: "在新窗口中打开",
                                          action: #selector(openFavoriteInNewWindow(_:)), keyEquivalent: "")
@@ -1414,7 +1416,7 @@ private final class FavoritesSidebarDataSource: SidebarDataSourceBase {
 
         let label = NSTextField(labelWithString: text)
         label.font = NSFont.systemFont(ofSize: 11)
-        label.textColor = .tertiaryLabelColor
+        label.textColor = FFVisualTokens.hint
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(label)
@@ -1546,6 +1548,21 @@ class DeviceSidebarDataSource: SidebarDataSourceBase {
 
     var deviceCount: Int { devices.count }
 
+    // MARK: - 「位置」分区收录规则（R4-25）
+
+    /// 只有挂载卷才算「位置」：根卷 `/` 与 `/Volumes/` 下的卷。
+    ///
+    /// 主目录是普通目录，而且默认就在「个人收藏」里——两处各列一次会让侧栏
+    /// 出现两个同名条目（2026-10-23 第四轮审计 R4-25）。
+    static func isVolumePlace(_ path: String) -> Bool {
+        path == "/" || path.hasPrefix("/Volumes/")
+    }
+
+    /// 从候选设备里筛出属于「位置」分区的条目（保持原顺序）
+    static func placeDevices(from candidates: [DeviceItem]) -> [DeviceItem] {
+        candidates.filter { isVolumePlace($0.path) }
+    }
+
     override init() {
         super.init()
         // Wave1 P0-3：不再在 init 内同步 loadDevices（旧实现会在主线程同步
@@ -1644,31 +1661,9 @@ class DeviceSidebarDataSource: SidebarDataSourceBase {
                 freeSize: rootSpace?.free ?? 0
             )
 
-            // 2. 添加用户主目录（作为快捷设备入口）
-            let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-            let homeName = homePath.components(separatedBy: "/").last ?? "Home"
-            let homeSpace = self.getDiskSpace(at: homePath)
-            let homeFsType = self.getFileSystemType(at: homePath) ?? "apfs"
-            newDevices.append(DeviceItem(
-                name: homeName,
-                path: homePath,
-                isRemovable: false,
-                isNetwork: false,
-                totalSize: homeSpace?.total ?? 0,
-                freeSize: homeSpace?.free ?? 0
-            ))
-            newInfo[homePath] = DeviceExtendedInfo(
-                fileSystemType: homeFsType,
-                mountPoint: homePath,
-                totalSize: homeSpace?.total ?? 0,
-                freeSize: homeSpace?.free ?? 0
-            )
-
-            // 3. 过滤并添加外部/网络卷（B11: 增强过滤系统隐藏卷）
+            // 2. 外部/网络卷候选（B11: 增强过滤系统隐藏卷）
+            //    主目录不再作为设备入口：它与「个人收藏」里的 Home 是同一路径（R4-25）
             for vol in volumes {
-                // 只保留 /Volumes/ 下的挂载卷（U盘、外接硬盘、网络驱动器等）
-                guard vol.path.hasPrefix("/Volumes/") else { continue }
-
                 let volName = vol.name
 
                 // B11: 过滤系统隐藏卷
@@ -1703,11 +1698,16 @@ class DeviceSidebarDataSource: SidebarDataSourceBase {
                 )
             }
 
+            // 位置分区收录规则统一在此把关（R4-25），扩展信息只保留入选项
+            let places = Self.placeDevices(from: newDevices)
+            let keptPaths = Set(places.map(\.path))
+            let placeInfo = newInfo.filter { keptPaths.contains($0.key) }
+
             // 数据就绪：主线程一次性替换数据源（ outlineView 读取均在主线程）
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                self.devices = newDevices
-                self.deviceExtendedInfo = newInfo
+                self.devices = places
+                self.deviceExtendedInfo = placeInfo
                 completion?()
             }
         }
@@ -1847,8 +1847,6 @@ class DeviceCellView: NSTableCellView, FFRegionAware {
         let icon: FFIconName
         if dev.path == "/" {
             icon = .hardDrive
-        } else if dev.path == FileManager.default.homeDirectoryForCurrentUser.path {
-            icon = .folder
         } else if dev.isNetwork {
             icon = .server
         } else {

@@ -81,7 +81,7 @@ class DuplicatePreviewPanel: NSView {
         addSubview(contentStack)
 
         emptyLabel.font = NSFont.systemFont(ofSize: 12)
-        emptyLabel.textColor = NSColor.tertiaryLabelColor
+        emptyLabel.textColor = FFVisualTokens.hint
         emptyLabel.alignment = .center
         emptyLabel.maximumNumberOfLines = 2
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false

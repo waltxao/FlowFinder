@@ -27,6 +27,9 @@ final class FFBatch4Tests: XCTestCase {
         XCTAssertFalse(OnboardingPolicy.shouldShow(completed: false, isRunningTests: false, selfTest: true))
         XCTAssertEqual(OnboardingPolicy.permissionTitle(denied: true), "待授权")
         XCTAssertEqual(OnboardingPolicy.permissionTitle(denied: false), "已授权")
+        // C1：TCC 未应答（超时）不得显示「已授权」，否则首启会同时出现「已授权」与「读不到目录」。
+        XCTAssertEqual(OnboardingPolicy.permissionTitle(denied: false, timedOut: true), "待确认")
+        XCTAssertEqual(OnboardingPolicy.permissionTitle(denied: true, timedOut: true), "待授权")
     }
 
     @MainActor
@@ -60,6 +63,16 @@ final class FFBatch4Tests: XCTestCase {
         XCTAssertTrue(text.contains("reason"))
     }
 
+    /// P2：前往文件夹的输入归一化（支持 ~、去空白、拒绝相对路径）
+    func testGoToFolderNormalization() {
+        let home = NSHomeDirectory()
+        XCTAssertEqual(FFGoToFolder.normalize("  ~/Desktop  ", home: home),
+                       (home as NSString).appendingPathComponent("Desktop"))
+        XCTAssertEqual(FFGoToFolder.normalize("/tmp/", home: home), "/tmp")
+        XCTAssertNil(FFGoToFolder.normalize("Documents", home: home))
+        XCTAssertNil(FFGoToFolder.normalize("   ", home: home))
+    }
+
     func testToolTitlesNoLongerClaimAI() {
         FFToolRegistry.registerBuiltInsIfNeeded()
         let titles = FFToolRegistry.shared.registeredTools.map(\.title)
@@ -80,7 +93,33 @@ final class FFBatch4Tests: XCTestCase {
         let loop = controller.keyViewLoopForTesting()
         XCTAssertTrue(loop.contains(controller.sidebarView.sidebarFocusableView),
                       "Tab 环应包含侧栏收藏列表")
-        XCTAssertTrue(loop.contains(controller.sidebarView.toolPillFocusView),
-                      "Tab 环仍应包含工具胶囊")
+        // 2026-10-24：侧栏工具胶囊已迁到底栏右侧圆钮，不再属于侧栏 Tab 环
+    }
+}
+
+final class FFBatchRenamePatternTests: XCTestCase {
+
+    func testEmptyExtensionDoesNotAppendDot() {
+        let folder = FileEntry(path: "/tmp/Projects", name: "Projects", isDirectory: true)
+        XCTAssertEqual(FFBatchRenamePattern.apply("{name}.{ext}", entry: folder, index: 0),
+                       "Projects")
+    }
+
+    func testFileExtensionStillAppends() {
+        let file = FileEntry(path: "/tmp/photo.JPG", name: "photo.JPG", isDirectory: false)
+        XCTAssertEqual(FFBatchRenamePattern.apply("{name}.{ext}", entry: file, index: 0),
+                       "photo.jpg")
+    }
+
+    func testTrailingDotsAreSanitized() {
+        let file = FileEntry(path: "/tmp/report", name: "report", isDirectory: false)
+        XCTAssertEqual(FFBatchRenamePattern.apply("{name}...", entry: file, index: 0),
+                       "report")
+    }
+
+    func testIndexPlaceholderStillWorks() {
+        let file = FileEntry(path: "/tmp/a.txt", name: "a.txt", isDirectory: false)
+        XCTAssertEqual(FFBatchRenamePattern.apply("{index:3}-{name}.{ext}", entry: file, index: 4),
+                       "005-a.txt")
     }
 }

@@ -6,8 +6,9 @@ enum OnboardingPolicy {
         !completed && !isRunningTests && !selfTest
     }
 
-    static func permissionTitle(denied: Bool) -> String {
-        denied ? "待授权" : "已授权"
+    static func permissionTitle(denied: Bool, timedOut: Bool = false) -> String {
+        if denied { return "待授权" }
+        return timedOut ? "待确认" : "已授权"
     }
 }
 
@@ -216,8 +217,9 @@ final class OnboardingWindowController: NSWindowController {
             let denied = Set(report.denied.map(\.title))
             for (title, label) in self.permissionLabels {
                 let isDenied = denied.contains(title)
-                label.stringValue = OnboardingPolicy.permissionTitle(denied: isDenied)
-                label.textColor = isDenied ? .systemOrange : .systemGreen
+                let pending = !isDenied && report.timedOut
+                label.stringValue = OnboardingPolicy.permissionTitle(denied: isDenied, timedOut: pending)
+                label.textColor = (isDenied || pending) ? .systemOrange : .systemGreen
             }
             self.settingsButton.isHidden = !report.needsAttention
         }

@@ -13,6 +13,52 @@ enum FFModalSheetButtonStyle {
     case plain        // 普通次要按钮
 }
 
+/// 实体背景容器：把动态语义色按当前外观重新解析进 layer。
+///
+/// layer 只吃 CGColor 快照：构建时写一次 `windowBackgroundColor.cgColor` 会把背景
+/// 钉死在解析当时的外观上（深色模式下实测停在 Aqua 白色，字段与浅灰标签却按深色
+/// 解析，标签在白底上直接隐形）。走 `updateLayer` 才能在主题切换时重新解析。
+class FFDynamicBackgroundView: NSView {
+    var backgroundFillColor: NSColor = .windowBackgroundColor {
+        didSet { needsDisplay = true }
+    }
+    var fillCornerRadius: CGFloat = 0 {
+        didSet { needsDisplay = true }
+    }
+    var borderStrokeWidth: CGFloat = 0 {
+        didSet { needsDisplay = true }
+    }
+    var borderStrokeColor: NSColor? {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = backgroundFillColor.cgColor
+            layer?.cornerRadius = fillCornerRadius
+            layer?.borderWidth = borderStrokeWidth
+            layer?.borderColor = borderStrokeColor?.cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
 /// 模态对话框基类
 ///
 /// 设计稿中所有对话框共用 macOS sheet 风格（圆角 12pt、阴影、header/body/footer 三段式）。
@@ -104,11 +150,9 @@ class FFModalSheet: NSWindow {
 
         // 任务 F11-2: 实体背景容器（替代 FFGlassView .panel .sheet 玻璃背景，v0.6.7）
         // 保留 12pt 圆角以维持 sheet 视觉风格；背景色为系统动态 windowBackgroundColor。
-        let container = NSView()
+        let container = FFDynamicBackgroundView()
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        container.layer?.cornerRadius = 12
+        container.fillCornerRadius = 12
         // 不设置 masksToBounds：避免裁剪 sheet 内容
         self.contentView = container
 

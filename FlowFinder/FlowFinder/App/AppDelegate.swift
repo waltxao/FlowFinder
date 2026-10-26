@@ -120,6 +120,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         SMBBridge.shared.reconnectSavedConnections()
                     }
                 }
+                // J3-11：旧文件说明（绝对路径 key）一次性迁移到 Finder 注释。
+                // 等权限门与首屏稳定后再跑，避免和 TCC 授权抢 I/O。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+                    DispatchQueue.global(qos: .utility).async {
+                        let report = FFFinderCommentStore.migrateLegacyDescriptionsIfNeeded()
+                        guard report.migrated > 0 else { return }
+                        DispatchQueue.main.async {
+                            FFFinderCommentCache.shared.removeAll()
+                            NotificationCenter.default.post(name: .fileListContentChanged, object: nil)
+                        }
+                    }
+                }
             }
         }
     }

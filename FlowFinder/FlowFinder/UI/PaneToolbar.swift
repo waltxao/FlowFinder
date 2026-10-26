@@ -9,6 +9,7 @@ protocol PaneToolbarDelegate: AnyObject {
     func paneToolbarDidClickUp(_ toolbar: PaneToolbar)
     func paneToolbarDidClickRefresh(_ toolbar: PaneToolbar)
     func paneToolbar(_ toolbar: PaneToolbar, didChangeSearchQuery query: String)
+    func paneToolbar(_ toolbar: PaneToolbar, didChangeSearchScope scope: FFSearchScope)
     func paneToolbar(_ toolbar: PaneToolbar, didChangeSortField field: SortField, ascending: Bool)
     func paneToolbar(_ toolbar: PaneToolbar, didChangeGroupBy groupBy: String)
     func paneToolbar(_ toolbar: PaneToolbar, didChangeViewMode mode: ViewMode)
@@ -54,10 +55,17 @@ class PaneToolbar: NSView, FFRegionAware {
     /// （Wave4 Task 1：容器由 FFGlassView 玻璃改实体，见 setupRow2 注释）
     private var searchContainer: NSView!
     private var searchTextField: NSTextField!
+    private var scopePopup: NSPopUpButton!
+    private(set) var searchScope: FFSearchScope = .current
+    private var isProgrammaticSearchUpdate = false
     private var sortPopup: NSPopUpButton!
     private var groupPopup: NSPopUpButton!
     private var listViewButton: NSButton!
     private var gridViewButton: NSButton!
+    /// R4-03：窄面板下收纳被收起的文字下拉（分组 / 范围 / 排序）
+    private var row2OverflowButton: NSButton!
+    /// 当前收进「更多」的槽位（空 = 行宽充足，全部行内显示）
+    private(set) var row2OverflowedSlots: Set<FFToolbarRow2Fit.Slot> = []
     /// 第二行唯一的设置入口（R19-2 D-08）：显示开关 + 显示列 + 第二行配置并入同一个菜单。
     var displaySettingsButton: NSButton!
 
@@ -121,6 +129,28 @@ class PaneToolbar: NSView, FFRegionAware {
         if let bar = breadcrumbBar, hit.isDescendant(of: bar) { return hit }
         if let container = searchContainer, hit.isDescendant(of: container) { return hit }
         return self
+    }
+
+    /// 行宽变化后重新分级（R4-03）。
+    ///
+    /// 只依据 `row2.bounds.width` 计算，而该宽度由工具栏左右边距决定、
+    /// 与行内显示哪些项无关，所以收起不会反过来改变判定结果，不会来回抖动。
+    override func layout() {
+        super.layout()
+        applyRow2Fit(rowWidth: row2?.bounds.width ?? 0)
+    }
+
+    /// 按行宽决定哪些文字下拉收进「更多」。
+    func applyRow2Fit(rowWidth: CGFloat) {
+        guard rowWidth > 0, row2 != nil else { return }
+        var enabled = Set<FFToolbarRow2Fit.Slot>()
+        if visibleRow2Items.contains(.group) { enabled.insert(.group) }
+        if visibleRow2Items.contains(.search) { enabled.insert(.scope) }
+        if visibleRow2Items.contains(.sort) { enabled.insert(.sort) }
+        let dropped = FFToolbarRow2Fit.overflowed(from: enabled, rowWidth: rowWidth)
+        guard dropped != row2OverflowedSlots else { return }
+        row2OverflowedSlots = dropped
+        applyRow2Visibility()
     }
 
     // 工具栏空白处的拖动由窗口级 `FFPaneDragController` 接管：
@@ -283,6 +313,20 @@ class PaneToolbar: NSView, FFRegionAware {
         // 右侧图标簇（排序/分组/视图/显示设置）因默认 hugging 更高而固定贴最右。
         searchContainer.setContentHuggingPriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
 
+        // J2-07：搜索框右侧紧凑范围菜单（本栏 / 含子目录 / 双栏）
+        scopePopup = NSPopUpButton()
+        scopePopup.addItems(withTitles: FFSearchScope.allCases.map { $0.title })
+        scopePopup.selectItem(withTitle: FFSearchScope.current.title)
+        scopePopup.target = self
+        scopePopup.action = #selector(scopeSelected(_:))
+        scopePopup.controlSize = .small
+        scopePopup.font = FFDesign.Text.sm
+        scopePopup.translatesAutoresizingMaskIntoConstraints = false
+        scopePopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        scopePopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 735), for: .horizontal)
+        scopePopup.setAccessibilityLabel("搜索范围")
+        scopePopup.toolTip = "搜索范围：本栏 / 含子目录 / 双栏"
+
         sortPopup = NSPopUpButton()
         sortPopup.addItems(withTitles: SortField.allCases.map { $0.rawValue })
         sortPopup.target = self
@@ -298,19 +342,19 @@ class PaneToolbar: NSView, FFRegionAware {
         sortPopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         groupPopup.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
-        // Wave4 Task 6（审计 §2 折中）：Row2 溢出分级——窗口缩窄时按抗压缩优先级
-        // 从低到高依次压缩/截断，不破版：
-        //   搜索框(1，弹性输入域最先让位，止步于最小宽 120) → 显示设置(700) →
-        //   视图切换(720) → 分组(730) → 排序(740，最保文字可读)。
-        // 图标按钮的固定宽度约束已在工厂方法中同步降至同级优先级。
-        searchContainer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 1), for: .horizontal)
-        sortPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 740), for: .horizontal)
-        groupPopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(rawValue: 730), for: .horizontal)
+        // R4-03：文字下拉的宽度由分级策略写死（覆盖最长标题，有测试守住）。
+        // 此前它们随标题浮动，行宽不足时 Auto Layout 不是截断下拉，而是把
+        // 28pt 的图标按钮压成 0 宽——视图切换与显示设置直接消失。
+        scopePopup.widthAnchor.constraint(equalToConstant: FFToolbarRow2Fit.width(for: .scope)).isActive = true
+        sortPopup.widthAnchor.constraint(equalToConstant: FFToolbarRow2Fit.width(for: .sort)).isActive = true
+        groupPopup.widthAnchor.constraint(equalToConstant: FFToolbarRow2Fit.width(for: .group)).isActive = true
 
-        listViewButton = createViewButton(icon: .list, action: #selector(listViewClicked), label: "列表视图",
-                                          compressionPriority: NSLayoutConstraint.Priority(rawValue: 720))
-        gridViewButton = createViewButton(icon: .grid2x2, action: #selector(gridViewClicked), label: "网格视图",
-                                          compressionPriority: NSLayoutConstraint.Priority(rawValue: 720))
+        // R4-03：溢出分级取代 Wave4 Task 6 的「按抗压缩优先级挤压」——
+        // 挤压的分档顺序（图标按钮宽度约束优先级最低）恰好让主操作先消失，
+        // 实测 1060×700 双栏行宽 416pt < 全部展开 508pt，三个图标按钮全部被压成 0 宽。
+        // 现在图标主操作固定 28pt 不让位，文字下拉按 分组 → 范围 → 排序 收进「更多」菜单。
+        listViewButton = createViewButton(icon: .list, action: #selector(listViewClicked), label: "列表视图")
+        gridViewButton = createViewButton(icon: .grid2x2, action: #selector(gridViewClicked), label: "网格视图")
 
         updateViewModeHighlight(.list)
 
@@ -324,17 +368,25 @@ class PaneToolbar: NSView, FFRegionAware {
         // 菜单内含显示开关、显示列与第二行配置（原齿轮按钮并入此处）。
         displaySettingsButton = createNavButton(icon: .eye,
                                                 action: #selector(showDisplaySettingsMenu),
-                                                label: "显示设置",
-                                                compressionPriority: NSLayoutConstraint.Priority(rawValue: 700))
+                                                label: "显示设置")
         displaySettingsButton.toolTip = "显示设置（隐藏文件 / 标签 / 后缀 / 列 / 第二行）"
+
+        // R4-03：窄面板下被收起的下拉并入这里，功能不丢、行尾不留空位。
+        row2OverflowButton = createNavButton(icon: .ellipsis,
+                                             action: #selector(showRow2OverflowMenu),
+                                             label: "更多工具栏项目")
+        row2OverflowButton.toolTip = "更多（分组 / 搜索范围 / 排序）"
+        row2OverflowButton.isHidden = true
 
         row2 = FFNonDragStackView(views: [
             searchContainer,
+            scopePopup,
             sortPopup,
             groupPopup,
             listViewButton, gridViewButton,
             toolsSeparator,
             displaySettingsButton,
+            row2OverflowButton,
         ])
         row2.orientation = .horizontal
         row2.alignment = .centerY
@@ -370,12 +422,17 @@ class PaneToolbar: NSView, FFRegionAware {
     }
 
     func applyRow2Visibility() {
-        searchContainer.isHidden = !visibleRow2Items.contains(.search)
-        sortPopup.isHidden = !visibleRow2Items.contains(.sort)
-        groupPopup.isHidden = !visibleRow2Items.contains(.group)
+        let searchVisible = visibleRow2Items.contains(.search)
+        searchContainer.isHidden = !searchVisible
+        // 用户关闭（`visibleRow2Items`）与行宽不足（`row2OverflowedSlots`）都要让位，
+        // 后者由 `applyRow2Fit` 在布局时重算，面板变宽会自动回到行内。
+        scopePopup.isHidden = !searchVisible || row2OverflowedSlots.contains(.scope)
+        sortPopup.isHidden = !visibleRow2Items.contains(.sort) || row2OverflowedSlots.contains(.sort)
+        groupPopup.isHidden = !visibleRow2Items.contains(.group) || row2OverflowedSlots.contains(.group)
         listViewButton.isHidden = !visibleRow2Items.contains(.viewMode)
         gridViewButton.isHidden = !visibleRow2Items.contains(.viewMode)
         displaySettingsButton.isHidden = false
+        row2OverflowButton.isHidden = row2OverflowedSlots.isEmpty
         needsLayout = true
     }
 
@@ -385,6 +442,8 @@ class PaneToolbar: NSView, FFRegionAware {
             : visibleRow2Items.subtracting([item])
         UserDefaults.standard.set(FFToolbarRow2Preferences.encode(visibleRow2Items),
                                   forKey: FFToolbarRow2Preferences.storageKey)
+        // 分级结果依赖「用户开启了哪些项」，先清空交给下一次布局重算（R4-03）
+        row2OverflowedSlots = []
         applyRow2Visibility()
         NotificationCenter.default.post(name: .toolbarRow2PreferencesChanged, object: nil)
     }
@@ -393,6 +452,7 @@ class PaneToolbar: NSView, FFRegionAware {
         visibleRow2Items = FFToolbarRow2Preferences.visibleItems(
             from: UserDefaults.standard.string(forKey: FFToolbarRow2Preferences.storageKey)
         )
+        row2OverflowedSlots = []
         applyRow2Visibility()
     }
 
@@ -427,6 +487,76 @@ class PaneToolbar: NSView, FFRegionAware {
         guard let raw = sender.representedObject as? String,
               let item = FFToolbarRow2Item(rawValue: raw) else { return }
         setRow2Item(item, visible: !visibleRow2Items.contains(item))
+    }
+
+    // MARK: - R4-03: 窄面板「更多」菜单
+
+    /// 被行宽收起的下拉逐项列在这里，标题带上当前值，勾选态与行内下拉同一份状态。
+    /// 与按钮动作同一份代码，测试直接断言结构。
+    func makeRow2OverflowMenu() -> NSMenu {
+        let menu = NSMenu(title: "更多")
+        menu.autoenablesItems = false
+        if row2OverflowedSlots.contains(.scope) {
+            menu.addItem(makeOverflowSubmenu(label: "搜索范围",
+                                             options: FFSearchScope.allCases.map { $0.title },
+                                             current: scopePopup.titleOfSelectedItem,
+                                             action: #selector(overflowScopeSelected(_:))))
+        }
+        if row2OverflowedSlots.contains(.sort) {
+            menu.addItem(makeOverflowSubmenu(label: "排序",
+                                             options: SortField.allCases.map { $0.rawValue },
+                                             current: sortPopup.titleOfSelectedItem,
+                                             action: #selector(overflowSortSelected(_:))))
+        }
+        if row2OverflowedSlots.contains(.group) {
+            menu.addItem(makeOverflowSubmenu(label: "分组",
+                                             options: ["无分组", "按种类", "按日期", "按大小"],
+                                             current: groupPopup.titleOfSelectedItem,
+                                             action: #selector(overflowGroupSelected(_:))))
+        }
+        return menu
+    }
+
+    private func makeOverflowSubmenu(label: String,
+                                     options: [String],
+                                     current: String?,
+                                     action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: current.map { "\(label)：\($0)" } ?? label,
+                             action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: label)
+        submenu.autoenablesItems = false
+        for option in options {
+            let optionItem = NSMenuItem(title: option, action: action, keyEquivalent: "")
+            optionItem.target = self
+            optionItem.state = option == current ? .on : .off
+            submenu.addItem(optionItem)
+        }
+        item.submenu = submenu
+        return item
+    }
+
+    /// 在按钮下方弹出「更多」菜单
+    @objc private func showRow2OverflowMenu() {
+        let menu = makeRow2OverflowMenu()
+        let location = NSPoint(x: 0, y: row2OverflowButton.bounds.height + 2)
+        menu.popUp(positioning: nil, at: location, in: row2OverflowButton)
+    }
+
+    // 选择仍写回原下拉，保持 `setSortField` / `setGroupBy` / `setSearchScope`
+    // 的双栏镜像与后续读取路径只有一份真相。
+    @objc private func overflowScopeSelected(_ sender: NSMenuItem) {
+        scopePopup.selectItem(withTitle: sender.title)
+        scopeSelected(scopePopup)
+    }
+
+    @objc private func overflowSortSelected(_ sender: NSMenuItem) {
+        sortPopup.selectItem(withTitle: sender.title)
+        sortSelected(sortPopup)
+    }
+
+    @objc private func overflowGroupSelected(_ sender: NSMenuItem) {
+        groupPopup.selectItem(withTitle: sender.title)
+        groupSelected(groupPopup)
     }
 
     // MARK: - Button Factory
@@ -487,16 +617,57 @@ class PaneToolbar: NSView, FFRegionAware {
     func setCanGoForward(_ canGoForward: Bool) { forwardButton.isEnabled = canGoForward }
     func setViewMode(_ mode: ViewMode) { updateViewModeHighlight(mode) }
 
+    func setSortField(_ field: SortField) {
+        sortPopup.selectItem(withTitle: field.rawValue)
+    }
+
+    func setGroupBy(_ groupBy: String) {
+        let title: String
+        switch groupBy {
+        case "kind": title = "按种类"
+        case "date": title = "按日期"
+        case "size": title = "按大小"
+        default: title = "无分组"
+        }
+        groupPopup.selectItem(withTitle: title)
+    }
+
     /// Wave2 P1：聚焦本面板搜索框（⌘F 分流入口；面板内筛选框获得全键盘可达性）
     func focusSearchField() {
         window?.makeFirstResponder(searchTextField)
     }
 
+    /// J2-07：程序化同步范围菜单（不触发 delegate）。
+    func setSearchScope(_ scope: FFSearchScope) {
+        guard searchScope != scope else { return }
+        searchScope = scope
+        scopePopup.selectItem(withTitle: scope.title)
+    }
+
+    /// J2-07：程序化同步搜索词（双栏镜像用，不触发 delegate）。
+    func setSearchQuery(_ query: String) {
+        guard searchTextField.stringValue != query else { return }
+        isProgrammaticSearchUpdate = true
+        searchTextField.stringValue = query
+        isProgrammaticSearchUpdate = false
+    }
+
+    var scopePopupForTesting: NSPopUpButton { scopePopup }
+    var sortPopupForTesting: NSPopUpButton { sortPopup }
+    var groupPopupForTesting: NSPopUpButton { groupPopup }
+    var row2ForTesting: NSStackView? { row2 }
+    var listViewButtonForTesting: NSButton { listViewButton }
+    var gridViewButtonForTesting: NSButton { gridViewButton }
+    var row2OverflowButtonForTesting: NSButton { row2OverflowButton }
+
     /// Wave2 P0-1：返回本工具栏参与 keyViewLoop 的控件（数组顺序即 Tab 顺序）：
     /// 搜索框 → 排序 → 分组 → 视图分段（列表/网格切换按钮）。链尾由 MainWindowController
     /// 接到当前视图模式的文件列表/网格，再经窗口级 keyViewLoop 流转到另一面板。
     func keyViewControls() -> [NSView] {
-        [searchTextField, sortPopup, groupPopup, listViewButton, gridViewButton].compactMap { $0 }
+        [searchTextField, scopePopup, sortPopup, groupPopup, listViewButton, gridViewButton,
+         displaySettingsButton, row2OverflowButton]
+            .compactMap { $0 }
+            .filter { !$0.isHiddenOrHasHiddenAncestor }
     }
 
     private func updateViewModeHighlight(_ mode: ViewMode) {
@@ -512,6 +683,13 @@ class PaneToolbar: NSView, FFRegionAware {
     @objc private func refreshClicked() { delegate?.paneToolbarDidClickRefresh(self) }
     @objc private func searchChanged() {
         delegate?.paneToolbar(self, didChangeSearchQuery: searchTextField.stringValue)
+    }
+
+    @objc private func scopeSelected(_ sender: NSPopUpButton) {
+        guard let title = sender.titleOfSelectedItem,
+              let scope = FFSearchScope(rawValue: title) else { return }
+        searchScope = scope
+        delegate?.paneToolbar(self, didChangeSearchScope: scope)
     }
 
     @objc private func sortSelected(_ sender: NSPopUpButton) {
@@ -560,9 +738,9 @@ class PaneToolbar: NSView, FFRegionAware {
         let showExtensions = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showFileExtensions) as? Bool ?? true
         let showSystem = UserDefaults.standard.object(forKey: FFUserDefaultsKeys.showSystemFiles) as? Bool ?? false
 
-        // 显示/隐藏隐藏文件（文案根据当前状态切换）
+        // 固定名词 + 勾选态；不要用「隐藏…」动作文案配勾选，避免语义反转
         let hiddenItem = NSMenuItem(
-            title: showHidden ? "隐藏隐藏文件" : "显示隐藏文件",
+            title: "显示隐藏文件",
             action: #selector(toggleShowHidden),
             keyEquivalent: ""
         )
@@ -570,9 +748,8 @@ class PaneToolbar: NSView, FFRegionAware {
         hiddenItem.state = showHidden ? .on : .off
         menu.addItem(hiddenItem)
 
-        // 显示/隐藏文件标签
         let tagsItem = NSMenuItem(
-            title: showTags ? "隐藏文件标签" : "显示文件标签",
+            title: "显示文件标签",
             action: #selector(toggleShowTags),
             keyEquivalent: ""
         )
@@ -580,9 +757,8 @@ class PaneToolbar: NSView, FFRegionAware {
         tagsItem.state = showTags ? .on : .off
         menu.addItem(tagsItem)
 
-        // 显示/隐藏文件后缀
         let extensionsItem = NSMenuItem(
-            title: showExtensions ? "隐藏文件后缀" : "显示文件后缀",
+            title: "显示文件后缀",
             action: #selector(toggleShowExtensions),
             keyEquivalent: ""
         )
@@ -590,9 +766,8 @@ class PaneToolbar: NSView, FFRegionAware {
         extensionsItem.state = showExtensions ? .on : .off
         menu.addItem(extensionsItem)
 
-        // 显示/隐藏系统文件
         let systemItem = NSMenuItem(
-            title: showSystem ? "隐藏系统文件" : "显示系统文件",
+            title: "显示系统文件",
             action: #selector(toggleShowSystemFiles),
             keyEquivalent: ""
         )
@@ -659,8 +834,10 @@ extension PaneToolbar: NSTextFieldDelegate {
     /// 修复问题11：此前 searchTextField 仅 target/action，searchChanged 仅 Enter 触发，
     /// 输入过程无反馈。设置 delegate 后，每次按键都触发 controlTextDidChange -> searchChanged。
     public func controlTextDidChange(_ obj: Notification) {
-        // 仅响应搜索框（避免将来若有其他 NSTextField 误触）
-        guard let textField = obj.object as? NSTextField, textField === searchTextField else { return }
+        // 仅响应搜索框（避免将来若有其他 NSTextField 误触）；程序化镜像不回调
+        guard !isProgrammaticSearchUpdate,
+              let textField = obj.object as? NSTextField,
+              textField === searchTextField else { return }
         searchChanged()
     }
 
@@ -685,5 +862,71 @@ extension PaneToolbar: NSTextFieldDelegate {
         default:
             return false
         }
+    }
+}
+
+// MARK: - FFToolbarRow2Fit
+
+/// 面板工具栏第二行的窄宽分级（R4-03）。
+///
+/// 实测 1060×700 双栏下面板 432pt、行宽 416pt，而第二行全部展开需要 508pt。
+/// 原先交给 Auto Layout 挤压，被压的是「宽度约束优先级最低」的 28pt 图标按钮：
+/// 列表/网格切换与显示设置直接变成 0 宽（功能消失），分组下拉截成「…」。
+/// 现在改成显式分级：图标主操作固定不让位，文字型下拉按 分组 → 范围 → 排序
+/// 整项收进「更多」菜单，面板变宽自动回到行内。
+enum FFToolbarRow2Fit {
+
+    /// 可收进「更多」的文字下拉槽位
+    enum Slot: String, CaseIterable {
+        case group
+        case scope
+        case sort
+    }
+
+    static let searchWidth: CGFloat = 120
+    static let viewButtonWidth: CGFloat = 28
+    static let separatorWidth: CGFloat = 5
+    static let eyeWidth: CGFloat = 28
+    static let overflowWidth: CGFloat = 28
+    static let spacing: CGFloat = 4
+
+    /// 每个槽位的预留宽度 = 最长标题的固有宽度（`testRow2FitWidthsCoverEveryPopupTitle` 守住）
+    static func width(for slot: Slot) -> CGFloat {
+        switch slot {
+        case .group: return 87
+        case .scope: return 84
+        case .sort: return 100
+        }
+    }
+
+    /// 让位顺序：最常用（排序）最后收
+    private static let dropOrder: [Slot] = [.group, .scope, .sort]
+
+    /// 返回在 `rowWidth` 下需要收进「更多」的槽位。
+    ///
+    /// - Parameter enabled: 用户开启的槽位（关闭的项不占宽度，也不会计入结果）。
+    static func overflowed(from enabled: Set<Slot>, rowWidth: CGFloat) -> Set<Slot> {
+        var inline = dropOrder.filter { enabled.contains($0) }
+        var dropped = Set<Slot>()
+        while totalWidth(inline: inline, showsOverflow: !dropped.isEmpty) > rowWidth {
+            guard !inline.isEmpty else { break }
+            dropped.insert(inline.removeFirst())
+        }
+        return dropped
+    }
+
+    private static func totalWidth(inline: [Slot], showsOverflow: Bool) -> CGFloat {
+        // 搜索框 + 列表 + 网格 + 分隔线 + 显示设置
+        var width = searchWidth + viewButtonWidth * 2 + separatorWidth + eyeWidth
+        var items: Int = 5
+        for slot in inline {
+            width += self.width(for: slot)
+            items += 1
+        }
+        if showsOverflow {
+            width += overflowWidth
+            items += 1
+        }
+        return width + spacing * CGFloat(max(0, items - 1))
     }
 }

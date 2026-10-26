@@ -74,3 +74,22 @@ enum FFStartupPath {
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
     }
 }
+
+
+/// 前往文件夹输入归一化：支持 ~、去首尾空白、拒绝相对路径。
+enum FFGoToFolder {
+    static func normalize(_ raw: String, home: String = NSHomeDirectory()) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let expanded: String
+        if trimmed == "~" {
+            expanded = home
+        } else if trimmed.hasPrefix("~/") {
+            expanded = (home as NSString).appendingPathComponent(String(trimmed.dropFirst(2)))
+        } else {
+            expanded = trimmed
+        }
+        guard expanded.hasPrefix("/") else { return nil }
+        return (expanded as NSString).standardizingPath
+    }
+}

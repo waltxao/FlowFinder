@@ -1,6 +1,60 @@
 import Cocoa
 import Combine
 
+// MARK: - R-26: AX 行虚拟化
+
+/// 表格 AX 行的数据源。只按需提供行数与摘要，不触发 cell view 创建。
+protocol FFAXRowDataSource: AnyObject {
+    var axRowCount: Int { get }
+    func axLabel(forRow row: Int) -> String?
+    func axSelect(row: Int) -> Bool
+}
+
+/// 轻量 AX 行元素：每行只暴露一个摘要元素，不暴露 cell 子元素。
+/// 继承 NSAccessibilityElement 才能被 AX 服务端识别；不创建任何行视图。
+final class FFAXRowElement: NSAccessibilityElement {
+    let rowIndex: Int
+    weak var table: FFQuickLookTableView?
+
+    init(rowIndex: Int, table: FFQuickLookTableView) {
+        self.rowIndex = rowIndex
+        self.table = table
+        super.init()
+    }
+
+    override func accessibilityIndex() -> Int { rowIndex }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .row }
+
+    override func accessibilityLabel() -> String? {
+        table?.axLabel(forRow: rowIndex)
+    }
+
+    override func accessibilityHelp() -> String? {
+        "按空格预览，按回车重命名"
+    }
+
+    override func accessibilityParent() -> Any? { table }
+
+    override func isAccessibilitySelected() -> Bool {
+        table?.selectedRowIndexes.contains(rowIndex) ?? false
+    }
+
+    override func accessibilityChildren() -> [Any]? { [] }
+
+    override func accessibilityFrame() -> NSRect {
+        guard let table, let window = table.window else { return .zero }
+        let rowRect = table.rect(ofRow: rowIndex)
+        guard !rowRect.isEmpty else { return .zero }
+        return window.convertToScreen(table.convert(rowRect, to: nil))
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        table?.axSelect(row: rowIndex) ?? false
+    }
+}
+
+
 // MARK: - FFQuickLookTableView
 
 /// 拦截空格键的 NSTableView 子类：
@@ -17,6 +71,112 @@ final class FFQuickLookTableView: NSTableView {
     var onDeleteKey: (() -> Void)?
     /// 当前所属面板标识（left/right）
     var side: String = "left"
+
+    /// R-26: AX 行数据源（FileListView）。AX 枚举只读它，不触发行视图。
+    weak var axDataSource: FFAXRowDataSource?
+
+    private var axRowsCache: [FFAXRowElement] = []
+    private var axRowsCacheCount = -1
+
+    var axRowCount: Int {
+        axDataSource?.axRowCount ?? numberOfRows
+    }
+
+    func axLabel(forRow row: Int) -> String? {
+        axDataSource?.axLabel(forRow: row)
+    }
+
+    /// 数据行变化后丢弃代理缓存；下次 AX 查询按新行数重建。
+    func invalidateAXRows() {
+        axRowsCacheCount = -1
+        axRowsCache.removeAll(keepingCapacity: true)
+    }
+
+    private func axRowElements() -> [FFAXRowElement] {
+        let count = axRowCount
+        if axRowsCacheCount == count { return axRowsCache }
+        axRowsCacheCount = count
+        axRowsCache = (0..<count).map { FFAXRowElement(rowIndex: $0, table: self) }
+        return axRowsCache
+    }
+
+    private func axSelectedRowElements() -> [FFAXRowElement] {
+        let selected = selectedRowIndexes
+        guard !selected.isEmpty else { return [] }
+        return axRowElements().filter { selected.contains($0.rowIndex) }
+    }
+
+    @discardableResult
+    func axSelect(row: Int) -> Bool {
+        guard row >= 0, row < axRowCount else { return false }
+        if let axDataSource {
+            let handled = axDataSource.axSelect(row: row)
+            if handled { scrollRowToVisible(row) }
+            return handled
+        }
+        selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        scrollRowToVisible(row)
+        window?.makeFirstResponder(self)
+        return true
+    }
+
+    override func reloadData() {
+        super.reloadData()
+        invalidateAXRows()
+    }
+
+    override func selectRowIndexes(_ indexes: IndexSet, byExtendingSelection extend: Bool) {
+        super.selectRowIndexes(indexes, byExtendingSelection: extend)
+        NSAccessibility.post(element: self, notification: .selectedRowsChanged)
+    }
+
+    override func accessibilityRowCount() -> Int { axRowCount }
+
+    override func accessibilityRows() -> [NSAccessibilityRow]? {
+        unsafeBitCast(axRowElements(), to: [NSAccessibilityRow].self)
+    }
+
+    override func accessibilityVisibleRows() -> [NSAccessibilityRow]? {
+        let range = rows(in: visibleRect)
+        guard range.length > 0 else { return [] }
+        let visible = axRowElements().filter { range.contains($0.rowIndex) }
+        return unsafeBitCast(visible, to: [NSAccessibilityRow].self)
+    }
+
+    override func accessibilitySelectedRows() -> [NSAccessibilityRow]? {
+        unsafeBitCast(axSelectedRowElements(), to: [NSAccessibilityRow].self)
+    }
+
+    override func setAccessibilitySelectedRows(_ selectedRows: [NSAccessibilityRow]) {
+        // 只接受本表产出的行元素：外来对象既可能不是 FFAXRowElement，也不该用它的索引改本表选中。
+        // 显式传空数组仍然清空选中；只含外来对象的调用视为无效输入，保持选中不变。
+        guard !selectedRows.isEmpty else {
+            selectRowIndexes(IndexSet(), byExtendingSelection: false)
+            return
+        }
+        let bridged = selectedRows as NSArray
+        let indexes = bridged.compactMap { obj -> Int? in
+            guard let mine = obj as? FFAXRowElement, mine.table === self,
+                  mine.rowIndex >= 0, mine.rowIndex < axRowCount else { return nil }
+            return mine.rowIndex
+        }
+        guard !indexes.isEmpty else { return }
+        selectRowIndexes(IndexSet(indexes), byExtendingSelection: false)
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        axRowElements()
+    }
+
+    override func accessibilitySelectedChildren() -> [Any]? {
+        axSelectedRowElements()
+    }
+
+    override func accessibilitySelectedCells() -> [Any]? { [] }
+
+    override func accessibilityVisibleCells() -> [Any]? { [] }
+
+    override func accessibilityRowHeaderUIElements() -> [Any]? { [] }
 
     /// Wave3 Task 1: 拖拽目标反馈复位回调（宿主 FileListView 借此清除 Drop 高亮 / Spring 计时）。
     /// tableView 是注册的拖拽目标，NSDraggingDestination 的 draggingExited/draggingEnded/
@@ -306,8 +466,6 @@ private class FFTableCellView: NSTableCellView {
 /// - 窗口失焦时：选中为灰色（de-emphasized）+ 黑色文字
 /// 这正是访达的标准行为，无需任何自定义。
 private class FFTableRowView: NSTableRowView {
-    // 空实现：仅作为扩展点保留（如将来添加 hover 效果）
-
     /// Wave3 Task 1: Drop 目标高亮（拖到文件夹行上时由 FileListView 置位）。
     /// 绘制：accent 8% 底 + 1.5pt accent 圆角描边（与网格 item Drop 高亮同语言）。
     var isDropTarget: Bool = false {
@@ -318,7 +476,12 @@ private class FFTableRowView: NSTableRowView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // 先走标准绘制（选中背景等），再叠加 Drop 高亮（覆盖在选中之上，保证可见）
+        // 修复 Issue 3：selectionHighlightStyle = .none 时 super.draw 不调 drawSelection(in:)，
+        // 需手动在 cell 内容之前绘制选中高亮（inset + 圆角 + 间隙），
+        // 再走 super.draw 画 cell 内容（覆盖在选中高亮之上），最后叠 Drop 高亮。
+        if isSelected {
+            drawSelection(in: dirtyRect)
+        }
         super.draw(dirtyRect)
         guard isDropTarget else { return }
         let rect = bounds.insetBy(dx: 2, dy: 1)
@@ -344,10 +507,10 @@ private class FFTableRowView: NSTableRowView {
         let color = isEmphasized
             ? FFAccent.current
             : NSColor.unemphasizedSelectedContentBackgroundColor
-        // 访达样式：左右各内缩 4pt + 5pt 圆角，不再满宽直角填充（此前与
-        // 分组标题行、窗格边界齐平相接，视觉上像一条色带而不是「选中框」；
-        // 几何与 FFTableRowView 的 Drop 高亮 insetBy(dx: 2)+圆角 5 同语言）
-        let rect = bounds.insetBy(dx: 4, dy: 0)
+        // 访达样式：左右各内缩 4pt + 上下各内缩 1pt + 5pt 圆角，不再满宽直角填充。
+        // 修复 Issue 3：dy 从 0 改为 1——相邻选中行之间留出 2pt 间隙（上下各 1pt），
+        // 避免选中两个文件时选中框连成一片无法区分。
+        let rect = bounds.insetBy(dx: 4, dy: 1)
         color.setFill()
         NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
     }
@@ -452,7 +615,7 @@ private final class FFStickySectionHeaderView: NSView {
         addSubview(titleLabel)
 
         countLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        countLabel.textColor = NSColor.tertiaryLabelColor
+        countLabel.textColor = FFVisualTokens.hint
         countLabel.backgroundColor = .clear
         countLabel.isBezeled = false
         countLabel.drawsBackground = false
@@ -610,6 +773,14 @@ public class FileListView: NSView, FFRegionAware {
                         || self.currentSortField != state.sortField
                         || self.currentSortAscending != state.sortAscending
                     if needReload {
+                        // C3 修复：内联重命名期间跳过 reloadData，防止编辑中的 cell 被重建、
+                        // firstResponder 丢失。重命名完成后 renameFile 会再触发一次 reload，
+                        // 届时 isRenaming=false，reload 正常执行。
+                        guard !self.actionsController.isRenaming else {
+                            FFDebug.log("[RENAME-DIAG] Combine sink: 跳过 reloadData（isRenaming=true）")
+                            return
+                        }
+                        FFDebug.log("[RENAME-DIAG] Combine sink: 执行 reloadData（isRenaming=false, files=\(state.files.count)）")
                         // 大目录优化：检测是否为纯追加（分页追加批次），仅当无分组、
                         // 排序/分组维度未变、文件数增加时，使用增量 insertRows 避免全量重建
                         let delta = state.files.count - self.lastFilesCount
@@ -738,6 +909,7 @@ public class FileListView: NSView, FFRegionAware {
         isReloading = true
         let indexSet = IndexSet(integersIn: insertStart..<(insertStart + newRows.count))
         tableView.insertRows(at: indexSet, withAnimation: [])
+        (tableView as? FFQuickLookTableView)?.invalidateAXRows()
         restoreSelectionFromViewModel()
         updateStickyHeader()
         DispatchQueue.main.async { [weak self] in
@@ -892,6 +1064,7 @@ public class FileListView: NSView, FFRegionAware {
             self?.endDragSession()
         }
         tableView = qlTableView
+        qlTableView.axDataSource = self
         // 问题 2 诊断：确认每个面板都创建了 FFQuickLookTableView 且 onSpaceKey 已就位
         FFDebug.log("FileListView setup tableView type=FFQuickLookTableView side=\(getSide()) onSpaceKeySet=\(qlTableView.onSpaceKey != nil)")
         tableView.allowsMultipleSelection = true
@@ -1100,7 +1273,8 @@ public class FileListView: NSView, FFRegionAware {
         let spacing = tableView.intercellSpacing.width
         let available = scrollView.contentSize.width - 2
             - spacing * CGFloat(FFListColumnsState.visibleColumns().count + 1)
-        guard available > FFListColumn.name.minWidth else { return }
+        let nameFloor = FFColumnFitPolicy.nameFloor(available: available)
+        guard available > nameFloor else { return }
 
         func preferred(_ c: FFListColumn) -> CGFloat {
             FFListColumnsState.width(for: c, default: c.defaultWidth)
@@ -1116,17 +1290,17 @@ public class FileListView: NSView, FFRegionAware {
 
         // ① 收缩：从最宽的列开始往 minWidth 压，直到放得下
         var guardCount = 0
-        while othersTotal() + FFListColumn.name.minWidth > available, guardCount < 40 {
+        while othersTotal() + nameFloor > available, guardCount < 40 {
             guardCount += 1
             guard let widest = columns.filter({ $0 != .name && (widths[$0] ?? 0) > $0.minWidth })
                 .max(by: { (widths[$0] ?? 0) < (widths[$1] ?? 0) }) else { break }
             let current = widths[widest] ?? widest.minWidth
-            let need = othersTotal() + FFListColumn.name.minWidth - available
+            let need = othersTotal() + nameFloor - available
             widths[widest] = max(widest.minWidth, current - need)
         }
 
         // ② 仍放不下 → 按 fitPriority 整列收起（说明 → 标签 → 创建日期 → 类型 → 大小 → 修改日期）
-        while othersTotal() + FFListColumn.name.minWidth > available,
+        while othersTotal() + nameFloor > available,
               let drop = columns.filter({ !$0.isRequired })
                 .max(by: { $0.fitPriority < $1.fitPriority }) {
             columns.removeAll { $0 == drop }
@@ -1137,6 +1311,9 @@ public class FileListView: NSView, FFRegionAware {
             .filter { !columns.contains($0) }.map { $0.rawValue }
         if droppedIDs != fittedOutColumns {
             fittedOutColumns = droppedIDs
+            // 同步到「显示列」菜单：被宽度挤掉的列要写明原因，不能无声消失（R4-03）
+            FFListColumnsState.setFittedOut(droppedIDs.compactMap(FFListColumn.init(rawValue:)),
+                                            for: effectiveSide)
             rebuildColumns()
             // 列集合变了，下一轮把名称列宽度补齐；fittedOutColumns 已记录，
             // 不会再次触发 drop，因此不会无限递归。
@@ -1148,7 +1325,7 @@ public class FileListView: NSView, FFRegionAware {
 
         // ③ 名称列吃掉剩余空间
         let others = columns.filter { $0 != .name }.reduce(0) { $0 + (widths[$1] ?? 0) }
-        widths[.name] = max(FFListColumn.name.minWidth, available - others)
+        widths[.name] = max(nameFloor, available - others)
 
         for col in tableView.tableColumns {
             guard let c = FFListColumn(rawValue: col.identifier.rawValue),
@@ -1161,6 +1338,8 @@ public class FileListView: NSView, FFRegionAware {
     @objc private func tagCacheWarmed(_ note: Notification) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // C3 修复：内联重命名期间跳过 reloadData，防止编辑中的 cell 被重建
+            guard !self.actionsController.isRenaming else { return }
             self.reloadData()
         }
     }
@@ -1168,6 +1347,8 @@ public class FileListView: NSView, FFRegionAware {
     @objc private func listColumnsDidChange() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // C3 修复：内联重命名期间跳过 reloadData
+            guard !self.actionsController.isRenaming else { return }
             // 可见列变了：即使宽度没变也要重新 fit 一次。
             self.lastColumnFitWidth = -1
             self.rebuildColumns()
@@ -1490,6 +1671,10 @@ public class FileListView: NSView, FFRegionAware {
     public func reloadData() {
         let signpost = FFPerf.begin("Render.list")
         defer { FFPerf.end("Render.list", signpost) }
+        if actionsController.isRenaming {
+            FFDebug.log("[RENAME-DIAG] reloadData: ⚠️ 被调用但 isRenaming=true！调用栈：")
+            FFDebug.log("[RENAME-DIAG] reloadData: \(Thread.callStackSymbols.prefix(5).joined(separator: "\n"))")
+        }
         // Wave3 Task 1/2: reload 后行视图全部重建，Drop 高亮与驻留计时一并复位
         clearDragVisualState()
         // 任务 F10-8: 重建分组显示行映射后再 reload tableView
@@ -1973,11 +2158,13 @@ extension FileListView: NSTableViewDelegate {
             hv.sectionCount = viewModel?.groupedFiles.first(where: { $0.key == displayRows[row].key })?.entries.count ?? 0
             return hv
         }
-        // DESIGN-SPEC C-04：显式指定 .regular，让行视图自己负责选中绘制。
-        // 委托创建的 row view 其 selectionHighlightStyle 默认为 .none，此时 NSTableView
-        // 会用系统强调色自己画——这正是「列表蓝、侧栏与网格红」的成因。
+        // 修复 Issue 3：改用 .none——系统不画满宽选中高亮，完全由 draw(_:) 内
+        // 手动调用 drawSelection(in:) 绘制 inset 高亮。super.draw(dirtyRect) 内部
+        // 会调用 drawSelection(in:)，但我们先在 draw(_:) 里画一次确保选中底色
+        // 在 cell 内容之下；super.draw 再调一次 drawSelection(in:) 时 isSelected
+        // 已绘制过，效果叠加无副作用。
         let rowView = FFTableRowView()
-        rowView.selectionHighlightStyle = .regular
+        rowView.selectionHighlightStyle = .none
         return rowView
     }
 
@@ -2218,7 +2405,9 @@ extension FileListView: NSTableViewDelegate {
         let operationName = isMove ? "移动" : "复制"
         let progressBar = viewModel.taskProgressBar
         let collapsed = viewModel.progressBarsCollapsed
-        progressBar?.startDirectProgress(operation: operationName, totalCount: conflictPlan.count)
+        progressBar?.startDirectProgress(operation: operationName,
+                                         totalCount: conflictPlan.count,
+                                         destinationPath: destPath)
         viewModel.progressBarsExpanded?()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -2396,6 +2585,32 @@ extension FileListView: NSTableViewDelegate {
     }
 }
 
+// MARK: - R-26: AX 行数据源
+
+extension FileListView: FFAXRowDataSource {
+    var axRowCount: Int { displayRows.count }
+
+    func axLabel(forRow row: Int) -> String? {
+        guard row >= 0, row < displayRows.count else { return nil }
+        let displayRow = displayRows[row]
+        if displayRow.isHeader {
+            let count = viewModel?.groupedFiles
+                .first(where: { $0.key == displayRow.key })?.entries.count ?? 0
+            return "分组 \(displayRow.key)，\(count) 项"
+        }
+        guard let viewModel, displayRow.fileIndex < viewModel.files.count else { return nil }
+        return FileEntryAccessibility.label(for: viewModel.files[displayRow.fileIndex])
+    }
+
+    func axSelect(row: Int) -> Bool {
+        guard row >= 0, row < displayRows.count, !displayRows[row].isHeader else { return false }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
+        window?.makeFirstResponder(tableView)
+        return true
+    }
+}
+
 // MARK: - Keyboard Events
 
 extension FileListView {
@@ -2546,14 +2761,30 @@ extension FileListView: FFPaneViewHost {
     public var doubleClickHandler: ((FileEntry) -> Void)? { onDoubleClick }
 
     func renameTextFieldForSelection() -> NSTextField? {
-        guard let viewModel = viewModel else { return nil }
+        guard let viewModel = viewModel else {
+            FFDebug.log("[RENAME-DIAG] renameTextFieldForSelection: 跳过（无 viewModel）")
+            return nil
+        }
         let selectedRows = tableView.selectedRowIndexes
         guard selectedRows.count == 1, let row = selectedRows.first,
-              row >= 0, row < displayRows.count else { return nil }
+              row >= 0, row < displayRows.count else {
+            FFDebug.log("[RENAME-DIAG] renameTextFieldForSelection: 跳过（selectedRows=\(selectedRows), displayRows.count=\(displayRows.count)）")
+            return nil
+        }
         let displayRow = displayRows[row]
-        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else { return nil }
-        guard let cellView = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView,
-              let textField = cellView.textField else { return nil }
+        guard !displayRow.isHeader, displayRow.fileIndex < viewModel.files.count else {
+            FFDebug.log("[RENAME-DIAG] renameTextFieldForSelection: 跳过（isHeader=\(displayRow.isHeader), fileIndex=\(displayRow.fileIndex), files.count=\(viewModel.files.count)）")
+            return nil
+        }
+        let rawView = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+        guard let cellView = rawView as? NSTableCellView else {
+            FFDebug.log("[RENAME-DIAG] renameTextFieldForSelection: 跳过（rawView=\(rawView == nil ? "nil" : "non-NSTableCellView"), row=\(row)）")
+            return nil
+        }
+        guard let textField = cellView.textField else {
+            FFDebug.log("[RENAME-DIAG] renameTextFieldForSelection: 跳过（cellView.textField=nil, row=\(row)）")
+            return nil
+        }
         return textField
     }
 
@@ -2562,6 +2793,14 @@ extension FileListView: FFPaneViewHost {
         if row >= 0 {
             tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
+    }
+
+    /// 选中行滚入可视区（R4-18）。scrollRowToVisible 会顺带实例化该行 cell，
+    /// 紧接着 renameTextFieldForSelection() 才拿得到文本框。
+    func revealSelection() {
+        guard let row = tableView.selectedRowIndexes.min() else { return }
+        tableView.scrollRowToVisible(row)
+        tableView.layoutSubtreeIfNeeded()
     }
 
     var focusRestoreTarget: NSResponder? { tableView }
@@ -2583,6 +2822,11 @@ extension FileListView: FFPaneViewHost {
         guard let sv = scrollView else { return }
         // 浮层底部距容器 8pt，留白需一并覆盖
         let inset = max(0, height + 8)
+        // 修复 D-01 C：滚动条轨道也在详情栏上缘结束，不再被浮层压住
+        sv.scrollerInsets = NSEdgeInsets(top: sv.scrollerInsets.top,
+                                         left: sv.scrollerInsets.left,
+                                         bottom: inset,
+                                         right: sv.scrollerInsets.right)
         guard abs(sv.contentInsets.bottom - inset) > 0.5 else { return }
         // 关闭自动调整，否则 AppKit 会在滚动条出现/消失时覆盖我们设的值
         sv.automaticallyAdjustsContentInsets = false
@@ -2594,6 +2838,8 @@ extension FileListView: FFPaneViewHost {
         )
         FFDebug.log("FileListView.setBottomOverlayInset side=\(getSide()) barHeight=\(height) inset=\(inset)")
     }
+    /// 测试访问：滚动条轨道底部让开量
+    var scrollerBottomInsetForTesting: CGFloat { scrollView?.scrollerInsets.bottom ?? 0 }
 }
 
 // MARK: - FFCreateTagColorHolder（新建标签对话框颜色选择辅助类）
@@ -2637,4 +2883,6 @@ extension Notification.Name {
     static let fileListTagsChanged = Notification.Name("FileListTagsChanged")
     /// F9-C: 请求显示"显示简介"独立窗口（仿访达 Get Info）
     static let fileListShowInfo = Notification.Name("FileListShowInfo")
+    /// J3-10: 请求弹出「批量整理」预览 Sheet
+    static let fileListBatchOrganize = Notification.Name("fileListBatchOrganize")
 }

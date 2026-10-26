@@ -15,17 +15,19 @@ class DeleteConfirmDialog: FFModalSheet {
     /// - Parameters:
     ///   - fileCount: 待删除文件数
     ///   - message: 主消息（nil 时使用默认"确定要将 N 个项目移到废纸篓吗？"）
-    ///   - confirmButtonTitle: 确认按钮标题（默认"移到废纸篓"；永久删除场景传"永久删除"）
+    ///   - confirmButtonTitle: 确认按钮标题（默认与菜单「移动到废纸篓」一致；永久删除场景传"永久删除"）
     ///   - deleteAction: 确认删除回调
     init(fileCount: Int,
          message: String? = nil,
-         confirmButtonTitle: String = "移到废纸篓",
+         confirmButtonTitle: String = FFNaming.moveToTrashBase,
+         isPermanent: Bool = false,
          deleteAction: @escaping () -> Void) {
         self.fileCount = fileCount
 
         let bodyView = NSView()
         // 先创建 checkbox 引用，供闭包捕获（避免在 super.init 前引用 self）
         let checkbox = NSButton(checkboxWithTitle: "不再询问", target: nil, action: nil)
+        checkbox.isHidden = isPermanent
         self.dontAskAgainCheckbox = checkbox
         // 捕获局部 deleteAction，避免闭包中引用 self
         let capturedDeleteAction = deleteAction
@@ -35,20 +37,23 @@ class DeleteConfirmDialog: FFModalSheet {
                    primaryButton: (confirmButtonTitle, .destructive),
                    secondaryButton: "取消",
                    primaryAction: {
-                       if checkbox.state == .on {
+                       if !isPermanent, checkbox.state == .on {
                            UserDefaults.standard.set(true, forKey: FFUserDefaultsKeys.deleteConfirmDisabled)
                        }
                        capturedDeleteAction()
                    })
 
-        setupBody(bodyView: bodyView, checkbox: checkbox, message: message)
+        setupBody(bodyView: bodyView, checkbox: checkbox, message: message, isPermanent: isPermanent)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private func setupBody(bodyView: NSView, checkbox: NSButton, message: String?) {
+    private func setupBody(bodyView: NSView,
+                           checkbox: NSButton,
+                           message: String?,
+                           isPermanent: Bool) {
         // 警告图标（黄色三角）
         let warningIcon = NSImageView()
         warningIcon.image = FFIcon.image(.triangleAlert, size: 26, color: .systemYellow)
@@ -65,7 +70,9 @@ class DeleteConfirmDialog: FFModalSheet {
         mainMessage.translatesAutoresizingMaskIntoConstraints = false
 
         // 副消息
-        let subMessage = NSTextField(labelWithString: "此操作可以通过 Finder 的「放回原处」或应用的撤销功能恢复。")
+        let subMessage = NSTextField(labelWithString: isPermanent
+                                     ? FFDeleteCopy.permanentDeleteWarning
+                                     : "此操作可以通过 Finder 的「放回原处」或应用的撤销功能恢复。")
         subMessage.font = .systemFont(ofSize: 11)
         subMessage.textColor = .secondaryLabelColor
         subMessage.lineBreakMode = .byWordWrapping
@@ -79,7 +86,6 @@ class DeleteConfirmDialog: FFModalSheet {
         bodyView.addSubview(warningIcon)
         bodyView.addSubview(mainMessage)
         bodyView.addSubview(subMessage)
-        bodyView.addSubview(checkbox)
 
         NSLayoutConstraint.activate([
             warningIcon.topAnchor.constraint(equalTo: bodyView.topAnchor),
@@ -94,11 +100,18 @@ class DeleteConfirmDialog: FFModalSheet {
             subMessage.topAnchor.constraint(equalTo: mainMessage.bottomAnchor, constant: 6),
             subMessage.leadingAnchor.constraint(equalTo: mainMessage.leadingAnchor),
             subMessage.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
-
-            checkbox.topAnchor.constraint(equalTo: subMessage.bottomAnchor, constant: 12),
-            checkbox.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
-            checkbox.bottomAnchor.constraint(equalTo: bodyView.bottomAnchor),
         ])
+
+        if isPermanent {
+            subMessage.bottomAnchor.constraint(equalTo: bodyView.bottomAnchor).isActive = true
+        } else {
+            bodyView.addSubview(checkbox)
+            NSLayoutConstraint.activate([
+                checkbox.topAnchor.constraint(equalTo: subMessage.bottomAnchor, constant: 12),
+                checkbox.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
+                checkbox.bottomAnchor.constraint(equalTo: bodyView.bottomAnchor),
+            ])
+        }
     }
 }
 
@@ -110,9 +123,12 @@ extension DeleteConfirmDialog {
     /// - 0 个条目：无需确认（直接执行空操作）
     /// - 用户已勾选"不再询问"：跳过
     /// - 无宿主窗口：跳过（无法展示 sheet，直接执行，与既有回退行为一致）
-    static func shouldConfirm(fileCount: Int, confirmDisabled: Bool, windowAvailable: Bool) -> Bool {
+    static func shouldConfirm(fileCount: Int,
+                              confirmDisabled: Bool,
+                              windowAvailable: Bool,
+                              isPermanent: Bool = false) -> Bool {
         guard fileCount > 0 else { return false }
-        if confirmDisabled { return false }
+        if !isPermanent && confirmDisabled { return false }
         if !windowAvailable { return false }
         return true
     }
@@ -129,16 +145,21 @@ extension DeleteConfirmDialog {
     static func confirmDelete(fileCount: Int,
                               window: NSWindow?,
                               message: String? = nil,
-                              confirmButtonTitle: String = "移到废纸篓",
+                              confirmButtonTitle: String = FFNaming.moveToTrashBase,
+                              isPermanent: Bool = false,
                               action: @escaping () -> Void) {
         let disabled = UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.deleteConfirmDisabled)
-        guard shouldConfirm(fileCount: fileCount, confirmDisabled: disabled, windowAvailable: window != nil) else {
+        guard shouldConfirm(fileCount: fileCount,
+                            confirmDisabled: disabled,
+                            windowAvailable: window != nil,
+                            isPermanent: isPermanent) else {
             action()
             return
         }
         let dialog = DeleteConfirmDialog(fileCount: fileCount,
                                          message: message,
                                          confirmButtonTitle: confirmButtonTitle,
+                                         isPermanent: isPermanent,
                                          deleteAction: action)
         dialog.beginSheetModal(for: window!)
     }

@@ -14,6 +14,14 @@ enum FFDuplicateSelectionPolicy {
     static func initialSelection(groups: [Any]) -> Set<String> {
         []
     }
+
+    /// 每组至少保留一个文件：仅当标记后仍有未标记项时才允许加入删除集合。
+    static func canMarkForDeletion(filePath: String,
+                                   allPaths: [String],
+                                   currentlyMarked: Set<String>) -> Bool {
+        guard allPaths.contains(filePath) else { return false }
+        return allPaths.contains { $0 != filePath && !currentlyMarked.contains($0) }
+    }
 }
 
 enum FFDeleteCopy {

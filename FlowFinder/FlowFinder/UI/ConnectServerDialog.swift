@@ -31,6 +31,13 @@ enum ConnectServerProtocol: Int, CaseIterable {
     var isSupported: Bool {
         return self == .smb
     }
+
+    /// R4-05：不可用协议必须自己把话说破。此前只把输入框变灰、
+    /// 把「（FTP 暂不支持）」塞进占位符，用户看不出这个协议根本连不上。
+    var unsupportedNotice: String? {
+        guard !isSupported else { return nil }
+        return "\(title) 暂未支持，目前只能连接 SMB 共享。"
+    }
 }
 
 // MARK: - ConnectServerDialog
@@ -48,6 +55,8 @@ class ConnectServerDialog: FFModalSheet {
     private var passwordField: NSSecureTextField!
     private var rememberToggle: NSButton!
     private var autoConnectToggle: NSButton!
+    /// R4-05：不可用协议的显式说明（选中 SMB 时隐藏）
+    private var protocolNoticeLabel: NSTextField!
 
     /// 连接回调
     private let connectAction: (ConnectServerResult) -> Void
@@ -58,7 +67,7 @@ class ConnectServerDialog: FFModalSheet {
         let bodyView = NSView()
         // 使用闭包持有盒延迟注入 self 依赖（Swift 6 严格模式禁止 super.init 前捕获 self）
         let box = FFClosureBox()
-        super.init(title: "连接到服务器",
+        super.init(title: FFNaming.connectServerBase,
                    bodyView: bodyView,
                    primaryButton: ("连接", .default),
                    secondaryButton: "取消",
@@ -97,6 +106,14 @@ class ConnectServerDialog: FFModalSheet {
         protocolSegmented.selectedSegment = 0
         protocolSegmented.controlSize = .small
         protocolSegmented.translatesAutoresizingMaskIntoConstraints = false
+
+        // R4-05：选到不可用协议时，在协议行下方直接说明，而不是只把输入框变灰。
+        protocolNoticeLabel = NSTextField(wrappingLabelWithString: "")
+        protocolNoticeLabel.font = .systemFont(ofSize: 11)
+        protocolNoticeLabel.textColor = .secondaryLabelColor
+        protocolNoticeLabel.isSelectable = false
+        protocolNoticeLabel.isHidden = true
+        protocolNoticeLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // 服务器地址
         let serverLabel = makeFieldLabel("服务器地址")
@@ -156,6 +173,7 @@ class ConnectServerDialog: FFModalSheet {
         // 布局
         bodyView.addSubview(protocolLabel)
         bodyView.addSubview(protocolSegmented)
+        bodyView.addSubview(protocolNoticeLabel)
         bodyView.addSubview(serverLabel)
         bodyView.addSubview(serverField)
         bodyView.addSubview(portShareLabels)
@@ -188,8 +206,13 @@ class ConnectServerDialog: FFModalSheet {
             protocolSegmented.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
             protocolSegmented.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
 
+            protocolNoticeLabel.topAnchor.constraint(equalTo: protocolSegmented.bottomAnchor, constant: 4),
+            protocolNoticeLabel.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
+            protocolNoticeLabel.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
+            noticeHeightConstraint,
+
             // 服务器地址
-            serverLabel.topAnchor.constraint(equalTo: protocolSegmented.bottomAnchor, constant: spacing),
+            serverLabel.topAnchor.constraint(equalTo: protocolNoticeLabel.bottomAnchor, constant: spacing),
             serverLabel.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
             serverLabel.heightAnchor.constraint(equalToConstant: labelHeight),
 
@@ -249,6 +272,10 @@ class ConnectServerDialog: FFModalSheet {
         ])
     }
 
+    /// R4-05：说明行隐藏时高度归零，不留空档。
+    private lazy var noticeHeightConstraint: NSLayoutConstraint =
+        protocolNoticeLabel.heightAnchor.constraint(equalToConstant: 0)
+
     private func makeFieldLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 11, weight: .medium)
@@ -261,21 +288,25 @@ class ConnectServerDialog: FFModalSheet {
         let proto = ConnectServerProtocol(rawValue: protocolSegmented.selectedSegment) ?? .smb
         portField.stringValue = proto.defaultPort
         // 非支持协议禁用连接（F2: 同时禁用「连接」按钮，避免点击后静默无效果）
-        if !proto.isSupported {
+        if let notice = proto.unsupportedNotice {
             // 仅 SMB 已支持，其他协议禁用用户名/密码输入
             userField.isEnabled = false
             passwordField.isEnabled = false
             shareField.isEnabled = false
             setPrimaryButtonEnabled(false)
-            // 提示
-            userField.placeholderString = "（\(proto.title) 暂不支持）"
+            protocolNoticeLabel.stringValue = notice
+            protocolNoticeLabel.isHidden = false
+            noticeHeightConstraint.constant = 16
         } else {
             userField.isEnabled = true
             passwordField.isEnabled = true
             shareField.isEnabled = true
             setPrimaryButtonEnabled(true)
-            userField.placeholderString = "可选（匿名访问留空）"
+            protocolNoticeLabel.stringValue = ""
+            protocolNoticeLabel.isHidden = true
+            noticeHeightConstraint.constant = 0
         }
+        userField.placeholderString = "可选（匿名访问留空）"
     }
 }
 

@@ -172,6 +172,32 @@ final class SidebarFavoritesStoreTests: XCTestCase {
         XCTAssertFalse(store.hasMissingFavorites)
     }
 
+    // MARK: - R4-25：位置分区与个人收藏不得重复列同一个路径
+
+    func testPlacesSectionKeepsOnlyMountedVolumes() {
+        func dev(_ name: String, _ path: String) -> DeviceItem {
+            DeviceItem(name: name, path: path, isRemovable: false, isNetwork: false,
+                       totalSize: 0, freeSize: 0)
+        }
+        let candidates = [
+            dev("Macintosh HD", "/"),
+            dev("waltxao", "/Users/waltxao"),
+            dev("Iris-Data", "/Volumes/Iris-Data"),
+            dev("Data", "/System/Volumes/Data"),
+        ]
+        XCTAssertEqual(DeviceSidebarDataSource.placeDevices(from: candidates).map(\.path),
+                       ["/", "/Volumes/Iris-Data"],
+                       "「位置」只收挂载卷：主目录已在「个人收藏」，再列一次就是侧栏两个同名条目")
+    }
+
+    func testHomeFolderIsAFavoriteAndNotAPlace() {
+        let home = "/Users/waltxao"
+        XCTAssertTrue(SidebarFavoritesStore.defaultFavorites(homePath: home).contains { $0.path == home },
+                      "主目录的侧栏入口只有一处：个人收藏")
+        XCTAssertFalse(DeviceSidebarDataSource.isVolumePlace(home),
+                       "主目录同时被当成挂载卷 → 侧栏重复条目（R4-25）")
+    }
+
     // MARK: - 行高度量（锁定，避免无意改动导致分区高度与行高脱节）
 
     func testSidebarMetricsLocked() {

@@ -12,9 +12,31 @@ public class SMBManagerPanel: NSView {
     private var statusLabel: NSTextField!
     private var addButton: NSButton!
     private var refreshButton: NSButton!
+    private var listLabel: NSTextField!
 
     /// 已挂载的共享列表
     private var volumes: [SMBVolume] = []
+
+    // MARK: - 文案口径（R4-14）
+
+    /// 连接数量只在列表标题这一处播报。此前 `共 0 个已连接服务器`、
+    /// `已连接的服务器` 标题与空态图标块三处说同一件事。
+    static func listHeader(connectedCount: Int) -> String {
+        "已连接服务器（\(connectedCount)）"
+    }
+
+    /// 状态行只报连接/断开的过程与结果；空列表时不再重复播报数量。
+    static func refreshStatus(connectedCount: Int) -> String? {
+        connectedCount > 0 ? "共 \(connectedCount) 个已连接服务器" : nil
+    }
+
+    /// 空态图标：Wi-Fi 斜杠说的是「没有网络」，这里要说的是「没有已连接的服务器」。
+    static let emptyStateIcon: FFIconName = .server
+    static let emptyStateText = "暂无已连接的服务器，点按「添加服务器」连接 SMB 共享"
+    static let emptyStateHeight: CGFloat = 88
+    /// 列表可视区下限：嵌进设置页时面板其余行会吃掉高度，
+    /// 不给下限则可视区被压到 30pt 左右，空态的说明文字整段被裁掉。
+    static let minListHeight: CGFloat = emptyStateHeight + 22
 
     // MARK: - Init
 
@@ -87,8 +109,8 @@ public class SMBManagerPanel: NSView {
             statusRow.heightAnchor.constraint(equalToConstant: 20),
         ])
 
-        // 服务器列表（卡片样式）
-        let listLabel = NSTextField(labelWithString: "已连接的服务器")
+        // 服务器列表（卡片样式）；标题带计数，是全页唯一的数量播报处
+        listLabel = NSTextField(labelWithString: SMBManagerPanel.listHeader(connectedCount: 0))
         listLabel.font = .systemFont(ofSize: 11, weight: .medium)
         listLabel.textColor = .secondaryLabelColor
         listLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -108,7 +130,8 @@ public class SMBManagerPanel: NSView {
         scrollView.documentView = serverStack
 
         // 添加服务器按钮
-        addButton = NSButton(title: "+ 添加服务器...", target: self, action: #selector(addServerClicked))
+        // R4-14：通栏等宽按钮看起来像一行被禁用的列表项，改回普通左对齐按钮。
+        addButton = NSButton(title: FFNaming.addServerTitle, target: self, action: #selector(addServerClicked))
         addButton.bezelStyle = .rounded
         addButton.controlSize = .regular
         addButton.translatesAutoresizingMaskIntoConstraints = false
@@ -143,7 +166,6 @@ public class SMBManagerPanel: NSView {
             scrollView.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -12),
 
             addButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            addButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
             addButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
             addButton.heightAnchor.constraint(equalToConstant: 28),
 
@@ -151,6 +173,8 @@ public class SMBManagerPanel: NSView {
             serverStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
             serverStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             serverStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: SMBManagerPanel.minListHeight),
         ])
     }
 
@@ -158,6 +182,7 @@ public class SMBManagerPanel: NSView {
 
     private func rebuildServerList() {
         serverStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        listLabel.stringValue = SMBManagerPanel.listHeader(connectedCount: volumes.count)
 
         if volumes.isEmpty {
             let empty = makeEmptyState()
@@ -188,38 +213,31 @@ public class SMBManagerPanel: NSView {
         container.layer?.cornerRadius = 8
 
         let icon = NSImageView()
-        icon.image = FFIcon.template(.wifiOff, size: 28)
+        icon.image = FFIcon.template(SMBManagerPanel.emptyStateIcon, size: 24)
         icon.contentTintColor = .tertiaryLabelColor
         icon.imageScaling = .scaleProportionallyDown
         icon.translatesAutoresizingMaskIntoConstraints = false
 
-        let label = NSTextField(labelWithString: "暂无已连接的服务器")
+        // 图标 + 一句话，不再拆成「暂无…」与「点击下方…」两行重复表述。
+        let label = NSTextField(labelWithString: SMBManagerPanel.emptyStateText)
         label.font = .systemFont(ofSize: 12)
-        label.textColor = .tertiaryLabelColor
+        label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
-
-        let hint = NSTextField(labelWithString: "点击下方「添加服务器」按钮连接到 SMB 共享")
-        hint.font = .systemFont(ofSize: 10)
-        hint.textColor = .tertiaryLabelColor
-        hint.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(icon)
         container.addSubview(label)
-        container.addSubview(hint)
 
         NSLayoutConstraint.activate([
-            icon.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
             icon.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 32),
-            icon.heightAnchor.constraint(equalToConstant: 32),
+            icon.topAnchor.constraint(equalTo: container.topAnchor, constant: 18),
+            icon.widthAnchor.constraint(equalToConstant: 26),
+            icon.heightAnchor.constraint(equalToConstant: 26),
 
-            label.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 8),
+            label.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 6),
             label.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            label.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -18),
 
-            hint.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 4),
-            hint.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-
-            container.heightAnchor.constraint(equalToConstant: 110),
+            container.heightAnchor.constraint(equalToConstant: SMBManagerPanel.emptyStateHeight),
         ])
         return container
     }
@@ -253,7 +271,7 @@ public class SMBManagerPanel: NSView {
 
         let ipLabel = NSTextField(labelWithString: volume.url)
         ipLabel.font = .systemFont(ofSize: 10)
-        ipLabel.textColor = .tertiaryLabelColor
+        ipLabel.textColor = FFVisualTokens.hint
         ipLabel.lineBreakMode = .byTruncatingTail
         ipLabel.cell?.truncatesLastVisibleLine = true
         ipLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -326,7 +344,7 @@ public class SMBManagerPanel: NSView {
     /// 连接到服务器
     private func connectToServer(url: URL, parentWindow: NSWindow) {
         progressIndicator.startAnimation(nil)
-        statusLabel.stringValue = "正在连接..."
+        statusLabel.stringValue = "正在连接…"
         addButton.isEnabled = false
 
         SMBBridge.shared.mount(url: url.absoluteString) { [weak self] result in
@@ -354,7 +372,7 @@ public class SMBManagerPanel: NSView {
         guard !mountPoint.isEmpty else { return }
 
         progressIndicator.startAnimation(nil)
-        statusLabel.stringValue = "正在断开..."
+        statusLabel.stringValue = "正在断开…"
         sender.isEnabled = false
 
         SMBBridge.shared.unmount(mountPoint: mountPoint) { [weak self] result in
@@ -378,8 +396,5 @@ public class SMBManagerPanel: NSView {
         SMBBridge.shared.refreshMountedVolumes()
         volumes = SMBBridge.shared.listMounted()
         rebuildServerList()
-        if statusLabel.stringValue == "就绪" || statusLabel.stringValue.contains("已断开") || statusLabel.stringValue.contains("已连接") {
-            statusLabel.stringValue = "共 \(volumes.count) 个已连接服务器"
-        }
     }
 }

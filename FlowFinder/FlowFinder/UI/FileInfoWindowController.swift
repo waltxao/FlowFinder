@@ -69,11 +69,9 @@ public class FileInfoWindowController: NSWindowController {
         let contentView = window.contentView!
 
         // 任务 F11-2: 实体背景容器（替代 NSVisualEffectView .underWindowBackground，v0.6.7）
-        // 使用系统动态 windowBackgroundColor，与窗口背景一致。
-        let backgroundContainer = NSView()
+        // R4-32: 走 FFDynamicBackgroundView，动态色要在外观切换时重新解析，不能构建时钉死。
+        let backgroundContainer = FFDynamicBackgroundView()
         backgroundContainer.translatesAutoresizingMaskIntoConstraints = false
-        backgroundContainer.wantsLayer = true
-        backgroundContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         contentView.addSubview(backgroundContainer)
 
         // 内容容器（垂直堆叠）
@@ -331,14 +329,9 @@ public class FileInfoWindowController: NSWindowController {
         return contents.count
     }
 
-    /// 格式化字节大小为 "X MB" / "X KB" / "X GB"
-    private static func formatFileSize(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
-        formatter.countStyle = .file
-        formatter.includesUnit = true
-        formatter.zeroPadsFractionDigits = false
-        return formatter.string(fromByteCount: bytes)
+    /// 格式化字节大小：小于 1 KB 保留字节，走全站同一份 `FFFormat`（R4-01）
+    static func formatFileSize(_ bytes: Int64) -> String {
+        FFFormat.fileSize(bytes < 0 ? 0 : UInt64(bytes))
     }
 
     /// 文件种类描述

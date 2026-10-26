@@ -420,9 +420,9 @@ final class FFDetailsPhase4PolicyTests: XCTestCase {
     func testPreviewColumnWidthRangeAndDefault() {
         XCTAssertEqual(FFDetailsLayoutPolicy.defaultPreviewColumnWidth, 132)
         XCTAssertEqual(FFDetailsLayoutPolicy.minimumPreviewColumnWidth, 96)
-        XCTAssertEqual(FFDetailsLayoutPolicy.maximumPreviewColumnWidth, 200)
+        XCTAssertEqual(FFDetailsLayoutPolicy.maximumPreviewColumnWidth, 232)
         XCTAssertEqual(FFDetailsLayoutPolicy.clampedPreviewColumnWidth(40), 96)
-        XCTAssertEqual(FFDetailsLayoutPolicy.clampedPreviewColumnWidth(260), 200)
+        XCTAssertEqual(FFDetailsLayoutPolicy.clampedPreviewColumnWidth(260), 232)
         XCTAssertEqual(FFDetailsLayoutPolicy.clampedPreviewColumnWidth(150), 150)
     }
 }
@@ -541,10 +541,11 @@ final class FFBuildInfoTests: XCTestCase {
                        "0.8.0-26102101 Beta")
     }
 
-    func testAboutBuildLineIncludesDateAndPath() {
+    /// R4-16 修订：关于页只显示构建时间，bundle 路径退出可见文案。
+    func testAboutBuildLineShowsDateOnly() {
         XCTAssertEqual(FFBuildInfo.aboutBuildLine(buildDateText: "2026-10-21 12:30",
                                                    bundlePath: "/Users/x/Desktop/FlowFinder.app"),
-                       "构建 2026-10-21 12:30 · /Users/x/Desktop/FlowFinder.app")
+                       "构建 2026-10-21 12:30")
     }
 }
 

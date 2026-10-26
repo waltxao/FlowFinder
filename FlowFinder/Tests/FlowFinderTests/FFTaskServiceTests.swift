@@ -58,4 +58,17 @@ final class FFTaskServiceTests: XCTestCase {
         service.removeFinished()
         XCTAssertEqual(service.tasks.map(\.id), ["run"])
     }
+
+    func testLateProgressCannotReviveFinishedTask() {
+        let service = FFTaskService()
+        var item = task(completed: 100, state: .finished)
+        service.upsert(item)
+
+        item.state = .running
+        item.completedBytes = 40
+        service.upsert(item)
+
+        XCTAssertEqual(service.tasks.first?.state, .finished)
+        XCTAssertEqual(service.tasks.first?.completedBytes, 100)
+    }
 }

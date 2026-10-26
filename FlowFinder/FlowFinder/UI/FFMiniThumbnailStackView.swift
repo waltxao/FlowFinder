@@ -13,13 +13,33 @@ import Cocoa
 ///    鼠标落在控件上时仍返回控件，本拦截器只兜底"控件之间的空白区域"。
 /// E4: 从 ExpandableDetailsBar.swift 拆出（internal 供同 module 使用方访问）。
 final class FFMouseInterceptorView: NSView {
-    override func mouseDown(with event: NSEvent) { }
-    override func mouseUp(with event: NSEvent) { }
+    /// 空白区域单击（未拖动）：详情栏药丸/胶囊点击切换折叠展开。
+    var onClick: (() -> Void)?
+    private var mouseDownPoint: NSPoint?
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownPoint = event.locationInWindow
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { mouseDownPoint = nil }
+        guard let start = mouseDownPoint else { return }
+        let end = event.locationInWindow
+        guard hypot(end.x - start.x, end.y - start.y) < 4 else { return }
+        onClick?()
+    }
+
     override func mouseDragged(with event: NSEvent) { }
     override func mouseMoved(with event: NSEvent) { }
     override func rightMouseDown(with event: NSEvent) { }
     override func rightMouseUp(with event: NSEvent) { }
     override func rightMouseDragged(with event: NSEvent) { }
+}
+
+/// 收起态内容容器：自身与全部子视图都不参与命中测试，让点击落到下方拦截层，
+/// 从而支持「点击药丸空白处切换展开」；展开态仍使用普通 NSView 保留控件交互。
+final class FFPillPassThroughView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 // MARK: - FFMiniThumbnailStackView（v0.7.4 修订 4：多选缩略图堆叠图标）

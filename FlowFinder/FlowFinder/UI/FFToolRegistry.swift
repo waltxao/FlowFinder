@@ -31,6 +31,7 @@ final class FFToolRegistry {
         guard shared.tools.isEmpty else { return }
         shared.register(DuplicateScanTool())
         shared.register(BatchRenameTool())
+        shared.register(BatchOrganizeTool())
         shared.register(TaskCenterTool())
         shared.register(AITagTool())
         shared.register(AIOrganizeTool())
@@ -43,7 +44,7 @@ final class FFToolRegistry {
 
 private struct DuplicateScanTool: FFTool {
     let id = "duplicate-scan"
-    let title = "重复文件扫描"
+    let title = FFNaming.duplicateScanBase
     var icon: FFIconName { .scanSearch }
     let keywords = ["查重", "重复", "duplicate", "dedup"]
     let group = FFToolGroup.organize
@@ -60,14 +61,16 @@ private struct DuplicateScanTool: FFTool {
 
 private struct BatchRenameTool: FFTool {
     let id = "batch-rename"
-    let title = "批量重命名"
+    let title = FFNaming.batchRenameBase
     var icon: FFIconName { .replace }
     let keywords = ["批量", "重命名", "rename", "batch"]
     let group = FFToolGroup.organize
     var contextHint: String? { "作用于当前选择" }
 
     func availability(in context: FFToolContext) -> FFToolAvailability {
-        context.selection.count >= 2 ? .available : .needsSelection
+        // R4-11：阈值是 2——只选 1 个时说「先选择文件」等于误导（已经选了）
+        if context.selection.isEmpty { return .needsSelection }
+        return context.selection.count >= 2 ? .available : .disabled(FFNaming.batchRenameRequires)
     }
 
     func run(in context: FFToolContext) {
@@ -75,14 +78,34 @@ private struct BatchRenameTool: FFTool {
     }
 }
 
+/// J3-10: 批量整理工具（工具页入口，作用于当前目录）
+private struct BatchOrganizeTool: FFTool {
+    let id = "batch-organize"
+    let title = FFNaming.batchOrganizeBase
+    var icon: FFIconName { .folderTree }
+    let keywords = ["整理", "分类", "organize", "batch"]
+    let group = FFToolGroup.organize
+    var contextHint: String? { "作用于当前目录" }
+
+    func availability(in context: FFToolContext) -> FFToolAvailability {
+        context.currentPath.isEmpty ? .needsFolder : .available
+    }
+
+    func run(in context: FFToolContext) {
+        context.window?.menuBatchOrganize(nil)
+    }
+}
+
 private struct TaskCenterTool: FFTool {
     let id = "task-center"
-    let title = "任务中心"
+    let title = FFNaming.taskCenterBase
     var icon: FFIconName { .listChecks }
     let keywords = ["任务", "进度", "task", "progress"]
     let group = FFToolGroup.task
 
-    func availability(in context: FFToolContext) -> FFToolAvailability { .available }
+    func availability(in context: FFToolContext) -> FFToolAvailability {
+        context.hasTasks ? .available : .disabled("暂无任务")
+    }
 
     func run(in context: FFToolContext) {
         TaskPanelWindowController.shared.showWindow()

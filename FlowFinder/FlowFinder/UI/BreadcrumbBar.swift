@@ -247,36 +247,98 @@ class BreadcrumbBar: NSView, FFRegionAware {
             contentStack.addArrangedSubview(button)
         }
 
-        // 延迟到下一轮布局后再计算溢出（此时 contentStack.intrinsicContentSize 已更新）
+        // 分段自身的固有宽度不依赖布局，立刻量一次，保证首轮 intrinsicContentSize 就正确；
+        // 控件内部（字体/图标）就绪后再补量一次。
+        measureFullContentWidth()
+        invalidateIntrinsicContentSize()
+
+        // 延迟到下一轮布局后再计算溢出（此时分段宽度已就绪）
         DispatchQueue.main.async { [weak self] in
-            self?.invalidateIntrinsicContentSize()
-            self?.updateOverflowState()
+            guard let self else { return }
+            self.measureFullContentWidth()
+            self.invalidateIntrinsicContentSize()
+            self.updateOverflowState()
         }
+    }
+
+    /// 全部分段（含被收起的左侧段）铺开的宽度。
+    /// 单独存一份而不是读 `contentStack.fittingSize`：收起左侧段后 fittingSize 会变小，
+    /// 面包屑随之变窄、行尾占位又变宽，可见区跟着缩小 → 再收一段，一路级联到只剩当前目录。
+    private var fullContentWidth: CGFloat = 0
+
+    private func measureFullContentWidth() {
+        let views = contentStack.arrangedSubviews
+        guard !views.isEmpty else {
+            fullContentWidth = 0
+            return
+        }
+        let widths = views.map { $0.intrinsicContentSize.width }
+        fullContentWidth = contentStack.edgeInsets.left + contentStack.edgeInsets.right
+            + widths.reduce(0, +)
+            + contentStack.spacing * CGFloat(max(0, widths.count - 1))
     }
 
     // MARK: - 固有宽度
 
-    /// 按内容宽度参与布局，不吸收行内剩余空白。
+    /// 按**全部**分段参与布局，不吸收行内剩余空白。
     /// Row1 是「导航组 → 面包屑 → 弹性空白」，面包屑必须紧贴刷新按钮（规格 T-04）；
     /// 此前没有 intrinsicContentSize，栈视图只能靠 hugging 分配宽度，结果面包屑
     /// 被拉满整行、内部又靠右对齐，视觉上飘到了行尾。
-    /// 被压缩到内容宽度以下时，clipContainer 变窄 → 触发溢出裁剪（左侧祖先段被裁，
-    /// 当前目录始终可见），行为与原来一致。
+    /// 行宽不足时本视图被压缩（抗压缩优先级 defaultLow），左侧整段收起并显示省略号。
     override var intrinsicContentSize: NSSize {
-        let width = contentStack.fittingSize.width
-        guard width > 0 else {
+        guard fullContentWidth > 0 else {
             return NSSize(width: NSView.noIntrinsicMetric, height: 24)
         }
-        return NSSize(width: width, height: 24)
+        return NSSize(width: fullContentWidth, height: 24)
     }
 
     // MARK: - 溢出检测
 
-    /// 检测内容是否溢出可见区域，更新省略号显隐
+    /// 溢出时**整段**收起左侧分段（R4-03）。
+    ///
+    /// 旧实现只靠裁剪：靠右对齐的内容被行宽切在最左一段的中间，
+    /// 半截文字（实测「Iris」显示成「ris」）压在省略号按钮下面。
+    /// 现在按可见区宽度从右往左累加，放不下的整段隐藏，并给省略号预留位置。
     private func updateOverflowState() {
-        let contentWidth = contentStack.fittingSize.width
-        let visibleWidth = clipContainer.bounds.width
-        isOverflowing = contentWidth > visibleWidth && visibleWidth > 0
+        let views = contentStack.arrangedSubviews
+        guard !views.isEmpty else {
+            isOverflowing = false
+            return
+        }
+        let available = clipContainer.bounds.width
+        guard available > 0 else { return }
+
+        let insets = contentStack.edgeInsets.left + contentStack.edgeInsets.right
+        let gap = contentStack.spacing
+        guard fullContentWidth > available else {
+            if isOverflowing {
+                for view in views { view.isHidden = false }
+                isOverflowing = false
+            }
+            return
+        }
+
+        // 省略号也要占位，否则收起后仍会压在它下面
+        let budget = available - insets - (overflowButton.intrinsicContentSize.width > 0
+            ? overflowButton.frame.width + gap : 0)
+        let widths = views.map { $0.intrinsicContentSize.width }
+        var used: CGFloat = 0
+        var firstVisible = views.count
+        var index = views.count - 1
+        while index >= 0 {
+            let addition = widths[index] + (index == views.count - 1 ? 0 : gap)
+            guard used + addition <= budget else { break }
+            used += addition
+            firstVisible = index
+            index -= 1
+        }
+        // 当前目录（最后一段）永远保留，哪怕已经放不下
+        if firstVisible >= views.count { firstVisible = views.count - 1 }
+
+        for (position, view) in views.enumerated() {
+            view.isHidden = position < firstVisible
+        }
+        isOverflowing = firstVisible > 0
     }
 
     override func layout() {
@@ -286,6 +348,15 @@ class BreadcrumbBar: NSView, FFRegionAware {
             self?.updateOverflowState()
         }
     }
+
+    // MARK: - 测试缝隙
+
+    var segmentButtonsForTesting: [NSButton] {
+        contentStack.arrangedSubviews.compactMap { $0 as? NSButton }
+            .filter { !($0 is BreadcrumbChevronButton) }
+    }
+    var overflowButtonForTesting: NSButton { overflowButton }
+    var isOverflowingForTesting: Bool { isOverflowing }
 
     // MARK: - 点击事件
 

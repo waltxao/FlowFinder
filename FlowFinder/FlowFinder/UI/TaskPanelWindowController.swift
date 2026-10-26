@@ -15,6 +15,7 @@ public class TaskPanelWindowController: NSWindowController {
     private var scrollView: NSScrollView!
     private var refreshButton: NSButton!
     private var cancelButton: NSButton!
+    private var revealButton: NSButton!
     private var clearButton: NSButton!
     private var statusLabel: NSTextField!
 
@@ -23,9 +24,30 @@ public class TaskPanelWindowController: NSWindowController {
     private enum PanelRow {
         case app(FFTask)
         case system(TaskInfo)
+
+        /// 任务作用的对象（R4-24）。Rust 侧任务只带名称与描述，没有可靠路径。
+        var locationPath: String? {
+            switch self {
+            case .app(let task): return task.locationPath
+            case .system: return nil
+            }
+        }
     }
     private var rows: [PanelRow] = []
     private var emptyLabel: NSTextField!
+
+    /// internal 供回归测试定位行与断言控件状态
+    var rowTaskIDs: [String] {
+        rows.map { row in
+            switch row {
+            case .app(let task): return task.id
+            case .system(let task): return task.id
+            }
+        }
+    }
+    var tableViewForTesting: NSTableView? { tableView }
+    var cancelButtonForTesting: NSButton? { cancelButton }
+    var revealButtonForTesting: NSButton? { revealButton }
 
     private override init(window: NSWindow?) {
         super.init(window: window)
@@ -38,7 +60,7 @@ public class TaskPanelWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "任务面板"
+        window.title = FFNaming.taskCenterBase
         window.minSize = NSSize(width: 500, height: 300)
         window.center()
         window.setFrameAutosaveName("TaskPanelWindow")
@@ -69,6 +91,10 @@ public class TaskPanelWindowController: NSWindowController {
         cancelButton.bezelStyle = .rounded
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
 
+        revealButton = NSButton(title: "定位", target: self, action: #selector(revealClicked))
+        revealButton.bezelStyle = .rounded
+        revealButton.translatesAutoresizingMaskIntoConstraints = false
+
         clearButton = NSButton(title: "清除已完成", target: self, action: #selector(clearClicked))
         clearButton.bezelStyle = .rounded
         clearButton.translatesAutoresizingMaskIntoConstraints = false
@@ -80,6 +106,7 @@ public class TaskPanelWindowController: NSWindowController {
 
         toolbar.addSubview(refreshButton)
         toolbar.addSubview(cancelButton)
+        toolbar.addSubview(revealButton)
         toolbar.addSubview(clearButton)
         toolbar.addSubview(statusLabel)
 
@@ -92,7 +119,9 @@ public class TaskPanelWindowController: NSWindowController {
         tableView = NSTableView()
         tableView.allowsMultipleSelection = false
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        tableView.usesAlternatingRowBackgroundColors = true
+        // 交替行底色会在最后一行下方继续画出空行条纹，看起来像可点的行（R4-22）。
+        tableView.usesAlternatingRowBackgroundColors = false
+        tableView.gridStyleMask = .solidHorizontalGridLineMask
         tableView.rowHeight = 24
 
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
@@ -124,7 +153,7 @@ public class TaskPanelWindowController: NSWindowController {
 
         emptyLabel = NSTextField(labelWithString: "暂无任务")
         emptyLabel.font = NSFont.systemFont(ofSize: 13)
-        emptyLabel.textColor = .tertiaryLabelColor
+        emptyLabel.textColor = FFVisualTokens.hint
         emptyLabel.isHidden = true
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(emptyLabel)
@@ -145,7 +174,10 @@ public class TaskPanelWindowController: NSWindowController {
             cancelButton.leadingAnchor.constraint(equalTo: refreshButton.trailingAnchor, constant: 8),
             cancelButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
 
-            clearButton.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
+            revealButton.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
+            revealButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+
+            clearButton.leadingAnchor.constraint(equalTo: revealButton.trailingAnchor, constant: 8),
             clearButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
 
             statusLabel.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
@@ -168,6 +200,7 @@ public class TaskPanelWindowController: NSWindowController {
                 guard let self else { return }
                 self.rows = appTasks.map(PanelRow.app) + systemTasks.map(PanelRow.system)
                 self.tableView.reloadData()
+                self.updateActionbar()
 
                 let activeApp = appTasks.filter(\.isActive).count
                 let activeSystem = systemTasks.filter { $0.isActive }.count
@@ -175,7 +208,7 @@ public class TaskPanelWindowController: NSWindowController {
                 let completedApp = appTasks.filter { !$0.isActive }.count
                 self.emptyLabel.isHidden = !self.rows.isEmpty
                 if self.rows.isEmpty {
-                    self.statusLabel.stringValue = "暂无任务"
+                    self.statusLabel.stringValue = ""
                 } else {
                     self.statusLabel.stringValue =
                         "共 \(self.rows.count) 个任务（\(activeApp + activeSystem) 进行中，\(completedApp + completedSystem) 已完成）"
@@ -190,12 +223,69 @@ public class TaskPanelWindowController: NSWindowController {
         TaskSchedulerManager.shared.refreshTasks()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        updateActionbar()
     }
 
     // MARK: - Actions
 
     @objc private func refreshClicked() {
         TaskSchedulerManager.shared.refreshTasks()
+        tableView.reloadData()
+        updateActionbar()
+    }
+
+    /// 「取消任务」只在选中行确实可取消时可用，避免点击后静默无效（R4-23）。
+    /// 「定位」同一套规则（R4-24）：只有任务带着仍在磁盘上的对象时才可用，禁用原因写进 tooltip。
+    private func updateActionbar() {
+        let row = tableView.selectedRow
+        let selected = (row >= 0 && row < rows.count) ? rows[row] : nil
+        let cancellable = selected.map(isCancellable) ?? false
+        cancelButton.isEnabled = cancellable
+        cancelButton.toolTip = cancellable ? nil : "选中一个进行中的任务后可取消"
+
+        let target = revealTarget(for: selected)
+        revealButton.isEnabled = target.path != nil
+        revealButton.toolTip = target.path ?? target.disabledReason
+    }
+
+    private func isCancellable(_ row: PanelRow) -> Bool {
+        switch row {
+        case .app(let task): return FFTaskService.shared.canCancel(task.id)
+        case .system(let task): return task.isActive
+        }
+    }
+
+    private func revealTarget(for row: PanelRow?) -> (path: String?, disabledReason: String?) {
+        guard let row else { return (nil, "选中一个任务后可定位") }
+        guard let path = row.locationPath, !path.isEmpty else {
+            return (nil, "该任务没有可定位的对象")
+        }
+        guard FileManager.default.fileExists(atPath: path) else {
+            return (nil, "对象已不在磁盘上：\(path)")
+        }
+        return (path, nil)
+    }
+
+    /// 把主窗口活动面板带到任务对象所在处（R4-24）。
+    @objc private func revealClicked() {
+        let row = tableView.selectedRow
+        guard row >= 0, row < rows.count,
+              let path = revealTarget(for: rows[row]).path else { return }
+        if let main = TaskPanelWindowController.frontmostMainWindow() {
+            main.revealTaskLocation(path: path)
+            return
+        }
+        // 没有可见主窗口时退回访达，至少不会点了没反应。
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    /// 取最靠前的可见主窗口（`NSApp.windows` 按前后顺序排列）。
+    private static func frontmostMainWindow() -> MainWindowController? {
+        NSApp.windows.lazy.compactMap { $0.windowController as? MainWindowController }
+            .first { controller in
+                guard let window = controller.window else { return false }
+                return window.isVisible && !window.isMiniaturized
+            }
     }
 
     @objc private func cancelClicked() {
@@ -228,12 +318,9 @@ extension TaskPanelWindowController: NSTableViewDataSource {
 
 extension TaskPanelWindowController: NSTableViewDelegate {
 
-    private static let appDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter
-    }()
+    public func tableViewSelectionDidChange(_ notification: Notification) {
+        updateActionbar()
+    }
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < rows.count else { return nil }
@@ -276,7 +363,7 @@ extension TaskPanelWindowController: NSTableViewDelegate {
             case "progress":
                 text.stringValue = "\(Int(task.progress * 100))%"
             case "created":
-                text.stringValue = Self.appDateFormatter.string(from: task.startedAt)
+                text.stringValue = FFFormat.dateCompact(task.startedAt)
             default:
                 break
             }

@@ -182,8 +182,8 @@ class SettingsRowView: NSView {
 
     /// 禁用整行（占位项标注"即将支持"）
     func setDisabled(tooltip: String = "即将支持") {
-        titleLabel.textColor = NSColor.tertiaryLabelColor
-        descLabel.textColor = NSColor.tertiaryLabelColor
+        titleLabel.textColor = FFVisualTokens.hint
+        descLabel.textColor = FFVisualTokens.hint
         controlContainer.subviews.forEach { ($0 as? NSControl)?.isEnabled = false }
         self.toolTip = tooltip
     }
@@ -365,6 +365,21 @@ class SettingsSectionView: NSView {
         NSLayoutConstraint.activate([
             view.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor),
             view.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor),
+        ])
+    }
+
+    /// R4-13：脚注——只对「说明一件事、但没有开关」的内容使用。
+    /// 之前这类说明排成一行设置项（标题加粗、右侧空），用户会去找根本不存在的控件。
+    func addFootnote(_ text: String) {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = NSFont.systemFont(ofSize: FFSettingsMetrics.descFontSize)
+        label.textColor = NSColor.secondaryLabelColor
+        label.isSelectable = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        rowsStack.addArrangedSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor),
         ])
     }
 }

@@ -6,15 +6,19 @@ final class FFToolContext {
     let currentPath: String
     let selection: [FileEntry]
     weak var window: MainWindowController?
+    /// 是否有任务记录；任务中心圆只在此为 true 时可用/出现。
+    var hasTasks: Bool
 
     init(activePane: PaneSide,
          currentPath: String,
          selection: [FileEntry],
-         window: MainWindowController?) {
+         window: MainWindowController?,
+         hasTasks: Bool = false) {
         self.activePane = activePane
         self.currentPath = currentPath
         self.selection = selection
         self.window = window
+        self.hasTasks = hasTasks
     }
 
     var selectionSummary: String {

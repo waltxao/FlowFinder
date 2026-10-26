@@ -62,6 +62,43 @@ final class FFVisualTokensTests: XCTestCase {
     func testAccentIsSystemAccent() {
         XCTAssertEqual(FFVisualTokens.accent, NSColor.controlAccentColor)
     }
+
+    // MARK: - R4-27 深色模式下的文字对比度下限
+
+    /// 把带 alpha 的动态色先合成到背景上再算对比度：
+    /// FFContrast 按颜色自身亮度计算，半透明白直接交给它会虚报成 21:1。
+    private func contrast(_ foreground: NSColor,
+                          on background: NSColor,
+                          in appearanceName: NSAppearance.Name) -> CGFloat {
+        guard let appearance = NSAppearance(named: appearanceName) else { return -1 }
+        var ratio: CGFloat = -1
+        appearance.performAsCurrentDrawingAppearance {
+            guard let fg = foreground.usingColorSpace(.sRGB),
+                  let bg = background.usingColorSpace(.sRGB) else { return }
+            let a = fg.alphaComponent
+            let composited = NSColor(srgbRed: fg.redComponent * a + bg.redComponent * (1 - a),
+                                     green: fg.greenComponent * a + bg.greenComponent * (1 - a),
+                                     blue: fg.blueComponent * a + bg.blueComponent * (1 - a),
+                                     alpha: 1)
+            ratio = FFContrast.ratio(composited, bg)
+        }
+        return ratio
+    }
+
+    func testHintTokenMeetsDarkContrastFloor() {
+        let background = NSColor.windowBackgroundColor
+        let old = contrast(.tertiaryLabelColor, on: background, in: .darkAqua)
+        XCTAssertLessThan(old, 3.0,
+                          "对照基线：tertiaryLabel 在深色底上确实接近不可读（R4-27 根因），实测 \(old):1")
+
+        let dark = contrast(FFVisualTokens.hint, on: background, in: .darkAqua)
+        XCTAssertGreaterThanOrEqual(dark, 4.5,
+                                    "分组标题/提示文字深色下必须达到 4.5:1，实测 \(dark):1")
+        // 浅色下系统次级色约 3.5:1（Apple 自身的提示档），本轮审计只在深色翻车
+        let light = contrast(FFVisualTokens.hint, on: background, in: .aqua)
+        XCTAssertGreaterThanOrEqual(light, 3.0,
+                                    "浅色下提示文字不得低于 3:1，实测 \(light):1")
+    }
 }
 
 final class FFDesignFoundationTests: XCTestCase {
@@ -164,4 +201,5 @@ final class FFIconFoundationTests: XCTestCase {
             XCTFail("文件夹图标应使用 Phosphor")
         }
     }
+
 }

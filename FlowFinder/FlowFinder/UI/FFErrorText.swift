@@ -82,6 +82,14 @@ enum FFErrorText {
             title: "连不上这台服务器",
             detail: "检查网络是否正常、服务器是否在线，然后重试。",
             isPermission: false
+        ),
+        // C1：目录枚举超过 10s 时不能再一口咬定「磁盘或网络无响应」—— 权限未授予、iCloud
+        // 首次同步、网络卷无响应都会卡在同一处，文案要把三种可能同时摆出来。
+        Rule(
+            needles: ["目录读取超时", "directory list timeout", "timed out", "timeout"],
+            title: "目录读取超时",
+            detail: "10 秒内没读完这个文件夹。常见原因有三种：① 还没获得访问权限（去「系统设置 › 隐私与安全性 › 文件和文件夹」确认）；② iCloud 正在同步这个目录；③ 网络卷无响应。点「重试」再试一次，或换到本机其他目录。",
+            isPermission: false
         )
     ]
 

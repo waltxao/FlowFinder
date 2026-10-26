@@ -67,8 +67,16 @@ public class DuplicateScanWindowController: NSWindowController {
     private var scanTaskID: String?
     private var hasScanned = false
 
+    /// 窗口最小尺寸：旧值 600×400 实测把结果区挤到看不见、底部按钮压到工具栏下（R4-30）
+    static let minWindowSize = NSSize(width: 720, height: 480)
+
     var isEmptyStateForTesting: Bool { !(emptyStateView?.isHidden ?? true) }
     var primaryActionTitleForTesting: String { startButton?.title ?? "" }
+    var groupCountForTesting: Int { duplicateGroups.count }
+    var statusTextForTesting: String { statusLabel?.stringValue ?? "" }
+    var scanTaskIDForTesting: String? { scanTaskID }
+    var pathFieldForTesting: NSTextField? { pathField }
+    var resultsScrollSizeForTesting: NSSize { resultsScrollView?.frame.size ?? .zero }
 
     private override init(window: NSWindow?) {
         super.init(window: window)
@@ -81,10 +89,10 @@ public class DuplicateScanWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "查重扫描"
+        window.title = FFNaming.duplicateScanBase
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.minSize = NSSize(width: 600, height: 400)
+        window.minSize = Self.minWindowSize
         window.center()
         window.setFrameAutosaveName("DuplicateScanWindow")
         self.init(window: window)
@@ -379,13 +387,17 @@ public class DuplicateScanWindowController: NSWindowController {
         pathField = NSTextField(string: FileManager.default.homeDirectoryForCurrentUser.path)
         pathField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         pathField.textColor = NSColor.labelColor
-        pathField.isBezeled = true
-        pathField.bezelStyle = .squareBezel
+        // 只读展示就不该长得像输入框：去掉描边与底色，靠「浏览…」改值（R4-30）
+        pathField.isBezeled = false
+        pathField.drawsBackground = false
         pathField.isEditable = false
+        pathField.isSelectable = true
+        pathField.lineBreakMode = .byTruncatingMiddle
+        pathField.toolTip = pathField.stringValue
         pathField.translatesAutoresizingMaskIntoConstraints = false
         selectedURL = FileManager.default.homeDirectoryForCurrentUser
 
-        browseButton = NSButton(title: "浏览...", target: self, action: #selector(browseClicked))
+        browseButton = NSButton(title: "浏览…", target: self, action: #selector(browseClicked))
         browseButton.bezelStyle = .rounded
         browseButton.controlSize = .small
         browseButton.translatesAutoresizingMaskIntoConstraints = false
@@ -583,10 +595,16 @@ public class DuplicateScanWindowController: NSWindowController {
             resetResultsForNewSession()
         }
         if !scanPath.isEmpty, pathField != nil {
-            selectedURL = URL(fileURLWithPath: scanPath)
-            pathField.stringValue = scanPath
+            setScanPath(URL(fileURLWithPath: scanPath))
         }
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// 同步扫描路径选中值与只读展示：字段被截断时靠 tooltip 看全路径（R4-30）
+    private func setScanPath(_ url: URL) {
+        selectedURL = url
+        pathField.stringValue = url.path
+        pathField.toolTip = url.path
     }
 
     private func resetResultsForNewSession() {
@@ -616,14 +634,14 @@ public class DuplicateScanWindowController: NSWindowController {
         openPanel.allowsMultipleSelection = false
         openPanel.beginSheetModal(for: window!) { [weak self] response in
             if response == .OK, let url = openPanel.url {
-                self?.selectedURL = url
-                self?.pathField.stringValue = url.path
+                self?.setScanPath(url)
             }
         }
     }
 
     @objc private func startScan() {
-        guard let url = selectedURL else { return }
+        // 一次只允许一个扫描：并发请求会共用 UI 状态并留下无人收尾的任务（R4-02）。
+        guard !isScanning, let url = selectedURL else { return }
         let path = url.path
 
         isScanning = true
@@ -641,33 +659,38 @@ public class DuplicateScanWindowController: NSWindowController {
         clearSelectionButton.isEnabled = false
         progressIndicator.doubleValue = 0
         progressPercentLabel.stringValue = "0%"
-        statusLabel.stringValue = "扫描中..."
-        sectionHeader.stringValue = "扫描中..."
+        statusLabel.stringValue = "扫描中…"
+        sectionHeader.stringValue = "扫描中…"
 
         let taskID = "dedup-\(UUID().uuidString)"
         scanTaskID = taskID
         FFTaskService.shared.upsert(FFTask(id: taskID, title: "重复文件扫描", detail: path,
                                            completedBytes: 0, totalBytes: 0,
-                                           state: .running, startedAt: Date()))
+                                           state: .running, startedAt: Date(),
+                                           locationPath: path))
+        // 让任务面板的「取消任务」真的能停掉这次扫描，而不是点击静默无效（R4-23）。
+        FFTaskService.shared.setCancelHandler(for: taskID) { [weak self] in
+            self?.cancelScan()
+        }
 
         DuplicateScanBridge.shared.scanDuplicates(
             path: path,
+            // SearchBridge 的 C 跳板已经把进度/分组回调切到主线程；这里再套一层
+            // main.async 会把它们排到 completion 之后——收尾先落账、迟到的进度再把
+            // 任务改回 .running，状态栏也谎报「找到 0 个重复组」（R4-02）。
             progressHandler: { [weak self] scanned, total in
-                DispatchQueue.main.async {
-                    let progress = total > 0 ? Double(scanned) / Double(total) * 100 : 0
-                    self?.progressIndicator.doubleValue = progress
-                    self?.progressPercentLabel.stringValue = "\(Int(progress))%"
-                    self?.statusLabel.stringValue = "已扫描 \(scanned) / \(total) 个文件"
-                    self?.updateScanTask(completed: Int64(scanned), total: Int64(total), state: .running)
-                }
+                let progress = total > 0 ? Double(scanned) / Double(total) * 100 : 0
+                self?.progressIndicator.doubleValue = progress
+                self?.progressPercentLabel.stringValue = "\(Int(progress))%"
+                self?.statusLabel.stringValue = "已扫描 \(scanned) / \(total) 个文件"
+                self?.updateScanTask(id: taskID, completed: Int64(scanned),
+                                     total: Int64(total), state: .running)
             },
             groupHandler: { [weak self] group in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    self.duplicateGroups.append(group)
-                    self.addGroupView(group)
-                    self.updateSectionHeader()
-                }
+                guard let self = self else { return }
+                self.duplicateGroups.append(group)
+                self.addGroupView(group)
+                self.updateSectionHeader()
             },
             completion: { [weak self] error in
                 DispatchQueue.main.async {
@@ -679,13 +702,13 @@ public class DuplicateScanWindowController: NSWindowController {
 
                     if let error = error {
                         self?.statusLabel.stringValue = "错误: \(error.localizedDescription)"
-                        self?.finishScanTask(state: .failed(error.localizedDescription))
+                        self?.finishScanTask(id: taskID, state: .failed(error.localizedDescription))
                     } else {
                         let count = self?.duplicateGroups.count ?? 0
                         self?.hasScanned = true
                         self?.statusLabel.stringValue = "完成，找到 \(count) 个重复组"
                         self?.progressPercentLabel.stringValue = "100%"
-                        self?.finishScanTask(state: .finished)
+                        self?.finishScanTask(id: taskID, state: .finished)
                     }
                     self?.updateSectionHeader()
                     self?.updateActionbar()
@@ -695,18 +718,16 @@ public class DuplicateScanWindowController: NSWindowController {
         )
     }
 
-    private func updateScanTask(completed: Int64, total: Int64, state: FFTaskState) {
-        guard let id = scanTaskID,
-              var task = FFTaskService.shared.tasks.first(where: { $0.id == id }) else { return }
+    private func updateScanTask(id: String, completed: Int64, total: Int64, state: FFTaskState) {
+        guard var task = FFTaskService.shared.tasks.first(where: { $0.id == id }) else { return }
         task.completedBytes = completed
         task.totalBytes = max(task.totalBytes, total)
         task.state = state
         FFTaskService.shared.upsert(task)
     }
 
-    private func finishScanTask(state: FFTaskState) {
-        guard let id = scanTaskID,
-              var task = FFTaskService.shared.tasks.first(where: { $0.id == id }) else { return }
+    private func finishScanTask(id: String, state: FFTaskState) {
+        guard var task = FFTaskService.shared.tasks.first(where: { $0.id == id }) else { return }
         if task.totalBytes > 0 {
             task.completedBytes = task.totalBytes
         }
@@ -765,7 +786,8 @@ public class DuplicateScanWindowController: NSWindowController {
             fileCount: allDeleteFilePaths.count,
             window: window,
             message: "确定要永久删除 \(allDeleteFilePaths.count) 个重复文件吗？此操作无法撤销。",
-            confirmButtonTitle: "永久删除"
+            confirmButtonTitle: "永久删除",
+            isPermanent: true
         ) { [weak self] in
             self?.performDelete()
         }
@@ -788,13 +810,32 @@ public class DuplicateScanWindowController: NSWindowController {
             }
 
             DispatchQueue.main.async {
-                self?.allDeleteFilePaths = []
-                self?.totalReleasableSpace = 0
-                self?.updateActionbar()
+                guard let self else { return }
+                self.allDeleteFilePaths = []
+                self.totalReleasableSpace = 0
+                self.updateActionbar()
+                if !errors.isEmpty {
+                    self.presentDeleteErrors(errors, deletedCount: deletedCount)
+                }
                 // 重新扫描以刷新结果
-                self?.startScan()
+                self.startScan()
             }
         }
+    }
+
+    private func presentDeleteErrors(_ errors: [String], deletedCount: Int) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "部分文件未能删除"
+        var detail = "已删除 \(deletedCount) 个，失败 \(errors.count) 个。\n"
+        detail += errors.prefix(8).joined(separator: "\n")
+        if errors.count > 8 {
+            detail += "\n…另有 \(errors.count - 8) 个失败项"
+        }
+        alert.informativeText = detail
+        alert.addButton(withTitle: "好")
+        alert.beginSheetModal(for: window)
     }
 
     // MARK: - 组视图管理
@@ -833,10 +874,11 @@ public class DuplicateScanWindowController: NSWindowController {
         let fileCount = duplicateGroups.reduce(0) { $0 + $1.files.count }
         summaryLabel.stringValue = "\(duplicateGroups.count) 组 · \(fileCount) 个文件"
         selectionCountLabel.stringValue = "已选择 \(allDeleteFilePaths.count) 个文件待删除"
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        spaceLabel.stringValue = "可释放 \(formatter.string(fromByteCount: Int64(totalReleasableSpace)))"
+        spaceLabel.stringValue = "可释放 \(FFByteText.format(Int64(totalReleasableSpace)))"
         confirmDeleteButton.isEnabled = !allDeleteFilePaths.isEmpty
+        confirmDeleteButton.toolTip = allDeleteFilePaths.isEmpty
+            ? "先勾选要删除的重复文件：点右侧的 ✕ 把该文件标为删除"
+            : "永久删除已标记的 \(allDeleteFilePaths.count) 个文件（不可撤销）"
         clearSelectionButton.isEnabled = !allDeleteFilePaths.isEmpty
         selectDuplicatesButton?.isEnabled = !duplicateGroups.isEmpty
     }

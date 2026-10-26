@@ -1,11 +1,11 @@
 import AppKit
 
-// MARK: - 工具页目录（R19-2 D-05/D-06）
+// MARK: - 底栏工具目录（R19-2 D-05/D-06）
 
-/// 工具页只列用户批准的可用工具，并按「整理 / 任务 / 系统」纵向分组。
+/// 底栏工具簇只列文件工具，并按「整理 / 任务」顺序排列。
 ///
-/// AI 两个「即将推出」工具仍注册在全局注册表里（右键菜单等照旧可见），
-/// 但不进入工具页——工具页只放现在真能用的东西。
+/// 设置与关于是应用命令（菜单/侧栏入口），不属于文件工具，不进入底栏圆钮。
+/// AI 两个「即将推出」工具仍注册在全局注册表里（右键菜单等照旧可见）。
 enum FFToolPageCatalog {
 
     struct Entry {
@@ -13,7 +13,7 @@ enum FFToolPageCatalog {
         let availability: FFToolAvailability
     }
 
-    static let includedToolIDs = ["duplicate-scan", "batch-rename", "task-center", "settings", "about"]
+    static let includedToolIDs = ["duplicate-scan", "batch-rename", "batch-organize", "task-center"]
 
     static func entries(context: FFToolContext, registry: FFToolRegistry = .shared) -> [Entry] {
         registry.registeredTools
@@ -70,14 +70,15 @@ final class FFToolRowView: NSView {
 
         let title = NSTextField(labelWithString: tool.title)
         title.font = FFVisualTokens.Font.body
-        title.textColor = availability.isAvailable ? .labelColor : .tertiaryLabelColor
+        // 不可用的工具靠图标变淡 + 右侧原因表达；名称本身仍要读得清（R4-27）
+        title.textColor = availability.isAvailable ? .labelColor : FFVisualTokens.hint
         title.translatesAutoresizingMaskIntoConstraints = false
         addSubview(title)
 
         let hintText = availability.reason ?? tool.contextHint
         let reason = NSTextField(labelWithString: hintText ?? "")
         reason.font = FFVisualTokens.Font.caption
-        reason.textColor = .tertiaryLabelColor
+        reason.textColor = FFVisualTokens.hint
         reason.isHidden = hintText == nil
         reason.translatesAutoresizingMaskIntoConstraints = false
         addSubview(reason)
@@ -154,14 +155,22 @@ final class FFToolRowView: NSView {
         super.keyDown(with: event)
     }
 
+    /// VoiceOver / AX 按压激活（实机验证发现 AXPress 此前无效）
+    override func accessibilityPerformPress() -> Bool {
+        guard availability.isAvailable else { return false }
+        onClick?()
+        return true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard hovered, availability.isAvailable else { return }
-        let rect = bounds.insetBy(dx: 4, dy: 1)
-        FFAccent.current.withAlphaComponent(0.14).setFill()
-        NSBezierPath(roundedRect: rect,
-                     xRadius: FFVisualTokens.Radius.control,
-                     yRadius: FFVisualTokens.Radius.control).fill()
+        if hovered, availability.isAvailable {
+            let rect = bounds.insetBy(dx: 4, dy: 1)
+            FFAccent.current.withAlphaComponent(0.14).setFill()
+            NSBezierPath(roundedRect: rect,
+                         xRadius: FFVisualTokens.Radius.control,
+                         yRadius: FFVisualTokens.Radius.control).fill()
+        }
 
         if window?.firstResponder === self {
             NSColor.keyboardFocusIndicatorColor.setStroke()
@@ -188,16 +197,18 @@ final class SidebarToolPageView: NSView {
     /// 执行完工具 / 点「返回收藏」后通知属主退出工具页
     var onDismiss: (() -> Void)?
 
-    private let context: FFToolContext
+    private var context: FFToolContext
     private let backButton = NSButton(title: backTitle, target: nil, action: nil)
+    private let contentStack = NSStackView()
     private var rows: [FFToolRowView] = []
+    private var availabilitySignature = ""
 
     var backButtonForTesting: NSButton { backButton }
     var headerTextsForTesting: [String] { [Self.title, backButton.title] }
     func rowViewsForTesting() -> [FFToolRowView] { rows }
 
     /// 批次 1 B1-10：工具页打开时接入窗口 keyViewLoop
-    func focusableViewsForTesting() -> [NSView] { rows }
+    func focusableViewsForTesting() -> [NSView] { [backButton] + rows }
 
     init(context: FFToolContext) {
         self.context = context
@@ -235,15 +246,14 @@ final class SidebarToolPageView: NSView {
         scroll.autohidesScrollers = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 2
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
 
         let document = FlippedToolPageContainer()
         document.translatesAutoresizingMaskIntoConstraints = false
-        document.addSubview(stack)
+        document.addSubview(contentStack)
         scroll.documentView = document
 
         addSubview(header)
@@ -266,18 +276,44 @@ final class SidebarToolPageView: NSView {
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 2),
-            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -8),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -12),
+            contentStack.topAnchor.constraint(equalTo: document.topAnchor, constant: 2),
+            contentStack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 8),
+            contentStack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -8),
+            contentStack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -12),
         ])
 
-        for (group, entries) in FFToolPageCatalog.grouped(context: context) {
+        populateRows()
+    }
+
+    /// 选择/目录变化时更新可用性，不重建头部与滚动位置。
+    func updateContext(_ newContext: FFToolContext) {
+        let signature = FFToolPageCatalog.entries(context: newContext)
+            .map { "\($0.tool.id):\(String(describing: $0.availability))" }
+            .joined(separator: "|")
+        context = newContext
+        guard signature != availabilitySignature else { return }
+        populateRows()
+    }
+
+    private func populateRows() {
+        contentStack.arrangedSubviews.forEach {
+            contentStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        rows.removeAll()
+
+        let grouped = FFToolPageCatalog.grouped(context: context)
+        availabilitySignature = grouped
+            .flatMap { $0.entries }
+            .map { "\($0.tool.id):\(String(describing: $0.availability))" }
+            .joined(separator: "|")
+
+        for (group, entries) in grouped {
             let groupTitle = NSTextField(labelWithString: group.title)
             groupTitle.font = FFVisualTokens.Font.captionMedium
-            groupTitle.textColor = .tertiaryLabelColor
-            stack.addArrangedSubview(groupTitle)
-            stack.setCustomSpacing(2, after: groupTitle)
+            groupTitle.textColor = FFVisualTokens.hint
+            contentStack.addArrangedSubview(groupTitle)
+            contentStack.setCustomSpacing(2, after: groupTitle)
 
             var lastRow: NSView?
             for entry in entries {
@@ -287,18 +323,18 @@ final class SidebarToolPageView: NSView {
                     entry.tool.run(in: self.context)
                     self.onDismiss?()
                 }
-                stack.addArrangedSubview(row)
+                contentStack.addArrangedSubview(row)
                 rows.append(row)
                 lastRow = row
             }
             if let lastRow {
-                stack.setCustomSpacing(10, after: lastRow)
+                contentStack.setCustomSpacing(10, after: lastRow)
             }
         }
 
         // 行必须铺满栈宽，否则右侧可用性提示贴不到边缘（.leading 对齐只保证左缘）
-        for subview in stack.arrangedSubviews {
-            subview.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        for subview in contentStack.arrangedSubviews {
+            subview.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
     }
 

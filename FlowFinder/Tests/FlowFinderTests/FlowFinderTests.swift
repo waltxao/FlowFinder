@@ -637,7 +637,9 @@ final class FFDetailsBarLayoutTests: XCTestCase {
         // modules.bottom 为 lessThanOrEqual 而无高度来源，布局歧义塌缩为 0）
         // 测试不依赖用户机器上的记忆值，保持布局日志干净
         barDefaultsSnapshot = UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight")
+        let oldTier = UserDefaults.standard.object(forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
         UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+        UserDefaults.standard.set(132.0, forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
         defer {
             // 快照恢复（复核 Minor 2 补全：不在测试域留下删除痕迹）
             if let snapshot = barDefaultsSnapshot {
@@ -645,14 +647,19 @@ final class FFDetailsBarLayoutTests: XCTestCase {
             } else {
                 UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
             }
+            if let oldTier {
+                UserDefaults.standard.set(oldTier, forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
+            }
         }
         let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 210))
         bar.isExpanded = true
         bar.layoutSubtreeIfNeeded()
 
-        // 期望值由栏自身实际高度推导（紧凑检查器默认展开 120pt）
+        // 期望值由栏自身实际高度推导（顶部拉手区 14 + 状态栏 18）
         XCTAssertEqual(bar.currentHeight, FFDetailsLayoutPolicy.minimumExpandedHeight, accuracy: 1.0)
-        let expected = bar.currentHeight - 6 - 18
+        let expected = bar.currentHeight - 14 - 18
         XCTAssertEqual(bar.dividerIconToCol1.bounds.height, expected, accuracy: 1.0)
         // D-05 起信息区内部不再有分界线（列宽等分、列数按高度推导），
         // 改为核对各可见列高度一致（等分后并排、同一 top/bottom）
@@ -747,14 +754,14 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
     }
 
     /// 紧凑检查器回归：高度变化不再摘除信息行；所有行留在列中，超出可视高度时
-    /// 由信息区滚动容器承载，行不丢失。
+    /// 由 1–4 列流动布局重新分配（F-02 起不再有内部滚动条），行不丢失。
     ///
     /// 驱动方式说明：host 窗口直接缩放 contentView 会与栏的 required 高度约束打架
     /// （contentView frame 由窗口接管，heightConstraint 无法跟随），故走真实的远端同步
     /// 接线驱动高度：写记忆 key + 广播 FFDetailsBarLayoutChanged → layoutChangedRemotely
     /// 应用 clamp 后高度并重排（与「另一栏拖拽同步」同一条路径）。
     @MainActor
-    func testRowsStayAttachedWithScrollableOverflow() throws {
+    func testRowsStayAttachedWhenBarShrinks() throws {
         // 写一个真实 PNG 到临时目录（与类型专属行测试同构，保证有 ≥1 条专属信息行）
         let ctx = CGContext(
             data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32,
@@ -772,29 +779,23 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         let entry = FileEntry(path: url.path, name: url.lastPathComponent, isDirectory: false)
 
         // 测试不依赖用户机器上的记忆值，保持布局日志干净
-        barDefaultsSnapshot = UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight")
+        let oldHeight = UserDefaults.standard.object(forKey: "FFDetailsBarExpandedHeight")
+        let oldTier = UserDefaults.standard.object(forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
         UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
+        UserDefaults.standard.set(132.0, forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
         defer {
-            // 快照恢复（复核 Minor 2：不在测试域留下删除痕迹）
-            if let snapshot = barDefaultsSnapshot {
-                UserDefaults.standard.set(snapshot, forKey: "FFDetailsBarExpandedHeight")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
-        defer {
-            // 快照恢复（复核 Minor 2 补全：不在测试域留下删除痕迹）
-            if let snapshot = barDefaultsSnapshot {
-                UserDefaults.standard.set(snapshot, forKey: "FFDetailsBarExpandedHeight")
+            if let oldHeight {
+                UserDefaults.standard.set(oldHeight, forKey: "FFDetailsBarExpandedHeight")
             } else {
                 UserDefaults.standard.removeObject(forKey: "FFDetailsBarExpandedHeight")
             }
-        }
+            if let oldTier {
+                UserDefaults.standard.set(oldTier, forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
             }
         }
-
-        // 跳过一次性紧凑高度迁移，直接以 216（480 面板的 45%）作为初始高度
-        UserDefaults.standard.set(true, forKey: "FFDetailsBarCompactHeightV1")
-        UserDefaults.standard.set(CGFloat(216), forKey: "FFDetailsBarExpandedHeight")
-        let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 216))
+        let bar = ExpandableDetailsBar(frame: NSRect(x: 0, y: 0, width: 600, height: 132))
         // 用普通容器承载（不用 NSWindow：窗口簿记延迟块与测试裸释放竞态，曾致运行器 SIGSEGV）
         // 底边贴容器、高度由栏自身高度约束驱动；面板高 480 → 展开上限 216
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
@@ -824,14 +825,17 @@ final class FFDetailsBarTypeRowsFlowTests: XCTestCase {
         XCTAssertGreaterThan(count1, 0, "展开态应有信息行")
         XCTAssertEqual(count1, flowCount, "所有信息行都应保留在列中")
         XCTAssertTrue(bar.infoScrollViewForTesting.hasVerticalScroller,
-                      "信息区应具备纵向滚动能力")
+                      "D-03：信息区应允许纵向滚动，不再隐藏末行")
+        XCTAssertGreaterThan(bar.infoScrollViewForTesting.documentView?.fittingSize.height ?? 0,
+                             0,
+                              "文档视图应承载全部信息行")
 
-        // 栏变矮到 120：行不摘除，交给滚动容器
+        // 栏变矮到下限 132：行不摘除，由滚动承载
         UserDefaults.standard.set(CGFloat(120), forKey: "FFDetailsBarExpandedHeight")
         NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: nil)
         container.layoutSubtreeIfNeeded()
         XCTAssertEqual(bar.currentHeight, 132, accuracy: 1.0, "展开高度下限应为 132")
-        XCTAssertEqual(attachedCount(), count1, "栏变矮后行不得丢失（由滚动承载）")
+        XCTAssertEqual(attachedCount(), count1, "栏变矮后行不得丢失（滚动承载）")
 
         // 栏变高回 216：仍是同一批行
         UserDefaults.standard.set(CGFloat(216), forKey: "FFDetailsBarExpandedHeight")
@@ -954,6 +958,15 @@ final class FFErrorTextTests: XCTestCase {
     func testReadOnlyVolume() {
         let m = FFErrorText.humanize("Read-only file system (os error 30)")
         XCTAssertTrue(m.title.contains("只读"))
+    }
+
+    /// C1：目录枚举卡死时，文案必须给出多种可能原因与下一步，而不是只甩一句「磁盘或网络无响应」。
+    func testDirectoryTimeoutExplainsLikelyCauses() {
+        let m = FFErrorText.humanize("目录读取超时")
+        XCTAssertEqual(m.title, "目录读取超时")
+        XCTAssertTrue(m.detail.contains("访问权限"), "应提示权限可能未授予：\(m.detail)")
+        XCTAssertTrue(m.detail.contains("iCloud"), "应提示 iCloud 同步可能占住目录：\(m.detail)")
+        XCTAssertTrue(m.detail.contains("网络"), "应提示网络卷可能无响应：\(m.detail)")
     }
 
     func testNoSpace() {

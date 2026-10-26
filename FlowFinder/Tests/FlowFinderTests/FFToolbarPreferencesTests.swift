@@ -75,4 +75,32 @@ final class FFToolbarRow2MergeTests: XCTestCase {
         XCTAssertFalse(buttons.contains("第二行显示"), "齿轮入口应并入显示设置")
         XCTAssertFalse(buttons.contains("新建文件夹"))
     }
+
+    /// 显示设置菜单使用固定名词 + 勾选态，不再用「隐藏…」动作文案配勾选
+    func testDisplaySettingsMenuUsesFixedLabels() {
+        let tagKey = FFUserDefaultsKeys.showFileTags
+        let oldTag = UserDefaults.standard.object(forKey: tagKey)
+        UserDefaults.standard.set(true, forKey: tagKey)
+        defer {
+            if let oldTag { UserDefaults.standard.set(oldTag, forKey: tagKey) }
+            else { UserDefaults.standard.removeObject(forKey: tagKey) }
+        }
+
+        let toolbar = PaneToolbar(frame: NSRect(x: 0, y: 0, width: 480, height: 76))
+        let menu = toolbar.makeDisplaySettingsMenu()
+        let tagItem = menu.items.first { $0.title == "显示文件标签" }
+        XCTAssertNotNil(tagItem, "菜单应为固定名词「显示文件标签」")
+        XCTAssertEqual(tagItem?.state, .on)
+        XCTAssertFalse(menu.items.contains { $0.title == "隐藏文件标签" })
+    }
+
+    /// 第二行隐藏的控件不能继续留在 Tab 环里
+    func testHiddenRow2ControlsLeaveKeyViewLoop() {
+        let toolbar = PaneToolbar(frame: NSRect(x: 0, y: 0, width: 480, height: 76))
+        defer { toolbar.setRow2Item(.search, visible: true) }
+
+        toolbar.setRow2Item(.search, visible: false)
+        XCTAssertFalse(toolbar.keyViewControls().contains { $0 === toolbar.searchFieldForTesting })
+        XCTAssertFalse(toolbar.keyViewControls().contains { $0 === toolbar.scopePopupForTesting })
+    }
 }

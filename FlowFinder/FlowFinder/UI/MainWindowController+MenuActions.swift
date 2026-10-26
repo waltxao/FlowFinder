@@ -11,9 +11,19 @@ import Cocoa
 
 // MARK: - Menu Actions
 
-extension MainWindowController {
+/// 声明 `NSMenuItemValidation` 一致性：AppKit 只通过 Objective-C 的 `validateMenuItem:`
+/// 调用校验。此前该方法只是普通 Swift 成员，从未被 AppKit 调用，
+/// 导致无选中时剪切/复制/粘贴照样可点（R4-20 的真实根因）。
+extension MainWindowController: NSMenuItemValidation {
     @objc func menuNewFolder(_ sender: Any?) {
-        activePaneViewModel.createDirectory()
+        // R4-18：新建文件夹走「创建 → 选中 → 内联重命名」，由活动面板视图的执行，
+        // 与右键菜单同一入口（旧的 createDirectory 只建不管，焦点回不到列表）。
+        let isGrid = activePaneViewModel.state.viewMode == .grid
+        let listView = activePane == .left ? leftFileListView : rightFileListView
+        let gridView = activePane == .left ? leftFileGridView : rightFileGridView
+        let ac = isGrid ? gridView?.actionsController : listView?.actionsController
+        FFDebug.log("[RENAME-DIAG] menuNewFolder: isGrid=\(isGrid), activePane=\(activePane), actionsController=\(ac == nil ? "nil" : "alive")")
+        ac?.createNewFolderAndRename()
     }
 
     /// Wave2 P0-4：⌘⇧N 新窗口——创建独立的 MainWindowController 实例。
@@ -76,9 +86,17 @@ extension MainWindowController {
         dialog.beginSheetModal(for: window)
     }
 
-    @objc func menuGetInfo(_ sender: Any?) {
-        // D-07：⌘I 打开活动面板的按需详情浮层；无选中不创建浮层。
-        showDetailsForActiveSelection()
+    /// R4-28/R4-29：⌘I 切换活动面板的区内详情栏。
+    /// 收起态→展开并填充当前选中；展开态→收起。取代原先挂在文件菜单、
+    /// 标签写「显示简介」但实际只展开详情栏的入口（标签与行为不一致）。
+    @objc func menuToggleDetailsBar(_ sender: Any?) {
+        let side = activePane
+        guard let bar = detailsBar(for: side) else { return }
+        if bar.isExpanded {
+            bar.collapse()
+        } else {
+            showDetailsForActiveSelection()
+        }
     }
 
     /// F9-C: 显示独立 FileInfoWindow（仿访达 Get Info）。
@@ -215,7 +233,9 @@ extension MainWindowController {
         case .cut: operationName = "移动"
         }
         let totalCount = conflictPlan.count
-        taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
+        taskProgressBar.startDirectProgress(operation: operationName,
+                                            totalCount: totalCount,
+                                            destinationPath: destPath)
         showProgressBar(animated: true)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -571,7 +591,9 @@ extension MainWindowController {
         guard !conflictPlan.isEmpty else { return }
 
         let totalCount = conflictPlan.count
-        taskProgressBar.startDirectProgress(operation: operationName, totalCount: totalCount)
+        taskProgressBar.startDirectProgress(operation: operationName,
+                                            totalCount: totalCount,
+                                            destinationPath: destPath)
         showProgressBar(animated: true)
 
         // 无冲突/替换项走批量接口；保留两者项逐项改名复制/移动（与 menuPaste 一致）
@@ -777,7 +799,7 @@ extension MainWindowController {
         BatchRenameWindowController.shared.showWindow(selectedFiles: selected, paneViewModel: activePaneViewModel)
     }
 
-    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    public func validateMenuItem(_ item: NSMenuItem) -> Bool {
         // Bug 8 修复：先 guard action 非 nil（separator 等无 action 项不会进入此回调，
         // 但仍做防御性检查），避免后续比较中误访问
         guard let action = item.action else { return false }
@@ -786,13 +808,28 @@ extension MainWindowController {
 
         switch action {
         case #selector(menuBatchRename(_:)):
-            return activePaneViewModel.selectedFiles.count >= 2
-        // B7 #6：单面板（另一面板收起）时主菜单跨面板项禁用
-        // （文件右键菜单的同类项由 FFPaneActionsController.updateMainMenu 隐藏）
+            // R4-11：禁用时说明阈值，否则用户只知道「点了没反应」
+            let enough = activePaneViewModel.selectedFiles.count >= 2
+            item.toolTip = enough ? nil : FFNaming.batchRenameRequires
+            return enough
+        // R4-20：粘贴原先落到 default 恒为 true，空剪贴板也是亮的
+        case #selector(NSText.paste(_:)):
+            return NSPasteboard.general.availableType(from: [.fileURL, .string]) != nil
+        // R4-10：撤销/重做从右键菜单挪回 编辑 菜单后，这里补上状态校验——
+        // 否则栈为空时菜单亮着、点了没反应。
+        case NSSelectorFromString("undo:"):
+            return ffUndoManager.canUndo
+        case NSSelectorFromString("redo:"):
+            return ffUndoManager.canRedo
+        // B7 #6 + R4-20：跨面板项要求「双面板 + 有选中」；
+        // 「在对侧面板打开」再额外要求选中项是目录。
+        // 注意：同一 selector 不能出现在两个 case 分组里——Swift 只会命中第一个，
+        // 原先的重复分组让后半条规则成了死代码。
         case #selector(menuCopyToOther(_:)),
-             #selector(menuMoveToOther(_:)),
-             #selector(menuOpenInOther(_:)):
-            return !isSinglePaneMode
+             #selector(menuMoveToOther(_:)):
+            return !isSinglePaneMode && hasSelection
+        case #selector(menuOpenInOther(_:)):
+            return !isSinglePaneMode && (activePaneViewModel.selectedFiles.first?.isDirectory ?? false)
         // Wave2 P0-4：「显示隐藏文件」菜单项展示当前开关状态（对勾）
         case #selector(menuToggleHiddenFiles(_:)):
             item.state = UserDefaults.standard.bool(forKey: FFUserDefaultsKeys.showHiddenFiles) ? .on : .off
@@ -805,16 +842,13 @@ extension MainWindowController {
              #selector(NSText.copy(_:)),
              #selector(NSText.cut(_:)),
              #selector(menuCopyPaths(_:)),
-             #selector(menuCopyToOther(_:)),
-             #selector(menuMoveToOther(_:)):
+             #selector(menuEditTags(_:)),
+             #selector(menuDuplicateSelected(_:)):
             return hasSelection
         // 内联重命名仅支持单选，多选时菜单项应禁用（审查 Minor 1），
         // 与 menuRename action 内 count == 1 的前置校验保持一致
         case #selector(menuRename(_:)):
             return activePaneViewModel.selectedFiles.count == 1
-        case #selector(menuOpenInOther(_:)):
-            // 仅当选中项为目录时可用
-            return activePaneViewModel.selectedFiles.first?.isDirectory ?? false
         default:
             return true
         }
@@ -904,6 +938,47 @@ extension MainWindowController {
 
     /// Wave2 P1：⌘F 分流——聚焦活动面板内搜索框（面板内筛选的全键盘可达入口）。
     /// 原行为是打开全局搜索面板，已拆分到 menuGlobalSearch（⌘⇧F）。
+    @objc func menuGoToFolder(_ sender: Any?) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "前往文件夹"
+        alert.informativeText = "输入文件夹路径（支持 ~ 和绝对路径）。"
+        alert.addButton(withTitle: "前往")
+        alert.addButton(withTitle: "取消")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "/Users/…"
+        field.stringValue = activePaneViewModel.currentPath
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            self.navigateToFolderInput(field.stringValue)
+        }
+    }
+
+    private func navigateToFolderInput(_ raw: String) {
+        guard let path = FFGoToFolder.normalize(raw) else {
+            presentGoToFolderError("请输入以 / 或 ~ 开头的文件夹路径。")
+            return
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            presentGoToFolderError("找不到文件夹：\(path)")
+            return
+        }
+        activePaneViewModel.navigate(to: path)
+    }
+
+    private func presentGoToFolderError(_ message: String) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "无法前往"
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        alert.beginSheetModal(for: window) { _ in }
+    }
+
     @objc func menuShowWelcome(_ sender: Any?) {
         OnboardingWindowController.shared.show(force: true)
     }
@@ -940,6 +1015,48 @@ extension MainWindowController {
     @objc func menuDuplicateScan(_ sender: Any?) {
         // 工具默认作用于当前活动面板目录，而不是把用户丢回主目录。
         DuplicateScanWindowController.shared.showWindow(scanPath: activePaneViewModel.state.path)
+    }
+
+    // MARK: - J3-10 批量整理
+
+    /// 工具页「批量整理」入口：作用于当前活动面板目录
+    @objc func menuBatchOrganize(_ sender: Any?) {
+        presentOrganizeSheet(for: activePaneViewModel)
+    }
+
+    /// 弹出整理预览 Sheet；目录为空 / 读取失败 / 无可整理文件时以 sheet alert 提示。
+    func presentOrganizeSheet(for viewModel: PaneViewModel) {
+        let directory = viewModel.currentPath
+        func infoAlert(_ text: String, critical: Bool = false) {
+            let alert = NSAlert()
+            alert.messageText = "批量整理"
+            alert.informativeText = text
+            alert.alertStyle = critical ? .critical : .informational
+            alert.addButton(withTitle: "好")
+            if let window = window { alert.beginSheetModal(for: window) { _ in } }
+        }
+        guard !directory.isEmpty else {
+            infoAlert("请先进入要整理的文件夹。")
+            return
+        }
+        let entries: [FileEntry]
+        do {
+            entries = try FFOrganizePlanner.candidates(inDirectory: directory)
+        } catch {
+            infoAlert("无法读取目录内容：\(error.localizedDescription)", critical: true)
+            return
+        }
+        guard !entries.isEmpty else {
+            infoAlert("当前目录没有可整理的文件（子文件夹与隐藏文件不参与）。")
+            return
+        }
+        let sheet = FFOrganizeSheet(directory: directory, entries: entries)
+        sheet.onExecute = { [weak viewModel] plan, dir in
+            viewModel?.performOrganize(plan: plan, directory: dir)
+        }
+        if let window = window {
+            sheet.beginSheetModal(for: window)
+        }
     }
 
     @objc func menuTaskPanel(_ sender: Any?) {

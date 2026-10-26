@@ -3,6 +3,14 @@ import XCTest
 @testable import FlowFinder
 
 final class FFShellLayoutTests: XCTestCase {
+
+    /// P1：窄面板下名称列不得被类型/日期挤到比它们更窄。
+    func testNameColumnFloorIsFortyPercentWithMinimum() {
+        XCTAssertEqual(FFColumnFitPolicy.nameFloor(available: 300), 160, accuracy: 0.1)
+        XCTAssertEqual(FFColumnFitPolicy.nameFloor(available: 500), 200, accuracy: 0.1)
+        XCTAssertEqual(FFColumnFitPolicy.nameFloor(available: 1000), 400, accuracy: 0.1)
+    }
+
     func testActivePaneUsesTwoPointEdge() {
         let border = FFActivePaneBorderView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         XCTAssertEqual(FFVisualTokens.activePaneEdge, 2)
@@ -304,6 +312,49 @@ final class FFShellLayoutTests: XCTestCase {
                                  "右标签组不能压到主题/单双栏按钮")
     }
 
+    /// R4-19：切到单面板后，被收起那一栏的标签必须整组消失，
+    /// 既不能留在标签条上成为点不到的死条目，也不能混进可见那一栏的标签组。
+    func testCollapsedPaneTabsDisappearInSinglePaneMode() {
+        let controller = MainWindowController(startsWithSinglePane: false,
+                                              showImmediately: false,
+                                              runsSelfTests: false)
+        defer { controller.close() }
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(controller.newTab(in: .left, path: "/tmp/ff-r419-left"))
+        XCTAssertTrue(controller.newTab(in: .right, path: "/tmp/ff-r419-right"))
+        controller.updateGlobalTopBarLayout()
+
+        let bar = controller.globalTopBar!
+        let leftTitles = bar.leftTabStrip.allTabItems().map(\.titleText)
+        let rightTitles = bar.rightTabStrip.allTabItems().map(\.titleText)
+        XCTAssertTrue(leftTitles.contains("ff-r419-left"), "双栏时左标签组应有左栏新建的标签：\(leftTitles)")
+        XCTAssertFalse(leftTitles.contains("ff-r419-right"), "左标签组不得混入右栏标签：\(leftTitles)")
+        XCTAssertTrue(rightTitles.contains("ff-r419-right"), "双栏时右标签组应有右栏新建的标签：\(rightTitles)")
+        XCTAssertFalse(rightTitles.contains("ff-r419-left"), "右标签组不得混入左栏标签：\(rightTitles)")
+
+        controller.isSinglePaneMode = true
+        controller.activePane = .left
+        controller.applyPaneMode()
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+        controller.updateGlobalTopBarLayout()
+
+        XCTAssertTrue(bar.rightTabStrip.isHidden,
+                      "单栏左侧时右标签组必须整组隐藏，否则收起面板的标签留在标签条上（R4-19）")
+        XCTAssertFalse(bar.leftTabStrip.isHidden)
+        XCTAssertFalse(bar.leftTabStrip.allTabItems().map(\.titleText).contains("ff-r419-right"),
+                       "可见标签组里不得出现被收起面板的标签（R4-19）")
+
+        // 隐藏只是收起：标签数据要保住，切回双栏时原样还原
+        controller.isSinglePaneMode = false
+        controller.applyPaneMode()
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+        controller.updateGlobalTopBarLayout()
+        XCTAssertFalse(bar.rightTabStrip.isHidden, "切回双栏后右标签组要回来")
+        XCTAssertTrue(bar.rightTabStrip.allTabItems().map(\.titleText).contains("ff-r419-right"),
+                      "切回双栏后被收起期间保住的标签必须还原")
+    }
+
     func testHiddenSidebarKeepsPaneToolbarAtEightAndTabsClearControls() {
         let controller = MainWindowController(startsWithSinglePane: false,
                                               showImmediately: false,
@@ -554,5 +605,212 @@ final class FFShellLayoutTests: XCTestCase {
         XCTAssertFalse(FFViewModePolicy.shouldApply(previous: .list, current: .list))
         XCTAssertTrue(FFViewModePolicy.shouldApply(previous: .list, current: .grid))
         XCTAssertTrue(FFViewModePolicy.shouldApply(previous: nil, current: .list))
+    }
+
+    // MARK: - R4-03：最小尺寸 1060×700 下的工具栏/面包屑/列分级
+
+    /// 行宽充足时什么都不收。
+    func testRow2FitKeepsEveryControlInlineWhenWide() {
+        let dropped = FFToolbarRow2Fit.overflowed(from: Set(FFToolbarRow2Fit.Slot.allCases),
+                                                  rowWidth: 700)
+        XCTAssertTrue(dropped.isEmpty)
+    }
+
+    /// 实测宽度：1060×700 双栏行宽 416，面板下限 400 时行宽 384。
+    /// 让位顺序固定 分组 → 范围 → 排序；搜索框/视图切换/显示设置永不收进「更多」。
+    func testRow2FitDropsGroupThenScopeThenSortAsTheRowNarrows() {
+        let all = Set(FFToolbarRow2Fit.Slot.allCases)
+        XCTAssertEqual(FFToolbarRow2Fit.overflowed(from: all, rowWidth: 416), [.group, .scope])
+        XCTAssertEqual(FFToolbarRow2Fit.overflowed(from: all, rowWidth: 384), [.group, .scope])
+        XCTAssertEqual(FFToolbarRow2Fit.overflowed(from: all, rowWidth: 300), [.group, .scope, .sort])
+    }
+
+    /// 用户已关闭的项不该被当成「收进更多」。
+    func testRow2FitOnlyReportsEnabledSlots() {
+        XCTAssertTrue(FFToolbarRow2Fit.overflowed(from: [], rowWidth: 100).isEmpty)
+        XCTAssertEqual(FFToolbarRow2Fit.overflowed(from: [.group], rowWidth: 100), [.group])
+        XCTAssertTrue(FFToolbarRow2Fit.overflowed(from: [.sort], rowWidth: 1000).isEmpty)
+    }
+
+    /// 预留宽度必须盖住每一项的最长标题，否则下拉会截成「…」（R4-03 实测症状）。
+    func testRow2FitWidthsCoverEveryPopupTitle() throws {
+        UserDefaults.standard.removeObject(forKey: FFToolbarRow2Preferences.storageKey)
+        let toolbar = PaneToolbar(frame: .zero)
+        toolbar.side = .left
+
+        let scope = toolbar.scopePopupForTesting
+        for value in FFSearchScope.allCases {
+            scope.selectItem(withTitle: value.title)
+            XCTAssertLessThanOrEqual(scope.intrinsicContentSize.width,
+                                     FFToolbarRow2Fit.width(for: .scope),
+                                     "范围「\(value.title)」超出预留宽度")
+        }
+        let sort = toolbar.sortPopupForTesting
+        for field in SortField.allCases {
+            sort.selectItem(withTitle: field.rawValue)
+            XCTAssertLessThanOrEqual(sort.intrinsicContentSize.width,
+                                     FFToolbarRow2Fit.width(for: .sort),
+                                     "排序「\(field.rawValue)」超出预留宽度")
+        }
+        let group = toolbar.groupPopupForTesting
+        for title in ["无分组", "按种类", "按日期", "按大小"] {
+            group.selectItem(withTitle: title)
+            XCTAssertLessThanOrEqual(group.intrinsicContentSize.width,
+                                     FFToolbarRow2Fit.width(for: .group),
+                                     "分组「\(title)」超出预留宽度")
+        }
+    }
+
+    /// 收进「更多」的项必须能在菜单里继续操作，否则等于功能丢失。
+    func testRow2OverflowMenuCarriesDroppedControls() throws {
+        UserDefaults.standard.removeObject(forKey: FFToolbarRow2Preferences.storageKey)
+        let toolbar = PaneToolbar(frame: .zero)
+        toolbar.side = .left
+        toolbar.applyRow2Fit(rowWidth: 416)
+
+        let menu = toolbar.makeRow2OverflowMenu()
+        let submenus = Set(menu.items.compactMap { $0.submenu?.title })
+        XCTAssertEqual(submenus, ["分组", "搜索范围"],
+                       "416pt 行宽下分组与范围被收起，菜单里必须还在")
+        XCTAssertFalse(submenus.contains("排序"))
+
+        // 菜单项要真的能改状态：行内下拉此时是隐藏的，选完仍要写回同一份状态
+        let scopeEntry = try XCTUnwrap(menu.items.first { $0.submenu?.title == "搜索范围" })
+        XCTAssertEqual(scopeEntry.title, "搜索范围：本栏")
+        let pick = try XCTUnwrap(scopeEntry.submenu?.items.first { $0.title == "含子目录" })
+        XCTAssertNotNil(pick.target)
+        XCTAssertTrue(pick.target!.responds(to: pick.action!), "菜单项动作必须挂在工具栏自身")
+        pick.target!.perform(pick.action, with: pick)
+        XCTAssertEqual(toolbar.scopePopupForTesting.titleOfSelectedItem, "含子目录")
+
+        // 再开一次：当前值要跟着变，勾也要跟着走
+        let reopened = toolbar.makeRow2OverflowMenu()
+        let reopenedEntry = try XCTUnwrap(reopened.items.first { $0.submenu?.title == "搜索范围" })
+        XCTAssertEqual(reopenedEntry.title, "搜索范围：含子目录")
+        let checked = reopenedEntry.submenu?.items.filter { $0.state == .on }.map { $0.title }
+        XCTAssertEqual(checked, ["含子目录"])
+    }
+
+    /// 声明的最小尺寸下：图标按钮不得被压成 0 宽，行内不得有控件越界。
+    func testMinSizeWindowKeepsRow2ControlsVisible() throws {
+        UserDefaults.standard.removeObject(forKey: FFToolbarRow2Preferences.storageKey)
+        let controller = MainWindowController(startsWithSinglePane: false,
+                                              showImmediately: false,
+                                              runsSelfTests: false)
+        defer { controller.close() }
+        guard let window = controller.window, let content = window.contentView else {
+            return XCTFail("缺少窗口")
+        }
+        var frame = window.frame
+        frame.size = NSSize(width: 1060, height: 700)
+        window.setFrame(frame, display: false)
+        content.layoutSubtreeIfNeeded()
+
+        guard let toolbar = controller.leftPaneToolbar else { return XCTFail("缺少工具栏") }
+        let row2 = try XCTUnwrap(toolbar.row2ForTesting)
+        let eyeButton: NSButton = toolbar.displaySettingsButton
+        for button in [toolbar.listViewButtonForTesting,
+                       toolbar.gridViewButtonForTesting,
+                       eyeButton] {
+            XCTAssertEqual(button.frame.width, 28, accuracy: 0.5,
+                           "主操作按钮被压成 \(button.frame.width)pt（R4-03：视图切换/显示设置消失）")
+            XCTAssertFalse(button.isHiddenOrHasHiddenAncestor, "\(button) 在最小尺寸下不可见")
+        }
+        assertRow2Fallback(toolbar)
+        for view in row2.arrangedSubviews where !view.isHidden {
+            XCTAssertLessThanOrEqual(view.frame.maxX, row2.bounds.maxX + 0.5,
+                                     "\(type(of: view)) 越出行尾：\(view.frame) vs \(row2.bounds)")
+            XCTAssertGreaterThanOrEqual(view.frame.minX, row2.bounds.minX - 0.5,
+                                        "\(type(of: view)) 越出行首：\(view.frame)")
+        }
+
+        // 侧栏可见时实测行宽只有 416pt：文字下拉整组收进「更多」，图标按钮宽度不受影响
+        toolbar.applyRow2Fit(rowWidth: 416)
+        XCTAssertEqual(toolbar.row2OverflowedSlots, [.group, .scope])
+        XCTAssertTrue(toolbar.groupPopupForTesting.isHiddenOrHasHiddenAncestor)
+        XCTAssertTrue(toolbar.scopePopupForTesting.isHiddenOrHasHiddenAncestor)
+        XCTAssertFalse(toolbar.sortPopupForTesting.isHiddenOrHasHiddenAncestor)
+        XCTAssertFalse(toolbar.row2OverflowButtonForTesting.isHiddenOrHasHiddenAncestor,
+                       "分组/范围收进「更多」后必须留下入口")
+        XCTAssertEqual(eyeButton.frame.width, 28, accuracy: 0.5, "收起文字下拉不得挤压图标按钮")
+    }
+
+    /// 行宽不足时可以收起文字下拉，但被收起的项必须能在「更多」里继续用。
+    private func assertRow2Fallback(_ toolbar: PaneToolbar,
+                                    file: StaticString = #filePath,
+                                    line: UInt = #line) {
+        let dropped = toolbar.row2OverflowedSlots
+        let popups: [FFToolbarRow2Fit.Slot: NSPopUpButton] = [
+            .group: toolbar.groupPopupForTesting,
+            .scope: toolbar.scopePopupForTesting,
+            .sort: toolbar.sortPopupForTesting,
+        ]
+        for slot in FFToolbarRow2Fit.Slot.allCases {
+            XCTAssertEqual(popups[slot]!.isHiddenOrHasHiddenAncestor, dropped.contains(slot),
+                           "\(slot.rawValue) 的显隐应与收起状态一致", file: file, line: line)
+        }
+        XCTAssertEqual(toolbar.row2OverflowButtonForTesting.isHiddenOrHasHiddenAncestor,
+                       dropped.isEmpty, "「更多」按钮只应在确有收起项时出现",
+                       file: file, line: line)
+    }
+
+    /// 面包屑溢出时整段收起，不得把路径切一半压在省略号下（R4-03 实测「压住刷新按钮」）。
+    func testBreadcrumbDropsWholeSegmentsWhenNarrow() throws {
+        let bar = BreadcrumbBar(frame: NSRect(x: 0, y: 0, width: 284, height: 24))
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 284, height: 24))
+        host.addSubview(bar)
+        NSLayoutConstraint.activate([
+            // host 无父视图，Auto Layout 不会从它的 frame 推出尺寸约束，必须显式给宽
+            host.widthAnchor.constraint(equalToConstant: 284),
+            host.heightAnchor.constraint(equalToConstant: 24),
+            bar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            bar.topAnchor.constraint(equalTo: host.topAnchor),
+            bar.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        bar.setPath("/Volumes/Iris-Data/文件管理系统/flowfinder-native/FlowFinder/FlowFinder/UI")
+        host.layoutSubtreeIfNeeded()
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+        host.layoutSubtreeIfNeeded()
+
+        let segments = bar.segmentButtonsForTesting
+        XCTAssertEqual(bar.frame.width, 284, "宿主宽度未生效，测不出溢出")
+        XCTAssertTrue(bar.isOverflowingForTesting, "284pt 放不下这条路径，应进入溢出态")
+        let visible = segments.filter { !$0.isHiddenOrHasHiddenAncestor }
+        XCTAssertFalse(visible.isEmpty, "溢出时当前目录仍要可见")
+        XCTAssertEqual(visible.last?.title, segments.last?.title,
+                       "最后一段（当前目录）必须始终显示")
+        let ellipsis = bar.overflowButtonForTesting
+        let ellipsisRight = ellipsis.frame.maxX   // 省略号贴本视图左缘，与 bar 同坐标系
+        for segment in visible {
+            let inBar = bar.convert(segment.frame, from: try XCTUnwrap(segment.superview))
+            XCTAssertGreaterThanOrEqual(inBar.minX, ellipsisRight - 0.5,
+                                        "路径段「\(segment.title ?? "")」压在省略号上：\(inBar) vs \(ellipsis.frame)")
+        }
+    }
+
+    /// 面板太窄被临时收起的列要在「显示列」里说清楚，不能无声消失（R4-03）。
+    func testFittedOutColumnsAreMarkedInColumnMenu() throws {
+        FFListColumnsState.setFittedOut([.kind], for: .left)
+        defer { FFListColumnsState.setFittedOut([], for: .left) }
+
+        let menu = FFListColumnMenu.build(target: nil, action: #selector(NSApplication.terminate(_:)))
+        let kind = try XCTUnwrap(menu.items.first { $0.representedObject as? String == "kind" })
+        XCTAssertEqual(kind.title, "类型（面板太窄）")
+
+        let name = try XCTUnwrap(menu.items.first { $0.representedObject as? String == "name" })
+        XCTAssertEqual(name.title, "名称", "未被收起的列不得加后缀")
+    }
+
+    /// 单侧收起即标注，另一侧变宽后标注要能消失。
+    func testFittedOutRegistryClearsPerSide() {
+        FFListColumnsState.setFittedOut([.kind], for: .left)
+        FFListColumnsState.setFittedOut([.kind], for: .right)
+        XCTAssertEqual(FFListColumnsState.fittedOutColumns(), [.kind])
+        FFListColumnsState.setFittedOut([], for: .left)
+        XCTAssertEqual(FFListColumnsState.fittedOutColumns(), [.kind])
+        FFListColumnsState.setFittedOut([], for: .right)
+        XCTAssertTrue(FFListColumnsState.fittedOutColumns().isEmpty)
     }
 }

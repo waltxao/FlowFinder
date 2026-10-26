@@ -33,6 +33,10 @@ protocol FFPaneViewHost: AnyObject {
     /// 选中右键点击的项（用于右键菜单"重命名"——需单选后进入编辑模式）
     func selectClickedItemForRename()
 
+    /// 把当前选中项滚入可视区（R4-18：新建文件夹后紧跟内联重命名，
+    /// 行还在视口外就拿不到 cell 的 textField，重命名会静默失败）
+    func revealSelection()
+
     /// 重命名结束后的焦点恢复目标（列表视图为 tableView，网格视图为 collectionView）
     var focusRestoreTarget: NSResponder? { get }
 
@@ -61,7 +65,9 @@ final class FFPaneActionsController: NSObject {
 
     // MARK: - 内联重命名状态
 
-    private var isRenaming = false
+    /// 是否正在进行内联重命名（C3 修复：视图层 Combine sink 据此跳过 reloadData，
+    /// 防止编辑中的 cell 被重建导致 firstResponder 丢失）。
+    var isRenaming = false
     private var renamingOriginalName: String = ""
     private var renamingPath: String = ""
     private weak var renamingTextField: NSTextField?
@@ -89,26 +95,14 @@ final class FFPaneActionsController: NSObject {
         host?.panelSide != .right
     }
 
-    /// 弹出错误提示框
-    private func showError(_ error: Error) {
-        guard let window = host?.hostWindow else { return }
-        let alert = NSAlert()
-        alert.messageText = "错误"
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .critical
-        alert.addButton(withTitle: "好")
-        alert.beginSheetModal(for: window) { _ in }
-    }
-
     // MARK: - 右键菜单 Action 方法
 
-    /// v0.7.4 修订 2：右键菜单撤销/重做（转发到窗口 UndoManager）
-    @objc func undoFromMenu(_ sender: Any?) {
-        host?.hostWindow?.undoManager?.undo()
-    }
-
-    @objc func redoFromMenu(_ sender: Any?) {
-        host?.hostWindow?.undoManager?.redo()
+    /// 右键点击未选中项时先选中它；点击已选中项则保留多选。
+    private func ensureClickedItemSelected() {
+        guard let clicked = host?.clickedEntry else { return }
+        let selected = host?.selectedEntries ?? []
+        guard !selected.contains(where: { $0.path == clicked.path }) else { return }
+        host?.selectClickedItemForRename()
     }
 
     @objc func openSelected(_ sender: Any?) {
@@ -121,11 +115,13 @@ final class FFPaneActionsController: NSObject {
     }
 
     @objc func copySelected(_ sender: Any?) {
+        ensureClickedItemSelected()
         // Wave2 P0-4（多窗口）：object 携带 host 视图身份，接收方据此过滤本窗口通知
         NotificationCenter.default.post(name: .fileListDidCopy, object: host, userInfo: ["side": sideString()])
     }
 
     @objc func cutSelected(_ sender: Any?) {
+        ensureClickedItemSelected()
         NotificationCenter.default.post(name: .fileListDidCut, object: host, userInfo: ["side": sideString()])
     }
 
@@ -135,6 +131,7 @@ final class FFPaneActionsController: NSObject {
 
     /// Wave2 P1：右键菜单「拷贝路径」——多选时每行一个路径；无选中时回退右键点击项
     @objc func copyPathsSelected(_ sender: Any?) {
+        ensureClickedItemSelected()
         var paths = host?.selectedEntries.map { $0.path } ?? []
         if paths.isEmpty, let clickedPath = host?.clickedEntry?.path {
             paths = [clickedPath]
@@ -152,6 +149,7 @@ final class FFPaneActionsController: NSObject {
     }
 
     @objc func deleteSelected(_ sender: Any?) {
+        ensureClickedItemSelected()
         guard let entries = host?.selectedEntries, !entries.isEmpty else { return }
         guard let viewModel = host?.viewModel else { return }
         // 任务 T12: 删除进行中禁用重复触发（后台 I/O 期间拒绝再次删除，避免冲突操作）
@@ -163,37 +161,44 @@ final class FFPaneActionsController: NSObject {
         }
     }
 
-    @objc func createDirectory(_ sender: Any?) {
-        guard let currentPath = host?.viewModel?.currentPath,
-              let window = host?.hostWindow else { return }
-        let alert = NSAlert()
-        alert.messageText = "新建文件夹"
-        alert.informativeText = "输入文件夹名称："
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        textField.stringValue = "未命名文件夹"
-        textField.selectText(nil)
-        alert.accessoryView = textField
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            let folderName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !folderName.isEmpty else { return }
-            let newPath = (currentPath as NSString).appendingPathComponent(folderName)
-            do {
-                try CoreBridge.shared.createDirectory(path: newPath)
-                self?.host?.viewModel?.refresh()
-            } catch {
-                self?.showError(error)
-            }
+    /// 新建文件夹：创建 → 选中新项 → 进入内联重命名（R4-18，与访达一致）。
+    ///
+    /// 此前有两套流程：⇧⌘N 静默创建（不选中、不改名），右键菜单弹名称输入框。
+    /// 现在两个入口都走这一条——同一功能只有一种交互，且创建后立刻可改名。
+    func createNewFolderAndRename() {
+        guard let viewModel = host?.viewModel else {
+            FFDebug.log("[RENAME-DIAG] createNewFolderAndRename: 跳过（无 viewModel, host=\(host == nil ? "nil" : "alive")）")
+            return
         }
+        FFDebug.log("[RENAME-DIAG] createNewFolderAndRename: 调用 createDirectoryThenRenaming, path=\(viewModel.state.path)")
+        viewModel.createDirectoryThenRenaming { [weak self] newPath in
+            FFDebug.log("[RENAME-DIAG] createNewFolderAndRename 回调: newPath=\(newPath), self=\(self == nil ? "nil" : "alive"), host=\(self?.host == nil ? "nil" : "alive")")
+            guard let self, let host = self.host else {
+                FFDebug.log("[RENAME-DIAG] createNewFolderAndRename 回调: guard 失败（self=\(self == nil ? "nil" : "alive"), host=\(self?.host == nil ? "nil" : "alive")）")
+                return
+            }
+            let selectedCount = host.viewModel?.selectedFiles.count ?? -1
+            FFDebug.log("[RENAME-DIAG] createNewFolderAndRename 回调: revealSelection + beginInlineRename, selectedFiles.count=\(selectedCount)")
+            host.revealSelection()
+            self.beginInlineRename()
+        }
+    }
+
+    @objc func createDirectory(_ sender: Any?) {
+        createNewFolderAndRename()
     }
 
     /// v0.7.4 项 6：用所选项目新建文件夹（创建新文件夹并把选中项移入，冲突弹窗询问）
     @objc func createFolderFromSelection(_ sender: Any?) {
         guard let window = host?.hostWindow else { return }
         host?.viewModel?.createFolderFromSelection(window: window)
+    }
+
+    /// 右键菜单"批量重命名…"：转发到 MainWindowController.menuBatchRename，
+    /// 选中不足 2 个文件时由 updateMainMenu 禁用并给 tooltip。
+    @objc func batchRenameSelected(_ sender: Any?) {
+        guard let window = host?.hostWindow else { return }
+        (window.windowController as? MainWindowController)?.menuBatchRename(sender)
     }
 
     @objc func addToFavorites(_ sender: Any?) {
@@ -224,6 +229,13 @@ final class FFPaneActionsController: NSObject {
         DuplicateScanWindowController.shared.showWindow()
     }
 
+    /// J3-10: 右键菜单「整理当前目录…」→ 通知主窗口弹出整理预览 Sheet
+    @objc func organizeCurrentDirectory(_ sender: Any?) {
+        // Wave2 P0-4（多窗口）：object 携带 host 视图身份，接收方据此过滤本窗口通知
+        NotificationCenter.default.post(name: .fileListBatchOrganize, object: host,
+                                        userInfo: ["path": host?.viewModel?.currentPath ?? ""])
+    }
+
     @objc func generateAITags(_ sender: Any?) {
         triggerAITagGeneration()
     }
@@ -231,6 +243,7 @@ final class FFPaneActionsController: NSObject {
     // MARK: - 跨面板操作
 
     @objc func copyToOtherPane(_ sender: Any?) {
+        ensureClickedItemSelected()
         FFLog.debug("[F10-10] copyToOtherPane clicked, side=\(sideString()), clickedEntry=\(host?.clickedEntry?.path ?? "nil"), selectedCount=\(host?.selectedEntries.count ?? 0)", log: FFLog.ui)
         // Wave2 P0-4（多窗口）：object 携带 host 视图身份，接收方据此过滤本窗口通知
         NotificationCenter.default.post(name: .fileListDidCopyToOther, object: host,
@@ -238,6 +251,7 @@ final class FFPaneActionsController: NSObject {
     }
 
     @objc func moveToOtherPane(_ sender: Any?) {
+        ensureClickedItemSelected()
         FFLog.debug("[F10-10] moveToOtherPane clicked, side=\(sideString()), clickedEntry=\(host?.clickedEntry?.path ?? "nil"), selectedCount=\(host?.selectedEntries.count ?? 0)", log: FFLog.ui)
         NotificationCenter.default.post(name: .fileListDidMoveToOther, object: host,
                                         userInfo: ["side": sideString(), "clickedPath": host?.clickedEntry?.path])
@@ -598,20 +612,15 @@ extension FFPaneActionsController: NSMenuDelegate {
         let isBlankArea = host?.clickedEntry == nil && (host?.selectedEntries.isEmpty ?? true)
 
         // 空白处右键：精简菜单，只保留不需要选中文件的操作
-        // 保留：粘贴 / 新建文件夹 / 查重扫描 / 撤销(动态) / 重做(动态)
-        // 隐藏：打开 / 复制 / 剪切 / 移动与复制到另一面板 / 重命名 / 移到废纸篓 /
+        // 保留：粘贴 / 新建文件夹 / 重复文件扫描
+        // 隐藏：打开 / 复制 / 剪切 / 移动与复制到另一面板 / 重命名 / 移动到废纸篓 /
         //       添加到收藏 / 标签 / AI打标 / 显示简介 / 用所选新建文件夹
         if isBlankArea {
-            // 固定保留的项（标题不变）
-            let keepTitles = Set(["粘贴", "新建文件夹", "查重扫描"])
+            let keepTitles: Set<String> = ["粘贴", "新建文件夹", FFNaming.duplicateScanBase]
             for item in menu.items {
                 if item.isSeparatorItem { continue }
-                // 撤销/重做项用 tag 识别（100=撤销, 101=重做），单独按 canUndo/canRedo 判断
-                if item.tag == 100 || item.tag == 101 { continue }
                 item.isHidden = !keepTitles.contains(item.title)
             }
-            // 撤销/重做项在空白处也按 canUndo/canRedo 独立判断
-            updateUndoRedoMenuItems(menu)
             return
         }
 
@@ -620,8 +629,6 @@ extension FFPaneActionsController: NSMenuDelegate {
             if item.isSeparatorItem { continue }
             item.isHidden = false
         }
-        // 撤销/重做项始终动态显示（不随"恢复可见"无条件显示）
-        updateUndoRedoMenuItems(menu)
 
         // "打开"项图标：文件夹用 folder，文件用 doc
         if let openItem = menu.items.first(where: { $0.title == "打开" }) {
@@ -668,40 +675,25 @@ extension FFPaneActionsController: NSMenuDelegate {
         }
 
         // v0.7.4 项 6："用所选 X 个项目新建文件夹" 动态标题与显隐
-        // 选中 2 个及以上项目时显示（标题带数量）；单选/无选中时隐藏
+        // 选中 1 个及以上项目时显示（spec: hidden unless items selected）
         if let folderFromSelItem = menu.items.first(where: { $0.title.contains("用所选") }) {
             let selectedCount = host?.selectedEntries.count ?? 0
-            if selectedCount >= 2 {
-                folderFromSelItem.title = "用所选 \(selectedCount) 个项目新建文件夹"
+            if selectedCount >= 1 {
+                folderFromSelItem.title = selectedCount >= 2
+                    ? "用所选 \(selectedCount) 个项目新建文件夹"
+                    : "用所选项目新建文件夹"
                 folderFromSelItem.isHidden = false
             } else {
                 folderFromSelItem.isHidden = true
             }
         }
-    }
 
-    // MARK: - v0.7.4 修订 2: 撤销/重做动态菜单项
-
-    /// 动态更新右键菜单的撤销/重做项（用 tag 100/101 识别，避免标题变化后匹配失败）：
-    /// - canUndo 为 true 时显示"撤销 X"（X 为操作名，如"撤销删除"），否则隐藏
-    /// - canRedo 为 true 时显示"重做 X"，否则隐藏
-    /// - 两者独立判断、互不影响
-    private func updateUndoRedoMenuItems(_ menu: NSMenu) {
-        guard let window = host?.hostWindow, let um = window.undoManager else { return }
-        let canUndo = um.canUndo
-        let canRedo = um.canRedo
-        let undoName = um.undoActionName.isEmpty ? "" : um.undoActionName
-        let redoName = um.redoActionName.isEmpty ? "" : um.redoActionName
-
-        // tag 100 = 撤销项，tag 101 = 重做项
-        for item in menu.items {
-            if item.tag == 100 {
-                item.title = canUndo ? "撤销\(undoName)" : "撤销"
-                item.isHidden = !canUndo
-            } else if item.tag == 101 {
-                item.title = canRedo ? "重做\(redoName)" : "重做"
-                item.isHidden = !canRedo
-            }
+        // R4-11：批量重命名… 选中 >= 2 文件时可用，否则禁用并给 tooltip
+        if let batchItem = menu.items.first(where: { $0.title == FFNaming.batchRenameTitle }) {
+            let fileCount = (host?.selectedEntries ?? []).filter { !$0.isDirectory }.count
+            let enough = fileCount >= 2
+            batchItem.isEnabled = enough
+            batchItem.toolTip = enough ? nil : FFNaming.batchRenameRequires
         }
     }
 
@@ -710,7 +702,7 @@ extension FFPaneActionsController: NSMenuDelegate {
     /// 重建标签二级子菜单
     /// - 顶部：列出现有所有标签（彩色圆点 + 名称，当前文件已有的显示 ✓）
     /// - 分隔线
-    /// - "新建标签..." 项
+    /// - "新建标签…" 项
     private func rebuildTagsSubmenu(_ menu: NSMenu) {
         menu.removeAllItems()
         let targets = tagTargets()
@@ -751,7 +743,7 @@ extension FFPaneActionsController: NSMenuDelegate {
     }
 
     private func addCreateTagItem(to menu: NSMenu, paths: [String]) {
-        let createItem = NSMenuItem(title: "新建标签...", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
+        let createItem = NSMenuItem(title: "新建标签…", action: #selector(showCreateTagDialog(_:)), keyEquivalent: "")
         createItem.target = self
         createItem.representedObject = paths
         createItem.image = FFIcon.template(.plus, size: FFIcon.Metrics.menu)

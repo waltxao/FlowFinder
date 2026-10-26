@@ -10,17 +10,31 @@ final class FFWrapContainerView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        translatesAutoresizingMaskIntoConstraints = false
+        configureWrapBehavior()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        configureWrapBehavior()
+    }
+
+    private func configureWrapBehavior() {
+        translatesAutoresizingMaskIntoConstraints = false
+        // 高度必须优先贴合内容（R4-31）。FFModalSheet 用 defaultHigh 把 footer 钉在
+        // 窗口底边，约束求解拿不定主意时会把本容器拉高，药丸周围就出现大片空白。
+        // 不能设成 required：调用方还会加 `height >= 26` 的最小高度约束，required 会和它冲突。
+        setContentHuggingPriority(NSLayoutConstraint.Priority.defaultHigh + 1, for: .vertical)
     }
 
     override func layout() {
         super.layout()
         layoutItems()
     }
+
+    /// 行从容器顶边往下摆（R4-31）。
+    /// NSView 默认原点在左下，`calculateLayout` 算出的 y=0 会被解释成底边，
+    /// 容器被拉高时药丸全部沉底、上方留下一整块空白。
+    override var isFlipped: Bool { true }
 
     override var intrinsicContentSize: NSSize {
         let size = calculateLayout().size
@@ -102,6 +116,9 @@ class TagSelectorDialog: FFModalSheet {
     private var selectedContainer: FFWrapContainerView!
     private var suggestedContainer: FFWrapContainerView!
 
+    /// 推荐区当前的药丸（供回归测试检查视觉状态）
+    var suggestedChipsForTesting: [NSView] { suggestedContainer?.arrangedSubviews ?? [] }
+
     /// 初始化
     /// - Parameters:
     ///   - paths: 目标文件路径（1 个 = 精确覆盖；多个 = 只应用增删差异）
@@ -117,7 +134,7 @@ class TagSelectorDialog: FFModalSheet {
         let bodyView = NSView()
         // 使用闭包持有盒延迟注入 self 依赖（Swift 6 严格模式禁止 super.init 前捕获 self）
         let box = FFClosureBox()
-        super.init(title: "选择标签",
+        super.init(title: FFNaming.editTagsBase,
                    bodyView: bodyView,
                    primaryButton: ("确定", .default),
                    secondaryButton: "取消",
@@ -177,7 +194,7 @@ class TagSelectorDialog: FFModalSheet {
     private func setupBody(bodyView: NSView) {
         // 搜索框
         searchField = NSSearchField()
-        searchField.placeholderString = "搜索标签..."
+        searchField.placeholderString = "搜索标签…"
         searchField.target = self
         searchField.action = #selector(searchChanged)
         searchField.translatesAutoresizingMaskIntoConstraints = false
@@ -244,7 +261,7 @@ class TagSelectorDialog: FFModalSheet {
         if selectedTags.isEmpty {
             let empty = NSTextField(labelWithString: "未选择标签")
             empty.font = .systemFont(ofSize: 11)
-            empty.textColor = .tertiaryLabelColor
+            empty.textColor = FFVisualTokens.hint
             empty.translatesAutoresizingMaskIntoConstraints = false
             selectedContainer.addArrangedSubview(empty)
         }
@@ -263,7 +280,7 @@ class TagSelectorDialog: FFModalSheet {
         if suggested.isEmpty {
             let empty = NSTextField(labelWithString: "无可用标签")
             empty.font = .systemFont(ofSize: 11)
-            empty.textColor = .tertiaryLabelColor
+            empty.textColor = FFVisualTokens.hint
             empty.translatesAutoresizingMaskIntoConstraints = false
             suggestedContainer.addArrangedSubview(empty)
         }
@@ -322,9 +339,14 @@ class TagSelectorDialog: FFModalSheet {
 
     /// 推荐药丸：圆点 + 名（点击添加）
     private func makeSuggestedPill(tag: Tag) -> NSView {
+        let base = NSColor(hex: tag.color) ?? .systemBlue
         let pill = NSButton()
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.4).cgColor
+        // 描边 + 标签色浅淡染色（R4-31）：
+        // 此前只有近透明的 controlBackgroundColor 底色，推荐项读起来像图例而不是可点选项。
+        pill.layer?.backgroundColor = base.withAlphaComponent(0.10).cgColor
+        pill.layer?.borderWidth = 1
+        pill.layer?.borderColor = base.withAlphaComponent(0.55).cgColor
         pill.applySquircleCornerRadius(11)
         pill.isBordered = false
         pill.font = .systemFont(ofSize: 11)

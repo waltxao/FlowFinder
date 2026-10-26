@@ -89,7 +89,7 @@ final class FFPermissionGate {
 
         // group.wait 不能占主线程：TCC 对话框是系统模态，等待期间主线程仍要能响应点击
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = group.wait(timeout: .now() + timeout)
+            let waitResult = group.wait(timeout: .now() + timeout)
             var report = Report()
             lock.lock()
             let deniedSnapshot = denied
@@ -105,9 +105,9 @@ final class FFPermissionGate {
                 if stillDenied.isEmpty { break }
             }
             report.denied = stillDenied
-            // 复查已经给出确定结论：还剩不可读的目录才算问题；
-            // 超时只说明用户点得慢，不应再叠一个「没有应答」的提示。
-            report.timedOut = false
+            // 复查没有结论（仍在阻塞）说明「授权状态未确认」，不能当成已授权：
+            // 首启时 TCC 未应答会让目录枚举一直卡住，此时界面必须显示「待确认」。
+            report.timedOut = (waitResult == .timedOut) && stillDenied.isEmpty
             DispatchQueue.main.async { completion(report) }
         }
     }
@@ -182,14 +182,19 @@ extension FFPermissionGate {
     /// `FF_SKIP_PERMISSION_GATE=1` 时直接放行：自动化截图 / 自检场景下
     /// 系统授权框会挡住界面，而合成点击事件投不进 TCC 对话框（系统安全限制），
     /// 没办法自动应答。该开关只影响启动期的预请求，不改变各处真实读取的权限行为。
+    /// 启动权限门最多阻塞 3 秒：TCC 无应答时也要让首屏先加载，
+    /// 否则用户会长时间看到「此文件夹为空」而不是真实目录。
+    static let launchGateTimeout: TimeInterval = 3
+
     func prepareBeforeInitialLoad(window: NSWindow?,
+                                  timeout: TimeInterval = FFPermissionGate.launchGateTimeout,
                                   completion: @escaping () -> Void) {
         if ProcessInfo.processInfo.environment["FF_SKIP_PERMISSION_GATE"] == "1" {
             FFDebug.log("[PERM] 跳过启动权限门（FF_SKIP_PERMISSION_GATE=1）")
             completion()
             return
         }
-        requestAccess { [weak self] report in
+        requestAccess(timeout: timeout) { [weak self] report in
             completion()
             self?.presentGuidanceIfNeeded(report, in: window)
         }

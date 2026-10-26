@@ -98,15 +98,17 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
             if entry.isDirectory {
                 // 任务 F10-9: 目录不加载缩略图，清除路径标记避免旧回调误覆盖目录图标
                 currentPath = nil
-                // 2026-10-19 #11b：标准位置目录优先用语义色合成图标（48pt 网格基准），
+                // 修复 Bug 2：图标生成尺寸使用 thumbnailMaxEdge（显示约束），避免 48pt 源图被拉伸到 88pt 导致模糊
+                let iconSize = max(thumbnailMaxEdge, 16)
+                // 2026-10-19 #11b：标准位置目录优先用语义色合成图标，
                 // 未命中走 NSWorkspace 图标缓存
                 if let spec = FFStandardLocationIcon.spec(forPath: entry.path) {
-                    setThumbnail(FFStandardLocationIcon.makeIcon(spec: spec, side: 48))
-                } else if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: entry.path, pointSize: 48) {
+                    setThumbnail(FFStandardLocationIcon.makeIcon(spec: spec, side: iconSize))
+                } else if let cached = ThumbnailManager.shared.cachedWorkspaceIcon(for: entry.path, pointSize: iconSize) {
                     setThumbnail(cached)
                 } else {
-                    setThumbnail(FFIcon.image(.folder, size: 48, color: .secondaryLabelColor))
-                    ThumbnailManager.shared.fetchWorkspaceIcon(for: entry.path, pointSize: 48) { [weak self] image in
+                    setThumbnail(FFIcon.image(.folder, size: iconSize, color: .secondaryLabelColor))
+                    ThumbnailManager.shared.fetchWorkspaceIcon(for: entry.path, pointSize: iconSize) { [weak self] image in
                         guard let self = self, self.currentPath == nil else { return }
                         if let image = image { self.setThumbnail(image) }
                     }
@@ -125,11 +127,12 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 // 任务 F11-7: 占位图标优先用缓存的工作区图标（比 SF Symbol 更接近最终视觉），
                 // 缓存未命中再用通用 doc 符号，并后台异步获取真实工作区图标作为缩略图返回前的过渡。
                 // 这样即使缩略图生成慢，用户也能快速看到正确的文件类型图标而非通用 doc。
-                let placeholderPointSize: CGFloat = 48
+                // 修复 Bug 2：占位图标尺寸使用 thumbnailMaxEdge（与显示约束一致）
+                let placeholderPointSize = max(thumbnailMaxEdge, 16)
                 if let cachedIcon = ThumbnailManager.shared.cachedWorkspaceIcon(for: path, pointSize: placeholderPointSize) {
                     setThumbnail(cachedIcon)
                 } else {
-                    setThumbnail(FFIcon.image(.file, size: 48, color: .secondaryLabelColor))
+                    setThumbnail(FFIcon.image(.file, size: placeholderPointSize, color: .secondaryLabelColor))
                     // 后台异步获取真实工作区图标作为过渡（缩略图返回前先显示真实类型图标）
                     ThumbnailManager.shared.fetchWorkspaceIcon(for: path, pointSize: placeholderPointSize) { [weak self] image in
                         guard let self = self, self.currentPath == path else { return }
@@ -142,7 +145,9 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                 }
 
                 // 使用 ThumbnailManager 获取缩略图
-                ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: 96, height: 96)) { [weak self] image in
+                // 修复 Bug 2：缩略图像素尺寸按 thumbnailMaxEdge × 2（@2x）生成，避免 48pt 源图被拉伸到 88pt
+                let thumbnailPixelSize = max(thumbnailMaxEdge * 2, 96)
+                ThumbnailManager.shared.generateThumbnail(path: path, size: CGSize(width: thumbnailPixelSize, height: thumbnailPixelSize)) { [weak self] image in
                     guard let self = self else { return }
                     // 校验 item 仍显示同一文件（用完整路径而非文件名）
                     guard self.currentPath == path else { return }
@@ -151,7 +156,7 @@ class FileGridCollectionViewItem: NSCollectionViewItem {
                     if let image = image {
                         self.setThumbnail(image)
                     } else {
-                        self.setThumbnail(FFIcon.image(.file, size: 48, color: .secondaryLabelColor))
+                        self.setThumbnail(FFIcon.image(.file, size: max(self.thumbnailMaxEdge, 16), color: .secondaryLabelColor))
                     }
                 }
             }
@@ -566,9 +571,9 @@ private final class FFGridSectionHeaderView: NSView {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
-        // 任务 F11-5: 计数徽章（与列表视图样式一致：次级字号 + 三级标签色，无括号）
+        // 任务 F11-5: 计数徽章（与列表视图样式一致：次级字号 + 提示色，无括号）
         countLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        countLabel.textColor = NSColor.tertiaryLabelColor
+        countLabel.textColor = FFVisualTokens.hint
         countLabel.backgroundColor = .clear
         countLabel.isBezeled = false
         countLabel.drawsBackground = false
@@ -742,6 +747,11 @@ public class FileGridView: NSView, FFRegionAware {
     func setBottomOverlayInset(_ height: CGFloat) {
         guard let sv = scrollView else { return }
         let inset = max(0, height + 8)
+        // 修复 D-01 C：滚动条轨道也在详情栏上缘结束
+        sv.scrollerInsets = NSEdgeInsets(top: sv.scrollerInsets.top,
+                                         left: sv.scrollerInsets.left,
+                                         bottom: inset,
+                                         right: sv.scrollerInsets.right)
         guard abs(sv.contentInsets.bottom - inset) > 0.5 else { return }
         sv.automaticallyAdjustsContentInsets = false
         sv.contentInsets = NSEdgeInsets(
@@ -751,6 +761,7 @@ public class FileGridView: NSView, FFRegionAware {
             right: sv.contentInsets.right
         )
     }
+    var scrollerBottomInsetForTesting: CGFloat { scrollView?.scrollerInsets.bottom ?? 0 }
 
     private var lastFilesCount: Int = -1
 
@@ -993,8 +1004,9 @@ public class FileGridView: NSView, FFRegionAware {
         // NSCollectionViewGridLayout 不支持补充视图，无法渲染分组标题。
         // FlowLayout 横向排列填满一行后换行，与网格视觉效果一致，且支持 headerReferenceSize。
         let layout = NSCollectionViewFlowLayout()
-        // Wave4 Task 4: itemSize 由图标大小状态驱动（2026-10-19 #8：默认 112×124，范围 80–200）
-        layout.itemSize = NSSize(width: gridIconSize, height: gridIconSize + 12)
+        // Wave4 Task 4: itemSize 由图标大小状态驱动（2026-10-19 #8：默认 1112×132，范围 80–200）
+        // 修复 Bug 2：高度统一为 gridIconSize + 20（与 applyGridIconSize 一致）
+        layout.itemSize = NSSize(width: gridIconSize, height: gridIconSize + 20)
         layout.minimumInteritemSpacing = 8
         layout.minimumLineSpacing = 8
         layout.sectionInset = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
@@ -1524,6 +1536,14 @@ extension FileGridView: FFPaneViewHost {
         return gridItem.nameLabel
     }
 
+    /// 选中项滚入可视区（R4-18：新建文件夹后要立刻内联重命名，格子弹幕外拿不到 item）
+    func revealSelection() {
+        let paths = collectionView.selectionIndexPaths
+        guard !paths.isEmpty else { return }
+        collectionView.scrollToItems(at: paths, scrollPosition: [])
+        collectionView.layoutSubtreeIfNeeded()
+    }
+
     func selectClickedItemForRename() {
         guard let event = NSApp.currentEvent else { return }
         let point = collectionView.convert(event.locationInWindow, from: nil)
@@ -1728,7 +1748,9 @@ extension FileGridView {
         let operationName = isMove ? "移动" : "复制"
         let progressBar = viewModel?.taskProgressBar
         let collapsed = viewModel?.progressBarsCollapsed
-        progressBar?.startDirectProgress(operation: operationName, totalCount: conflictPlan.count)
+        progressBar?.startDirectProgress(operation: operationName,
+                                         totalCount: conflictPlan.count,
+                                         destinationPath: destPath)
         viewModel?.progressBarsExpanded?()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in

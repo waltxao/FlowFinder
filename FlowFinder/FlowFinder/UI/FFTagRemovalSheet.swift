@@ -72,10 +72,9 @@ final class FFTagRemovalSheet: NSWindow {
     // MARK: - UI
 
     private func buildUI() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 190))
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        container.layer?.cornerRadius = 12
+        // R4-32: 动态色要在外观切换时重新解析，不能构建时钉死在 layer 上。
+        let container = FFDynamicBackgroundView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 190))
+        container.fillCornerRadius = 12
         contentView = container
 
         // 标题

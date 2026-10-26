@@ -1,14 +1,79 @@
 import Cocoa
 
-/// 外观设置视图：主题切换（浅色/深色/自动跟随系统 三态）
-/// 任务 F11-3: 恢复 .system 三态（v0.6.7），修正 v0.6.5 T2 错误移除
+/// R4-04：主题卡需要持续可见的选中态。
+///
+/// 普通 momentary `NSButton` 的 `state` 不产生持续视觉（按下弹起后外观不变），
+/// 用户点「深色」后界面变黑了，但三张卡看起来一模一样，认不出当前生效项。
+/// 这里自建卡片：选中态用强调色描边 + 淡底 + 图标着色三者共同表达。
+final class FFThemeCardButton: NSButton {
+
+    var isSelectedCard: Bool = false {
+        didSet { guard oldValue != isSelectedCard else { return } ; refreshChrome() }
+    }
+
+    init(title: String, icon: FFIconName, tag: Int) {
+        super.init(frame: .zero)
+        self.tag = tag
+        wantsLayer = true
+        isBordered = false
+        bezelStyle = .regularSquare
+        imagePosition = .imageAbove
+        imageScaling = .scaleNone
+        font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        image = FFIcon.template(icon, size: 28)
+        attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                         .foregroundColor: NSColor.labelColor]
+        )
+        toolTip = title
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        translatesAutoresizingMaskIntoConstraints = false
+        refreshChrome()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshChrome),
+            name: .appearanceChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshChrome),
+            name: .accentColorChanged, object: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshChrome()
+    }
+
+    @objc private func refreshChrome() {
+        let accent = FFAccent.current
+        let selected = isSelectedCard
+        // layer 只吃 CGColor 快照：动态色必须在视图自身的外观里解析，
+        // 否则深色模式下 controlBackgroundColor 会按 Aqua 解析成纯白（实测）。
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.layer?.cornerRadius = 10
+            self.layer?.cornerCurve = .continuous
+            self.layer?.borderWidth = selected ? 2 : 1
+            self.layer?.borderColor = (selected ? accent : NSColor.separatorColor).cgColor
+            self.layer?.backgroundColor = (selected
+                                           ? accent.withAlphaComponent(0.10)
+                                           : NSColor.controlBackgroundColor).cgColor
+        }
+        contentTintColor = selected ? accent : NSColor.secondaryLabelColor
+    }
+}
+
+/// 外观设置视图：主题三卡（浅色/深色/自动跟随系统）+ 界面尺寸
+/// R4-04/R4-26：卡片改为等宽铺满整行（原 100×100 左对齐、右侧大片死白），
+/// 带持续选中态；删掉视图内重复的「外观」标题（分区标题已经是「主题」）。
 public class AppearanceSettingsView: NSView {
 
-    private var titleLabel: NSTextField!
-    private var buttonContainer: NSView!
-    private var lightButton: NSButton!
-    private var darkButton: NSButton!
-    private var systemButton: NSButton!
+    private var cardStack: NSStackView!
+    private var themeCards: [FFThemeCardButton] = []
     private var descriptionLabel: NSTextField!
     private var sizeTitleLabel: NSTextField!
     private var sizeControl: NSSegmentedControl!
@@ -26,48 +91,23 @@ public class AppearanceSettingsView: NSView {
         setupBindings()
     }
 
-    deinit {
-        // 回调使用 [weak self]，对象释放后自动失效，无需手动解绑
-    }
-
     // MARK: - UI Setup
 
     private func setupUI() {
-        // 标题
-        titleLabel = NSTextField(labelWithString: "外观")
-        titleLabel.font = NSFont.boldSystemFont(ofSize: 16)
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        cardStack = NSStackView()
+        cardStack.orientation = .horizontal
+        cardStack.distribution = .fillEqually
+        cardStack.spacing = 12
+        cardStack.translatesAutoresizingMaskIntoConstraints = false
 
-        // 按钮容器
-        buttonContainer = NSView()
-        buttonContainer.translatesAutoresizingMaskIntoConstraints = false
+        themeCards = AppearanceMode.allCases.map { mode in
+            let card = FFThemeCardButton(title: mode.title, icon: mode.icon, tag: mode.rawValue)
+            card.target = self
+            card.action = #selector(themeButtonClicked(_:))
+            cardStack.addArrangedSubview(card)
+            return card
+        }
 
-        // 浅色按钮
-        lightButton = createThemeButton(
-            title: AppearanceMode.light.title,
-            icon: AppearanceMode.light.icon,
-            mode: .light
-        )
-
-        // 深色按钮
-        darkButton = createThemeButton(
-            title: AppearanceMode.dark.title,
-            icon: AppearanceMode.dark.icon,
-            mode: .dark
-        )
-
-        // 自动跟随系统按钮（任务 F11-3: 恢复三态）
-        systemButton = createThemeButton(
-            title: AppearanceMode.system.title,
-            icon: AppearanceMode.system.icon,
-            mode: .system
-        )
-
-        buttonContainer.addSubview(lightButton)
-        buttonContainer.addSubview(darkButton)
-        buttonContainer.addSubview(systemButton)
-
-        // 描述标签
         descriptionLabel = NSTextField(labelWithString: "")
         descriptionLabel.font = NSFont.systemFont(ofSize: 11)
         descriptionLabel.textColor = NSColor.secondaryLabelColor
@@ -91,78 +131,38 @@ public class AppearanceSettingsView: NSView {
         sizeHintLabel.textColor = NSColor.secondaryLabelColor
         sizeHintLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(titleLabel)
-        addSubview(buttonContainer)
+        addSubview(cardStack)
         addSubview(descriptionLabel)
         addSubview(sizeTitleLabel)
         addSubview(sizeControl)
         addSubview(sizeHintLabel)
 
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 20),
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            cardStack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            cardStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            cardStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            cardStack.heightAnchor.constraint(equalToConstant: 92),
 
-            buttonContainer.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
-            buttonContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            buttonContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            buttonContainer.heightAnchor.constraint(equalToConstant: 100),
+            descriptionLabel.topAnchor.constraint(equalTo: cardStack.bottomAnchor, constant: 10),
+            descriptionLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            descriptionLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-            lightButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
-            lightButton.leadingAnchor.constraint(equalTo: buttonContainer.leadingAnchor),
-            lightButton.widthAnchor.constraint(equalToConstant: 100),
-            lightButton.heightAnchor.constraint(equalToConstant: 100),
-
-            darkButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
-            darkButton.leadingAnchor.constraint(equalTo: lightButton.trailingAnchor, constant: 16),
-            darkButton.widthAnchor.constraint(equalToConstant: 100),
-            darkButton.heightAnchor.constraint(equalToConstant: 100),
-
-            systemButton.topAnchor.constraint(equalTo: buttonContainer.topAnchor),
-            systemButton.leadingAnchor.constraint(equalTo: darkButton.trailingAnchor, constant: 16),
-            systemButton.widthAnchor.constraint(equalToConstant: 100),
-            systemButton.heightAnchor.constraint(equalToConstant: 100),
-
-            descriptionLabel.topAnchor.constraint(equalTo: buttonContainer.bottomAnchor, constant: 12),
-            descriptionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            descriptionLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-
-            sizeTitleLabel.topAnchor.constraint(equalTo: descriptionLabel.bottomAnchor, constant: 18),
-            sizeTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            sizeTitleLabel.topAnchor.constraint(equalTo: descriptionLabel.bottomAnchor, constant: 16),
+            sizeTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
 
             sizeControl.topAnchor.constraint(equalTo: sizeTitleLabel.bottomAnchor, constant: 8),
-            sizeControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            sizeControl.leadingAnchor.constraint(equalTo: leadingAnchor),
             sizeControl.widthAnchor.constraint(equalToConstant: 240),
             sizeControl.heightAnchor.constraint(equalToConstant: 24),
 
             sizeHintLabel.topAnchor.constraint(equalTo: sizeControl.bottomAnchor, constant: 8),
-            sizeHintLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            sizeHintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            sizeHintLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sizeHintLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
             // Bug #17 修复：约束链必须闭合到底部，否则视图在 NSStackView 中高度歧义、塌缩为 0。
-            sizeHintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
+            sizeHintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
         ])
 
         updateSelection()
-    }
-
-    private func createThemeButton(title: String, icon: FFIconName, mode: AppearanceMode) -> NSButton {
-        let button = NSButton()
-        button.bezelStyle = .regularSquare
-        button.isBordered = true
-        button.title = ""
-        button.image = FFIcon.template(icon, size: 40)
-        button.imagePosition = .imageAbove
-        button.font = NSFont.systemFont(ofSize: 12)
-        button.toolTip = title
-        button.tag = mode.rawValue
-        button.target = self
-        button.action = #selector(themeButtonClicked(_:))
-        button.translatesAutoresizingMaskIntoConstraints = false
-        // 使用副标题显示文字
-        button.attributedTitle = NSAttributedString(
-            string: title,
-            attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
-        )
-        return button
     }
 
     // MARK: - Bindings
@@ -180,10 +180,9 @@ public class AppearanceSettingsView: NSView {
 
     private func updateSelection() {
         let currentMode = ThemeManager.shared.currentMode
-
-        lightButton.state = currentMode == .light ? .on : .off
-        darkButton.state = currentMode == .dark ? .on : .off
-        systemButton.state = currentMode == .system ? .on : .off
+        for card in themeCards {
+            card.isSelectedCard = card.tag == currentMode.rawValue
+        }
 
         let sizeIndex = FFSizeLevel.allCases.firstIndex(of: FFSizePreference.current) ?? 1
         sizeControl.selectedSegment = sizeIndex
@@ -198,41 +197,11 @@ public class AppearanceSettingsView: NSView {
         }
     }
 
-    public override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if window != nil {
-            FFDebug.log("AppearanceSettingsView movedToWindow frame=\(frame) bounds=\(bounds)")
-        }
-    }
-
-    private var lastHitTestLogged = Date.distantPast
-
-    public override func hitTest(_ point: NSPoint) -> NSView? {
-        let result = super.hitTest(point)
-        // 诊断：点击是否到达本视图（若 super 返回 nil 说明被上层拦截或点在 bounds 外）
-        // 节流：鼠标移动会高频调用 hitTest，限制每 0.5s 最多记一次
-        if window != nil, Date().timeIntervalSince(lastHitTestLogged) > 0.5 {
-            lastHitTestLogged = Date()
-            let inBounds = bounds.contains(point)
-            FFDebug.log("AppearanceSettingsView.hitTest: point=\(point) inBounds=\(inBounds) result=\(result.map { String(describing: type(of: $0)) } ?? "nil") bounds=\(bounds)")
-        }
-        return result
-    }
-
-    public override func layout() {
-        super.layout()
-        if window != nil && !bounds.isEmpty {
-            FFDebug.log("AppearanceSettingsView layout frame=\(frame) bounds=\(bounds) lightBtn=\(lightButton.frame) darkBtn=\(darkButton.frame) systemBtn=\(systemButton.frame) lightInWin=\(lightButton.convert(lightButton.bounds, to: window?.contentView))")
-        }
-    }
-
     // MARK: - Actions
 
     @objc private func themeButtonClicked(_ sender: NSButton) {
         guard let mode = AppearanceMode(rawValue: sender.tag) else { return }
-        FFDebug.log("AppearanceSettingsView.themeButtonClicked: mode=\(mode.title) tag=\(sender.tag)")
         ThemeManager.shared.applyMode(mode)
-        FFDebug.log("AppearanceSettingsView.themeButtonClicked: applyMode 返回后 NSApp.appearance=\(String(describing: NSApp.appearance?.name))")
     }
 
     @objc private func sizeLevelChanged(_ sender: NSSegmentedControl) {

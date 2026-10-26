@@ -1,5 +1,44 @@
 import Cocoa
 
+/// 批量重命名名称计算（纯函数，便于单测）。
+enum FFBatchRenamePattern {
+    static func apply(_ pattern: String, entry: FileEntry, index: Int) -> String {
+        var result = pattern
+        result = result.replacingOccurrences(of: "{name}", with: entry.displayName)
+
+        let ext = entry.fileExtension
+        if ext.isEmpty {
+            // 避免 {name}.{ext} 在无扩展名时生成尾点。
+            result = result.replacingOccurrences(of: ".{ext}", with: "")
+        }
+        result = result.replacingOccurrences(of: "{ext}", with: ext)
+
+        if let regex = try? NSRegularExpression(pattern: "\\{index:(\\d+)\\}") {
+            let nsString = NSMutableString(string: result)
+            let fullRange = NSRange(location: 0, length: nsString.length)
+            let matches = regex.matches(in: result, range: fullRange)
+            for match in matches.reversed() {
+                guard match.numberOfRanges >= 2,
+                      let nRange = Range(match.range(at: 1), in: result) else { continue }
+                let n = Int(result[nRange]) ?? 1
+                let padded = String(format: "%0\(n)d", index + 1)
+                nsString.replaceCharacters(in: match.range, with: padded)
+            }
+            result = nsString as String
+        }
+
+        result = result.replacingOccurrences(of: "{index}", with: "\(index + 1)")
+        result = result.replacingOccurrences(of: "{index0}", with: "\(index)")
+        return sanitize(result)
+    }
+
+    static func sanitize(_ raw: String) -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.hasSuffix(".") { value.removeLast() }
+        return value
+    }
+}
+
 /// 批量重命名窗口控制器：模式替换 / 序号添加 / 大小写转换 + 实时预览
 /// 任务 F11-2: 窗口实体背景（windowBackgroundColor），确保内容清晰可读（v0.6.7）。
 public class BatchRenameWindowController: NSWindowController {
@@ -18,10 +57,19 @@ public class BatchRenameWindowController: NSWindowController {
 
     /// 计算后的预览结果（与 files 一一对应）
     private var previewNames: [String] = []
-    /// 冲突标记（与 files 一一对应；true 表示该行的新名称冲突）
-    private var conflictFlags: [Bool] = []
-    /// 目录中已存在的文件名集合（不含正在被重命名的原名），用于冲突检测
-    private var existingNames: Set<String> = []
+    /// 每行的冲突原因（与 files 一一对应；nil 表示该行可用）。红字之外必须能说出撞了谁（R4-12）。
+    private var conflictReasons: [String?] = []
+    /// 每行的扩展名改写提示（与 files 一一对应；nil 表示扩展名不变）。只提示，不拦下执行。
+    private var extensionWarnings: [String?] = []
+    /// 预览表当前显示的行号（映射到 files 下标）；「只看冲突」筛选后可能少于 files.count。
+    private var visibleIndices: [Int] = []
+    /// 各目录里已存在的文件名（不含正在被重命名的原名），按目录分别判定冲突（R4-12）。
+    private var existingNamesByDir: [String: Set<String>] = [:]
+
+    /// 文件所在目录，跨目录选择时冲突判定的分组键。
+    private func directory(of entry: FileEntry) -> String {
+        (entry.path as NSString).deletingLastPathComponent
+    }
 
     private enum RenameMode: Int {
         case pattern = 0
@@ -57,6 +105,28 @@ public class BatchRenameWindowController: NSWindowController {
     private var scrollView: NSScrollView!
     private var renameButton: NSButton!
     private var cancelButton: NSButton!
+    private var onlyConflictsSwitch: NSButton!
+    private var conflictLegendLabel: NSTextField!
+
+    // 供 XCTest 读取真实控件与真实判定结果（R4-12）。
+    var previewTableForTesting: NSTableView? { previewTableView }
+    var patternFieldForTesting: NSTextField? { patternField }
+    var prefixFieldForTesting: NSTextField? { prefixField }
+    var renameButtonForTesting: NSButton? { renameButton }
+    var onlyConflictsSwitchForTesting: NSButton? { onlyConflictsSwitch }
+    var conflictLegendForTesting: NSTextField? { conflictLegendLabel }
+
+    /// 第 index 行（files 下标）的冲突原因；nil 表示该行可执行。
+    func conflictReason(at index: Int) -> String? {
+        guard index >= 0, index < conflictReasons.count else { return nil }
+        return conflictReasons[index]
+    }
+
+    /// 第 index 行的扩展名改写提示；nil 表示扩展名保持不变。
+    func extensionWarning(at index: Int) -> String? {
+        guard index >= 0, index < extensionWarnings.count else { return nil }
+        return extensionWarnings[index]
+    }
 
     // MARK: - Init
 
@@ -90,10 +160,10 @@ public class BatchRenameWindowController: NSWindowController {
 
     private func setupUI() {
         guard let window = window else { return }
-        let contentView = window.contentView!
         // 任务 F11-2: contentView 实体背景（v0.6.7）
-        contentView.wantsLayer = true
-        contentView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        // R4-32: 动态色不能构建时解析一次钉在 layer 上，主题切换后窗口会停在旧外观底色。
+        let contentView = FFDynamicBackgroundView(frame: window.contentRect(forFrameRect: window.frame))
+        window.contentView = contentView
 
         // 顶部模式切换
         modeSegmentedControl = NSSegmentedControl(
@@ -117,7 +187,7 @@ public class BatchRenameWindowController: NSWindowController {
         patternField.translatesAutoresizingMaskIntoConstraints = false
 
         patternHintLabel = NSTextField(labelWithString: "占位符: {name} 文件名  {ext} 扩展名  {index} 序号(1开始)  {index0} 序号(0开始)  {index:N} 零填充N位")
-        patternHintLabel.font = NSFont.systemFont(ofSize: 10)
+        patternHintLabel.font = FFVisualTokens.Font.hint
         patternHintLabel.textColor = NSColor.secondaryLabelColor
         patternHintLabel.lineBreakMode = .byTruncatingTail
         patternHintLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -143,7 +213,8 @@ public class BatchRenameWindowController: NSWindowController {
 
         let prefixLabel = NSTextField(labelWithString: "前缀:")
         prefixLabel.translatesAutoresizingMaskIntoConstraints = false
-        prefixField = NSTextField(string: "IMG_")
+        // 前缀留空：写死的 IMG_ 会覆盖掉用户自己的命名习惯（R4-12）。
+        prefixField = NSTextField(string: "")
         prefixField.placeholderString = "前缀（可空）"
         prefixField.delegate = self
         prefixField.translatesAutoresizingMaskIntoConstraints = false
@@ -247,7 +318,9 @@ public class BatchRenameWindowController: NSWindowController {
 
         previewTableView = NSTableView()
         previewTableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        previewTableView.usesAlternatingRowBackgroundColors = true
+        // 交替行底色会画到数据行以下，看起来像下面还排着 7 个空行（R4-12）；改用横向分隔线。
+        previewTableView.usesAlternatingRowBackgroundColors = false
+        previewTableView.gridStyleMask = .solidHorizontalGridLineMask
         previewTableView.rowHeight = 22
         previewTableView.dataSource = self
         previewTableView.delegate = self
@@ -278,8 +351,23 @@ public class BatchRenameWindowController: NSWindowController {
         renameButton.keyEquivalent = "\r"  // Return
         renameButton.translatesAutoresizingMaskIntoConstraints = false
 
+        // 只看冲突：三五百行的批量重命名里，红字散在表里根本找不到（R4-12）。
+        onlyConflictsSwitch = NSButton(checkboxWithTitle: "只看冲突",
+                                       target: self, action: #selector(onlyConflictsChanged))
+        onlyConflictsSwitch.state = .off
+        onlyConflictsSwitch.translatesAutoresizingMaskIntoConstraints = false
+
+        // 图例：颜色含义必须写在界面上，不能只靠用户猜。
+        conflictLegendLabel = NSTextField(labelWithString: "红字 = 名称冲突（悬停看原因）  橙字 = 扩展名将被改写")
+        conflictLegendLabel.font = FFVisualTokens.Font.hint
+        conflictLegendLabel.textColor = NSColor.secondaryLabelColor
+        conflictLegendLabel.lineBreakMode = .byTruncatingTail
+        conflictLegendLabel.translatesAutoresizingMaskIntoConstraints = false
+
         buttonBar.addSubview(cancelButton)
         buttonBar.addSubview(renameButton)
+        buttonBar.addSubview(conflictLegendLabel)
+        buttonBar.addSubview(onlyConflictsSwitch)
 
         NSLayoutConstraint.activate([
             cancelButton.topAnchor.constraint(equalTo: buttonBar.topAnchor),
@@ -289,6 +377,13 @@ public class BatchRenameWindowController: NSWindowController {
             renameButton.topAnchor.constraint(equalTo: buttonBar.topAnchor),
             renameButton.bottomAnchor.constraint(equalTo: buttonBar.bottomAnchor),
             renameButton.trailingAnchor.constraint(equalTo: cancelButton.leadingAnchor, constant: -8),
+
+            onlyConflictsSwitch.trailingAnchor.constraint(equalTo: renameButton.leadingAnchor, constant: -16),
+            onlyConflictsSwitch.centerYAnchor.constraint(equalTo: buttonBar.centerYAnchor),
+
+            conflictLegendLabel.trailingAnchor.constraint(equalTo: onlyConflictsSwitch.leadingAnchor, constant: -12),
+            conflictLegendLabel.centerYAnchor.constraint(equalTo: buttonBar.centerYAnchor),
+            conflictLegendLabel.leadingAnchor.constraint(greaterThanOrEqualTo: buttonBar.leadingAnchor),
         ])
 
         // 整体布局
@@ -331,25 +426,45 @@ public class BatchRenameWindowController: NSWindowController {
     // MARK: - Public API
 
     public func showWindow(selectedFiles: [FileEntry], paneViewModel: PaneViewModel?) {
-        self.files = selectedFiles
+        let fileCount = selectedFiles.filter { !$0.isDirectory }.count
+        let ignoredFolders = selectedFiles.count - fileCount
+        self.files = selectedFiles.filter { !$0.isDirectory }
         self.paneViewModel = paneViewModel
+        window?.title = ignoredFolders > 0
+            ? "批量重命名（已忽略 \(ignoredFolders) 个文件夹）"
+            : "批量重命名"
+        guard !files.isEmpty else {
+            if let window {
+                let alert = NSAlert()
+                alert.messageText = "批量重命名"
+                alert.informativeText = "所选项目中没有文件。批量重命名只处理文件，文件夹不会被改名。"
+                alert.addButton(withTitle: "好")
+                alert.beginSheetModal(for: window)
+            }
+            return
+        }
         computeExistingNames()
         updatePreview()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
 
-    /// 收集所选文件所在目录的现有文件名，用于冲突检测。
-    /// 排除正在被重命名的文件原名（这些将被新名替换）。
+    /// 收集每个所选目录的现有文件名，用于冲突检测。
+    /// 跨目录选择时必须逐目录判定：只看第一个文件的目录会把别的目录一起误报或漏报（R4-12）。
+    /// 排除各目录中正在被重命名的原名（这些将被新名替换）。
     private func computeExistingNames() {
-        existingNames.removeAll()
-        guard let firstPath = files.first?.path else { return }
-        let dir = (firstPath as NSString).deletingLastPathComponent
-        let renamingOldNames = Set(files.map { $0.name })
-        if let entries = try? FileManager.default.contentsOfDirectory(atPath: dir) {
-            for name in entries where !renamingOldNames.contains(name) {
-                existingNames.insert(name)
+        existingNamesByDir = [:]
+        for entry in files {
+            let dir = directory(of: entry)
+            guard existingNamesByDir[dir] == nil else { continue }
+            let renamingOldNames = Set(files.filter { directory(of: $0) == dir }.map(\.name))
+            var names = Set<String>()
+            if let entries = try? FileManager.default.contentsOfDirectory(atPath: dir) {
+                for name in entries where !renamingOldNames.contains(name) {
+                    names.insert(name)
+                }
             }
+            existingNamesByDir[dir] = names
         }
     }
 
@@ -369,6 +484,11 @@ public class BatchRenameWindowController: NSWindowController {
 
     @objc private func casePopupChanged(_ sender: Any?) {
         updatePreview()
+    }
+
+    @objc private func onlyConflictsChanged(_ sender: Any?) {
+        rebuildVisibleIndices()
+        previewTableView.reloadData()
     }
 
     @objc private func cancelClicked(_ sender: Any?) {
@@ -416,33 +536,7 @@ public class BatchRenameWindowController: NSWindowController {
     /// {index:N} 使用安全的「先收集所有匹配，再倒序替换」方式，避免在
     /// enumerateMatches 中修改字符串造成的索引错位。
     private func applyPattern(_ pattern: String, entry: FileEntry, index: Int) -> String {
-        var result = pattern
-
-        // 先替换 {name} 和 {ext}（不含 {index} 前缀，安全）
-        result = result.replacingOccurrences(of: "{name}", with: entry.displayName)
-        result = result.replacingOccurrences(of: "{ext}", with: entry.fileExtension)
-
-        // 处理 {index:N}（零填充）。必须先于 {index} / {index0} 处理。
-        if let regex = try? NSRegularExpression(pattern: "\\{index:(\\d+)\\}") {
-            let nsString = NSMutableString(string: result)
-            let fullRange = NSRange(location: 0, length: nsString.length)
-            let matches = regex.matches(in: result, range: fullRange)
-            // 倒序替换以保持索引稳定
-            for match in matches.reversed() {
-                guard match.numberOfRanges >= 2,
-                      let nRange = Range(match.range(at: 1), in: result) else { continue }
-                let n = Int(result[nRange]) ?? 1
-                let padded = String(format: "%0\(n)d", index + 1)
-                nsString.replaceCharacters(in: match.range, with: padded)
-            }
-            result = nsString as String
-        }
-
-        // 在 {index:N} 已被替换后，处理简单占位符
-        result = result.replacingOccurrences(of: "{index}", with: "\(index + 1)")
-        result = result.replacingOccurrences(of: "{index0}", with: "\(index)")
-
-        return result
+        FFBatchRenamePattern.apply(pattern, entry: entry, index: index)
     }
 
     private func applyCaseChange(_ name: String, caseOption: String) -> String {
@@ -463,26 +557,73 @@ public class BatchRenameWindowController: NSWindowController {
     /// 重新计算所有新名称并刷新预览表。任何输入变化都应调用此方法。
     private func updatePreview() {
         previewNames = files.indices.map { computeNewName(for: files[$0], index: $0) }
-
-        // 冲突检测：两个新名相同，或与目录中已存在的非重命名文件同名
-        var nameCount: [String: Int] = [:]
-        for name in previewNames {
-            nameCount[name, default: 0] += 1
-        }
-        conflictFlags = previewNames.map { name in
-            if name.isEmpty { return true }
-            if nameCount[name, default: 0] > 1 { return true }
-            if existingNames.contains(name) { return true }
-            return false
-        }
-
+        computeConflictReasons()
+        computeExtensionWarnings()
+        rebuildVisibleIndices()
         previewTableView.reloadData()
 
-        let hasConflict = conflictFlags.contains(true)
+        let hasConflict = conflictReasons.contains { $0 != nil }
         let hasAnyChange = files.indices.contains { i in
             previewNames[i] != files[i].name && !previewNames[i].isEmpty
         }
         renameButton.isEnabled = !hasConflict && hasAnyChange && !files.isEmpty
+        updateLegend()
+    }
+
+    /// 图例给出结论 + 颜色含义：勾了「只看冲突」却一场冲突都没有时表格会整片空掉，
+    /// 没有「无冲突」这句结论，空表看起来就像又一次静默失效（R4-12）。
+    private func updateLegend() {
+        let conflicts = conflictReasons.compactMap { $0 }
+        conflictLegendLabel.stringValue = conflicts.isEmpty
+            ? "无冲突  橙字 = 扩展名将被改写"
+            : "\(conflicts.count) 处冲突（红字，悬停看原因）  橙字 = 扩展名将被改写"
+    }
+
+    /// 逐行给出冲突原因（R4-12）。重名只在同一目录内互撞才算冲突。
+    private func computeConflictReasons() {
+        var reasons = [String?](repeating: nil, count: files.count)
+        for i in files.indices {
+            let newName = previewNames[i]
+            if newName.isEmpty {
+                reasons[i] = "新名称为空"
+                continue
+            }
+            let dir = directory(of: files[i])
+            let rivals = files.indices.filter {
+                $0 != i && previewNames[$0] == newName && directory(of: files[$0]) == dir
+            }
+            if !rivals.isEmpty {
+                let involved = ([i] + rivals).map { files[$0].name }.sorted()
+                reasons[i] = "与「\(involved.joined(separator: "」「"))」改成了同一个名字：\(newName)"
+                continue
+            }
+            if existingNamesByDir[dir, default: []].contains(newName) {
+                reasons[i] = "目录里已有「\(newName)」"
+            }
+        }
+        conflictReasons = reasons
+    }
+
+    /// 扩展名被改写（如 {name}.{ext}text 产出 .pytext）只提示，不拦下执行（R4-12）。
+    private func computeExtensionWarnings() {
+        extensionWarnings = files.indices.map { i in
+            let oldExt = (files[i].name as NSString).pathExtension
+            let newExt = (previewNames[i] as NSString).pathExtension
+            guard oldExt != newExt else { return nil }
+            switch (oldExt.isEmpty, newExt.isEmpty) {
+            case (true, false): return "将新增扩展名：\(newExt)"
+            case (false, true): return "将去掉扩展名：\(oldExt)"
+            default: return "扩展名将从 \(oldExt) 变为 \(newExt)"
+            }
+        }
+    }
+
+    /// 默认显示全部行；勾选「只看冲突」后只留下需要处理的行。
+    private func rebuildVisibleIndices() {
+        let conflictOnly = onlyConflictsSwitch.state == .on
+        visibleIndices = conflictOnly
+            ? files.indices.filter { conflictReasons[$0] != nil }
+            : Array(files.indices)
     }
 
     // MARK: - Perform Rename
@@ -515,7 +656,8 @@ public class BatchRenameWindowController: NSWindowController {
         FFTaskService.shared.upsert(FFTask(id: taskID, title: "批量重命名",
                                            detail: "\(items.count) 个项目",
                                            completedBytes: 0, totalBytes: Int64(items.count),
-                                           state: .running, startedAt: Date()))
+                                           state: .running, startedAt: Date(),
+                                           locationPath: paneViewModel?.state.path))
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
@@ -663,7 +805,7 @@ extension BatchRenameWindowController: NSTextFieldDelegate, NSControlTextEditing
 
 extension BatchRenameWindowController: NSTableViewDataSource {
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        return files.count
+        return visibleIndices.count
     }
 }
 
@@ -691,24 +833,28 @@ extension BatchRenameWindowController: NSTableViewDelegate {
             ])
         }
 
-        guard row < files.count else { return cellView }
-        let entry = files[row]
+        guard row >= 0, row < visibleIndices.count else { return cellView }
+        let index = visibleIndices[row]
+        let entry = files[index]
 
         switch columnID {
         case "old":
             cellView.textField?.stringValue = entry.name
             cellView.textField?.textColor = NSColor.labelColor
+            cellView.textField?.toolTip = nil
         case "new":
-            if row < previewNames.count {
-                cellView.textField?.stringValue = previewNames[row]
-            } else {
-                cellView.textField?.stringValue = ""
-            }
-            if row < conflictFlags.count, conflictFlags[row] {
+            cellView.textField?.stringValue = index < previewNames.count ? previewNames[index] : ""
+            let reason = conflictReason(at: index)
+            let warning = extensionWarning(at: index)
+            if reason != nil {
                 cellView.textField?.textColor = NSColor.systemRed
+            } else if warning != nil {
+                cellView.textField?.textColor = NSColor.systemOrange
             } else {
                 cellView.textField?.textColor = NSColor.labelColor
             }
+            // 颜色之外必须说出原因，否则用户只知道有问题、不知道改哪里（R4-12）。
+            cellView.textField?.toolTip = reason ?? warning
         default:
             break
         }

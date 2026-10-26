@@ -14,6 +14,28 @@ protocol DuplicateGroupViewDelegate: AnyObject {
 /// 重复文件组视图：可折叠组头 + 文件行列表
 /// 组头：展开箭头 + 16x16 图标 + 组名 + 计数药丸 + 可释放空间标签
 /// 文件行：radio 选择圈（14x14 自绘） + 16x16 图标 + 路径 + 大小 + 保留/删除标签
+/// 查重窗口统一的字节文案：小于 1 KB 一律按字节显示（含单位，不再出现「0 KB」「6」这类丢单位输出）。
+enum FFByteText {
+    static func format(_ bytes: Int64) -> String {
+        let value = max(0, bytes)
+        if value < 1000 { return "\(value) 字节" }   // file 档按 1000 进制，与访达一致
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.isAdaptive = false
+        formatter.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
+        return formatter.string(fromByteCount: value)
+    }
+}
+
+/// 重复组标题：不再把内容 hash 暴露给用户。
+enum DuplicateGroupTitle {
+    static func text(fileCount: Int, firstName: String?) -> String {
+        let count = "\(fileCount) 个相同文件"
+        guard let name = firstName, !name.isEmpty else { return count }
+        return "\(count) · \(name)"
+    }
+}
+
 class DuplicateGroupView: NSView {
 
     weak var delegate: DuplicateGroupViewDelegate?
@@ -61,6 +83,7 @@ class DuplicateGroupView: NSView {
         headerView.wantsLayer = true
         headerView.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.4).cgColor
         headerView.applySquircleCornerRadius(6)
+        headerView.title = ""
         addSubview(headerView)
 
         // 组头内容：展开箭头 + 图标 + 组名 + 计数药丸 + 可释放空间
@@ -76,13 +99,18 @@ class DuplicateGroupView: NSView {
         groupIcon.imageScaling = .scaleProportionallyDown
         groupIcon.translatesAutoresizingMaskIntoConstraints = false
 
-        let groupName = NSTextField(labelWithString: "重复组（\(group.hash.prefix(8))）")
+        let titleText = DuplicateGroupTitle.text(
+            fileCount: group.files.count,
+            firstName: group.files.first.map { ($0.path as NSString).lastPathComponent }
+        )
+        let groupName = NSTextField(labelWithString: titleText)
+        headerView.setAccessibilityLabel(titleText)
         groupName.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         groupName.textColor = NSColor.labelColor
         groupName.translatesAutoresizingMaskIntoConstraints = false
 
         let countPill = makePill(text: "\(group.files.count)", bgColor: .systemBlue)
-        let spaceLabel = NSTextField(labelWithString: "可释放 \(formatSize(group.size * UInt64(max(0, group.files.count - 1))))")
+        let spaceLabel = NSTextField(labelWithString: "可释放 \(FFByteText.format(Int64(group.size * UInt64(max(0, group.files.count - 1)))))")
         spaceLabel.font = NSFont.systemFont(ofSize: 11)
         spaceLabel.textColor = NSColor.systemGreen
         spaceLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -153,12 +181,6 @@ class DuplicateGroupView: NSView {
         return pill
     }
 
-    private func formatSize(_ bytes: UInt64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
-    }
-
     // MARK: - Actions
 
     @objc private func toggleExpand() {
@@ -208,6 +230,17 @@ extension DuplicateGroupView: DuplicateFileRowDelegate {
     fileprivate func fileRowDidClickDeleteToggle(_ row: DuplicateFileRow, filePath: String, isMarkedForDelete: Bool) {
         // 单独切换删除标记（不影响保留项）
         if isMarkedForDelete {
+            let allPaths = group.files.map(\.path)
+            guard FFDuplicateSelectionPolicy.canMarkForDeletion(
+                filePath: filePath,
+                allPaths: allPaths,
+                currentlyMarked: deleteFilePaths
+            ) else {
+                row.updateKeepState(isKeep: filePath == keepFilePath)
+                row.updateDeleteMark(isMarked: false)
+                NSSound.beep()
+                return
+            }
             deleteFilePaths.insert(filePath)
             // 若取消保留项的删除，需重新指定保留项
             if filePath == keepFilePath {
@@ -307,9 +340,7 @@ private class DuplicateFileRow: NSView {
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // 大小标签
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        sizeLabel.stringValue = formatter.string(fromByteCount: Int64(file.size))
+        sizeLabel.stringValue = FFByteText.format(Int64(file.size))
         sizeLabel.font = NSFont.systemFont(ofSize: 11)
         sizeLabel.textColor = NSColor.secondaryLabelColor
         sizeLabel.translatesAutoresizingMaskIntoConstraints = false

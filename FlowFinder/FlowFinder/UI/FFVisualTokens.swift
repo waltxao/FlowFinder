@@ -84,6 +84,10 @@ enum FFVisualTokens {
     static let label = NSColor.labelColor
     static let secondaryLabel = NSColor.secondaryLabelColor
     static let tertiaryLabel = NSColor.tertiaryLabelColor
+    /// 分组标题、可用性说明、状态计数等「需要读出来」的小字。
+    /// tertiaryLabel 在深色底上只有约 2.5:1（实测），第四轮审计 R4-27 的根因；
+    /// 纯装饰/真正禁用的控件才用 tertiaryLabel。
+    static let hint = NSColor.secondaryLabelColor
 
     enum Spacing {
         static let xs: CGFloat = 4
@@ -112,6 +116,8 @@ enum FFVisualTokens {
     enum Font {
         static let caption = NSFont.systemFont(ofSize: 11)
         static let captionMedium = NSFont.systemFont(ofSize: 11, weight: .medium)
+        /// 图例、格式提示这类挤在一行里的小字说明；10pt 只有这一档，收在这里免得各窗口自己写死。
+        static let hint = NSFont.systemFont(ofSize: 10)
         static var body: NSFont { NSFont.systemFont(ofSize: FFSizePreference.current.bodyFontSize) }
         static let sectionTitle = NSFont.systemFont(ofSize: 15, weight: .medium)
         static let emptyTitle = NSFont.systemFont(ofSize: 17, weight: .semibold)

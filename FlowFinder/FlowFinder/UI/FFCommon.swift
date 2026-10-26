@@ -19,9 +19,43 @@ final class FFHoverIconButton: NSButton {
     var hoverAlpha: CGFloat = 0.07
 
     private var hovering = false {
-        didSet { if hovering != oldValue { needsDisplay = true } }
+        didSet { if hovering != oldValue { updateGlassVisibility() ; needsDisplay = true } }
     }
     private var hoverTracking: NSTrackingArea?
+    /// macOS 26+ 液态玻璃 hover 背景（圆形，替代 labelColor 半透明底色）
+    private var glassBackgroundView: NSView?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupGlassIfNeeded()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupGlassIfNeeded()
+    }
+
+    private func setupGlassIfNeeded() {
+        guard #available(macOS 26.0, *) else { return }
+        setupGlass26()
+    }
+
+    @available(macOS 26.0, *)
+    private func setupGlass26() {
+        let glassView = NSGlassEffectView()
+        glassView.style = .clear
+        glassView.wantsLayer = true
+        glassView.layer?.masksToBounds = true
+        glassView.translatesAutoresizingMaskIntoConstraints = false
+        glassView.appearance = NSApp.appearance
+        glassView.isHidden = true  // 仅 hover 时显示
+        addSubview(glassView)
+        // 置于所有内容下方：先移除其他子视图再按序加回
+        let others = subviews.filter { $0 !== glassView }
+        for v in others { v.removeFromSuperview() }
+        for v in others { addSubview(v) }
+        glassBackgroundView = glassView
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -41,14 +75,42 @@ final class FFHoverIconButton: NSButton {
         hovering = false
     }
 
+    override func layout() {
+        super.layout()
+        updateGlassFrame()
+    }
+
+    /// 更新玻璃背景的尺寸与圆角（按按钮当前 bounds）
+    private func updateGlassFrame() {
+        guard #available(macOS 26.0, *),
+              let glassView = glassBackgroundView as? NSGlassEffectView else { return }
+        let size = min(bounds.width, bounds.height)
+        glassView.frame = NSRect(
+            x: (bounds.width - size) / 2,
+            y: (bounds.height - size) / 2,
+            width: size, height: size
+        )
+        glassView.cornerRadius = size / 2
+    }
+
+    /// hover/press 时显示玻璃背景，否则隐藏
+    private func updateGlassVisibility() {
+        guard let glassView = glassBackgroundView else { return }
+        glassView.isHidden = !(hovering || isHighlighted) || !isEnabled
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        if isEnabled, hovering || isHighlighted {
-            let alpha = isHighlighted ? hoverAlpha + 0.04 : hoverAlpha
-            NSColor.labelColor.withAlphaComponent(alpha).setFill()
-            NSBezierPath(roundedRect: bounds,
-                         xRadius: hoverCornerRadius,
-                         yRadius: hoverCornerRadius).fill()
+        if glassBackgroundView == nil {
+            // macOS < 26：自绘 hover 底色
+            if isEnabled, hovering || isHighlighted {
+                let alpha = isHighlighted ? hoverAlpha + 0.04 : hoverAlpha
+                NSColor.labelColor.withAlphaComponent(alpha).setFill()
+                NSBezierPath(roundedRect: bounds,
+                             xRadius: hoverCornerRadius,
+                             yRadius: hoverCornerRadius).fill()
+            }
         }
+        // macOS 26+：NSGlassEffectView 提供液态玻璃 hover 背景
         super.draw(dirtyRect)
     }
 }
@@ -583,19 +645,8 @@ enum FFPaneMenuBuilder {
     static func buildMenu(for target: AnyObject, isLeft: Bool, tagsSubmenu: NSMenu?) -> NSMenu {
         let menu = NSMenu()
 
-        // v0.7.4 修订 2：撤销/重做项（默认隐藏，有可撤销/重做操作时由 menuNeedsUpdate 显示）
-        // 标题动态更新为"撤销 X"/"重做 X"，如"撤销删除"、"重做删除"
-        // tag 100=撤销, 101=重做（用 tag 识别避免标题变化后匹配失败）
-        let undoItem = menu.addItem(withTitle: "撤销", action: #selector(FFPaneActionsController.undoFromMenu(_:)), keyEquivalent: "z")
-        undoItem.image = FFIcon.template(.undo2, size: FFIcon.Metrics.menu)
-        undoItem.isHidden = true
-        undoItem.tag = 100
-        let redoItem = menu.addItem(withTitle: "重做", action: #selector(FFPaneActionsController.redoFromMenu(_:)), keyEquivalent: "Z")
-        redoItem.image = FFIcon.template(.redo2, size: FFIcon.Metrics.menu)
-        redoItem.isHidden = true
-        redoItem.tag = 101
-        menu.addItem(.separator())
-
+        // R4-10：撤销/重做属于 编辑 菜单，不再排在文件右键菜单首位——
+        // 文件菜单的第一项应该是「打开」，而不是两个和当前选中无关的全局命令。
         // 1. 打开
         menu.addItem(withTitle: "打开", action: #selector(FFPaneActionsController.openSelected(_:)), keyEquivalent: "")
         // B7 #4：在新标签页中打开（仅单个文件夹时显示，由 menuNeedsUpdate 控制）
@@ -635,11 +686,17 @@ enum FFPaneMenuBuilder {
         // 11. 重命名
         let renameItem = menu.addItem(withTitle: "重命名", action: #selector(FFPaneActionsController.renameSelected(_:)), keyEquivalent: "")
         renameItem.image = FFIcon.template(.pencil, size: FFIcon.Metrics.menu)
-        // 12. 移到废纸篓（红色文字）
-        let deleteItem = menu.addItem(withTitle: "移到废纸篓", action: #selector(FFPaneActionsController.deleteSelected(_:)), keyEquivalent: "\u{7F}")
+        // 11b. 批量重命名…（R4-11：选中 >= 2 文件时可用，否则禁用并给 tooltip）
+        let batchRenameItem = menu.addItem(withTitle: FFNaming.batchRenameTitle,
+                                           action: #selector(FFPaneActionsController.batchRenameSelected(_:)),
+                                           keyEquivalent: "")
+        batchRenameItem.image = FFIcon.template(.penLine, size: FFIcon.Metrics.menu)
+        batchRenameItem.isHidden = true  // 由 updateMainMenu 按选中数量控制
+        // 12. 移动到废纸篓（红色文字；R4-06 与主菜单同名）
+        let deleteItem = menu.addItem(withTitle: FFNaming.moveToTrashBase, action: #selector(FFPaneActionsController.deleteSelected(_:)), keyEquivalent: "\u{7F}")
         deleteItem.image = FFIcon.template(.trash2, size: FFIcon.Metrics.menu)
         let redAttrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.systemRed]
-        deleteItem.attributedTitle = NSAttributedString(string: "移到废纸篓", attributes: redAttrs)
+        deleteItem.attributedTitle = NSAttributedString(string: FFNaming.moveToTrashBase, attributes: redAttrs)
         // 13. 分隔线
         menu.addItem(.separator())
         // 14. 新建文件夹
@@ -665,12 +722,15 @@ enum FFPaneMenuBuilder {
             tagsItem.image = FFIcon.template(.tag, size: FFIcon.Metrics.menu)
             tagsItem.submenu = tagsSubmenu
         }
-        // 19. AI 自动打标签
-        let aiTagItem = menu.addItem(withTitle: "AI 自动打标签", action: #selector(FFPaneActionsController.generateAITags(_:)), keyEquivalent: "")
+        // 19. 按类型自动打标签（F-06：菜单不出现 AI 字样）
+        let aiTagItem = menu.addItem(withTitle: "按类型自动打标签", action: #selector(FFPaneActionsController.generateAITags(_:)), keyEquivalent: "")
         aiTagItem.image = FFIcon.template(.sparkles, size: FFIcon.Metrics.menu)
-        // 20. 查重扫描
-        let dupItem = menu.addItem(withTitle: "查重扫描", action: #selector(FFPaneActionsController.duplicateScan(_:)), keyEquivalent: "")
+        // 20. 重复文件扫描（R4-06：与侧栏/工具菜单同名，去掉「查重」口语缩写）
+        let dupItem = menu.addItem(withTitle: FFNaming.duplicateScanBase, action: #selector(FFPaneActionsController.duplicateScan(_:)), keyEquivalent: "")
         dupItem.image = FFIcon.template(.scanSearch, size: FFIcon.Metrics.menu)
+        // J3-10: 批量整理（R4-06：与侧栏/工具注册表同名；预览 Sheet 仍按目录范围执行）
+        let organizeItem = menu.addItem(withTitle: FFNaming.batchOrganizeBase, action: #selector(FFPaneActionsController.organizeCurrentDirectory(_:)), keyEquivalent: "")
+        organizeItem.image = FFIcon.template(.folderTree, size: FFIcon.Metrics.menu)
         // 21. 分隔线
         menu.addItem(.separator())
         // 22. 显示简介
@@ -1304,6 +1364,14 @@ enum FFDetailsFlowLayout {
         return max(1, min(maxColumnCount, estimated))
     }
 
+    /// 滚动模式：按信息区宽度选列数，把**全部**行均衡分到各列，不做高度截断。
+    /// 调用方负责让文档视图随列高增长并启用纵向滚动（2026-10-23 D-03）。
+    static func scrollLayout(itemHeights: [CGFloat], availableWidth: CGFloat) -> [[Int]] {
+        guard !itemHeights.isEmpty else { return [] }
+        let count = FFDetailsLayoutPolicy.scrollColumnCount(forWidth: availableWidth)
+        return distribute(itemHeights: itemHeights, columnCount: count)
+    }
+
     /// 每列应显示的行索引（未包含的行隐藏）。
     /// 优先找「不超高」的最小列数；都超高时用最大列数并逐列截断到装得下为止。
     static func columnLayout(itemHeights: [CGFloat],
@@ -1396,8 +1464,10 @@ enum FFBuildInfo {
         return formatter.string(from: date)
     }
 
+    /// R4-16：关于页只报构建时间。bundle 原始路径对普通用户没有意义，
+    /// 只在鼠标悬停时经 `bundlePath` 单独取用。
     static func aboutBuildLine(buildDateText: String, bundlePath: String) -> String {
-        "构建 \(buildDateText) · \(bundlePath)"
+        "构建 \(buildDateText)"
     }
 
     static var aboutBuildLine: String {

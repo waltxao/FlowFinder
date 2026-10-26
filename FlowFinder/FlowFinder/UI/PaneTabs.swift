@@ -339,6 +339,8 @@ final class PaneTabItemView: NSView, FFRegionAware {
         updateAppearance()
     }
 
+    func refreshAppearance() { updateAppearance() }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
@@ -538,6 +540,13 @@ final class PaneTabStripView: NSView, FFRegionAware {
     /// 背板填充色 = 面板卡片背景色（由控制器注入，跟随主题）
     func setBackdropColor(_ color: NSColor) {
         backdrop.fillColor = color
+    }
+
+    func refreshAppearance() {
+        items.forEach { $0.refreshAppearance() }
+        addButton.contentTintColor = .secondaryLabelColor
+        backdrop.needsDisplay = true
+        needsDisplay = true
     }
 
     /// 取第 index 个标签的视图（拖动浮层用）
@@ -807,6 +816,17 @@ final class FFGlobalTopBar: NSView, FFRegionAware {
     func setThemeIcon(for mode: AppearanceMode) {
         themeButton.image = FFIcon.template(SidebarView.themeIcon(for: mode),
                                             size: FFTopBarMetrics.iconSize)
+    }
+
+    func refreshAppearance() {
+        controlsDivider.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        for button in [sidebarButton, themeButton, paneModeButton] {
+            button.contentTintColor = .secondaryLabelColor
+            button.needsDisplay = true
+        }
+        leftTabStrip.refreshAppearance()
+        rightTabStrip.refreshAppearance()
+        needsDisplay = true
     }
 
     override func layout() {

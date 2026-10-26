@@ -82,7 +82,12 @@ extension MainWindowController: PaneTabStripDelegate {
     }
 
     func closeTab(side: PaneSide, index: Int) {
-        guard let store = tabsStore(for: side), store.close(at: index) else { return }
+        guard let store = tabsStore(for: side) else { return }
+        if store.count <= 1 {
+            window?.performClose(nil)
+            return
+        }
+        guard store.close(at: index) else { return }
         loadActiveTab(side: side)
     }
 

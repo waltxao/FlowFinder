@@ -1,0 +1,12 @@
+/*
+ 简体中文本地化入口（R4-01，docs/AUDIT-2026-10-23-UIUX-R4.md）。
+
+ AppKit / Foundation 按「app 支持哪些本地化」决定进程 locale。bundle 里没有
+ zh-Hans.lproj 且 CFBundleDevelopmentRegion = en 时，进程 locale 被判成 en_CN，
+ 于是系统菜单项（Undo / Redo / AutoFill / Start Dictation… / Emoji & Symbols）、
+ NSOpenPanel 外壳、ByteCountFormatter 单位（861 bytes / Zero bytes）整套退回英文，
+ 混在中文界面里。
+
+ 应用自己的文案仍是代码内中文字符串（产品只面向中文用户），此文件只负责向系统
+ 声明「本 App 支持简体中文」，因此保持空表。
+ */

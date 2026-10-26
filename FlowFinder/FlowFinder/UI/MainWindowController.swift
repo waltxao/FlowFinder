@@ -203,6 +203,8 @@ class FFSplitView: NSSplitView {
 final class FFSidebarRevealHost: NSView {
 
     let button = NSButton()
+    /// macOS 26+ 液态玻璃背景（包裹按钮，提供圆形玻璃底座）
+    private var glassBackgroundView: NSView?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -216,6 +218,16 @@ final class FFSidebarRevealHost: NSView {
 
     private func setup() {
         translatesAutoresizingMaskIntoConstraints = false
+
+        // macOS 26+：在按钮下方添加液态玻璃圆形底座
+        if #available(macOS 26.0, *) {
+            let glassView = NSGlassEffectView()
+            glassView.style = .clear
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+            glassView.appearance = NSApp.appearance
+            addSubview(glassView)
+            glassBackgroundView = glassView
+        }
 
         button.bezelStyle = .inline
         button.isBordered = false
@@ -251,10 +263,19 @@ final class FFSidebarRevealHost: NSView {
             }
         }
 
-        button.frame = NSRect(x: x,
-                              y: bounds.height - centerFromTop - size / 2,
-                              width: size,
-                              height: size)
+        let buttonOrigin = NSPoint(x: x, y: bounds.height - centerFromTop - size / 2)
+        button.frame = NSRect(origin: buttonOrigin, size: NSSize(width: size, height: size))
+
+        // macOS 26+：玻璃底座跟随按钮位置，略大于按钮（28 vs 24）
+        if #available(macOS 26.0, *), let glassView = glassBackgroundView as? NSGlassEffectView {
+            let glassSize: CGFloat = 28
+            glassView.frame = NSRect(
+                x: buttonOrigin.x - (glassSize - size) / 2,
+                y: buttonOrigin.y - (glassSize - size) / 2,
+                width: glassSize, height: glassSize
+            )
+            glassView.cornerRadius = glassSize / 2
+        }
     }
 }
 
@@ -465,7 +486,13 @@ public class MainWindowController: NSWindowController {
     internal var leftActiveBorder: FFActivePaneBorderView!
     private var rightActiveBorder: FFActivePaneBorderView!
     private var leftDetailsBar: ExpandableDetailsBar!
+    var leftDetailsBarForTesting: ExpandableDetailsBar? { leftDetailsBar }
     private var rightDetailsBar: ExpandableDetailsBar!
+    /// 2026-10-24 工具模块：详情栏右侧圆钮 + 工具栏 + 详情圆
+    private var leftToolsModule: FFToolsModuleCoordinator?
+    private var rightToolsModule: FFToolsModuleCoordinator?
+    var leftToolsModuleForTesting: FFToolsModuleCoordinator? { leftToolsModule }
+    var rightToolsModuleForTesting: FFToolsModuleCoordinator? { rightToolsModule }
     var taskProgressBar: TaskProgressBar!
     /// 任务 F11-9：底部进度栏高度约束（0=收起 / 28=展开，复制/移动/粘贴时动态切换）
     var taskProgressBarHeightConstraint: NSLayoutConstraint!
@@ -534,7 +561,7 @@ public class MainWindowController: NSWindowController {
         window.minSize = NSSize(width: 1060, height: 700)
         window.center()
         // 注意：不要在这里 makeKeyAndOrderFront！
-        // 必须先完成 setupUI（设置 isOpaque=false, backgroundColor=.clear, NSVisualEffectView），
+        // 必须先完成 setupUI（设置 isOpaque=false, backgroundColor=.clear, 液态玻璃背景），
         // 然后再显示窗口，否则窗口会以不透明状态先渲染一次
         // window.makeKeyAndOrderFront(nil)
         // 不使用 autosave，避免加载之前保存的小窗口尺寸
@@ -547,6 +574,7 @@ public class MainWindowController: NSWindowController {
         window.acceptsMouseMovedEvents = true
 
         setupUI()
+        bindDetailsBarsToSelection()
 
         // #3：恢复单/双窗口模式（须在 setupUI 创建完两栏包装视图之后）
         isSinglePaneMode = startsWithSinglePane
@@ -868,18 +896,49 @@ public class MainWindowController: NSWindowController {
             taskProgressBarHeightConstraint,
         ])
 
-        // 统一使用 NSVisualEffectView 作为窗口背景玻璃
-        let visualEffectView = NSVisualEffectView()
-        visualEffectView.material = .underWindowBackground
-        visualEffectView.blendingMode = .behindWindow
-        visualEffectView.state = .active
-        visualEffectView.addSubview(mainContainer)
+        // 窗口级液态玻璃背景：macOS 26+ 使用原生 NSGlassEffectView，旧版回退 NSVisualEffectView
+        // 修复 Bug 1：玻璃视图不直接作为 contentView（会拦截鼠标事件），
+        // 改用普通容器 NSView 包裹玻璃背景 + mainContainer 作为并列子视图
+        let containerView = NSView()
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+
+        if #available(macOS 26.0, *) {
+            let glassView = NSGlassEffectView()
+            glassView.style = .regular
+            glassView.cornerRadius = 0  // 窗口级无圆角，由 FFWindowShape 管理窗口形状
+            glassView.appearance = NSApp.appearance
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+            containerView.addSubview(glassView)
+            NSLayoutConstraint.activate([
+                glassView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                glassView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                glassView.topAnchor.constraint(equalTo: containerView.topAnchor),
+                glassView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            ])
+        } else {
+            let visualEffectView = NSVisualEffectView()
+            visualEffectView.material = .underWindowBackground
+            visualEffectView.blendingMode = .behindWindow
+            visualEffectView.state = .active
+            visualEffectView.appearance = NSApp.appearance
+            visualEffectView.translatesAutoresizingMaskIntoConstraints = false
+            containerView.addSubview(visualEffectView)
+            NSLayoutConstraint.activate([
+                visualEffectView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                visualEffectView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                visualEffectView.topAnchor.constraint(equalTo: containerView.topAnchor),
+                visualEffectView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            ])
+        }
+
+        // mainContainer 作为玻璃背景的兄弟视图（在上方），确保鼠标事件直达
+        containerView.addSubview(mainContainer)
         mainContainer.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            mainContainer.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
-            mainContainer.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
-            mainContainer.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
-            mainContainer.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor),
+            mainContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            mainContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            mainContainer.topAnchor.constraint(equalTo: containerView.topAnchor),
+            mainContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
         ])
         mainContainerView = mainContainer
 
@@ -912,7 +971,7 @@ public class MainWindowController: NSWindowController {
         let revealHost = FFSidebarRevealHost()
         revealHost.isHidden = true
         revealHost.button.target = self
-        revealHost.button.action = #selector(toggleSidebar(_:))
+        revealHost.button.action = #selector(ffToggleSidebar(_:))
         mainContainer.addSubview(revealHost)
         NSLayoutConstraint.activate([
             revealHost.leadingAnchor.constraint(equalTo: mainContainer.leadingAnchor),
@@ -934,7 +993,7 @@ public class MainWindowController: NSWindowController {
             name: NSWindow.didEndLiveResizeNotification,
             object: window)
 
-        window.contentView = visualEffectView
+        window.contentView = containerView
         // 2026-10-20 #5：窗口圆角改超椭圆 12（与面板同一套曲线；系统圆角是圆形弧，无 API 可改）
         // FF_SKIP_WINDOW_SHAPE=1 可关掉遮罩做对照排查
         if ProcessInfo.processInfo.environment["FF_SKIP_WINDOW_SHAPE"] != "1" {
@@ -988,6 +1047,10 @@ public class MainWindowController: NSWindowController {
                 self?.leftFileGridView?.refreshAppearance()
                 self?.rightFileGridView?.refreshAppearance()
                 self?.globalTopBar?.setThemeIcon(for: mode)
+                self?.globalTopBar?.refreshAppearance()
+                self?.sidebarView.needsDisplay = true
+                self?.leftDetailsBar?.refreshThemeColors()
+                self?.rightDetailsBar?.refreshThemeColors()
                 // 任务 F11-1: 刷新操作区容器与设备栏浮层的实体背景色（日间/夜间切换）
                 self?.refreshOperationAreaBackgrounds()
             }
@@ -1252,9 +1315,9 @@ public class MainWindowController: NSWindowController {
             gridView.trailingAnchor.constraint(equalTo: contentClip.trailingAnchor),
             gridView.bottomAnchor.constraint(equalTo: contentClip.bottomAnchor),
 
-            // v0.6.9: 详情栏浮层定位——底部留 8pt 边距，左右各 8pt
+            // v0.6.9: 详情栏浮层定位——底部留 8pt。
+            // 2026-10-24：右侧让位（8 + 54 工具圆钮 + 8）与展开时铺满由工具协调器统一管理。
             detailsBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            detailsBar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             detailsBar.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
             // 高度由 ExpandableDetailsBar 内部 heightConstraint 控制
         ])
@@ -1286,6 +1349,15 @@ public class MainWindowController: NSWindowController {
             }
         }
 
+        // 2026-10-24 工具模块：详情栏右侧圆钮 → 工具栏；执行/选中变化/活动面板变化自动回详情。
+        let toolsModule = FFToolsModuleCoordinator(
+            container: container,
+            detailsBar: detailsBar,
+            side: side,
+            contextProvider: { [weak self] in self?.toolContext(for: side) }
+        )
+        toolsModule.install()
+
         // 保存引用
         switch side {
         case .left:
@@ -1294,12 +1366,14 @@ public class MainWindowController: NSWindowController {
             leftFileListView = listView
             leftFileGridView = gridView
             leftDetailsBar = detailsBar
+            leftToolsModule = toolsModule
         case .right:
             rightPaneToolbar = toolbar
             rightBreadcrumbBar = breadcrumbBar
             rightFileListView = listView
             rightFileGridView = gridView
             rightDetailsBar = detailsBar
+            rightToolsModule = toolsModule
         }
 
         return container
@@ -1537,13 +1611,13 @@ public class MainWindowController: NSWindowController {
         if let existing = smbStatusToast {
             toast = existing
         } else {
-            let container = NSView()
+            // R4-32: 这个 toast 容器建一次就长期复用，动态色必须随外观重新解析。
+            let container = FFDynamicBackgroundView()
             container.translatesAutoresizingMaskIntoConstraints = false
-            container.wantsLayer = true
-            container.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.97).cgColor
-            container.layer?.cornerRadius = 10
-            container.layer?.borderWidth = 0.5
-            container.layer?.borderColor = NSColor.separatorColor.cgColor
+            container.backgroundFillColor = NSColor.windowBackgroundColor.withAlphaComponent(0.97)
+            container.fillCornerRadius = 10
+            container.borderStrokeWidth = 0.5
+            container.borderStrokeColor = .separatorColor
 
             let label = NSTextField(labelWithString: "")
             label.font = NSFont.systemFont(ofSize: 12)
@@ -1690,6 +1764,11 @@ public class MainWindowController: NSWindowController {
             self, selector: #selector(handleFileListShowInfo(_:)),
             name: .fileListShowInfo, object: nil
         )
+        // J3-10: 订阅「整理当前目录…」请求，弹出整理预览 Sheet
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleFileListBatchOrganize(_:)),
+            name: .fileListBatchOrganize, object: nil
+        )
         // 任务 F10-10: 注册 OpenSettings 通知（v0.6.6）
         // 修复问题3：侧边栏齿轮按钮发的 "OpenSettings" 通知无观察者，导致设置窗口打不开
         NotificationCenter.default.addObserver(
@@ -1815,6 +1894,25 @@ public class MainWindowController: NSWindowController {
         }
         guard !path.isEmpty else { return }
         showFileInfo(forPath: path)
+    }
+
+    /// J3-10: 处理右键菜单「整理当前目录…」请求，弹出整理预览 Sheet。
+    /// Wave2 P0-4（多窗口）：仅响应本窗口面板发出的请求，Sheet 只落在发起窗口。
+    @objc private func handleFileListBatchOrganize(_ notification: Notification) {
+        guard isOwnPaneNotification(notification) else { return }
+        let target: PaneViewModel
+        if let source = notification.object as? NSView {
+            if source === leftFileListView || source === leftFileGridView {
+                target = leftPaneViewModel
+            } else if source === rightFileListView || source === rightFileGridView {
+                target = rightPaneViewModel
+            } else {
+                target = activePaneViewModel
+            }
+        } else {
+            target = activePaneViewModel
+        }
+        presentOrganizeSheet(for: target)
     }
 
     /// 沿视图层级向上查找 firstResponder 归属的 FileListView / FileGridView。
@@ -2168,6 +2266,14 @@ public class MainWindowController: NSWindowController {
         toolbar?.setCanGoBack(state.historyIndex > 0)
         toolbar?.setCanGoForward(state.historyIndex < state.history.count - 1)
         toolbar?.setViewMode(state.viewMode)
+        toolbar?.setSearchQuery(state.searchQuery)
+        toolbar?.setSearchScope(state.searchScope)
+        toolbar?.setSortField(state.sortField)
+        toolbar?.setGroupBy(state.groupBy)
+        sidebarView.refreshToolPageContext()
+
+        // 2026-10-24 工具模块：选中/目录变化自动回详情
+        toolsModule(for: side)?.contextDidChange(path: state.path, selection: state.selectedFiles)
 
         // 活体验收缺陷修复（列表重复行）触发源：updatePaneUI 由 $state sink 在**每次**
         // 发射时调用（含 isLoading/selectedFiles 等与文件列表无关的字段变化），重赋同一
@@ -2235,11 +2341,23 @@ public class MainWindowController: NSWindowController {
 
     /// 工具组上下文：读取活动面板与选择，不触碰视图内部状态。
     func toolContext() -> FFToolContext {
-        let viewModel = activePaneViewModel
-        return toolCoordinator.context(activePane: activePane,
-                                       currentPath: viewModel.state.path,
-                                       selection: viewModel.selectedFiles,
-                                       window: self)
+        toolContext(for: activePane)
+    }
+
+    /// 指定面板的工具上下文（底栏工具模块按面板各自取）。
+    func toolContext(for side: PaneSide) -> FFToolContext {
+        let viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
+        let context = toolCoordinator.context(activePane: side,
+                                              currentPath: viewModel.state.path,
+                                              selection: viewModel.selectedFiles,
+                                              window: self)
+        context.hasTasks = FFTaskPresence.summary().hasTasks
+        return context
+    }
+
+    /// 指定面板的底栏工具模块。
+    private func toolsModule(for side: PaneSide) -> FFToolsModuleCoordinator? {
+        side == .left ? leftToolsModule : rightToolsModule
     }
 
     /// ⌘I：展开当前活动面板的操作区内详情栏；不再创建独立浮层。
@@ -2247,6 +2365,8 @@ public class MainWindowController: NSWindowController {
         let side = activePane
         let viewModel = side == .left ? leftPaneViewModel : rightPaneViewModel
         guard let bar = detailsBar(for: side) else { return }
+        // 工具模块打开时，⌘I 先回到详情再展开
+        toolsModule(for: side)?.closeTools()
         bar.expand()
         bar.update(with: viewModel.selectedFiles)
     }
@@ -2348,7 +2468,9 @@ public class MainWindowController: NSWindowController {
     // MARK: - 侧栏显隐（2026-10-19 #10）
 
     /// 侧栏显隐的窗口级入口：侧栏顶部按钮、⌥⌘S 菜单项、左上角浮层开关都走这里。
-    @objc func toggleSidebar(_ sender: Any?) {
+    /// R4-07：方法名刻意避开 AppKit 保留的 `toggleSidebar:`——NSWindow 自带同名方法，
+    /// 在响应链里排在窗口控制器之前，其 validateMenuItem 结果为 false，菜单项会永久置灰。
+    @objc func ffToggleSidebar(_ sender: Any?) {
         setSidebarVisible(!isSidebarVisible, animated: true)
     }
 
@@ -2356,7 +2478,7 @@ public class MainWindowController: NSWindowController {
         // 多窗口：只响应本窗口侧边栏发出
         if let source = notification.object as? AnyObject,
            !(source === sidebarView), !(source === window) { return }
-        toggleSidebar(notification.object)
+        ffToggleSidebar(notification.object)
     }
 
     /// 显隐侧栏。
@@ -2898,10 +3020,21 @@ public class MainWindowController: NSWindowController {
         // 权限集中请求完成后再刷新两侧面板：
         // 直接 refresh 会让目录列举撞上 TCC 授权对话框（系统调用阻塞 → 10s 后误报超时），
         // 而且用户体感是「每打开一个文件夹被问一次」。
+        // 先立即加载：未受 TCC 保护的目录（如 /tmp）不必等权限门。
+        // 权限门并行进行；若初始加载因权限失败或目录为空，授权完成后再重试一次。
+        leftPaneViewModel.refresh()
+        rightPaneViewModel.refresh()
         FFPermissionGate.shared.prepareBeforeInitialLoad(window: window) { [weak self] in
             guard let self = self else { return }
-            self.leftPaneViewModel.refresh()
-            self.rightPaneViewModel.refresh()
+            func needsRetry(_ vm: PaneViewModel) -> Bool {
+                !vm.state.isLoading && (vm.state.error != nil || vm.state.files.isEmpty)
+            }
+            if needsRetry(self.leftPaneViewModel) {
+                self.leftPaneViewModel.refresh()
+            }
+            if needsRetry(self.rightPaneViewModel) {
+                self.rightPaneViewModel.refresh()
+            }
         }
     }
 
@@ -2934,6 +3067,17 @@ public class MainWindowController: NSWindowController {
         }
     }
 
+    /// 详情栏跟随模型层选中态：移动/删除等程序化变更不会走视图选择回调，
+    /// 只有订阅 $state 才能保证选中项消失时详情栏同步清空。
+    private func bindDetailsBarsToSelection() {
+        leftPaneViewModel.$state.map(\.selectedFiles).removeDuplicates()
+            .sink { [weak self] files in self?.leftDetailsBar?.update(with: files) }
+            .store(in: &cancellables)
+        rightPaneViewModel.$state.map(\.selectedFiles).removeDuplicates()
+            .sink { [weak self] files in self?.rightDetailsBar?.update(with: files) }
+            .store(in: &cancellables)
+    }
+
     private func handleSelectionChanged(side: PaneSide, files: [FileEntry]) {
         // 防抖: 取消上一次未完成的选中变更 UI 更新，防止快速连续点击不同文件时
         // 多次 layout 触发窗口跳动。将详情栏更新推迟到下一个 runloop，确保
@@ -2950,7 +3094,13 @@ public class MainWindowController: NSWindowController {
     }
 
     func activatePane(_ side: PaneSide) {
+        let previous = activePane
         activePane = side
+        // 2026-10-24 工具模块：切换活动面板自动回详情
+        if previous != side {
+            leftToolsModule?.closeIfActivePaneChanged()
+            rightToolsModule?.closeIfActivePaneChanged()
+        }
         updateActivePaneVisual()
         // 单窗模式下切换活动面板 = 切换可见侧
         if isSinglePaneMode { applyPaneMode() }
@@ -2967,6 +3117,7 @@ public class MainWindowController: NSWindowController {
             userInfo: ["tagFilter": vm.state.tagFilter as Any,
                        "tagFilters": vm.state.tagFilters]
         )
+        sidebarView.refreshToolPageContext()
     }
 
     /// Wave2 P0-2：把键盘焦点同步到指定面板的列表/网格（按当前视图模式）。
@@ -3042,6 +3193,21 @@ public class MainWindowController: NSWindowController {
         guard let entry = (notification.userInfo?["entry"] as? FileEntry) ?? (notification.object as? FileEntry) else { return }
         let vm = activePane == .left ? leftPaneViewModel : rightPaneViewModel
         vm.navigate(to: entry.path)
+    }
+
+    /// 任务中心「定位」的落点（R4-24）：把活动面板带到任务对象上——
+    /// 目录直接进入，文件进入父目录并选中它。
+    func revealTaskLocation(path: String) {
+        window?.makeKeyAndOrderFront(nil)
+        var isDir = ObjCBool(false)
+        let isDirectory = FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+            && isDir.boolValue
+        if isDirectory {
+            activePaneViewModel.navigate(to: path)
+        } else {
+            activePaneViewModel.navigate(to: (path as NSString).deletingLastPathComponent,
+                                         selecting: path)
+        }
     }
 
     // MARK: - v0.8.0 P1：收藏右键菜单的窗口级动作
@@ -3144,8 +3310,44 @@ extension MainWindowController: PaneToolbarDelegate {
     }
 
     func paneToolbar(_ toolbar: PaneToolbar, didChangeSearchQuery query: String) {
-        let vm = toolbar == leftPaneToolbar ? leftPaneViewModel : rightPaneViewModel
+        let side: PaneSide = toolbar === leftPaneToolbar ? .left : .right
+        let vm = side == .left ? leftPaneViewModel : rightPaneViewModel
         vm.setSearchQuery(query)
+
+        // J2-07 双栏：任一侧输入都镜像到另一侧，两侧各自过滤当前目录。
+        guard vm.state.searchScope == .bothPanes else { return }
+        let peerSide: PaneSide = side == .left ? .right : .left
+        let peerVM = peerSide == .left ? leftPaneViewModel : rightPaneViewModel
+        let peerToolbar = peerSide == .left ? leftPaneToolbar : rightPaneToolbar
+        peerVM.setSearchScope(.bothPanes)
+        peerToolbar?.setSearchScope(.bothPanes)
+        peerVM.setSearchQuery(query)
+        peerToolbar?.setSearchQuery(query)
+    }
+
+    func paneToolbar(_ toolbar: PaneToolbar, didChangeSearchScope scope: FFSearchScope) {
+        let side: PaneSide = toolbar === leftPaneToolbar ? .left : .right
+        let vm = side == .left ? leftPaneViewModel : rightPaneViewModel
+        let peerSide: PaneSide = side == .left ? .right : .left
+        let peerVM = peerSide == .left ? leftPaneViewModel : rightPaneViewModel
+        let peerToolbar = peerSide == .left ? leftPaneToolbar : rightPaneToolbar
+
+        vm.setSearchScope(scope)
+        toolbar.setSearchScope(scope)
+
+        if scope == .bothPanes {
+            peerVM.setSearchScope(.bothPanes)
+            peerToolbar?.setSearchScope(.bothPanes)
+            let query = vm.state.searchQuery
+            peerVM.setSearchQuery(query)
+            peerToolbar?.setSearchQuery(query)
+        } else if peerVM.state.searchScope == .bothPanes {
+            // 离开双栏：另一侧停止镜像并恢复完整列表
+            peerVM.setSearchScope(.current)
+            peerToolbar?.setSearchScope(.current)
+            peerVM.setSearchQuery("")
+            peerToolbar?.setSearchQuery("")
+        }
     }
 
     func paneToolbar(_ toolbar: PaneToolbar, didChangeSortField field: SortField, ascending: Bool) {
@@ -3183,6 +3385,11 @@ extension MainWindowController: PaneToolbarDelegate {
         let isLeft = toolbar == leftPaneToolbar
         let vm = isLeft ? leftPaneViewModel : rightPaneViewModel
         activatePane(isLeft ? .left : .right)
+        // 空搜索词（含纯空白）时 Enter 不打开任何结果：清空搜索后列表会恢复全量，
+        // 此时再落首项+打开会让「清空后回车」直接进入第一个文件夹。
+        guard !vm.state.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
         if vm.selectedFiles.isEmpty {
             paneToolbarDidRequestMoveToResults(toolbar, toLast: false)
         }

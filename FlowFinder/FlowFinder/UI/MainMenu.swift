@@ -6,8 +6,37 @@ import Cocoa
 class MainMenu {
     /// 设置应用程序菜单栏
     static func setupMainMenu() {
-        let mainMenu = NSMenu()
+        let mainMenu = buildMainMenu()
+        buildMenuBody(mainMenu)
 
+        // C3: 应用已保存的快捷键设置（shortcut_* → 菜单项 keyEquivalent）
+        applyShortcutSettings(to: mainMenu)
+        // C3: 注册快捷键变更监听：设置页录制保存后广播 .shortcutsChanged，刷新菜单
+        if shortcutsObserverToken == nil {
+            shortcutsObserverToken = NotificationCenter.default.addObserver(
+                forName: .shortcutsChanged, object: nil, queue: .main
+            ) { _ in
+                applyShortcutSettings(to: NSApp.mainMenu)
+            }
+        }
+
+        NSApp.mainMenu = mainMenu
+        // R4-08：注册窗口菜单，AppKit 才会自动维护窗口清单（多窗口切换的前提）
+        NSApp.windowsMenu = submenu(of: mainMenu, titled: "窗口")
+    }
+
+    /// 构建与 `NSApp` 无关的完整主菜单（纯函数，供单测直接检查菜单契约）。
+    static func buildMainMenu() -> NSMenu {
+        let mainMenu = NSMenu()
+        buildMenuBody(mainMenu)
+        return mainMenu
+    }
+
+    static func submenu(of mainMenu: NSMenu, titled title: String) -> NSMenu? {
+        mainMenu.items.first { $0.submenu?.title == title }?.submenu
+    }
+
+    private static func buildMenuBody(_ mainMenu: NSMenu) {
         // App menu (FlowFinder)
         let appMenuItem = NSMenuItem()
         mainMenu.addItem(appMenuItem)
@@ -20,7 +49,7 @@ class MainMenu {
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(withTitle: "显示全部", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "偏好设置...", action: #selector(MainWindowController.menuSettings(_:)), keyEquivalent: ",")
+        appMenu.addItem(withTitle: "设置…", action: #selector(MainWindowController.menuSettings(_:)), keyEquivalent: ",")
         appMenu.addItem(.separator())
         // 需求 #3：文件访问权限是文件管理器的前置条件，给一个可反复触发的入口
         appMenu.addItem(withTitle: "检查文件访问权限…",
@@ -51,13 +80,14 @@ class MainMenu {
         let closeWindow = fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         closeWindow.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "移动到废纸篓", action: #selector(MainWindowController.menuMoveToTrash(_:)), keyEquivalent: "\u{8}")
+        fileMenu.addItem(withTitle: FFNaming.moveToTrashBase,
+                         action: #selector(MainWindowController.menuMoveToTrash(_:)),
+                         keyEquivalent: "\u{8}")
         fileMenu.addItem(.separator())
-        let editTagsItem = fileMenu.addItem(withTitle: "编辑标签…",
+        let editTagsItem = fileMenu.addItem(withTitle: FFNaming.editTagsTitle,
                                             action: #selector(MainWindowController.menuEditTags(_:)),
                                             keyEquivalent: "t")
         editTagsItem.keyEquivalentModifierMask = [.command, .option]
-        fileMenu.addItem(withTitle: "显示简介", action: #selector(MainWindowController.menuGetInfo(_:)), keyEquivalent: "i")
 
         // Edit menu
         let editMenuItem = NSMenuItem()
@@ -82,7 +112,7 @@ class MainMenu {
         // 不绑 "\r"（Enter）：菜单键位无修饰键会全局拦截 Return，破坏文本框回车提交。
         let renameItem = editMenu.addItem(withTitle: "重命名", action: #selector(MainWindowController.menuRename(_:)), keyEquivalent: String(UnicodeScalar(0xF705)!))
         renameItem.keyEquivalentModifierMask = []
-        editMenu.addItem(withTitle: "批量重命名...", action: #selector(MainWindowController.menuBatchRename(_:)), keyEquivalent: "")
+        editMenu.addItem(withTitle: FFNaming.batchRenameTitle, action: #selector(MainWindowController.menuBatchRename(_:)), keyEquivalent: "")
         // Wave2 P1：⌘D 复制选中项菜单入口（键位展示跟随 shortcut_duplicate 设置）
         editMenu.addItem(withTitle: "复制选中项", action: #selector(MainWindowController.menuDuplicateSelected(_:)), keyEquivalent: "d")
         // Wave2 P1：⌥⌘C 拷贝路径（多选时每行一个路径）
@@ -106,14 +136,25 @@ class MainMenu {
         let gridViewItem = viewMenu.addItem(withTitle: "图标视图", action: #selector(MainWindowController.menuGridView(_:)), keyEquivalent: "2")
         gridViewItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(.separator())
-        viewMenu.addItem(withTitle: "显示隐藏文件", action: #selector(MainWindowController.menuToggleHiddenFiles(_:)), keyEquivalent: "")
+        // R4-28：对齐 Finder 的 ⌘⇧. 显示/隐藏隐藏文件（原为无键位，无法触发）
+        let hiddenItem = viewMenu.addItem(withTitle: "显示隐藏文件", action: #selector(MainWindowController.menuToggleHiddenFiles(_:)), keyEquivalent: ".")
+        hiddenItem.keyEquivalentModifierMask = [.command, .shift]
         // 2026-10-19 #10：⌥⌘S 显示/隐藏侧边栏（与侧栏顶部按钮、左上角浮动开关同一入口）
+        // R4-07：避开 AppKit 保留的 toggleSidebar: —— NSWindow 自带同名方法且优先命中，
+        // 其验证结果为 false，菜单项会永久置灰。改名后走窗口控制器自己的实现。
         let sidebarItem = viewMenu.addItem(
             withTitle: "显示/隐藏侧边栏",
-            action: #selector(MainWindowController.toggleSidebar(_:)),
+            action: #selector(MainWindowController.ffToggleSidebar(_:)),
             keyEquivalent: "s"
         )
         sidebarItem.keyEquivalentModifierMask = [.command, .option]
+        // R4-28：详情栏开关归位到显示菜单（原先错放在文件菜单且名为「显示简介」）
+        let detailsBarItem = viewMenu.addItem(
+            withTitle: FFNaming.detailsBarTitle,
+            action: #selector(MainWindowController.menuToggleDetailsBar(_:)),
+            keyEquivalent: "i"
+        )
+        detailsBarItem.keyEquivalentModifierMask = [.command]
         viewMenu.addItem(.separator())
         // 2026-10-20 #3：显示列（与列头右键、工具栏工具菜单同一份状态）
         let columnsItem = NSMenuItem(title: "显示列", action: nil, keyEquivalent: "")
@@ -141,8 +182,12 @@ class MainMenu {
         goMenu.addItem(withTitle: "文档", action: #selector(MainWindowController.menuGoDocuments(_:)), keyEquivalent: "")
         goMenu.addItem(withTitle: "下载", action: #selector(MainWindowController.menuGoDownloads(_:)), keyEquivalent: "")
         goMenu.addItem(withTitle: "主目录", action: #selector(MainWindowController.menuGoHome(_:)), keyEquivalent: "")
+        let goToFolderItem = goMenu.addItem(withTitle: "前往文件夹…",
+                                           action: #selector(MainWindowController.menuGoToFolder(_:)),
+                                           keyEquivalent: "g")
+        goToFolderItem.keyEquivalentModifierMask = [.command, .shift]
         goMenu.addItem(.separator())
-        goMenu.addItem(withTitle: "连接服务器...", action: #selector(MainWindowController.menuConnectServer(_:)), keyEquivalent: "k")
+        goMenu.addItem(withTitle: FFNaming.connectServerTitle, action: #selector(MainWindowController.menuConnectServer(_:)), keyEquivalent: "k")
 
         // Tools menu (工具)
         let toolsMenuItem = NSMenuItem()
@@ -150,13 +195,14 @@ class MainMenu {
         let toolsMenu = NSMenu(title: "工具")
         toolsMenuItem.submenu = toolsMenu
         // Wave2 P1：⌘F 分流——聚焦活动面板内搜索框；全局搜索面板改绑 ⌘⇧F
-        toolsMenu.addItem(withTitle: "搜索...", action: #selector(MainWindowController.menuSearch(_:)), keyEquivalent: "f")
-        let globalSearchItem = toolsMenu.addItem(withTitle: "全局搜索...", action: #selector(MainWindowController.menuGlobalSearch(_:)), keyEquivalent: "f")
+        toolsMenu.addItem(withTitle: "搜索…", action: #selector(MainWindowController.menuSearch(_:)), keyEquivalent: "f")
+        let globalSearchItem = toolsMenu.addItem(withTitle: "全局搜索…", action: #selector(MainWindowController.menuGlobalSearch(_:)), keyEquivalent: "f")
         globalSearchItem.keyEquivalentModifierMask = [.command, .shift]
-        let dupScanItem = toolsMenu.addItem(withTitle: "重复文件扫描...", action: #selector(MainWindowController.menuDuplicateScan(_:)), keyEquivalent: "d")
+        let dupScanItem = toolsMenu.addItem(withTitle: FFNaming.duplicateScanTitle, action: #selector(MainWindowController.menuDuplicateScan(_:)), keyEquivalent: "d")
         dupScanItem.keyEquivalentModifierMask = [.command, .shift]
         toolsMenu.addItem(.separator())
-        toolsMenu.addItem(withTitle: "任务面板", action: #selector(MainWindowController.menuTaskPanel(_:)), keyEquivalent: "0")
+        // R4-06：与侧栏/工具注册表同一名称——同一个东西不能有两个名字
+        toolsMenu.addItem(withTitle: FFNaming.taskCenterBase, action: #selector(MainWindowController.menuTaskPanel(_:)), keyEquivalent: "0")
 
         // Window menu
         let windowMenuItem = NSMenuItem()
@@ -184,19 +230,6 @@ class MainMenu {
                 defaultKeyEquivalents[entry.action] = (item.keyEquivalent, item.keyEquivalentModifierMask)
             }
         }
-
-        // C3: 应用已保存的快捷键设置（shortcut_* → 菜单项 keyEquivalent）
-        applyShortcutSettings(to: mainMenu)
-        // C3: 注册快捷键变更监听：设置页录制保存后广播 .shortcutsChanged，刷新菜单
-        if shortcutsObserverToken == nil {
-            shortcutsObserverToken = NotificationCenter.default.addObserver(
-                forName: .shortcutsChanged, object: nil, queue: .main
-            ) { _ in
-                applyShortcutSettings(to: NSApp.mainMenu)
-            }
-        }
-
-        NSApp.mainMenu = mainMenu
     }
 
     // MARK: - 快捷键设置接入（C3）

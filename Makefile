@@ -52,7 +52,7 @@ RED := \033[0;31m
 NC := \033[0m
 
 .PHONY: build app release test rust-test swift-test integration-test \
-	clean setup run demo beta version bump-version warnings help
+	clean setup run demo beta version bump-version warnings help desktop-copy
 
 # =============================================================================
 # 构建
@@ -62,13 +62,21 @@ NC := \033[0m
 bump-version:
 	@bash $(SCRIPT_DIR)/bump-version.sh
 
-## build: Debug 构建（Rust + Swift），构建号自动递增
+## build: Debug 构建（Rust + Swift），构建号自动递增，并自动覆盖桌面副本
 build: rust
 	@echo "$(BLUE)Bumping build number...$(NC)"
 	@echo "$(GREEN)✓ 版本 $$(bash $(SCRIPT_DIR)/bump-version.sh)$(NC)"
 	@echo "$(BLUE)Building Swift (Debug)...$(NC)"
-	@$(XCB) -configuration Debug build 2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" || true
+	@$(XCB) -configuration Debug build > /tmp/ff-build.log 2>&1; \
+	  grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" /tmp/ff-build.log | tail -5 || true; \
+	  grep -q "BUILD SUCCEEDED" /tmp/ff-build.log
 	@test -d "$(APP_DEBUG)" && echo "$(GREEN)✓ $(APP_DEBUG)$(NC)" || (echo "$(RED)✗ 构建失败$(NC)"; exit 1)
+	@echo "$(BLUE)Deploying to Desktop copy...$(NC)"
+	@bash $(SCRIPT_DIR)/deploy-desktop-copy.sh "$(APP_DEBUG)"
+
+## desktop-copy: 只把当前 Debug 产物覆盖到桌面副本（不重新构建）
+desktop-copy:
+	@bash $(SCRIPT_DIR)/deploy-desktop-copy.sh "$(APP_DEBUG)"
 
 ## app: build 的别名
 app: build

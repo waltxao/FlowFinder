@@ -313,7 +313,7 @@ public final class CoreBridge {
             // loadDirectory 的 catch）会回主线程清除 isLoading 并走既有错误浮层。
             // 迟到的列举结果因等待线程已解除等待而永远不会被消费（结构性丢弃），
             // 用户重试导航时 loadGeneration 代次守卫会再兜一层。
-            throw CoreBridgeError.directoryListTimeout("目录响应超时（磁盘或网络无响应），可重试")
+            throw CoreBridgeError.directoryListTimeout("目录读取超时")
         }
 
         guard ffiResult == 0 else {

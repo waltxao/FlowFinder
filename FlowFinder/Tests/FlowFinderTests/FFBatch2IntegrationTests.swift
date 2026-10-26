@@ -53,6 +53,13 @@ final class FFBatch2IntegrationTests: XCTestCase {
         return condition()
     }
 
+    private func spinRunLoop(_ seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.05)))
+        }
+    }
+
     private func makeController() -> MainWindowController {
         let controller = MainWindowController(startsWithSinglePane: false,
                                               showImmediately: false,
@@ -162,6 +169,140 @@ final class FFBatch2IntegrationTests: XCTestCase {
         XCTAssertEqual(FFSearchPolicy.maxResults, 500)
     }
 
+    func testSearchScopeCurrentFiltersOnlyCurrentDirectory() throws {
+        let dir = try makeTempDir("scope_current")
+        let sub = (dir as NSString).appendingPathComponent("sub")
+        try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+        try write("alpha.txt", in: dir)
+        try write("alpha-deep.txt", in: sub)
+        let vm = PaneViewModel()
+        load(vm, dir)
+
+        vm.setSearchScope(.current)
+        vm.setSearchQuery("alpha")
+        XCTAssertTrue(waitUntil { vm.state.files.map(\.name) == ["alpha.txt"] })
+        spinRunLoop(0.5)
+        XCTAssertEqual(vm.state.files.map(\.name), ["alpha.txt"],
+                       "本栏范围不得追加子目录结果")
+    }
+
+    func testSearchScopeRecursiveAppendsSubdirectoryMatches() throws {
+        let dir = try makeTempDir("scope_recursive")
+        let sub = (dir as NSString).appendingPathComponent("sub")
+        try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+        try write("alpha.txt", in: dir)
+        try write("alpha-deep.txt", in: sub)
+        let vm = PaneViewModel()
+        load(vm, dir)
+
+        vm.setSearchScope(.recursive)
+        vm.setSearchQuery("alpha")
+        XCTAssertTrue(waitUntil {
+            Set(vm.state.files.map(\.name)) == Set(["alpha.txt", "alpha-deep.txt"])
+        }, "含子目录范围应追加递归结果")
+    }
+
+    func testSearchScopeBothPanesFiltersCurrentDirectoryOnly() throws {
+        let dir = try makeTempDir("scope_both")
+        let sub = (dir as NSString).appendingPathComponent("sub")
+        try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+        try write("alpha.txt", in: dir)
+        try write("alpha-deep.txt", in: sub)
+        let vm = PaneViewModel()
+        load(vm, dir)
+
+        vm.setSearchScope(.bothPanes)
+        vm.setSearchQuery("alpha")
+        XCTAssertTrue(waitUntil { vm.state.files.map(\.name) == ["alpha.txt"] })
+        spinRunLoop(0.5)
+        XCTAssertEqual(vm.state.files.map(\.name), ["alpha.txt"],
+                       "双栏范围只看各自当前目录，不递归")
+    }
+
+    func testSearchScopeBothPanesMirrorsQueryAcrossPanes() throws {
+        let leftDir = try makeTempDir("scope_mirror_left")
+        let rightDir = try makeTempDir("scope_mirror_right")
+        try write("alpha-left.txt", in: leftDir)
+        try write("beta-left.txt", in: leftDir)
+        try write("alpha-right.txt", in: rightDir)
+        try write("beta-right.txt", in: rightDir)
+        let controller = makeController()
+        defer { controller.close() }
+        load(controller.leftPaneViewModel, leftDir)
+        load(controller.rightPaneViewModel, rightDir)
+        let leftToolbar = try XCTUnwrap(controller.leftPaneToolbar)
+        let rightToolbar = try XCTUnwrap(controller.rightPaneToolbar)
+
+        controller.paneToolbar(leftToolbar, didChangeSearchScope: .bothPanes)
+        controller.paneToolbar(leftToolbar, didChangeSearchQuery: "alpha")
+
+        XCTAssertTrue(waitUntil {
+            Set(controller.leftPaneViewModel.state.files.map(\.name)) == ["alpha-left.txt"]
+                && Set(controller.rightPaneViewModel.state.files.map(\.name)) == ["alpha-right.txt"]
+        }, "双栏搜索应各自过滤当前目录")
+        XCTAssertEqual(controller.leftPaneViewModel.state.searchScope, .bothPanes)
+        XCTAssertEqual(controller.rightPaneViewModel.state.searchScope, .bothPanes)
+        XCTAssertEqual(rightToolbar.searchFieldForTesting.stringValue, "alpha")
+        XCTAssertEqual(rightToolbar.scopePopupForTesting.titleOfSelectedItem, "双栏")
+
+        // 从右栏退出双栏：左栏停止镜像并恢复完整列表，右栏保留自己的搜索结果
+        controller.paneToolbar(rightToolbar, didChangeSearchScope: .current)
+        XCTAssertTrue(waitUntil {
+            controller.leftPaneViewModel.state.searchQuery.isEmpty
+                && controller.leftPaneViewModel.state.files.count == 2
+        }, "退出双栏后左栏应恢复完整列表")
+        XCTAssertEqual(controller.rightPaneViewModel.state.searchQuery, "alpha")
+        XCTAssertEqual(Set(controller.rightPaneViewModel.state.files.map(\.name)), ["alpha-right.txt"])
+        XCTAssertEqual(leftToolbar.searchFieldForTesting.stringValue, "")
+        XCTAssertEqual(leftToolbar.scopePopupForTesting.titleOfSelectedItem, "本栏")
+    }
+
+    /// P1 回归：清空搜索后 Enter 不得落到首项并打开（否则会直接进入第一个文件夹）。
+    func testSearchEnterWithEmptyQueryDoesNotOpenFirstItem() throws {
+        let dir = try makeTempDir("search_enter_empty")
+        let sub = (dir as NSString).appendingPathComponent("sub")
+        try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+        try write("alpha.txt", in: dir)
+        let controller = makeController()
+        defer { controller.close() }
+        load(controller.leftPaneViewModel, dir)
+        let toolbar = try XCTUnwrap(controller.leftPaneToolbar)
+
+        // 先搜一次再清空，复现「搜完 → ⌘A/Delete → Enter」路径
+        controller.paneToolbar(toolbar, didChangeSearchQuery: "alpha")
+        XCTAssertTrue(waitUntil { controller.leftPaneViewModel.state.files.map(\.name) == ["alpha.txt"] })
+        controller.paneToolbar(toolbar, didChangeSearchQuery: "")
+        XCTAssertTrue(waitUntil { controller.leftPaneViewModel.state.files.count == 2 })
+
+        controller.paneToolbarDidRequestOpenResult(toolbar)
+        spinRunLoop(0.5)
+
+        XCTAssertEqual(controller.leftPaneViewModel.state.path, dir, "空搜索词回车不得打开首项")
+        XCTAssertTrue(controller.leftPaneViewModel.selectedFiles.isEmpty, "空搜索词回车不得自动选中首项")
+    }
+
+    /// P2 回归：移动走选中文件后，详情栏必须回到「未选择文件」
+    func testDetailsBarClearsAfterMovedSelection() throws {
+        let src = try makeTempDir("detail_src")
+        let dst = try makeTempDir("detail_dst")
+        try write("alpha.txt", in: src)
+        let controller = makeController()
+        defer { controller.close() }
+        load(controller.leftPaneViewModel, src)
+        load(controller.rightPaneViewModel, dst)
+
+        controller.activatePane(.left)
+        let alpha = try XCTUnwrap(controller.leftPaneViewModel.state.files.first)
+        controller.leftPaneViewModel.selectFile(alpha)
+        XCTAssertTrue(waitUntil { controller.leftDetailsBarForTesting?.compactNameForTesting ?? "<nil>" == "alpha.txt" })
+
+        controller.menuMoveToOther(nil)
+        let target = (dst as NSString).appendingPathComponent("alpha.txt")
+        XCTAssertTrue(waitUntil(20) { FileManager.default.fileExists(atPath: target) })
+        XCTAssertTrue(waitUntil(3) { controller.leftDetailsBarForTesting?.compactNameForTesting ?? "<nil>" == "未选择文件" },
+                      "移动后详情栏应清空，实际=\(controller.leftDetailsBarForTesting?.compactNameForTesting ?? "<nil>")")
+    }
+
     // MARK: - 3. 键盘与焦点
 
     func testCmdFFocusesActivePaneSearchField() {
@@ -177,20 +318,7 @@ final class FFBatch2IntegrationTests: XCTestCase {
                       "⌘F 后焦点应在当前面板搜索框")
     }
 
-    func testKeyViewLoopIncludesToolPillAndRows() {
-        let controller = makeController()
-        defer { controller.close() }
-        controller.setSidebarVisible(true, animated: false)
-        controller.sidebarView.toggleToolPage()
-
-        let loop = controller.keyViewLoopForTesting()
-        XCTAssertTrue(loop.contains(controller.sidebarView.toolPillFocusView),
-                      "Tab 环应包含工具胶囊")
-        let rows = controller.sidebarView.toolPageForTesting?.focusableViewsForTesting() ?? []
-        XCTAssertEqual(rows.count, 5)
-        XCTAssertTrue(rows.allSatisfy { loop.contains($0) },
-                      "工具页 5 行都应在 Tab 环内")
-    }
+    // 2026-10-24：侧栏工具页已退役（工具迁到底栏右侧圆钮），原工具页 Tab 环测试删除。
 
     func testTextEditingCopyDoesNotTouchFileClipboard() {
         let controller = makeController()
@@ -317,5 +445,205 @@ final class FFBatch2IntegrationTests: XCTestCase {
             XCTAssertNotNil(Bundle.main.object(forInfoDictionaryKey: key),
                             "Info.plist 缺少用途声明: \(key)")
         }
+    }
+}
+
+// MARK: - J3-11: Finder 注释存取与旧数据迁移
+
+final class FFFinderCommentStoreTests: XCTestCase {
+
+    private var tempDir: URL!
+    private var suiteName: String!
+    private var defaults: UserDefaults!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        tempDir = URL(fileURLWithPath: "/tmp/ff-comment-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        suiteName = "FFFinderCommentStoreTests-\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    override func tearDownWithError() throws {
+        if let tempDir { try? FileManager.default.removeItem(at: tempDir) }
+        if let suiteName { defaults?.removePersistentDomain(forName: suiteName) }
+        try super.tearDownWithError()
+    }
+
+    private func makeFile(_ name: String) throws -> String {
+        let path = tempDir.appendingPathComponent(name).path
+        try Data("x".utf8).write(to: URL(fileURLWithPath: path))
+        return path
+    }
+
+    func testFinderCommentRoundTrip() throws {
+        let path = try makeFile("roundtrip.txt")
+        XCTAssertTrue(FFFinderCommentStore.write(path: path, comment: "第一行说明"))
+        XCTAssertEqual(FFFinderCommentStore.read(path: path), "第一行说明")
+
+        XCTAssertTrue(FFFinderCommentStore.write(path: path, comment: "  \n"))
+        XCTAssertNil(FFFinderCommentStore.read(path: path), "空白说明应移除 xattr")
+    }
+
+    func testReadsPlainTextFallback() throws {
+        let path = try makeFile("plain.txt")
+        let data = Data("纯文本说明".utf8)
+        let rc = data.withUnsafeBytes { buffer -> Int32 in
+            guard let base = buffer.baseAddress else { return -1 }
+            return setxattr(path, FFFinderCommentStore.xattrName, base, data.count, 0, 0)
+        }
+        XCTAssertEqual(rc, 0)
+        XCTAssertEqual(FFFinderCommentStore.read(path: path), "纯文本说明")
+    }
+
+    func testMigrationWritesOnlyWhenFinderCommentEmpty() throws {
+        let migratedPath = try makeFile("migrated.txt")
+        let existingPath = try makeFile("existing.txt")
+        XCTAssertTrue(FFFinderCommentStore.write(path: existingPath, comment: "已有 Finder 说明"))
+        let missingPath = tempDir.appendingPathComponent("missing.txt").path
+        defaults.set([migratedPath: "旧说明 A",
+                      existingPath: "旧说明 B",
+                      missingPath: "失效路径说明"],
+                     forKey: FFFinderCommentStore.legacyDefaultsKey)
+
+        let report = FFFinderCommentStore.migrateLegacyDescriptionsIfNeeded(defaults: defaults)
+
+        XCTAssertEqual(report.migrated, 1)
+        XCTAssertEqual(report.keptLegacy, 2)
+        XCTAssertEqual(report.failed, 0)
+        XCTAssertEqual(FFFinderCommentStore.read(path: migratedPath), "旧说明 A")
+        XCTAssertEqual(FFFinderCommentStore.read(path: existingPath), "已有 Finder 说明")
+
+        let remaining = defaults.dictionary(forKey: FFFinderCommentStore.legacyDefaultsKey) as? [String: String]
+        XCTAssertEqual(remaining?[existingPath], "旧说明 B")
+        XCTAssertEqual(remaining?[missingPath], "失效路径说明")
+        XCTAssertNil(remaining?[migratedPath])
+        XCTAssertTrue(defaults.bool(forKey: FFFinderCommentStore.migrationDefaultsKey))
+    }
+
+    func testMigrationRunsOnlyOnce() throws {
+        let path = try makeFile("once.txt")
+        defaults.set([path: "第一次"], forKey: FFFinderCommentStore.legacyDefaultsKey)
+        _ = FFFinderCommentStore.migrateLegacyDescriptionsIfNeeded(defaults: defaults)
+        defaults.set([path: "第二次"], forKey: FFFinderCommentStore.legacyDefaultsKey)
+
+        var writeCalls = 0
+        let report = FFFinderCommentStore.migrateLegacyDescriptionsIfNeeded(
+            defaults: defaults,
+            writeComment: { _, _ in writeCalls += 1; return true }
+        )
+
+        XCTAssertTrue(report.skipped)
+        XCTAssertEqual(writeCalls, 0)
+        XCTAssertEqual(FFFinderCommentStore.read(path: path), "第一次")
+    }
+
+    func testMigrationKeepsEntryWhenWriteFails() throws {
+        let path = try makeFile("fail.txt")
+        defaults.set([path: "写不进去"], forKey: FFFinderCommentStore.legacyDefaultsKey)
+
+        let report = FFFinderCommentStore.migrateLegacyDescriptionsIfNeeded(
+            defaults: defaults,
+            writeComment: { _, _ in false }
+        )
+
+        XCTAssertEqual(report.failed, 1)
+        let remaining = defaults.dictionary(forKey: FFFinderCommentStore.legacyDefaultsKey) as? [String: String]
+        XCTAssertEqual(remaining?[path], "写不进去")
+        XCTAssertTrue(defaults.bool(forKey: FFFinderCommentStore.migrationDefaultsKey))
+    }
+}
+
+// MARK: - J2-07 搜索范围
+
+final class FFSearchScopeTests: XCTestCase {
+
+    func testScopeTitlesAndBehavior() {
+        XCTAssertEqual(FFSearchScope.current.title, "本栏")
+        XCTAssertEqual(FFSearchScope.recursive.title, "含子目录")
+        XCTAssertEqual(FFSearchScope.bothPanes.title, "双栏")
+        XCTAssertTrue(FFSearchScope.recursive.searchesSubdirectories)
+        XCTAssertFalse(FFSearchScope.current.searchesSubdirectories)
+        XCTAssertFalse(FFSearchScope.bothPanes.searchesSubdirectories)
+        XCTAssertTrue(FFSearchScope.bothPanes.searchesBothPanes)
+        XCTAssertFalse(FFSearchScope.recursive.searchesBothPanes)
+    }
+
+    func testToolbarExposesScopeMenu() {
+        let toolbar = PaneToolbar(frame: NSRect(x: 0, y: 0, width: 900, height: 72))
+        XCTAssertEqual(toolbar.scopePopupForTesting.itemTitles, ["本栏", "含子目录", "双栏"])
+        XCTAssertEqual(toolbar.scopePopupForTesting.accessibilityLabel(), "搜索范围")
+
+        toolbar.setSearchScope(.bothPanes)
+        XCTAssertEqual(toolbar.scopePopupForTesting.titleOfSelectedItem, "双栏")
+    }
+
+    func testToolbarSearchFieldCanBeProgrammaticallyUpdated() {
+        let toolbar = PaneToolbar(frame: NSRect(x: 0, y: 0, width: 900, height: 72))
+        toolbar.setSearchQuery("报告")
+        XCTAssertEqual(toolbar.searchFieldForTesting.stringValue, "报告")
+    }
+
+    func testToolbarSortAndGroupPopupsSyncFromState() {
+        let toolbar = PaneToolbar(frame: NSRect(x: 0, y: 0, width: 900, height: 72))
+
+        toolbar.setSortField(.size)
+        XCTAssertEqual(toolbar.sortPopupForTesting.titleOfSelectedItem, "大小")
+
+        toolbar.setGroupBy("kind")
+        XCTAssertEqual(toolbar.groupPopupForTesting.titleOfSelectedItem, "按种类")
+        toolbar.setGroupBy("date")
+        XCTAssertEqual(toolbar.groupPopupForTesting.titleOfSelectedItem, "按日期")
+        toolbar.setGroupBy("size")
+        XCTAssertEqual(toolbar.groupPopupForTesting.titleOfSelectedItem, "按大小")
+        toolbar.setGroupBy("none")
+        XCTAssertEqual(toolbar.groupPopupForTesting.titleOfSelectedItem, "无分组")
+    }
+}
+
+// MARK: - P0 rename collision
+
+final class FFRenameCollisionTests: XCTestCase {
+
+    private func makeTempDir() throws -> String {
+        let dir = "/tmp/ff_rename_collision_\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    func testRenameToExistingFileDoesNotOverwrite() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        let source = (dir as NSString).appendingPathComponent("a.txt")
+        let existing = (dir as NSString).appendingPathComponent("b.txt")
+        try "source".write(toFile: source, atomically: true, encoding: .utf8)
+        try "existing".write(toFile: existing, atomically: true, encoding: .utf8)
+
+        let vm = PaneViewModel()
+        vm.renameFile(source, to: "b.txt")
+
+        XCTAssertEqual(try String(contentsOfFile: existing, encoding: .utf8), "existing",
+                       "同名目标文件不得被重命名覆盖")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source),
+                      "冲突时源文件应保留")
+        XCTAssertNotNil(vm.state.error)
+        XCTAssertTrue(vm.state.error?.contains("已存在") == true)
+    }
+
+    func testRenameToFreshNameStillWorks() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        let source = (dir as NSString).appendingPathComponent("a.txt")
+        let target = (dir as NSString).appendingPathComponent("c.txt")
+        try "source".write(toFile: source, atomically: true, encoding: .utf8)
+
+        let vm = PaneViewModel()
+        vm.renameFile(source, to: "c.txt")
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target))
     }
 }

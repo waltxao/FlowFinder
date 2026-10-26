@@ -27,6 +27,10 @@ final class FFPillButton: NSView, FFRegionAware {
     private var isHovered = false { didSet { needsDisplay = true } }
     private var isPressed = false { didSet { needsDisplay = true } }
     private var trackingArea: NSTrackingArea?
+    /// macOS 26+ 液态玻璃背景（替代自绘胶囊底色）
+    private var glassBackgroundView: NSView?
+    /// macOS 26+ 选中态 tint 层（叠在玻璃背景上）
+    private var glassTintLayer: CALayer?
 
     init(title: String, icon: FFIconName, height: CGFloat = 20) {
         super.init(frame: .zero)
@@ -62,6 +66,35 @@ final class FFPillButton: NSView, FFRegionAware {
         setAccessibilityLabel(title)
         setAccessibilityHelp("\(title)（空格或回车）")
         setAccessibilityValue("已关闭")
+
+        // macOS 26+：液态玻璃背景替代自绘胶囊底色
+        if #available(macOS 26.0, *) {
+            setupGlassBackground(height: height)
+        }
+    }
+
+    /// macOS 26+：创建 NSGlassEffectView 胶囊背景并置于最底层
+    @available(macOS 26.0, *)
+    private func setupGlassBackground(height: CGFloat) {
+        let glassView = NSGlassEffectView()
+        glassView.style = .clear
+        glassView.cornerRadius = height / 2
+        glassView.wantsLayer = true
+        glassView.layer?.masksToBounds = true
+        glassView.translatesAutoresizingMaskIntoConstraints = false
+        glassView.appearance = NSApp.appearance
+        addSubview(glassView)
+        // 置于最底层：icon/label 保持在上方
+        let others = subviews.filter { $0 !== glassView }
+        for v in others { v.removeFromSuperview() }
+        for v in others { addSubview(v) }
+        NSLayoutConstraint.activate([
+            glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            glassView.topAnchor.constraint(equalTo: topAnchor),
+            glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        glassBackgroundView = glassView
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -92,6 +125,20 @@ final class FFPillButton: NSView, FFRegionAware {
         let color: NSColor = isSelected ? FFAccent.current : .secondaryLabelColor
         iconView.contentTintColor = color
         label.textColor = isSelected ? FFAccent.current : .secondaryLabelColor
+
+        // macOS 26+：选中态在玻璃背景上叠 accent 色 tint
+        if #available(macOS 26.0, *), let glassView = glassBackgroundView as? NSGlassEffectView {
+            glassTintLayer?.removeFromSuperlayer()
+            glassTintLayer = nil
+            if isSelected {
+                let tint = CALayer()
+                tint.backgroundColor = FFAccent.current.withAlphaComponent(0.15).cgColor
+                tint.cornerRadius = bounds.height / 2
+                tint.frame = glassView.bounds
+                glassView.layer?.addSublayer(tint)
+                glassTintLayer = tint
+            }
+        }
     }
 
     override func updateTrackingAreas() {
@@ -128,15 +175,21 @@ final class FFPillButton: NSView, FFRegionAware {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let path = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-        if isSelected {
-            FFAccent.current.withAlphaComponent(isPressed ? 0.30 : (isHovered ? 0.24 : 0.18)).setFill()
-        } else {
-            let alpha: CGFloat = isPressed ? 0.16 : (isHovered ? 0.12 : 0.07)
-            NSColor.labelColor.withAlphaComponent(alpha).setFill()
-        }
-        path.fill()
 
+        if glassBackgroundView == nil {
+            // macOS < 26：自绘胶囊底色
+            let path = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+            if isSelected {
+                FFAccent.current.withAlphaComponent(isPressed ? 0.30 : (isHovered ? 0.24 : 0.18)).setFill()
+            } else {
+                let alpha: CGFloat = isPressed ? 0.16 : (isHovered ? 0.12 : 0.07)
+                NSColor.labelColor.withAlphaComponent(alpha).setFill()
+            }
+            path.fill()
+        }
+        // macOS 26+：NSGlassEffectView 提供液态玻璃背景，不画自绘底色
+
+        // 焦点环始终绘制（macOS 26+ 玻璃上仍需要键盘焦点指示）
         if window?.firstResponder === self {
             NSColor.keyboardFocusIndicatorColor.withAlphaComponent(0.9).setStroke()
             let ring = NSBezierPath(roundedRect: bounds.insetBy(dx: -2, dy: -2),
@@ -144,6 +197,16 @@ final class FFPillButton: NSView, FFRegionAware {
                                     yRadius: bounds.height / 2 + 2)
             ring.lineWidth = 2
             ring.stroke()
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        // macOS 26+：同步玻璃背景圆角与 tint 层（bounds 变化时）
+        if #available(macOS 26.0, *), let glassView = glassBackgroundView as? NSGlassEffectView {
+            glassView.cornerRadius = bounds.height / 2
+            glassTintLayer?.cornerRadius = bounds.height / 2
+            glassTintLayer?.frame = glassView.bounds
         }
     }
 }

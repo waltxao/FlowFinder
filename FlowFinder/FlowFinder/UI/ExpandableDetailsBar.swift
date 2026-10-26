@@ -111,6 +111,187 @@ class FFDetailsDragStrip: NSView {
     }
 }
 
+// MARK: - 小白条拉手（2026-10-23 D-02）
+
+/// 详情栏顶部居中的白色胶囊：点击切换折叠/展开，拖动 1:1 调高。
+/// 位移 < 4pt 视为点击；≥ 4pt 视为拖动。箭头按钮已移除。
+final class FFDetailsGripHandle: NSView {
+    var onClick: (() -> Void)?
+    var onDrag: ((CGFloat) -> Void)?
+    var onDragEnd: (() -> Void)?
+    /// AX / VoiceOver：当前高度与上下调档
+    var valueProvider: (() -> CGFloat)?
+    var onIncrement: (() -> Void)?
+    var onDecrement: (() -> Void)?
+
+    private let capsule = CALayer()
+    private var tracking: NSTrackingArea?
+    private var dragStart: CGPoint?
+    private var accumulated: CGFloat = 0
+    private var isDragging = false
+    private var isHovering = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        capsule.cornerRadius = 2
+        capsule.backgroundColor = NSColor.white.withAlphaComponent(0.94).cgColor
+        capsule.borderColor = NSColor.black.withAlphaComponent(0.14).cgColor
+        capsule.borderWidth = 0.5
+        capsule.shadowColor = NSColor.black.cgColor
+        capsule.shadowOpacity = 0.22
+        capsule.shadowRadius = 1
+        capsule.shadowOffset = CGSize(width: 0, height: 1)
+        layer?.addSublayer(capsule)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.slider)
+        setAccessibilityLabel("调整详情栏高度")
+        setAccessibilityHelp("点击切换折叠/展开，拖动调整高度")
+    }
+
+    required init?(coder: NSCoder) { fatalError("FFDetailsGripHandle 不支持 IB 初始化") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let w: CGFloat = 38, h: CGFloat = 4
+        capsule.frame = CGRect(x: (bounds.width - w) / 2,
+                               y: (bounds.height - h) / 2,
+                               width: w, height: h)
+        CATransaction.commit()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeUpDown)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        isHovering = true
+        NSCursor.resizeUpDown.set()
+        capsule.backgroundColor = NSColor.white.cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        guard !isDragging else { return }
+        isHovering = false
+        NSCursor.arrow.set()
+        capsule.backgroundColor = NSColor.white.withAlphaComponent(0.94).cgColor
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func accessibilityValue() -> Any? { Int(valueProvider?() ?? 54) }
+    override func accessibilityMinValue() -> Any? { 54 }
+    override func accessibilityMaxValue() -> Any? { 240 }
+
+    override func accessibilityPerformIncrement() -> Bool {
+        onIncrement?()
+        return true
+    }
+
+    override func accessibilityPerformDecrement() -> Bool {
+        onDecrement?()
+        return true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStart = convert(event.locationInWindow, from: nil)
+        accumulated = 0
+        isDragging = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = dragStart else { return }
+        let loc = convert(event.locationInWindow, from: nil)
+        let dy = loc.y - start.y
+        accumulated += abs(dy)
+        if !isDragging, accumulated >= 4 { isDragging = true }
+        dragStart = loc
+        if isDragging { onDrag?(dy) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragStart = nil
+        if isDragging { onDragEnd?() } else { onClick?() }
+        isDragging = false
+        accumulated = 0
+    }
+}
+
+// MARK: - 图标缩放手柄（2026-10-23 D-04 A）
+
+/// 图标右下角的圆形缩放手柄：拖动连续缩放；点击不处理。
+final class FFIconResizeHandle: NSView {
+    var onDrag: ((CGFloat) -> Void)?
+    var onDragEnd: (() -> Void)?
+
+    private var dragStart: CGPoint?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.92).cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.borderWidth = 1
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.18
+        layer?.shadowRadius = 2
+        layer?.shadowOffset = CGSize(width: 0, height: 1)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.slider)
+        setAccessibilityLabel("调整图标大小")
+    }
+
+    required init?(coder: NSCoder) { fatalError("FFIconResizeHandle 不支持 IB 初始化") }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStart = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = dragStart else { return }
+        let loc = convert(event.locationInWindow, from: nil)
+        // 右下角：向右/向下都表示放大（视图非翻转，向下 dy 为负）
+        let delta = ((loc.x - start.x) - (loc.y - start.y)) / 2
+        dragStart = loc
+        if abs(delta) > 0.01 { onDrag?(delta) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragStart = nil
+        onDragEnd?()
+    }
+}
+
+// MARK: - 翻转文档视图（信息区顶部对齐）
+
+/// NSScrollView 的文档视图用翻转坐标，内容比可视区短时贴顶而不是贴底。
+/// 非翻转的 NSStackView 直接作 documentView 时，macOS 会把短内容压在底部。
+private final class FFFlippedDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 // MARK: - ExpandableDetailsBar
 
 /// 可展开的文件详情面板
@@ -140,18 +321,20 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
 
     // MARK: - Constants
 
-    /// 收起态高度 36pt + 状态栏 18pt = 54pt
+    /// 收起态高度 54pt（药丸：圆角 = 高度 / 2 = 27）
     private let collapsedHeight: CGFloat = 54
-    /// 状态栏高度
+    /// 状态栏高度（仅展开态显示；收起态让位给 54pt 药丸）
     private let statusBarHeight: CGFloat = 18
-    /// 上边缘拖拽热区高度
-    private let topEdgeHeight: CGFloat = 6
-    /// 箭头按钮占位（上边缘热区尾部让出，避免盖住按钮）
-    private let chevronReserve: CGFloat = 32
+    /// 顶部小白条热区高度（2026-10-23：为拉手预留，内容从 14pt 开始）
+    private let topEdgeHeight: CGFloat = 14
+    /// 收起态药丸内容左右缩进
+    private let collapsedSideInset: CGFloat = 20
+    /// 展开内容区相对栏体左右缩进：标准 132 → 30；大档 240 → 52
+    private var expandedSideInset: CGFloat = 30
+    /// 图标区与信息区之间的分界线宽度
+    private let iconDividerWidth: CGFloat = 8
 
     /// 记忆 key（左右面板共用）
-    private static let heightKey = "FFDetailsBarExpandedHeight"
-    private static let compactHeightMigrationKey = "FFDetailsBarCompactHeightV1"
     static let iconWidthKey = "FFDetailsBarIconWidth"
 
     // MARK: - State
@@ -160,15 +343,29 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
     private var selectedCount: Int = 0
     /// v0.7.4 修订: 完整选中数组（多选时用于汇总显示）
     private var selectedFiles: [FileEntry] = []
-    /// 用户拖出的展开高度（权威值，computedExpandedHeight 已退役）
-    private var userExpandedHeight: CGFloat
-    /// 上边缘调高手柄
-    private var topEdgeStrip: FFDetailsDragStrip!
+    /// 三档状态机（D-02 / D-02a / D-08）
+    private var tierState: FFDetailsBarTierState
+    /// 顶部小白条（点击切换 / 拖动调高）
+    private var gripHandle: FFDetailsGripHandle!
+    /// 玻璃背景（macOS 26 NSGlassEffectView；旧系统 NSVisualEffectView）
+    private var glassBackgroundView: NSView?
+    /// 玻璃描边（0.5pt separator）
+    private var glassBorderView: NSView?
+    /// 图标区容器（图标 + 右下角缩放手柄）
+    private var iconSlotView: NSView!
+    /// 图标右下角缩放手柄
+    private var iconResizeHandle: FFIconResizeHandle!
+    /// 捏合起始尺寸
+    private var magnifyStartSize: CGFloat?
+    /// 是否正在拖动拉手（抑制 layout 的档位 clamp，避免与拖拽打架）
+    private var isHeightDragging = false
     /// 同步应用远端布局时为 true（抑制再次广播造成回环）
     private var isApplyingRemoteLayout = false
-    /// 图标区宽度（分界线可拖拽；初始值由预览图标大小决定）
+    /// 图标区宽度（由图标边长 + 32 推导，分界线可拖拽）
     private var iconWidth: CGFloat
-    /// 设置 > 外观的应用级预览图标大小（48–96，默认 64）
+    /// 用户拖动分界线后的手动宽度（nil = 跟随图标自动加宽）
+    private var iconWidthOverride: CGFloat?
+    /// 设置 > 外观的应用级预览图标大小（48–200，默认 64）
     private(set) var previewIconSize: CGFloat = FFDetailsLayoutPolicy.defaultIconSize
     // 约束引用（Task 3 setupUI 中赋值）
     private var iconWidthC: NSLayoutConstraint!
@@ -176,18 +373,20 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
     private var bigIconHeightC: NSLayoutConstraint!
     private var multiIconWidthC: NSLayoutConstraint!
     private var multiIconHeightC: NSLayoutConstraint!
-    /// 图标区与信息区之间的分界线（信息区内部不再有分界线：
-    /// D-05 起列宽等分，列数由高度自动推导，手动列宽与之互斥）
-    /// internal 以便布局回归测试访问（FFDetailsDragStrip 经 @testable 访问；类型可见性以文件内定义为准）
+    /// 图标区与信息区之间的分界线
+    /// internal 以便布局回归测试访问
     var dividerIconToCol1: FFDetailsDragStrip!
     /// 内容模块区（contentModules）：图标区 | 分界线 | 信息区，手动约束布局
     private var contentModules: NSView!
     /// 信息区：水平等分的 N 列容器（D-05）
     private var columnsStack: NSStackView!
-    /// 信息区滚动容器：紧凑高度下列多时纵向滚动，不再无限撑高详情栏
+    /// 信息区滚动容器：现在始终纵向滚动，不再隐藏末行（D-03）
     private var infoScrollView: NSScrollView!
     var infoScrollViewForTesting: NSScrollView { infoScrollView }
     var bigIconSizeForTesting: CGFloat { bigIconWidthC?.constant ?? 0 }
+    var nameFieldForTesting: NSTextField { nameField }
+    var locationFieldForTesting: NSTextField { locationField }
+    var tierForTesting: FFDetailsTier { tierState.tier }
     /// 全部列容器（1…4）。可见性由 rearrangeFlow 按列数控制
     private var columnViews: [NSStackView] = []
 
@@ -195,16 +394,33 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
     var isExpanded: Bool = false {
         didSet {
             guard isExpanded != oldValue else { return }
-            applyExpandedState(animated: true)
+            let last = tierState.lastExpanded
+            tierState = FFDetailsBarTierState(tier: isExpanded ? last : .collapsed,
+                                              lastExpanded: last)
+            applyTier(animated: true)
+            onExpansionChanged?(isExpanded)
         }
     }
+
+    /// 展开状态变化回调：外层据此隐藏工具按钮并让胶囊铺满右侧。
+    var onExpansionChanged: ((Bool) -> Void)?
 
     // MARK: - UI
 
     private var heightConstraint: NSLayoutConstraint!
+    /// 药丸/胶囊动态约束（半径随高度、内边距随档位）
+    private var expandedLeadingC: NSLayoutConstraint!
+    private var expandedTrailingC: NSLayoutConstraint!
+    private var compactLeadingC: NSLayoutConstraint!
+    private var compactTrailingC: NSLayoutConstraint!
+    private var statusLeadingC: NSLayoutConstraint?
+    private var statusTrailingC: NSLayoutConstraint?
+    /// 玻璃表面（macOS 26 NSGlassEffectView，用于同步动态圆角）
+    private var glassSurfaceView: NSView?
+    /// 药丸空白区域点击拦截层
+    private var mouseInterceptor: FFMouseInterceptorView?
 
-    private let chevronButton = NSButton()
-    private let compactView = NSView()
+    private let compactView = FFPillPassThroughView()
     private let expandedView = NSView()
 
     // compact
@@ -282,7 +498,51 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
     /// setupUI 阶段就执行过，那时回调尚未注入。
     var currentHeight: CGFloat { heightConstraint?.constant ?? collapsedHeight }
     var isExpandedForTesting: Bool { isExpanded }
+    var cornerRadiusForTesting: CGFloat { layer?.cornerRadius ?? 0 }
+    var compactContentFrameForTesting: NSRect { compactView.frame }
+    var statusLabelHiddenForTesting: Bool { statusLabel?.isHidden ?? true }
+    var expandedSideInsetForTesting: CGFloat { expandedSideInset }
+    /// 模拟点击药丸/胶囊空白区域（与 FFMouseInterceptorView.onClick 同一入口）。
+    func performBackgroundClickForTesting() { handleGripClick() }
+
+    /// 工具簇开合形变：先隐藏内容，只保留玻璃形状参与宽度收缩。
+    func prepareForMorphOut() {
+        compactView.alphaValue = 0
+        expandedView.alphaValue = 0
+        gripHandle?.alphaValue = 0
+        statusLabel?.alphaValue = 0
+    }
+
+    /// 形变回详情栏：宽度展开完成后恢复内容。
+    func prepareForMorphIn() {
+        compactView.alphaValue = 1
+        expandedView.alphaValue = 1
+        gripHandle?.alphaValue = 1
+        statusLabel?.alphaValue = 1
+    }
+
+    /// 宽度展开完成后让内容淡入，避免文字突然出现。
+    func animateMorphContentIn() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            prepareForMorphIn()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            compactView.animator().alphaValue = 1
+            expandedView.animator().alphaValue = 1
+            gripHandle?.animator().alphaValue = 1
+            statusLabel?.animator().alphaValue = 1
+        }
+    }
+    /// 收起态名称文本：未选中时应为「未选择文件」。
+    var compactNameForTesting: String { compactNameField.stringValue }
     var previewColumnWidthForTesting: CGFloat { iconWidth }
+    var sizeFieldTextForTesting: String { sizeField.stringValue }
+    var descriptionDisplayTextForTesting: String { descriptionField.stringValue }
+    var descriptionIsHintForTesting: Bool { descriptionShowingHint }
+    var locationToolTipForTesting: String { locationField.toolTip ?? "" }
 
     /// 详情元数据异步读取器；由 MainWindowController 注入。
     var metadataProvider: FFMetadataProviding? {
@@ -337,31 +597,27 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
-        Self.migrateToCompactHeightIfNeeded()
-        userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat)
-            ?? FFDetailsLayoutPolicy.defaultExpandedHeight
+        tierState = FFDetailsBarTierState(tier: .collapsed,
+                                          lastExpanded: FFDetailsLayoutPolicy.storedLastExpandedTier())
         previewIconSize = FFDetailsLayoutPolicy.storedIconSize()
-        iconWidth = FFDetailsLayoutPolicy.storedPreviewColumnWidth()
+        let storedWidth = FFDetailsLayoutPolicy.storedPreviewColumnWidth()
+        iconWidth = storedWidth
+        iconWidthOverride = abs(storedWidth - FFDetailsLayoutPolicy.defaultPreviewColumnWidth) > 0.5
+            ? storedWidth : nil
         super.init(frame: frameRect)
         setupUI()
     }
 
     required init?(coder: NSCoder) {
-        Self.migrateToCompactHeightIfNeeded()
-        userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat)
-            ?? FFDetailsLayoutPolicy.defaultExpandedHeight
+        tierState = FFDetailsBarTierState(tier: .collapsed,
+                                          lastExpanded: FFDetailsLayoutPolicy.storedLastExpandedTier())
         previewIconSize = FFDetailsLayoutPolicy.storedIconSize()
-        iconWidth = FFDetailsLayoutPolicy.storedPreviewColumnWidth()
+        let storedWidth = FFDetailsLayoutPolicy.storedPreviewColumnWidth()
+        iconWidth = storedWidth
+        iconWidthOverride = abs(storedWidth - FFDetailsLayoutPolicy.defaultPreviewColumnWidth) > 0.5
+            ? storedWidth : nil
         super.init(coder: coder)
         setupUI()
-    }
-
-    /// 旧版默认展开高度 210pt 偏大；一次性收敛到紧凑检查器的 120pt。
-    /// 之后用户再拖拽仍按新上限记忆。
-    private static func migrateToCompactHeightIfNeeded(defaults: UserDefaults = .standard) {
-        guard !defaults.bool(forKey: compactHeightMigrationKey) else { return }
-        defaults.set(FFDetailsLayoutPolicy.defaultExpandedHeight, forKey: heightKey)
-        defaults.set(true, forKey: compactHeightMigrationKey)
     }
 
     deinit {
@@ -370,27 +626,97 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
 
     // MARK: - Setup
 
+    @objc func refreshThemeColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            glassBorderView?.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.65).cgColor
+        }
+        needsDisplay = true
+    }
+
+    /// 安装液态玻璃背景：玻璃在最底层，内容在其上（避免拦截鼠标）。
+    private func installGlassBackground() {
+        let host = NSView()
+        host.translatesAutoresizingMaskIntoConstraints = false
+        host.wantsLayer = true
+        host.layer?.cornerRadius = collapsedHeight / 2
+        host.layer?.cornerCurve = .continuous
+        host.layer?.masksToBounds = true
+        host.layer?.backgroundColor = NSColor.clear.cgColor
+        addSubview(host)
+        glassBackgroundView = host
+
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = collapsedHeight / 2
+            glass.appearance = NSApp.appearance
+            glass.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(glass)
+            glassSurfaceView = glass
+            NSLayoutConstraint.activate([
+                glass.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                glass.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                glass.topAnchor.constraint(equalTo: host.topAnchor),
+                glass.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            ])
+        } else {
+            let effect = NSVisualEffectView()
+            effect.material = .underWindowBackground
+            effect.blendingMode = .withinWindow
+            effect.state = .active
+            effect.appearance = NSApp.appearance
+            effect.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(effect)
+            NSLayoutConstraint.activate([
+                effect.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                effect.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                effect.topAnchor.constraint(equalTo: host.topAnchor),
+                effect.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            ])
+        }
+
+        let border = NSView()
+        border.translatesAutoresizingMaskIntoConstraints = false
+        border.wantsLayer = true
+        border.layer?.cornerRadius = collapsedHeight / 2
+        border.layer?.cornerCurve = .continuous
+        border.layer?.borderWidth = 0.5
+        border.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.65).cgColor
+        border.layer?.backgroundColor = NSColor.clear.cgColor
+        addSubview(border)
+        glassBorderView = border
+
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: trailingAnchor),
+            host.topAnchor.constraint(equalTo: topAnchor),
+            host.bottomAnchor.constraint(equalTo: bottomAnchor),
+            border.leadingAnchor.constraint(equalTo: leadingAnchor),
+            border.trailingAnchor.constraint(equalTo: trailingAnchor),
+            border.topAnchor.constraint(equalTo: topAnchor),
+            border.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
     private func setupUI() {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
-        // Wave4 Task 2：圆角收敛两档——浮层级 10（FFDesign.Glass.cornerRadiusPanel）。
-        // 此处与 glassBackground 同用面板级令牌，保证层圆角与玻璃圆角一致。
-        layer?.cornerRadius = FFVisualTokens.Radius.details
+        // 动态形状：药丸/胶囊半径 = 当前高度 / 2（由 updatePillShape 在布局期同步）。
+        layer?.cornerRadius = collapsedHeight / 2
         layer?.cornerCurve = .continuous
         layer?.shadowColor = NSColor.black.cgColor
         layer?.shadowOpacity = 0.14
         layer?.shadowRadius = 12
         layer?.shadowOffset = NSSize(width: 0, height: -2)
 
-        // 2026-10-21 Phase 4：不再叠第二张玻璃卡；与面板/工具栏同用实体表面 + 细边框。
-        let surface = SquircleView(cornerRadius: FFVisualTokens.Radius.details,
-                                   squircleFactor: 5.0,
-                                   autoUpdateMask: true)
-        surface.translatesAutoresizingMaskIntoConstraints = false
-        surface.layer?.backgroundColor = FFDesign.operationAreaBackground.cgColor
-        surface.layer?.borderWidth = 0.5
-        surface.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.65).cgColor
-        addSubview(surface)
+        // 2026-10-23 D-06：液态玻璃背景（macOS 26 NSGlassEffectView(.regular)；旧系统回退）。
+        // 玻璃作为**最底层兄弟视图**，内容在上方；避免玻璃直接作为容器拦截鼠标事件
+        // （窗口级同款问题见 MainWindowController Bug 1 修复）。
+        installGlassBackground()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshThemeColors),
+            name: .appearanceChanged, object: nil
+        )
 
         // 修复鼠标穿透：详情栏作为浮层覆盖在文件列表上方，但空白区域（无子控件的区域）
         // 的鼠标事件会穿透到下方的文件列表——用户反馈"鼠标居然可以穿透详情栏点击下方内容"。
@@ -403,7 +729,9 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         mouseInterceptor.wantsLayer = true
         mouseInterceptor.layer?.backgroundColor = NSColor.clear.cgColor
         mouseInterceptor.translatesAutoresizingMaskIntoConstraints = false
+        mouseInterceptor.onClick = { [weak self] in self?.handleGripClick() }
         addSubview(mouseInterceptor)
+        self.mouseInterceptor = mouseInterceptor
 
         // compact 视图（收起态）
         compactView.translatesAutoresizingMaskIntoConstraints = false
@@ -521,10 +849,11 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         nameField.font = FFDesign.Text.lg
         nameField.textColor = NSColor.labelColor
         nameField.lineBreakMode = .byWordWrapping
-        nameField.maximumNumberOfLines = 2
-        nameField.cell?.truncatesLastVisibleLine = true
+        // 2026-10-23 D-05 B：不限行，完整换行；宽度由 rearrangeFlow 按实际列宽回填
+        nameField.maximumNumberOfLines = 0
+        nameField.cell?.truncatesLastVisibleLine = false
         nameField.cell?.wraps = true
-        nameField.preferredMaxLayoutWidth = 320
+        nameField.preferredMaxLayoutWidth = 0
         nameField.delegate = self
         // 单击进入改名编辑（与 descriptionField 双击不同：名称单击即编辑）
         let nameClickGesture = NSClickGestureRecognizer(target: self, action: #selector(beginEditingName))
@@ -536,11 +865,12 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         configureValue(sizeField)
         configureValue(locationField)
         // 2026-10-21 Phase 4：路径自动换行，点击直接复制完整路径。
+        // 2026-10-23 D-05 B：不限行；宽度按实际列宽回填。
         locationField.lineBreakMode = .byCharWrapping
-        locationField.maximumNumberOfLines = 2
+        locationField.maximumNumberOfLines = 0
         locationField.cell?.wraps = true
-        locationField.cell?.truncatesLastVisibleLine = true
-        locationField.preferredMaxLayoutWidth = 320
+        locationField.cell?.truncatesLastVisibleLine = false
+        locationField.preferredMaxLayoutWidth = 0
         locationField.textColor = NSColor.systemBlue
         locationField.font = FFDesign.Text.sm
         let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(copyLocationPath))
@@ -602,7 +932,7 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         tagsValueView.spacing = 6
         tagsValueView.translatesAutoresizingMaskIntoConstraints = false
 
-        // 文件说明：可编辑文本字段（双击进入编辑，回车保存至 UserDefaults）
+        // 文件说明：可编辑文本字段（双击进入编辑，回车保存至 Finder 注释）
         // Wave4 Task 5：说明值统一 body(11pt)，与其它详情值同档
         descriptionField.font = FFDesign.Text.sm
         descriptionField.textColor = NSColor.labelColor
@@ -614,6 +944,8 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         descriptionField.maximumNumberOfLines = 1
         descriptionField.cell?.truncatesLastVisibleLine = true
         descriptionField.cell?.wraps = false
+        // 没有说明时留一个占位，否则「文件说明」标签后一片空白像渲染坏了（R4-21）
+        descriptionField.placeholderString = "双击添加说明"
         descriptionField.translatesAutoresizingMaskIntoConstraints = false
         descriptionField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         descriptionField.delegate = self
@@ -643,7 +975,7 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         column3.isHidden = true
         column4.isHidden = true
 
-        // 信息区滚动容器：详情栏高度被限制在面板 45% 后，行数超出时纵向滚动
+        // 信息区容器：始终允许纵向滚动，所有行可达（2026-10-23 D-03）
         let infoScroll = NSScrollView()
         infoScroll.translatesAutoresizingMaskIntoConstraints = false
         infoScroll.drawsBackground = false
@@ -658,7 +990,11 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         modules.addSubview(iconSlot)
         modules.addSubview(div1)
         modules.addSubview(infoScroll)
-        infoScroll.documentView = area
+        // 信息区文档视图：翻转容器承载，短内容贴顶（2026-10-24 修复“详细信息贴底”）
+        let documentView = FFFlippedDocumentView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(area)
+        infoScroll.documentView = documentView
         columnViews = [column1, column2, column3, column4]
         for column in columnViews {
             area.addArrangedSubview(column)
@@ -693,6 +1029,28 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             multiIconView.centerXAnchor.constraint(equalTo: iconSlot.centerXAnchor),
             multiIconView.centerYAnchor.constraint(equalTo: iconSlot.centerYAnchor),
         ])
+
+        // 2026-10-23 D-04 A：图标右下角缩放手柄（拖动连续缩放）
+        iconSlotView = iconSlot
+        let resizeHandle = FFIconResizeHandle()
+        resizeHandle.translatesAutoresizingMaskIntoConstraints = false
+        iconSlot.addSubview(resizeHandle)
+        iconResizeHandle = resizeHandle
+        NSLayoutConstraint.activate([
+            resizeHandle.widthAnchor.constraint(equalToConstant: 16),
+            resizeHandle.heightAnchor.constraint(equalToConstant: 16),
+            resizeHandle.trailingAnchor.constraint(equalTo: bigIconView.trailingAnchor, constant: 4),
+            resizeHandle.bottomAnchor.constraint(equalTo: bigIconView.bottomAnchor, constant: 4),
+        ])
+        resizeHandle.onDrag = { [weak self] delta in self?.adjustIconSizeBy(delta) }
+        resizeHandle.onDragEnd = { [weak self] in self?.finishIconSizeAdjustment() }
+        resizeHandle.isHidden = true
+
+        // D-04 B：右键预设 + D-04 C：触控板捏合
+        bigIconView.menu = makeIconSizeMenu()
+        bigIconView.addGestureRecognizer(
+            NSMagnificationGestureRecognizer(target: self, action: #selector(handleMagnify(_:)))
+        )
 
         // 多选两列
         let multiColumns = NSStackView()
@@ -738,69 +1096,43 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         // fileTypeInfoContainer 常年空置——专属信息行在 mainColumn1；从堆栈摘除避免与 modules 等高约束打架。
         // 属性与 clearFileTypeSpecificInfo 保持不动
 
-        // 顶部细分隔线
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(separator)
+        // 顶部小白条：点击切换折叠/展开，拖动调高（2026-10-23 D-02；箭头按钮已移除）
+        let grip = FFDetailsGripHandle()
+        grip.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(grip)   // 在 mouseInterceptor 之后添加 → 位于其上层，事件不被拦截
+        gripHandle = grip
 
-        // chevron 按钮（最后添加，确保在最上层不被覆盖）
-        chevronButton.bezelStyle = .texturedRounded
-        chevronButton.imagePosition = .imageOnly
-        chevronButton.isBordered = false
-        chevronButton.refusesFirstResponder = true
-        chevronButton.contentTintColor = NSColor.secondaryLabelColor
-        chevronButton.target = self
-        chevronButton.action = #selector(toggleExpanded)
-        chevronButton.image = FFIcon.template(.chevronUp, size: 11)
-        chevronButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(chevronButton)
-
-        // 上边缘调高手柄：按住上下拖动调整展开高度（v0.7.6 详情栏重设计）
-        let topStrip = FFDetailsDragStrip(axis: .vertical, cursor: .resizeUpDown, showsLine: false)
-        topStrip.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(topStrip)   // 在 mouseInterceptor 之后添加 → 位于其上层，事件不被拦截
-        topEdgeStrip = topStrip
-
-        // 高度约束（由展开状态驱动）
+        // 高度约束（由三档状态驱动）
         heightConstraint = heightAnchor.constraint(equalToConstant: collapsedHeight)
         heightConstraint.priority = .required
 
-        NSLayoutConstraint.activate([
-            // 1.6 玻璃背景填满整个 bar
-            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
-            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
-            surface.topAnchor.constraint(equalTo: topAnchor),
-            surface.bottomAnchor.constraint(equalTo: bottomAnchor),
+        compactLeadingC = compactView.leadingAnchor.constraint(
+            equalTo: leadingAnchor, constant: collapsedSideInset)
+        compactTrailingC = compactView.trailingAnchor.constraint(
+            equalTo: trailingAnchor, constant: -collapsedSideInset)
+        expandedLeadingC = expandedView.leadingAnchor.constraint(
+            equalTo: leadingAnchor, constant: expandedSideInset)
+        expandedTrailingC = expandedView.trailingAnchor.constraint(
+            equalTo: trailingAnchor, constant: -expandedSideInset)
 
+        NSLayoutConstraint.activate([
             // 鼠标拦截层撑满（修复穿透：确保详情栏区域内的点击不穿到下方文件列表）
             mouseInterceptor.leadingAnchor.constraint(equalTo: leadingAnchor),
             mouseInterceptor.trailingAnchor.constraint(equalTo: trailingAnchor),
             mouseInterceptor.topAnchor.constraint(equalTo: topAnchor),
             mouseInterceptor.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // 分隔线
-            separator.topAnchor.constraint(equalTo: topAnchor),
-            separator.leadingAnchor.constraint(equalTo: leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
+            // 小白条：顶部居中，120×16 热区（胶囊 38×4 绘制在中间）
+            grip.centerXAnchor.constraint(equalTo: centerXAnchor),
+            grip.topAnchor.constraint(equalTo: topAnchor),
+            grip.widthAnchor.constraint(equalToConstant: 120),
+            grip.heightAnchor.constraint(equalToConstant: 16),
 
-            // chevron
-            chevronButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            chevronButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            chevronButton.widthAnchor.constraint(equalToConstant: 20),
-            chevronButton.heightAnchor.constraint(equalToConstant: 20),
-
-            // 上边缘热区：尾部让出箭头按钮区域
-            topStrip.topAnchor.constraint(equalTo: topAnchor),
-            topStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
-            topStrip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -chevronReserve),
-            topStrip.heightAnchor.constraint(equalToConstant: topEdgeHeight),
-
-            // compact 填充 bar 顶部区域，底部留出 statusBarHeight 给状态栏
-            compactView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            compactView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            // compact 填充整个 54pt 药丸，内容垂直居中（状态栏仅展开态显示）
+            compactLeadingC,
+            compactTrailingC,
             compactView.topAnchor.constraint(equalTo: topAnchor),
-            compactView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -statusBarHeight),
+            compactView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             // 收起态图标 32x32，垂直居中
             smallIconView.leadingAnchor.constraint(equalTo: compactView.leadingAnchor),
@@ -815,12 +1147,12 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             // 副字段：名称右侧 10px，垂直居中（单行布局，设计稿 "2.4 MB · PDF 文档"）
             compactSubField.leadingAnchor.constraint(equalTo: compactNameField.trailingAnchor, constant: 10),
             compactSubField.centerYAnchor.constraint(equalTo: compactView.centerYAnchor),
-            compactSubField.trailingAnchor.constraint(lessThanOrEqualTo: compactView.trailingAnchor, constant: -32),
+            compactSubField.trailingAnchor.constraint(lessThanOrEqualTo: compactView.trailingAnchor, constant: -8),
 
             // expanded
-            expandedView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            expandedView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            expandedView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            expandedLeadingC,
+            expandedTrailingC,
+            expandedView.topAnchor.constraint(equalTo: topAnchor, constant: topEdgeHeight),
             expandedView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -statusBarHeight),
 
             // expandedStack 填满 expandedView
@@ -846,7 +1178,7 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             div1.leadingAnchor.constraint(equalTo: iconSlot.trailingAnchor),
             div1.topAnchor.constraint(equalTo: modules.topAnchor),
             div1.bottomAnchor.constraint(equalTo: modules.bottomAnchor),
-            div1.widthAnchor.constraint(equalToConstant: 8),
+            div1.widthAnchor.constraint(equalToConstant: iconDividerWidth),
 
             // 滚动容器：分界线1 右侧到模块区右缘，与模块区同高
             infoScroll.leadingAnchor.constraint(equalTo: div1.trailingAnchor),
@@ -855,65 +1187,90 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             infoScroll.bottomAnchor.constraint(equalTo: modules.bottomAnchor),
 
             // 文档视图宽度跟随可视区；高度由列内容决定并可超出可视区（纵向滚动）
-            area.leadingAnchor.constraint(equalTo: infoScroll.contentView.leadingAnchor),
-            area.trailingAnchor.constraint(equalTo: infoScroll.contentView.trailingAnchor),
-            area.topAnchor.constraint(equalTo: infoScroll.contentView.topAnchor),
-            area.widthAnchor.constraint(equalTo: infoScroll.contentView.widthAnchor),
+            documentView.leadingAnchor.constraint(equalTo: infoScroll.contentView.leadingAnchor),
+            documentView.topAnchor.constraint(equalTo: infoScroll.contentView.topAnchor),
+            documentView.widthAnchor.constraint(equalTo: infoScroll.contentView.widthAnchor),
+            area.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            area.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            area.topAnchor.constraint(equalTo: documentView.topAnchor),
+            area.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
 
             // 各列的宽度/位置由信息区 stack（fillEqually）自动管理，此处不再单独约束
             heightConstraint,
         ])
 
-        topStrip.onDrag = { [weak self] dy in
-            self?.applyHeightDrag(deltaY: dy)
-        }
-        topStrip.onDragEnd = { [weak self] in
-            guard let self else { return }
-            // 尺寸记忆在拖拽结束时一次性落盘（终审 Minor：避免 ~60Hz 的 plist 写入），
-            // 落盘后广播——对侧栏按 UserDefaults 重读同步，必须在落盘之后（复核 Important 1）
-            UserDefaults.standard.set(self.userExpandedHeight, forKey: Self.heightKey)
-            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
-            // 拖高后内容区高度变化 → 图标边长与流动填充重排
-            updateIconEdge()
-            rearrangeFlow()
-        }
+        grip.onClick = { [weak self] in self?.handleGripClick() }
+        grip.onDrag = { [weak self] dy in self?.applyHeightDrag(deltaY: dy) }
+        grip.onDragEnd = { [weak self] in self?.finishHeightDrag() }
+        grip.valueProvider = { [weak self] in self?.heightConstraint?.constant ?? 54 }
+        grip.onIncrement = { [weak self] in self?.stepTier(up: true) }
+        grip.onDecrement = { [weak self] in self?.stepTier(up: false) }
 
-        // 内部分界线拖拽回调（图标区宽度 / 列1 宽度）
+        // 内部分界线拖拽回调（图标区宽度与图标大小联动）
         div1.onDrag = { [weak self] dx in self?.applyIconWidthDrag(deltaX: dx) }
         div1.onDragEnd = { [weak self] in
             guard let self else { return }
             // 尺寸记忆在拖拽结束时一次性落盘并广播（同上，复核 Important 1）
             UserDefaults.standard.set(self.iconWidth, forKey: Self.iconWidthKey)
+            UserDefaults.standard.set(Double(self.previewIconSize),
+                                      forKey: FFUserDefaultsKeys.detailsPreviewSize)
             NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
-            rearrangeFlow()
+            NotificationCenter.default.post(name: .detailsPreviewSizeChanged, object: self)
+            self.rearrangeFlow()
         }
         // 多选汇总行注册表（顺序即流动顺序；行由 rearrangeFlow 统一摆放）
         multiRows = [multiCountRow, multiSizeRow, multiTypesRow, multiTagsRow]
 
-        applyExpandedState(animated: false)
+        applyTier(animated: false)
         observeLayoutChanged()
         observePreviewSizeChanged()
         refresh()
     }
 
-    /// 图标边长由应用级设置驱动（48–96），不再随内容区高度放大。
+    /// 图标边长：设定值 / 列宽上限 / 当前内容高上限三者取小（D-04a）。
+    /// 自动模式下先由设定值推导目标图标区宽（图标 + 32），再按该宽度夹紧，
+    /// 避免「先用旧列宽算图标、列宽就永远长不上去」的鸡生蛋问题。
     func updateIconEdge() {
         guard bigIconWidthC != nil else { return }
-        // 图标随列宽缩放：列窄时收缩到列内，列宽时不超过用户设置的预览大小。
-        let capacity = max(FFDetailsLayoutPolicy.minimumIconSize, iconWidth - 32)
-        let edge = min(FFDetailsLayoutPolicy.clampedIconSize(previewIconSize), capacity)
+        let contentHeight = max(bounds.height - topEdgeHeight - statusBarHeight, 1)
+        let edge: CGFloat
+        if let manual = iconWidthOverride {
+            iconWidth = min(FFDetailsLayoutPolicy.maximumPreviewColumnWidth,
+                            max(FFDetailsLayoutPolicy.minimumPreviewColumnWidth, manual))
+            edge = FFDetailsLayoutPolicy.iconEdge(setting: previewIconSize,
+                                                  columnWidth: iconWidth,
+                                                  contentHeight: contentHeight)
+        } else {
+            let desiredEdge = min(
+                FFDetailsLayoutPolicy.clampedIconSize(previewIconSize),
+                max(FFDetailsLayoutPolicy.minimumIconSize,
+                    contentHeight - FFDetailsLayoutPolicy.iconVerticalPadding)
+            )
+            iconWidth = FFDetailsLayoutPolicy.iconColumnWidth(forEdge: desiredEdge)
+            edge = FFDetailsLayoutPolicy.iconEdge(setting: previewIconSize,
+                                                  columnWidth: iconWidth,
+                                                  contentHeight: contentHeight)
+        }
+        iconWidthC.constant = iconWidth
         bigIconWidthC.constant = edge
         bigIconHeightC.constant = edge
         multiIconWidthC.constant = edge
         multiIconHeightC.constant = edge
+        iconResizeHandle?.isHidden = !isExpanded
     }
 
-    /// 应用设置页的预览图标大小；预览列宽保持用户拖拽值，仅图标在该列内缩放。
-    func applyPreviewIconSize(_ size: CGFloat) {
+    /// 应用设置页 / 手柄 / 捏合的预览图标大小；默认持久化。
+    func applyPreviewIconSize(_ size: CGFloat, persist: Bool = true) {
         previewIconSize = FFDetailsLayoutPolicy.clampedIconSize(size)
+        // 图标设定值变化 → 回到自动加宽（放弃手动列宽）
+        iconWidthOverride = nil
         guard iconWidthC != nil else { return }
         updateIconEdge()
         rearrangeFlow()
+        if persist {
+            UserDefaults.standard.set(Double(previewIconSize),
+                                      forKey: FFUserDefaultsKeys.detailsPreviewSize)
+        }
     }
     // MARK: - 流动填充
 
@@ -927,19 +1284,35 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         return Array(base[0..<6]) + appendedTypeInfoRows + Array(base[6..<base.count])
     }
 
-    /// 按当前列宽测量行高（locationField 等可换行行随宽度变化），下限 16。
+    /// 行高测量台：脱离真实层级、按给定宽度独立排版。
+    /// 放在真实列里测量会读到尚未重排的父视图宽度（F-02）。
     /// AppKit 没有 UIKit 的 `systemLayoutSizeFitting(_:withHorizontalFittingPriority:
-    /// verticalFittingPriority:)`——改为把行临时全量放入列1、flush 后读取真实
-    /// frame 高度（行统一按列1 宽度测量，与纯计算核心的输入语义一致）。
-    private func measuredRowHeights(of rows: [NSView]) -> [CGFloat] {
-        for column in columnViews where column !== mainColumn1 {
-            setColumn(column, rows: [])
-        }
-        setColumn(mainColumn1, rows: rows)
-        // flush 上层 stack：列宽由 columnsStack 的 fillEqually 决定，
-        // 只 flush 列本身会拿到上一轮的宽度
-        columnsStack.layoutSubtreeIfNeeded()
-        return rows.map { max($0.frame.height, 16) }
+    /// verticalFittingPriority:)`——把行临时全量放入测量列、flush 后读取真实 frame 高度。
+    private lazy var flowMeasureRig: (host: NSView, column: NSStackView) = {
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 1, height: 1_000))
+        let column = NSStackView()
+        column.orientation = .vertical
+        column.spacing = FFDetailsFlowLayout.rowSpacing
+        column.alignment = .leading
+        column.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            column.topAnchor.constraint(equalTo: host.topAnchor),
+        ])
+        return (host, column)
+    }()
+
+    /// 在指定宽度下测量各行高度（列容器内全量替换后 flush 取值）
+    private func measuredRowHeights(of rows: [NSView], width: CGFloat) -> [CGFloat] {
+        let rig = flowMeasureRig
+        rig.host.frame.size.width = max(width, 1)
+        setColumn(rig.column, rows: rows)
+        rig.host.layoutSubtreeIfNeeded()
+        let heights = rows.map { max($0.frame.height, 16) }
+        setColumn(rig.column, rows: [])
+        return heights
     }
 
     /// 重新摆放一列的行（全量替换 arranged 行；被移除的行从父视图摘除，由注册表数组持有生命周期）
@@ -957,18 +1330,27 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         }
     }
 
-    /// 流动填充重排（D-06）：按可用高度推导列数（1–4），把行按顺序均衡分配到各列，
-    /// 装不下的行隐藏。触发点：高度/分界线拖拽、展开切换、refresh 末尾、面板尺寸变化。
-    ///
-    /// 两轮测量：列宽决定可换行行的高度，而行高又决定列数（循环依赖）。
-    /// 第一轮按最大列数（最窄列宽）测量——列越窄行越高，是保守估计；
-    /// 第二轮按第一轮得出的列数重测，取更紧凑的布局。两次足以收敛，不做循环。
+    /// 信息区可用尺寸（F-02）：由详情栏自身 bounds 与已知缩进推导。
+    /// 重排发生在本次布局遍历之内，modules / 信息区等子视图 frame 仍是上一轮
+    /// （折叠态 30pt）的旧值，而栏自身 bounds 已被约束引擎更新；
+    /// 读子视图会把每列压到一行，且布局结束后不会再触发自愈重排。
+    /// internal：布局回归测试需要同一份口径（裸容器里 clip 不会 settle 到目标高度）
+    var infoAreaSizeForFlow: CGSize {
+        let icon = iconWidthC?.constant ?? iconWidth
+        let height = max(bounds.height - topEdgeHeight - statusBarHeight, 1)
+        let width = max(bounds.width - expandedSideInset * 2 - icon - iconDividerWidth, 1)
+        return CGSize(width: width, height: height)
+    }
+
+    /// 流动填充重排（2026-10-23 D-03 / D-05）：按信息区宽度选列数（1–4），
+    /// 把**全部**行均衡分配到各列；文档视图随内容增高，信息区纵向滚动。
+    /// 触发点：高度/分界线拖拽、展开切换、refresh 末尾、面板尺寸变化。
     func rearrangeFlow() {
         // 挂载判定：已加入视图层级（含测试用普通容器承载）即可重排；
         // 不强制 window != nil——单元测试避免使用真实 NSWindow
         //（窗口簿记延迟块与测试裸释放竞态，曾致运行器 SIGSEGV）
-        guard isExpanded, window != nil || superview != nil else { return }
-        layoutSubtreeIfNeeded()
+        guard isExpanded || heightConstraint.constant > collapsedHeight + 1,
+              window != nil || superview != nil else { return }
         updateIconEdge()
         let ordered = flowOrderedRows
         guard !ordered.isEmpty else {
@@ -978,13 +1360,23 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             return
         }
 
-        let availableWidth = max(columnsStack.bounds.width, 1)
-        // 列数只看信息区宽度（<480 单列，≥480 两列）；溢出交给纵向滚动
-        let columnCount = FFDetailsLayoutPolicy.columns(forWidth: availableWidth)
-        applyColumnVisibility(count: columnCount)
+        let availableSize = infoAreaSizeForFlow
+        let columnCount = max(1, FFDetailsLayoutPolicy.scrollColumnCount(forWidth: availableSize.width))
+        let columnWidth = max(
+            80,
+            (availableSize.width - CGFloat(columnCount - 1) * FFDetailsFlowLayout.columnGap)
+                / CGFloat(columnCount)
+        )
+        // D-05 B：不限行换行，宽度按实际列宽回填（移除固定 320）
+        let valueWidth = max(80, columnWidth - 56)
+        nameField.preferredMaxLayoutWidth = valueWidth
+        locationField.preferredMaxLayoutWidth = valueWidth
 
-        let heights = measuredRowHeights(of: ordered)
-        let layout = FFDetailsFlowLayout.distribute(itemHeights: heights, columnCount: columnCount)
+        let heights = measuredRowHeights(of: ordered, width: availableSize.width)
+        // 全部行都分配进列，不再按高度截断（D-03 栏内滚动）
+        let layout = FFDetailsFlowLayout.scrollLayout(itemHeights: heights,
+                                                      availableWidth: availableSize.width)
+        applyColumnVisibility(count: max(1, layout.count))
         placeRows(ordered, layout: layout)
         lastArrangedSize = bounds.size
     }
@@ -1028,19 +1420,22 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
 
     override func layout() {
         super.layout()
-        guard isExpanded, bounds.size != lastArrangedSize, !isFlowDeferred else { return }
+        updatePillShape()
+        guard isExpanded || heightConstraint.constant > collapsedHeight + 1,
+              bounds.size != lastArrangedSize, !isFlowDeferred else { return }
         isFlowDeferred = true
         // 布局期的重排与高度重新 clamp 推迟到本次布局结束后执行（去抖合并）
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isFlowDeferred else { return }
             self.isFlowDeferred = false
             // 收起态下不应用展开高度（调度与执行之间可能已收起——复核 Minor 1）
-            guard self.isExpanded else { return }
+            guard self.isExpanded, !self.isHeightDragging else { return }
             // 窗口/面板缩小后重新 clamp 已应用高度（终审 Important 1）
-            let applied = self.appliedExpandedHeight()
+            let applied = self.appliedTierHeight()
             if self.heightConstraint.constant != applied {
                 self.heightConstraint.constant = applied
             }
+            self.updateIconEdge()
             self.rearrangeFlow()
         }
     }
@@ -1142,61 +1537,182 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             label.alignment = .left
             label.translatesAutoresizingMaskIntoConstraints = false
             addSubview(label)
-            // 状态栏位于 bar 底部独立区域，与上方详情内容不重叠
+            // 状态栏位于 bar 底部独立区域，与上方详情内容不重叠（收起态隐藏）
+            statusLeadingC = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: expandedSideInset)
+            statusTrailingC = label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -expandedSideInset)
             NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-                label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+                statusLeadingC!,
+                statusTrailingC!,
                 label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
                 label.heightAnchor.constraint(equalToConstant: statusBarHeight),
             ])
             statusLabel = label
         }
+        statusLabel?.isHidden = !isExpanded
         _ = diskFree
         statusLabel?.stringValue = "\(itemCount) 项"
     }
 
-    // MARK: - Toggle
+    // MARK: - Tier / Grip / Drag（2026-10-23 重做）
 
-    @objc private func toggleExpanded() {
-        isExpanded.toggle()
+    /// 小白条点击：折叠 ↔ 上次展开档（D-02a A）。空态不展开（沿用旧箭头禁用语义）。
+    private func handleGripClick() {
+        if !isExpanded, entry == nil, selectedCount == 0 { return }
+        let next = tierState.click()
+        persistLastExpandedTier()
+        isExpanded = (next != .collapsed)
     }
 
-    /// 上边缘拖拽：更新记忆高度并实时应用（clamp [120, 面板高度 45%，上限 260]；落盘延迟到拖拽结束）
-    private func applyHeightDrag(deltaY: CGFloat) {
-        guard isExpanded else { return }
-        let paneHeight = superview?.bounds.height ?? 0
-        let maxHeight = paneHeight > 0
-            ? FFDetailsLayoutPolicy.maxExpandedHeight(forPaneHeight: paneHeight)
-            : FFDetailsLayoutPolicy.maximumExpandedHeight
-        let newHeight = min(max(userExpandedHeight + deltaY, FFDetailsLayoutPolicy.minimumExpandedHeight), maxHeight)
-        guard newHeight != userExpandedHeight else { return }
-        userExpandedHeight = newHeight
-        heightConstraint.constant = newHeight
-        rearrangeFlow()
-        // V0.8.0：拖拽调高时实时同步列表底部留白
-        onHeightChanged?(newHeight)
-        if !isApplyingRemoteLayout {
-            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
+    private func persistLastExpandedTier() {
+        UserDefaults.standard.set(Double(tierState.lastExpanded.rawValue),
+                                  forKey: FFDetailsLayoutPolicy.lastExpandedTierKey)
+    }
+
+    /// AX / VoiceOver 调档：收起 → 上次展开档 → 大档；反向逐级收起。
+    private func stepTier(up: Bool) {
+        if tierState.tier == .collapsed, !up { return }
+        if tierState.tier == .collapsed, entry == nil, selectedCount == 0 { return }
+        switch (tierState.tier, up) {
+        case (.collapsed, true):
+            let last = tierState.lastExpanded
+            tierState = FFDetailsBarTierState(tier: last, lastExpanded: last)
+            persistLastExpandedTier()
+            isExpanded = true
+        case (.standard, true):
+            tierState = FFDetailsBarTierState(tier: .large, lastExpanded: .large)
+            persistLastExpandedTier()
+            applyTier(animated: true)
+        case (.large, false):
+            tierState = FFDetailsBarTierState(tier: .standard, lastExpanded: .standard)
+            persistLastExpandedTier()
+            applyTier(animated: true)
+        case (.standard, false):
+            tierState = FFDetailsBarTierState(tier: .collapsed, lastExpanded: .standard)
+            persistLastExpandedTier()
+            isExpanded = false
+        default:
+            break
         }
     }
 
-    /// 分界线1 拖拽：预览列宽 96–200（落盘延迟到拖拽结束）
+    /// 拉手拖动：高度 1:1 跟随，实时 clamp 到 [54, 大档]。松手才吸附（finishHeightDrag）。
+    private func applyHeightDrag(deltaY: CGFloat) {
+        if !isExpanded, entry == nil, selectedCount == 0 { return }
+        isHeightDragging = true
+        let paneHeight = superview?.bounds.height ?? 0
+        let maxHeight = FFDetailsLayoutPolicy.largeTierHeight(forPaneHeight: paneHeight)
+        let newHeight = min(max(heightConstraint.constant + deltaY,
+                                FFDetailsTier.collapsed.height),
+                            maxHeight)
+        guard abs(newHeight - heightConstraint.constant) > 0.01 else { return }
+        heightConstraint.constant = newHeight
+        // 拖动过程实时布局，否则 bounds 仍是旧高度，图标/列数会按旧尺寸计算
+        superview?.layoutSubtreeIfNeeded()
+        let expanded = newHeight > FFDetailsTier.collapsed.height + 1
+        compactView.isHidden = expanded
+        expandedView.isHidden = !expanded
+        iconResizeHandle?.isHidden = !expanded
+        updateIconEdge()
+        rearrangeFlow()
+        onHeightChanged?(newHeight)
+    }
+
+    /// 松手：按中点吸附（D-08 A），落盘并广播左右栏同步。
+    private func finishHeightDrag() {
+        isHeightDragging = false
+        let paneHeight = superview?.bounds.height ?? 0
+        let snapped = tierState.snap(to: heightConstraint.constant, paneHeight: paneHeight)
+        persistLastExpandedTier()
+        let wasExpanded = isExpanded
+        isExpanded = (snapped != .collapsed)
+        if wasExpanded == isExpanded {
+            applyTier(animated: true)
+        }
+        NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
+    }
+
+    /// 分界线拖拽：图标区宽 96–232，并与图标设定值联动（拖宽 = 放大）。
     private func applyIconWidthDrag(deltaX: CGFloat) {
         guard isExpanded else { return }
         let modulesWidth = contentModules?.bounds.width ?? 0
         let upper = min(FFDetailsLayoutPolicy.maximumPreviewColumnWidth,
-                        max(FFDetailsLayoutPolicy.minimumPreviewColumnWidth, modulesWidth - 240))
+                        max(FFDetailsLayoutPolicy.minimumPreviewColumnWidth, modulesWidth - 200))
         let newWidth = min(max(iconWidth + deltaX,
                                FFDetailsLayoutPolicy.minimumPreviewColumnWidth),
                            upper)
         guard newWidth != iconWidth else { return }
+        iconWidthOverride = newWidth
         iconWidth = newWidth
-        iconWidthC.constant = newWidth
+        previewIconSize = FFDetailsLayoutPolicy.clampedIconSize(newWidth - 32)
         updateIconEdge()
         rearrangeFlow()
-        if !isApplyingRemoteLayout {
-            NotificationCenter.default.post(name: .FFDetailsBarLayoutChanged, object: self)
+    }
+
+    /// 图标手柄 / 捏合：按当前档位可用高度封顶。
+    private func adjustIconSizeBy(_ delta: CGFloat) {
+        let contentHeight = max(bounds.height - topEdgeHeight - statusBarHeight, 1)
+        let maxEdge = max(FFDetailsLayoutPolicy.minimumIconSize,
+                          min(FFDetailsLayoutPolicy.maximumIconSize,
+                              contentHeight - FFDetailsLayoutPolicy.iconVerticalPadding))
+        let next = min(max(previewIconSize + delta, FFDetailsLayoutPolicy.minimumIconSize), maxEdge)
+        guard abs(next - previewIconSize) >= 0.5 else { return }
+        previewIconSize = next
+        updateIconEdge()
+        rearrangeFlow()
+    }
+
+    private func finishIconSizeAdjustment() {
+        UserDefaults.standard.set(Double(previewIconSize),
+                                  forKey: FFUserDefaultsKeys.detailsPreviewSize)
+        NotificationCenter.default.post(name: .detailsPreviewSizeChanged, object: self)
+    }
+
+    @objc private func handleMagnify(_ recognizer: NSMagnificationGestureRecognizer) {
+        let contentHeight = max(bounds.height - topEdgeHeight - statusBarHeight, 1)
+        let maxEdge = max(FFDetailsLayoutPolicy.minimumIconSize,
+                          min(FFDetailsLayoutPolicy.maximumIconSize,
+                              contentHeight - FFDetailsLayoutPolicy.iconVerticalPadding))
+        switch recognizer.state {
+        case .began:
+            magnifyStartSize = previewIconSize
+        case .changed:
+            let start = magnifyStartSize ?? previewIconSize
+            let next = min(max(start * (1 + recognizer.magnification),
+                               FFDetailsLayoutPolicy.minimumIconSize), maxEdge)
+            previewIconSize = next
+            updateIconEdge()
+            rearrangeFlow()
+        case .ended, .cancelled:
+            magnifyStartSize = nil
+            finishIconSizeAdjustment()
+        default:
+            break
         }
+    }
+
+    private func makeIconSizeMenu() -> NSMenu {
+        let menu = NSMenu()
+        let options: [(String, CGFloat)] = [
+            ("默认（64pt）", 64),
+            ("小（48pt）", 48),
+            ("中（96pt）", 96),
+            ("大（200pt）", 200),
+        ]
+        for (title, size) in options {
+            let item = NSMenuItem(title: title,
+                                  action: #selector(iconSizeMenuSelected(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = Double(size)
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func iconSizeMenuSelected(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Double else { return }
+        applyPreviewIconSize(CGFloat(value))
+        NotificationCenter.default.post(name: .detailsPreviewSizeChanged, object: self)
     }
 
     /// 监听另一侧详情栏的布局变更（拖左栏右栏同步）
@@ -1215,7 +1731,8 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
     }
 
     @objc private func previewSizeChangedRemotely(_ note: Notification) {
-        applyPreviewIconSize(FFDetailsLayoutPolicy.storedIconSize())
+        if let sender = note.object as? ExpandableDetailsBar, sender === self { return }
+        applyPreviewIconSize(FFDetailsLayoutPolicy.storedIconSize(), persist: false)
     }
 
     @objc private func layoutChangedRemotely(_ note: Notification) {
@@ -1223,43 +1740,66 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         guard (note.object as? ExpandableDetailsBar) !== self else { return }
         isApplyingRemoteLayout = true
         defer { isApplyingRemoteLayout = false }
-        userExpandedHeight = (UserDefaults.standard.object(forKey: Self.heightKey) as? CGFloat) ?? userExpandedHeight
-        if isExpanded {
-            // 恢复/同步路径同样 clamp（终审 Important 1：大屏记忆值在小面板上重新收敛）
-            heightConstraint.constant = appliedExpandedHeight()
-            // Task 3：图标区宽度记忆值同步（另一栏拖分界线后本栏应用同样宽度）。
-            // 信息区列宽不再记忆（D-05：列宽等分，列数按高度推导）
-            iconWidth = (UserDefaults.standard.object(forKey: Self.iconWidthKey) as? CGFloat) ?? iconWidth
-            iconWidthC.constant = iconWidth
-            updateIconEdge()
-            rearrangeFlow()
+        let last = FFDetailsLayoutPolicy.storedLastExpandedTier()
+        tierState = FFDetailsBarTierState(tier: isExpanded ? last : .collapsed,
+                                          lastExpanded: last)
+        previewIconSize = FFDetailsLayoutPolicy.storedIconSize()
+        let storedWidth = FFDetailsLayoutPolicy.storedPreviewColumnWidth()
+        iconWidth = storedWidth
+        iconWidthOverride = abs(storedWidth - FFDetailsLayoutPolicy.defaultPreviewColumnWidth) > 0.5
+            ? storedWidth : nil
+        applyTier(animated: false)
+        updateIconEdge()
+        rearrangeFlow()
+    }
+
+    /// 当前档位对应的实际高度（大档按面板高 45% 收敛）。
+    private func appliedTierHeight() -> CGFloat {
+        let paneHeight = superview?.bounds.height ?? 0
+        switch tierState.tier {
+        case .collapsed:
+            return FFDetailsTier.collapsed.height
+        case .standard:
+            return FFDetailsTier.standard.height
+        case .large:
+            return FFDetailsLayoutPolicy.largeTierHeight(forPaneHeight: paneHeight)
         }
     }
 
-    /// 应用展开高度（统一 clamp 出口）：记忆值仅在拖拽路径产生时已 clamp，
-    /// 恢复/同步/窗口缩小路径必须再次 clamp，防止大屏记忆值在小面板上盖满文件列表
-    /// （终审 Important 1：栏过高时上边缘手柄与箭头会被推出窗口，无法从窗口内救回）。
-    private func appliedExpandedHeight() -> CGFloat {
-        let paneHeight = superview?.bounds.height ?? 0
-        let maxHeight = paneHeight > 0
-            ? FFDetailsLayoutPolicy.maxExpandedHeight(forPaneHeight: paneHeight)
-            : FFDetailsLayoutPolicy.maximumExpandedHeight
-        return min(max(userExpandedHeight, FFDetailsLayoutPolicy.minimumExpandedHeight), maxHeight)
+    /// 收起态是药丸（圆角 = 高度/2 = 27）；展开态是卡片（12pt 圆角），
+    /// 不能把药丸半径套到展开卡片上，否则内容会被半圆端裁掉。
+    private func updatePillShape() {
+        let radius = isExpanded ? FFVisualTokens.Radius.details : collapsedHeight / 2
+        guard abs((layer?.cornerRadius ?? 0) - radius) > 0.01 else { return }
+        layer?.cornerRadius = radius
+        glassBackgroundView?.layer?.cornerRadius = radius
+        glassBorderView?.layer?.cornerRadius = radius
+        if #available(macOS 26.0, *), let glass = glassSurfaceView as? NSGlassEffectView {
+            glass.cornerRadius = radius
+        }
     }
 
-    private func applyExpandedState(animated: Bool) {
-        let newHeight = isExpanded ? appliedExpandedHeight() : collapsedHeight
-        heightConstraint.constant = newHeight
-        topEdgeStrip?.isHidden = !isExpanded
-        // 内部分界线仅展开态可见（收起态无内容模块区）
-        dividerIconToCol1?.isHidden = !isExpanded
-        compactView.isHidden = isExpanded
-        expandedView.isHidden = !isExpanded
+    /// 应用当前档位：高度、压缩/展开视图、拉手、动画与底部留白回调。
+    private func applyTier(animated: Bool) {
+        let height = appliedTierHeight()
+        heightConstraint.constant = height
+        let expanded = tierState.tier != .collapsed
+        compactView.isHidden = expanded
+        expandedView.isHidden = !expanded
+        dividerIconToCol1?.isHidden = !expanded
+        gripHandle?.isHidden = false
+        iconResizeHandle?.isHidden = !expanded
+        statusLabel?.isHidden = !expanded
 
-        let chevron: FFIconName = isExpanded ? .chevronDown : .chevronUp
-        chevronButton.image = FFIcon.template(chevron, size: 11)
+        let inset: CGFloat = tierState.tier == .large ? 52 : 30
+        expandedSideInset = inset
+        expandedLeadingC?.constant = inset
+        expandedTrailingC?.constant = -inset
+        statusLeadingC?.constant = inset
+        statusTrailingC?.constant = -inset
+        updatePillShape()
 
-        if isExpanded {
+        if expanded {
             loadThumbnail()
             if let entry { updateFileTypeSpecificInfo(entry: entry) }
         } else {
@@ -1268,22 +1808,25 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
 
         let performLayout = { [weak self] in
             self?.window?.layoutIfNeeded()
+            self?.updateIconEdge()
             self?.rearrangeFlow()
             self?.lastArrangedSize = self?.bounds.size ?? .zero
         }
-        if animated {
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if animated, !reduceMotion {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = FFMotion.animationDuration(0.25)
+                // 弹性档位切换：0.36s，末段轻微过冲，收起/展开同一节奏。
+                context.duration = 0.36
                 context.allowsImplicitAnimation = true
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1.18, 0.36, 1.0)
                 performLayout()
             }
         } else {
             performLayout()
         }
 
-        // V0.8.0：通知外部同步列表底部留白（收起/展开都会改变遮挡高度）
-        onHeightChanged?(newHeight)
+        // 通知外部同步列表底部留白（收起/展开/吸附都会改变遮挡高度）
+        onHeightChanged?(height)
     }
 
     // MARK: - 路径交互（Phase 4：点击/右键均复制）
@@ -1351,7 +1894,6 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             if isExpanded {
                 isExpanded = false
             }
-            chevronButton.isEnabled = false
             return
         }
 
@@ -1368,7 +1910,6 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             multiIconView.update(with: Array(selectedFiles.prefix(4)))
             populateMultiSelectSummary()
             rearrangeFlow()
-            chevronButton.isEnabled = true
             return
         }
 
@@ -1377,19 +1918,25 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         bigIconView.isHidden = false
         multiIconView.isHidden = true
         multiRows.forEach { $0.removeFromSuperview() }
-        chevronButton.isEnabled = true
 
         nameField.stringValue = entry.name
         typeField.stringValue = entry.kindDescription
-        sizeField.stringValue = entry.formattedSize
+        if entry.isDirectory {
+            // 目录没有现成字节数：先占位，异步递归汇总完成后回填（R4-21，
+            // 此前固定显示 `--`，看起来像数据缺失）
+            sizeField.stringValue = "计算中…"
+            calculateFolderSizeAsync(path: entry.path)
+        } else {
+            sizeField.stringValue = entry.formattedSize
+        }
         locationField.stringValue = entry.path
         locationField.toolTip = entry.path
         createdField.stringValue = entry.formattedCreationDate
         modifiedField.stringValue = entry.formattedModificationDate
         // bigIconView 已在上方 setRealFileIcon 中同步设置真实文件图标
 
-        // 文件说明（从 UserDefaults 读取，双击可编辑）
-        descriptionField.stringValue = getFileDescription(path: entry.path)
+        // 文件说明（从 Finder 注释读取，双击可编辑）
+        applyDescription(getFileDescription(path: entry.path))
 
         // 只读缓存，不在渲染路径做 xattr I/O。
         updateTags(path: entry.path, tags: TagBridge.shared.cachedTags(path: entry.path))
@@ -1718,28 +2265,73 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         NotificationCenter.default.post(name: NSNotification.Name("FileTagsDidChange"), object: nil, userInfo: ["tags": tags])
     }
 
-    // MARK: - 文件说明（UserDefaults 存储）
+    // MARK: - 文件说明（Finder 注释）
 
-    /// 从 UserDefaults 读取文件说明（以文件路径为 key）
-    private func getFileDescription(path: String) -> String {
-        let dict = UserDefaults.standard.dictionary(forKey: "fileDescriptions") ?? [:]
-        return dict[path] as? String ?? ""
+    /// 无说明时显示的占位文案。
+    /// 标签态的 NSTextField 不绘制 placeholderString，只设占位串实测仍是空白，
+    /// 所以占位要真的写进 stringValue，并用提示色区分（R4-21）。
+    static let emptyDescriptionHint = "双击添加说明"
+    private var descriptionShowingHint = false
+
+    /// 按「有无说明」渲染说明字段：空 → 提示文案 + 占位色；非空 → 正文色。
+    private func applyDescription(_ raw: String) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        descriptionShowingHint = text.isEmpty
+        descriptionField.stringValue = text.isEmpty ? Self.emptyDescriptionHint : text
+        descriptionField.textColor = text.isEmpty
+            ? NSColor.placeholderTextColor
+            : NSColor.labelColor
     }
 
-    /// 保存文件说明到 UserDefaults
+    /// 读取文件说明：Finder 注释优先，旧 UserDefaults 数据作为迁移回退。
+    private func getFileDescription(path: String) -> String {
+        if let comment = FFFinderCommentStore.read(path: path) {
+            return comment
+        }
+        return FFFinderCommentStore.legacyDescription(path: path) ?? ""
+    }
+
+    /// 保存文件说明到 Finder 注释；失败时保留旧本地数据并提示。
     private func setFileDescription(path: String, description: String) {
-        var dict = UserDefaults.standard.dictionary(forKey: "fileDescriptions") ?? [:]
-        dict[path] = description
-        UserDefaults.standard.set(dict, forKey: "fileDescriptions")
+        let savedToFinder = FFFinderCommentStore.write(path: path, comment: description)
+        FFFinderCommentCache.shared.setComment(description, for: path)
+
+        if savedToFinder {
+            FFFinderCommentStore.removeLegacyDescription(path: path)
+        } else {
+            // 只读卷/网络卷失败：保住用户输入，详情栏仍能从旧字典回退读取。
+            var dict = UserDefaults.standard.dictionary(forKey: FFFinderCommentStore.legacyDefaultsKey) ?? [:]
+            dict[path] = description
+            UserDefaults.standard.set(dict, forKey: FFFinderCommentStore.legacyDefaultsKey)
+            presentDescriptionWriteError()
+        }
+
+        // 只刷新注释缓存/当前表格，不触发目录重读。
+        NotificationCenter.default.post(name: .fileListContentChanged, object: nil)
+    }
+
+    private func presentDescriptionWriteError() {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "无法写入 Finder 说明"
+        alert.informativeText = "目标可能位于只读卷、网络卷或没有写入权限。本次说明只保存在 FlowFinder 本地。"
+        alert.addButton(withTitle: "好")
+        alert.beginSheetModal(for: window)
     }
 
     /// 双击文件说明文本字段，进入编辑模式
     @objc private func beginEditingDescription() {
         guard entry != nil else { return }
+        if descriptionShowingHint {
+            // 占位文案是显示用的假内容，编辑前必须清空
+            descriptionShowingHint = false
+            descriptionField.stringValue = ""
+        }
         descriptionField.isEditable = true
         descriptionField.isBezeled = true
         descriptionField.drawsBackground = true
         descriptionField.backgroundColor = NSColor.textBackgroundColor
+        descriptionField.textColor = NSColor.labelColor
         window?.makeFirstResponder(descriptionField)
         descriptionField.selectText(nil)
     }
@@ -1790,7 +2382,7 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
     /// 点击标签行编辑按钮：弹出下拉菜单（与右键菜单标签子菜单同款样式）。
     /// - 顶部：列出所有标签（彩色圆点 + 名称，当前文件已有的打勾 ✓）
     /// - 分隔线
-    /// - "新建标签..."（统一走 FFCreateTagDialog）
+    /// - "新建标签…"（统一走 FFCreateTagDialog）
     @objc private func editTagsClicked() {
         guard let entry, let window else { return }
         let current = TagBridge.shared.getTags(path: entry.path)
@@ -1819,7 +2411,7 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
     private func updateFileTypeSpecificInfo(entry: FileEntry) {
         // 移除上一次的专属信息行。防护：行可能已被流动填充摆到列2或暂时摘除
         // （removeArrangedSubview 对未附着行会抛 NSInternalInconsistencyException，
-        // 与 appendFolderSizeRow 的 contains 防护同一模式——审查修复：注册表不再被流动逻辑改动）
+        // 故只从确实在列上的行摘除——审查修复：注册表不再被流动逻辑改动）
         for row in appendedTypeInfoRows {
             if row.superview === mainColumn1 {
                 mainColumn1?.removeArrangedSubview(row)
@@ -1827,8 +2419,6 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
             row.removeFromSuperview()
         }
         appendedTypeInfoRows.removeAll()
-        // 同步清空总大小行引用（避免异步回调 appendFolderSizeRow 重复移除已清除的视图崩溃）
-        folderSizeRow = nil
         cancelMetadataRequest()
 
         // 收起态不读媒体；展开后由 applyExpandedState 触发。
@@ -2053,8 +2643,10 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
         return result
     }
 
-    /// 异步计算文件夹总大小，完成后把"总大小"专属信息行追加到主信息列（mainColumn1）
+    /// 异步汇总目录大小，完成后回填「大小」行（R4-21）。
+    /// 竞态防护：只有当前仍选中同一路径才写入，避免快速切换选中项时旧结果覆盖新行。
     private func calculateFolderSizeAsync(path: String) {
+        FFDebug.log("[DETAILS-DIAG] calculateFolderSizeAsync: 启动 path=\(path), entry.path=\(self.entry?.path ?? "nil")")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fm = FileManager.default
             let url = URL(fileURLWithPath: path)
@@ -2062,48 +2654,40 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
                 at: url,
                 includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
                 options: []
-            ) else { return }
+            ) else {
+                FFDebug.log("[DETAILS-DIAG] calculateFolderSizeAsync: enumerator 创建失败 path=\(path)")
+                return
+            }
 
             var total: Int64 = 0
+            var fileCount = 0
             for case let fileURL as URL in enumerator {
                 guard let values = try? fileURL.resourceValues(
                     forKeys: [.fileSizeKey, .isRegularFileKey]
                 ) else { continue }
                 if values.isRegularFile == true, let size = values.fileSize {
                     total += Int64(size)
+                    fileCount += 1
                 }
             }
 
             let sizeString = FFFormat.fileSize(UInt64(total))
+            FFDebug.log("[DETAILS-DIAG] calculateFolderSizeAsync: 计算完成 path=\(path), files=\(fileCount), total=\(total), formatted=\(sizeString)")
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.entry?.path == path else { return }
-                self.appendFolderSizeRow(sizeString)
+                guard let self = self else {
+                    FFDebug.log("[DETAILS-DIAG] calculateFolderSizeAsync: self 已释放，丢弃结果 path=\(path)")
+                    return
+                }
+                guard self.entry?.path == path else {
+                    FFDebug.log("[DETAILS-DIAG] calculateFolderSizeAsync: 路径不匹配，丢弃结果 expected=\(path), current=\(self.entry?.path ?? "nil")")
+                    return
+                }
+                FFDebug.log("[DETAILS-DIAG] calculateFolderSizeAsync: 回填 sizeField=\(sizeString)")
+                self.sizeField.stringValue = sizeString
+                // 异步回填不打断流动顺序（审查 Minor：回填后重排归位）
+                self.rearrangeFlow()
             }
         }
-    }
-
-    /// 在文件类型专属信息区追加"总大小"行（合并到主信息列，问题 7 结构）
-    /// 去重：异步计算可能重复回调（同路径多次选中/竞态），追加前先移除已有的"总大小"行，
-    /// 避免多个"总大小"堆积把"修改日期"挤出可视区（问题：文件夹详情多个总大小）。
-    /// 崩溃防护：updateFileTypeSpecificInfo 清除时可能已把旧行移出 stack——此时
-    /// removeArrangedSubview 对不在 stack 的视图触发 NSStackView 断言崩溃（SIGABRT），
-    /// 故移除前先检查 old 是否仍在 arrangedSubviews 中。
-    private var folderSizeRow: NSView?
-    private func appendFolderSizeRow(_ sizeString: String) {
-        if let old = folderSizeRow {
-            if mainColumn1?.arrangedSubviews.contains(old) == true {
-                mainColumn1?.removeArrangedSubview(old)
-                old.removeFromSuperview()
-            }
-            appendedTypeInfoRows.removeAll { $0 === old }
-            folderSizeRow = nil
-        }
-        let row = makeInfoRow(label: makeLabel("总大小"), value: makeValueField(sizeString))
-        mainColumn1?.addArrangedSubview(row)
-        appendedTypeInfoRows.append(row)
-        folderSizeRow = row
-        // 异步回填不打断流动顺序（审查 Minor：回填后重排归位）
-        rearrangeFlow()
     }
 
     // MARK: - 工具方法
@@ -2155,7 +2739,7 @@ class ExpandableDetailsBar: NSView, FFRegionAware {
 
 extension ExpandableDetailsBar: NSTextFieldDelegate {
 
-    /// 文件说明编辑结束（焦点离开或按回车）：保存到 UserDefaults 并退出编辑模式
+    /// 文件说明编辑结束（焦点离开或按回车）：保存到 Finder 注释并退出编辑模式
     func control(_ control: NSControl,
                  textView: NSTextView,
                  doCommandBy commandSelector: Selector) -> Bool {
@@ -2187,5 +2771,6 @@ extension ExpandableDetailsBar: NSTextFieldDelegate {
         field.isEditable = false
         field.isBezeled = false
         field.drawsBackground = false
+        applyDescription(field.stringValue)
     }
 }

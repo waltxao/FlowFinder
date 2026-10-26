@@ -48,6 +48,17 @@ enum FFSearchPolicy {
     static let maxResults = 500
 }
 
+/// J2-07 搜索范围。
+enum FFSearchScope: String, CaseIterable, Equatable {
+    case current = "本栏"
+    case recursive = "含子目录"
+    case bothPanes = "双栏"
+
+    var title: String { rawValue }
+    var searchesSubdirectories: Bool { self == .recursive }
+    var searchesBothPanes: Bool { self == .bothPanes }
+}
+
 // MARK: - PaneState
 
 struct PaneState: Equatable {
@@ -59,6 +70,7 @@ struct PaneState: Equatable {
     var isLoading: Bool = false
     var error: String?
     var searchQuery: String = ""
+    var searchScope: FFSearchScope = .current
     var sortField: SortField = .name
     var sortAscending: Bool = true
     var viewMode: ViewMode = .list
@@ -138,6 +150,8 @@ public class PaneViewModel: ObservableObject {
     private var loadGeneration: Int = 0
     /// 搜索双击定位：加载完成后自动选中的目标路径。
     private var pendingSelectionPath: String?
+    /// 一次性钩子：本轮加载完成（选中项已落地、视图已 reload）后执行一次（R4-18 新建文件夹）。
+    private var afterLoadReady: (() -> Void)?
     /// 刷新同目录时按设置保留的选中路径（批次 1 B1-02）。
     private var pendingRestoredSelectionPaths: [String]?
     /// 任务 T10: 删除/撤销/重做文件系统操作代次。
@@ -164,9 +178,18 @@ public class PaneViewModel: ObservableObject {
             state.searchQuery = ""
             state.tagFilter = nil  // 任务 F11-8: 导航时清除标签筛选（与 searchQuery 一致）
             state.error = nil
-            if let itemPath,
-               let entry = state.files.first(where: { $0.path == itemPath }) {
-                state.selectedFiles = [entry]
+            if let itemPath {
+                if let entry = state.files.first(where: { $0.path == itemPath }) {
+                    state.selectedFiles = [entry]
+                } else {
+                    // 目标不在当前列表里（列表还没到、或对象是列表之后才出现的）：
+                    // 先失效目录缓存再重读，落地后选中。此前直接清空选择，
+                    // 「定位到该任务对象」点了等于没点（R4-24）。
+                    pendingSelectionPath = itemPath
+                    state.selectedFiles.removeAll()
+                    try? CoreBridge.shared.invalidateCache(path: state.path)
+                    loadDirectory()
+                }
             } else {
                 state.selectedFiles.removeAll()
             }
@@ -433,22 +456,35 @@ public class PaneViewModel: ObservableObject {
         state.searchQuery = query
         // 任务 F10-10: 始终走 applyFilter（基于 allFiles），避免搜索清空时重新读盘（修复问题11辅助）
         // applyFilter 在 query 为空时恢复 allFiles，非空时从 allFiles 过滤
-        // 任务 F11-8: 非空查询触发子目录递归搜索（异步），先回退到当前目录过滤避免界面空白
+        // J2-07：只有「含子目录」才调度递归；本栏/双栏只过滤当前目录。
         if query.isEmpty {
             searchDebounceWorkItem?.cancel()
             searchDebounceWorkItem = nil
             applyFilter()
         } else {
-            // 先用当前目录直接子项过滤（即时反馈，避免界面空白）
             applyFilter()
-            // 300ms 防抖后再异步递归搜索子目录，避免快速输入触发并发搜索
             searchDebounceWorkItem?.cancel()
+            searchDebounceWorkItem = nil
+            guard state.searchScope.searchesSubdirectories else { return }
             let workItem = DispatchWorkItem { [weak self] in
                 self?.performRecursiveSearch(query: query)
             }
             searchDebounceWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
         }
+    }
+
+    /// J2-07：切换搜索范围后立即重算当前过滤；离开「含子目录」会取消挂起的递归任务。
+    func setSearchScope(_ scope: FFSearchScope) {
+        guard state.searchScope != scope else { return }
+        state.searchScope = scope
+        searchDebounceWorkItem?.cancel()
+        searchDebounceWorkItem = nil
+        guard !state.searchQuery.isEmpty else {
+            applyFilter()
+            return
+        }
+        setSearchQuery(state.searchQuery)
     }
 
     /// 任务 F11-8: 设置标签筛选（点击侧边栏标签触发）。
@@ -698,6 +734,191 @@ public class PaneViewModel: ObservableObject {
         }
     }
 
+    // MARK: - J3-10 批量整理（预览后执行 + 整批一次撤销/重做）
+
+    private var organizeOperationGeneration = 0
+
+    /// 执行整理计划：后台逐项移动（永不覆盖已存在目标），完成后注册整批一次撤销。
+    func performOrganize(plan: FFOrganizePlan, directory: String) {
+        let moves = plan.moves
+        let actionName = "批量整理"
+        let generation = { self.organizeOperationGeneration += 1; return self.organizeOperationGeneration }()
+        state.isDeleting = true
+        state.error = nil
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var movedPairs: [(source: String, target: String)] = []
+            var failedPaths: [String] = []
+            for move in moves {
+                do {
+                    try FileManager.default.createDirectory(atPath: move.targetDirectory,
+                                                            withIntermediateDirectories: true)
+                    try FileManager.default.moveItem(atPath: move.sourcePath, toPath: move.targetPath)
+                    movedPairs.append((move.sourcePath, move.targetPath))
+                } catch {
+                    failedPaths.append(move.sourcePath)
+                }
+            }
+            DispatchQueue.main.async {
+                guard self.organizeOperationGeneration == generation else { return }
+                self.finishOrganize(movedPairs: movedPairs, failedPaths: failedPaths,
+                                    directory: directory, actionName: actionName)
+            }
+        }
+    }
+
+    private func finishOrganize(movedPairs: [(source: String, target: String)],
+                                failedPaths: [String],
+                                directory: String,
+                                actionName: String) {
+        state.isDeleting = false
+
+        var dirs = Set<String>([directory])
+        for pair in movedPairs {
+            dirs.insert((pair.target as NSString).deletingLastPathComponent)
+        }
+        for dir in dirs {
+            try? CoreBridge.shared.invalidateCache(path: dir)
+        }
+
+        let movedSources = Set(movedPairs.map { $0.source })
+        state.selectedFiles.removeAll { movedSources.contains($0.path) }
+
+        if !failedPaths.isEmpty {
+            state.error = "\(failedPaths.count) 个项目整理失败：\(failedPaths.joined(separator: ", "))"
+        }
+
+        if !movedPairs.isEmpty {
+            registerUndoOrganize(movedPairs: movedPairs, directory: directory, actionName: actionName)
+        }
+
+        if state.path == directory {
+            loadDirectory()
+        }
+        NotificationCenter.default.post(
+            name: .paneFileOperationChanged,
+            object: nil,
+            userInfo: [
+                "path": state.path,
+                "movedCount": movedPairs.count,
+                "failedPaths": failedPaths,
+            ]
+        )
+    }
+
+    /// 注册整批撤销（主线程调用）。undoOrganize 内会同步注册 redo，形成闭环。
+    private func registerUndoOrganize(movedPairs: [(source: String, target: String)],
+                                      directory: String,
+                                      actionName: String) {
+        undoManager?.registerUndo(withTarget: self) { vm in
+            vm.undoOrganize(movedPairs: movedPairs, directory: directory, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+    }
+
+    /// 撤销整理：全部文件移回原位置，并同步注册 redo（registerUndo 在撤销会话内路由到 redo 栈）。
+    func undoOrganize(movedPairs: [(source: String, target: String)],
+                      directory: String,
+                      actionName: String) {
+        undoManager?.registerUndo(withTarget: self) { vm in
+            vm.redoOrganize(movedPairs: movedPairs, directory: directory, actionName: actionName)
+        }
+
+        let generation = { self.organizeOperationGeneration += 1; return self.organizeOperationGeneration }()
+        state.isDeleting = true
+        state.error = nil
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var failedPaths: [String] = []
+            for pair in movedPairs {
+                do {
+                    try FileManager.default.moveItem(atPath: pair.target, toPath: pair.source)
+                } catch {
+                    failedPaths.append(pair.source)
+                }
+            }
+            DispatchQueue.main.async {
+                guard self.organizeOperationGeneration == generation else { return }
+                self.state.isDeleting = false
+                var dirs = Set<String>([directory])
+                for pair in movedPairs {
+                    dirs.insert((pair.target as NSString).deletingLastPathComponent)
+                }
+                for dir in dirs {
+                    try? CoreBridge.shared.invalidateCache(path: dir)
+                }
+                if !failedPaths.isEmpty {
+                    self.state.error = "\(failedPaths.count) 个项目无法撤销（目标被占用）"
+                }
+                if self.state.path == directory {
+                    self.loadDirectory()
+                }
+                NotificationCenter.default.post(
+                    name: .paneFileOperationChanged,
+                    object: nil,
+                    userInfo: [
+                        "path": self.state.path,
+                        "restoredCount": movedPairs.count - failedPaths.count,
+                        "failedPaths": failedPaths,
+                    ]
+                )
+            }
+        }
+    }
+
+    /// 重做整理：重新执行移动（处理器内注册反向 undo，形成无限撤销/重做闭环）。
+    func redoOrganize(movedPairs: [(source: String, target: String)],
+                      directory: String,
+                      actionName: String) {
+        undoManager?.registerUndo(withTarget: self) { vm in
+            vm.undoOrganize(movedPairs: movedPairs, directory: directory, actionName: actionName)
+        }
+
+        let generation = { self.organizeOperationGeneration += 1; return self.organizeOperationGeneration }()
+        state.isDeleting = true
+        state.error = nil
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var failedPaths: [String] = []
+            for pair in movedPairs {
+                do {
+                    try FileManager.default.moveItem(atPath: pair.source, toPath: pair.target)
+                } catch {
+                    failedPaths.append(pair.source)
+                }
+            }
+            DispatchQueue.main.async {
+                guard self.organizeOperationGeneration == generation else { return }
+                self.state.isDeleting = false
+                var dirs = Set<String>([directory])
+                for pair in movedPairs {
+                    dirs.insert((pair.target as NSString).deletingLastPathComponent)
+                }
+                for dir in dirs {
+                    try? CoreBridge.shared.invalidateCache(path: dir)
+                }
+                if !failedPaths.isEmpty {
+                    self.state.error = "\(failedPaths.count) 个项目无法重做"
+                }
+                if self.state.path == directory {
+                    self.loadDirectory()
+                }
+                NotificationCenter.default.post(
+                    name: .paneFileOperationChanged,
+                    object: nil,
+                    userInfo: [
+                        "path": self.state.path,
+                        "movedCount": movedPairs.count - failedPaths.count,
+                        "failedPaths": failedPaths,
+                    ]
+                )
+            }
+        }
+    }
+
     func renameFile(_ oldPath: String, to newName: String) {
         let dir = (oldPath as NSString).deletingLastPathComponent
         let newPath = (dir as NSString).appendingPathComponent(newName)
@@ -705,6 +926,12 @@ public class PaneViewModel: ObservableObject {
         // 安全检查：newName 不应包含路径分隔符（否则会跨目录移动文件导致"消失"）
         if newName.contains("/") {
             state.error = "文件名不能包含 \"/\""
+            return
+        }
+        if newPath != oldPath,
+           FileManager.default.fileExists(atPath: newPath),
+           !isSameFile(oldPath, newPath) {
+            state.error = "已存在同名文件，请换一个名称"
             return
         }
         do {
@@ -751,17 +978,52 @@ public class PaneViewModel: ObservableObject {
         }
     }
 
-    func createDirectory() {
-        let newDirName = "未命名文件夹"
-        let newDirPath = (state.path as NSString).appendingPathComponent(newDirName)
+    private func isSameFile(_ firstPath: String, _ secondPath: String) -> Bool {
+        let first = URL(fileURLWithPath: firstPath)
+        let second = URL(fileURLWithPath: secondPath)
+        guard let firstValues = try? first.resourceValues(forKeys: [.fileResourceIdentifierKey]),
+              let secondValues = try? second.resourceValues(forKeys: [.fileResourceIdentifierKey]),
+              let firstID = firstValues.fileResourceIdentifier,
+              let secondID = secondValues.fileResourceIdentifier else {
+            return false
+        }
+        return (firstID as AnyObject).isEqual(secondID)
+    }
+
+    /// 目录内不重名的「未命名文件夹」：已存在时依次追加序号（R4-18）。
+    /// 此前写死同名，第二次新建会撞车。
+    static func untitledFolderName(in directory: String) -> String {
+        let base = FFNaming.untitledFolderBase
+        let fm = FileManager.default
+        var candidate = base
+        var counter = 2
+        while fm.fileExists(atPath: (directory as NSString).appendingPathComponent(candidate)) {
+            candidate = "\(base) \(counter)"
+            counter += 1
+        }
+        return candidate
+    }
+
+    /// ⇧⌘N 新建文件夹：创建 → 刷新并选中新项 → 列表就绪后回调（R4-18）。
+    ///
+    /// 旧行为只创建+刷新：焦点回不到列表、新项也没选中，用户还得自己再按一次 F2
+    /// 才能改名。回调在视图完成 reload 之后派发到主线程，视图层据此滚到新行并进入内联重命名。
+    func createDirectoryThenRenaming(_ readyForRename: @escaping (String) -> Void) {
+        let newPath = (state.path as NSString)
+            .appendingPathComponent(Self.untitledFolderName(in: state.path))
         do {
-            try CoreBridge.shared.createDirectory(path: newDirPath)
-            // v0.7.4 修订 2：注册撤销（删除刚创建的文件夹）
-            registerUndoCreateFolder(folderPath: newDirPath)
-            loadDirectory()
+            try CoreBridge.shared.createDirectory(path: newPath)
         } catch {
             state.error = error.localizedDescription
+            return
         }
+        registerUndoCreateFolder(folderPath: newPath)
+        // 与 deleteSelected/refresh 一致：先失效目录缓存再加载，否则 L2 缓存回吐旧列表，
+        // 新建的文件夹根本不在 state.files 里，选中与重命名都无从谈起。
+        try? CoreBridge.shared.invalidateCache(path: state.path)
+        pendingSelectionPath = newPath
+        afterLoadReady = { readyForRename(newPath) }
+        loadDirectory()
     }
 
     /// v0.7.4 修订 2：注册"新建文件夹"的撤销（删除该文件夹）与重做（重新创建）
@@ -836,7 +1098,9 @@ public class PaneViewModel: ObservableObject {
         // 极端情形）时不展示进度，后台仍会创建空文件夹，与旧行为一致
         let progressBar = taskProgressBar
         if !conflictPlan.isEmpty {
-            progressBar?.startDirectProgress(operation: "移动", totalCount: conflictPlan.count)
+            progressBar?.startDirectProgress(operation: "移动",
+                                             totalCount: conflictPlan.count,
+                                             destinationPath: folderPath)
             progressBarsExpanded?()
         }
 
@@ -1044,7 +1308,11 @@ public class PaneViewModel: ObservableObject {
     // MARK: - Private
 
     private func loadDirectory() {
-        guard !state.path.isEmpty else { return }
+        guard !state.path.isEmpty else {
+            // 空路径不会有任何加载完成回调，钩子留着会在下一次真实加载时误触发
+            afterLoadReady = nil
+            return
+        }
         // 任务 F11-11: 取消上一轮挂起的分页追加任务，并自增加载代次（C5）
         // 代次校验用于丢弃快速导航时旧后台加载的过时完成结果
         cancelPagination()
@@ -1105,6 +1373,12 @@ public class PaneViewModel: ObservableObject {
                             .pathsToRestore(previous: restore,
                                             available: self.state.files.map(\.path))
                             .compactMap { byPath[$0] }
+                    }
+                    // 一次性就绪回调（R4-18）：视图的 reload 由上面的 state 变更经
+                    // receive(on: main) 排队触发，这个 async 块排在它们之后，此时新行已在列表里。
+                    if let ready = self.afterLoadReady {
+                        self.afterLoadReady = nil
+                        DispatchQueue.main.async(execute: ready)
                     }
                     // 诊断：记录加载完成后 state.files 是否包含预期文件名（验证数据层是否读到新名字）
                     // 小目录打印完整列表；大目录只打印前 8 个
@@ -1302,7 +1576,7 @@ public class PaneViewModel: ObservableObject {
     /// 数值同时暴露给测试，避免文档与实现漂移。
     /// 仅当 searchQuery 非空且未设置标签筛选时执行（标签筛选为精确集合，不递归）。
     private func performRecursiveSearch(query: String) {
-        guard !query.isEmpty, state.tagFilter == nil else { return }
+        guard !query.isEmpty, state.tagFilter == nil, state.searchScope.searchesSubdirectories else { return }
         // 在派发到后台前捕获不可变快照，避免数据竞争
         let basePath = state.path
         let loweredQuery = query.lowercased()
@@ -1346,8 +1620,8 @@ public class PaneViewModel: ObservableObject {
                 // 外层已强引用解包 self，此处直接使用（注意：仍需校验查询未变）
                 // 仅当用户搜索查询未变时才应用结果（避免异步竞态：用户已清空或改字）
                 guard self.state.searchQuery == query else { return }
-                // 仅当未启用标签筛选时才合并（标签筛选期间不递归）
-                guard self.state.tagFilter == nil else { return }
+                // 仅当未启用标签筛选且范围仍为「含子目录」时才合并
+                guard self.state.tagFilter == nil, self.state.searchScope.searchesSubdirectories else { return }
                 // 合并：当前已显示的（当前目录直接匹配项）+ 递归匹配项
                 let currentPaths = Set(self.state.files.map { $0.path })
                 let newResults = results.filter { !currentPaths.contains($0.path) }

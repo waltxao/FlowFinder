@@ -23,4 +23,23 @@ final class FFDestructivePolicyTests: XCTestCase {
         XCTAssertFalse(FFDeleteCopy.permanentDeleteMentionsUndo)
         XCTAssertTrue(FFDeleteCopy.permanentDeleteWarning.contains("无法撤销"))
     }
+
+    func testDuplicateSelectionCannotDeleteEveryRemainingFile() {
+        let paths = ["a", "b", "c"]
+        XCTAssertTrue(FFDuplicateSelectionPolicy.canMarkForDeletion(
+            filePath: "a", allPaths: paths, currentlyMarked: []))
+        XCTAssertTrue(FFDuplicateSelectionPolicy.canMarkForDeletion(
+            filePath: "b", allPaths: paths, currentlyMarked: ["a"]))
+        XCTAssertFalse(FFDuplicateSelectionPolicy.canMarkForDeletion(
+            filePath: "c", allPaths: paths, currentlyMarked: ["a", "b"]),
+            "每组至少保留一个文件")
+    }
+
+    func testPermanentDeleteAlwaysRequiresConfirmation() {
+        XCTAssertTrue(DeleteConfirmDialog.shouldConfirm(
+            fileCount: 1, confirmDisabled: true, windowAvailable: true, isPermanent: true),
+            "永久删除不能复用废纸篓的「不再询问」")
+        XCTAssertFalse(DeleteConfirmDialog.shouldConfirm(
+            fileCount: 1, confirmDisabled: true, windowAvailable: true, isPermanent: false))
+    }
 }

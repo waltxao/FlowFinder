@@ -121,19 +121,27 @@ public final class ThemeManager: ObservableObject {
         // window.appearance = nil 以保持玻璃效果；
         // mainContainer 显式设置 appearance 确保子视图能解析选中高亮色。
         for window in NSApp.windows {
+            // 显式浅/深色必须把窗口 appearance 一起锁定；只有 .system 才交给系统。
+            // 之前玻璃窗口一律设 nil，实时切到浅色时侧栏/顶栏/标签仍按深色解析，
+            // 出现白底白字；重启后因初始化按浅色才正常。
+            let explicitAppearance = (mode == .system) ? nil : NSApp.appearance
             if #available(macOS 26.0, *), hasGlassEffect(in: window) {
-                window.appearance = nil
-                let effectiveApp = NSApp.appearance ?? NSApp.effectiveAppearance
+                window.appearance = explicitAppearance
+                let effectiveApp = explicitAppearance ?? NSApp.effectiveAppearance
                 if let mainContainer = findMainContainer(in: window) {
                     mainContainer.appearance = effectiveApp
                 }
+                window.contentView?.needsDisplay = true
+                window.invalidateShadow()
                 continue
             }
             // NSVisualEffectView 架构：窗口和内容容器都跟随 NSApp.appearance
-            window.appearance = NSApp.appearance
+            window.appearance = explicitAppearance
             if let mainContainer = findMainContainer(in: window) {
-                mainContainer.appearance = NSApp.appearance
+                mainContainer.appearance = explicitAppearance
             }
+            window.contentView?.needsDisplay = true
+            window.invalidateShadow()
         }
 
         // 刷新所有 FFGlassView 实例的玻璃令牌（噪声/高光/内阴影/tint）

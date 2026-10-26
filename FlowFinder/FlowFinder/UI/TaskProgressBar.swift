@@ -161,7 +161,10 @@ public class TaskProgressBar: NSView {
     /// - Parameters:
     ///   - operation: 操作名称（如"复制"、"移动"）
     ///   - totalCount: 待处理文件总数
-    public func startDirectProgress(operation: String, totalCount: Int) {
+    ///   - destinationPath: 落点目录，任务中心用它实现「定位到该任务对象」（R4-24）
+    public func startDirectProgress(operation: String,
+                                    totalCount: Int,
+                                    destinationPath: String? = nil) {
         cancelFadeOut()
         isDirectProgressMode = true
         isHidden = false
@@ -178,7 +181,8 @@ public class TaskProgressBar: NSView {
                                            completedBytes: 0,
                                            totalBytes: Int64(totalCount),
                                            state: .running,
-                                           startedAt: Date()))
+                                           startedAt: Date(),
+                                           locationPath: destinationPath))
     }
 
     /// 更新直接进度（在批量操作每完成一项时调用，主线程）
