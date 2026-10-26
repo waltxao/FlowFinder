@@ -7,7 +7,7 @@
 > **代码规模：** Swift 118 文件 / 46,900+ 行（2026-10-24 工具模块后，未逐个文件复核）；Rust 24 文件 / 13,529 行（不变）
 > **AI 资源快照：** `resources/ai-tools/`（2026-10-22 起；**2026-10-23 增补 `skills-2026-10-23/` 19 个 FlowFinder/macOS 工具链 Skill；2026-10-25 更新 `flowfinder-docs-sync` 与 `flowfinder-xctest-batch-verification`**），清单与运行时来源对照见 `resources/ai-tools/MCP-AND-SKILLS.md`——接手 Agent 的工具链从这里恢复
 > **验证基线：** Rust 200 项全绿（2026-10-24）；**全量 Swift 542 条 0 失败**（2026-10-24 实测；跳过 2 条既有环境测试：`DuplicateScanBrowseRegressionTests.testBrowseSheetReappearsAfterDeleteAndRescan` **单独复跑 16.656s 通过**、`FFBatch2IntegrationTests.testHardcodedTokenBudget` 外部卷阻塞 **0 条执行/150s 超时**）。**2026-10-25 新增 1 条回归单测 `testSearchEnterWithEmptyQueryDoesNotOpenFirstItem` 单跑通过（0.914s），全套未重跑**。**应用内自检 `FF_SELFTEST=1` 153 / 失败 0 + 布局压力 20 轮 0 失败**（2026-10-24 在 26102406 复跑；26102407–26102501 未重跑自检）。
-> **推送状态（2026-10-25）：** 历史 §1.x 中的「未提交 / 未推送」均为当轮状态；R-25…R-39 与本轮修复已统一推送到 `feat/v0.9-overhaul`（提交哈希见台账 §2.5 C）。
+> **推送状态（2026-10-25）：** 历史 §1.x 中的「未提交 / 未推送」均为当轮状态；R-25…R-39 与本轮修复已推送到 `origin/feat/v0.9-overhaul`（功能提交 `1ccba73`，文档/技能提交 `0023ae8`）。
 
 本文档是大改前的**唯一交接入口**。产品定义看 `PRODUCT.md`，视觉看 `DESIGN-SPEC.md`，
 验收看 `ACCEPTANCE.md`，功能清单看 `REQUIREMENTS.md`。
@@ -1105,7 +1105,7 @@ SMB 真实连接（无服务器凭据）· 查重「实际执行删除 / 失败 
 
 ## 1.34 2026-10-25 侧栏与搜索真机审计 + 两个导航缺陷修复（26102501）
 
-最终 Debug **0.8.0-26102501**；`make build` 已自动备份 26102409 并覆盖/重启桌面副本；**随本轮推送 `feat/v0.9-overhaul`（推送记录见台账 §2.5 C）**。
+最终 Debug **0.8.0-26102501**；`make build` 已自动备份 26102409 并覆盖/重启桌面副本；**已推送 `origin/feat/v0.9-overhaul`（功能提交 `1ccba73`，2026-10-25）**。
 
 **审计结论**
 - 侧栏实际只有 **个人收藏 / 位置 / 标签** 三段；早期截图里的「工作区 / 最近任务 / 站点 / 自动化 / 扩展 / 更多 / waltxx」是后面 Qoder 窗口透过液态玻璃的**透字**，把 FlowFinder 移到壁纸区后全部消失（`/tmp/ff-resume-261024/moved-right.png`）。后续审计不要再把这些当成缺失项。

@@ -27,7 +27,7 @@
 - **回归**：新增 `FFBatch2IntegrationTests.testSearchEnterWithEmptyQueryDoesNotOpenFirstItem`；`xcodebuild build-for-testing` 通过，单测 passed (0.914s)；全套未重跑（最近全量仍为 2026-10-24 的 542 条 0 失败）。
 - **真机**：0.8.0-26102501 桌面副本复核子目录内复点收藏、清空搜索回车；补验六个收藏、侧栏拖宽、标签新建/改色/删除、收藏右键 6 项、双栏/本栏搜索。证据为本地 `docs/images/audit-2026-10-25-sidebar-search/`（含个人文件名，未随公开仓库上传）。
 - **已知问题（未修）**：末项「下移」菜单项仍可点（no-op）；外部删除已选目录并刷新后详情栏残留已删项，清空 `AXSelectedRows` 不消失（第二次复现）。
-- **状态**：构建 0.8.0-26102501；随 `feat/v0.9-overhaul` 收口（推送记录见台账 §2.5 C）；未发版。
+- **状态**：构建 0.8.0-26102501；已推送 `origin/feat/v0.9-overhaul`（功能提交 `1ccba73`，2026-10-25）；未发版。
 
 ### 任务按钮注水 + 弹性开合动画（2026-10-24，R-39）
 
