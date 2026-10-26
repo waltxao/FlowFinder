@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可切换视觉对比稿</title>
+<style>
+  :root {
+    color-scheme: light;
+    --accent: #2f6fed;
+    --ink: #1d2733;
+    --muted: #6b7785;
+    --line: #dfe4ea;
+    --canvas: #eef1f5;
+    --window: #ffffff;
+    --sidebar: #f5f7fa;
+    --hover: #f4f6f9;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; }
+
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+
+  .vc-app {
+    --titlebar-h: 36px;
+    --tab-h: 28px;
+    --icon-size: 14px;
+    --font-size: 12px;
+    --seam-radius: 0px;
+    --pad: 8px;
+    --sidebar-w: 164px;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 24px;
+    font-size: var(--font-size);
+  }
+
+  .vc-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+
+  .vc-kicker {
+    margin: 0 0 4px;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .vc-header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 650;
+  }
+
+  .vc-disclaimer {
+    margin: 0;
+    padding: 7px 10px;
+    border: 1px solid #f0d7a6;
+    border-radius: 8px;
+    background: #fff8e8;
+    color: #73510e;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .vc-controls,
+  .vc-statebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  .vc-controls { margin-bottom: 8px; }
+
+  .vc-statebar { margin-bottom: 14px; }
+
+  .vc-statebar-label {
+    padding: 0 6px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .vc-controls button,
+  .vc-statebar button {
+    min-height: 30px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .vc-controls button:hover,
+  .vc-statebar button:hover { background: var(--hover); }
+
+  .vc-controls button.is-active {
+    border-color: var(--accent);
+    background: #eaf1ff;
+    color: #174ea6;
+    font-weight: 650;
+  }
+
+  .vc-controls button:focus-visible,
+  .vc-statebar button:focus-visible,
+  .vc-iconbtn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .vc-stage {
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background:
+      linear-gradient(90deg, rgba(29, 39, 51, .035) 1px, transparent 1px) 0 0 / 16px 16px,
+      linear-gradient(rgba(29, 39, 51, .035) 1px, transparent 1px) 0 0 / 16px 16px,
+      #e9edf2;
+    overflow-x: auto;
+  }
+
+  .vc-window {
+    min-width: 720px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--window);
+    box-shadow: 0 18px 42px rgba(25, 38, 55, .16), 0 2px 6px rgba(25, 38, 55, .06);
+  }
+
+  .vc-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--titlebar-h);
+    padding: 0 var(--pad);
+    border-bottom: 1px solid var(--line);
+    background: var(--window);
+  }
+
+  .vc-traffic {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+
+  .vc-traffic i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #d6dbe2;
+  }
+
+  .vc-traffic i:first-child { background: #ff5f57; }
+  .vc-traffic i:nth-child(2) { background: #febc2e; }
+  .vc-traffic i:nth-child(3) { background: #28c840; }
+
+  .vc-iconbtn {
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--icon-size);
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .vc-iconbtn:hover { background: var(--hover); color: var(--ink); }
+
+  .vc-tabgroups {
+    display: flex;
+    flex: 1;
+    gap: 16px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .vc-tabgroup {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .vc-tab {
+    display: flex;
+    align-items: center;
+    height: var(--tab-h);
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-bottom: 0;
+    border-radius: var(--seam-radius) var(--seam-radius) 0 0;
+    color: var(--muted);
+    font-size: var(--font-size);
+    white-space: nowrap;
+  }
+
+  .vc-tab.is-active {
+    border-color: var(--line);
+    background: var(--window);
+    color: var(--ink);
+    box-shadow: 0 1px 0 var(--window);
+  }
+
+  .vc-titlebar-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+    padding-left: 8px;
+    border-left: 1px solid var(--line);
+  }
+
+  .vc-content {
+    display: flex;
+    min-height: 380px;
+  }
+
+  .vc-sidebar {
+    flex: 0 0 var(--sidebar-w);
+    width: var(--sidebar-w);
+    padding: 10px;
+    border-right: 1px solid var(--line);
+    background: var(--sidebar);
+    overflow: hidden;
+    transition: width .16s ease, flex-basis .16s ease, padding .16s ease;
+  }
+
+  .vc-sidebar-title {
+    margin: 2px 6px 10px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .vc-navitem {
+    padding: 7px 8px;
+    border-radius: 6px;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  .vc-navitem.is-active {
+    background: #e4ebf7;
+    color: #174ea6;
+    font-weight: 600;
+  }
+
+  .vc-sidebar-foot {
+    margin-top: 16px;
+    padding: 7px 8px;
+    color: var(--muted);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .vc-panels {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .vc-panel {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--window);
+  }
+
+  .vc-panel-secondary { border-left: 1px solid var(--line); }
+
+  .vc-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 34px;
+    padding: 6px var(--pad);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .vc-crumb {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: calc(var(--font-size) - 1px);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .vc-search {
+    flex: 0 0 auto;
+    min-width: 92px;
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: calc(var(--font-size) - 1px);
+    text-align: center;
+  }
+
+  .vc-list {
+    flex: 1;
+    padding: 6px 0;
+  }
+
+  .vc-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px var(--pad);
+    color: var(--ink);
+    font-size: var(--font-size);
+  }
+
+  .vc-row:hover { background: var(--hover); }
+
+  .vc-fileicon {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    background: #c7d0da;
+  }
+
+  .vc-row:nth-child(2n) .vc-fileicon { background: #d9c6ae; }
+  .vc-row:nth-child(3n) .vc-fileicon { background: #bfd7cb; }
+
+  .vc-meta {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: calc(var(--font-size) - 1px);
+  }
+
+  .vc-detailbar {
+    margin: 8px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    background: rgba(29, 39, 51, .05);
+    color: var(--muted);
+    font-size: calc(var(--font-size) - 1px);
+  }
+
+  .vc-readout {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #fff;
+    color: var(--ink);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .vc-note {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  .vc-app[data-sidebar="hidden"] .vc-sidebar {
+    flex-basis: 0;
+    width: 0;
+    padding-right: 0;
+    padding-left: 0;
+    border-right-width: 0;
+    border-right-color: transparent;
+  }
+
+  .vc-app[data-layout="single"] .vc-panel-secondary,
+  .vc-app[data-layout="single"] .vc-tabgroup-secondary {
+    display: none;
+  }
+
+  .vc-app[data-fullscreen="on"] .vc-stage {
+    padding: 0;
+    border-radius: 0;
+    background: #fff;
+  }
+
+  .vc-app[data-fullscreen="on"] .vc-window {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  @media (max-width: 760px) {
+    .vc-app { padding: 12px; }
+    .vc-header { align-items: flex-start; flex-direction: column; }
+    .vc-disclaimer { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+<div class="vc-app"
+     data-current-option="current"
+     data-sidebar="shown"
+     data-layout="dual"
+     data-fullscreen="off">
+
+  <header class="vc-header">
+    <div>
+      <p class="vc-kicker">Visual comparison</p>
+      <h1>可切换视觉对比稿</h1>
+    </div>
+    <p class="vc-disclaimer">仅供检查；确认请在对话中回答。</p>
+  </header>
+
+  <section class="vc-controls" aria-label="选择方案">
+    <button type="button" data-option="current" aria-pressed="true">现状</button>
+    <button type="button" data-option="a" aria-pressed="false">A 宽松</button>
+    <button type="button" data-option="b" aria-pressed="false">B 紧凑</button>
+    <button type="button" data-option="c" aria-pressed="false">C 更宽松</button>
+  </section>
+
+  <section class="vc-statebar" aria-label="预览状态">
+    <span class="vc-statebar-label">预览状态</span>
+    <button type="button" data-state="sidebar" aria-pressed="true">侧栏：显示</button>
+    <button type="button" data-state="layout" aria-pressed="true">布局：双栏</button>
+    <button type="button" data-state="fullscreen" aria-pressed="false">窗口：窗口</button>
+  </section>
+
+  <main class="vc-stage">
+    <div class="vc-window">
+      <div class="vc-titlebar">
+        <div class="vc-traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+
+        <button class="vc-iconbtn" type="button" aria-label="切换侧栏">≡</button>
+
+        <div class="vc-tabgroups">
+          <div class="vc-tabgroup">
+            <div class="vc-tab is-active">面板 1</div>
+            <div class="vc-tab">面板 2</div>
+            <button class="vc-iconbtn" type="button" aria-label="新建标签">+</button>
+          </div>
+          <div class="vc-tabgroup vc-tabgroup-secondary">
+            <div class="vc-tab">面板 3</div>
+          </div>
+        </div>
+
+        <div class="vc-titlebar-actions">
+          <button class="vc-iconbtn" type="button" aria-label="切换主题">◐</button>
+          <button class="vc-iconbtn" type="button" aria-label="切换单双栏">▥</button>
+        </div>
+      </div>
+
+      <div class="vc-content">
+        <aside class="vc-sidebar" aria-label="侧栏">
+          <div class="vc-sidebar-title">侧栏</div>
+          <div class="vc-navitem is-active">所有文件</div>
+          <div class="vc-navitem">最近使用</div>
+          <div class="vc-navitem">收藏</div>
+          <div class="vc-sidebar-foot">版本 0.8.0 Beta</div>
+        </aside>
+
+        <div class="vc-panels">
+          <section class="vc-panel" aria-label="面板 1">
+            <div class="vc-panel-head">
+              <span class="vc-crumb">文件 / 项目 / 设计</span>
+              <span class="vc-search">搜索</span>
+            </div>
+            <div class="vc-list">
+              <div class="vc-row"><span class="vc-fileicon"></span><span>设计规范.md</span><span class="vc-meta">今天 10:24</span></div>
+              <div class="vc-row"><span class="vc-fileicon"></span><span>界面截图.png</span><span class="vc-meta">今天 09:18</span></div>
+              <div class="vc-row"><span class="vc-fileicon"></span><span>交互说明.pdf</span><span class="vc-meta">昨天 18:02</span></div>
+              <div class="vc-row"><span class="vc-fileicon"></span><span>图标库.fig</span><span class="vc-meta">昨天 16:40</span></div>
+              <div class="vc-row"><span class="vc-fileicon"></span><span>交付清单.txt</span><span class="vc-meta">10 月 18 日</span></div>
+            </div>
+            <div class="vc-detailbar">未选择文件 · 磁盘</div>
+          </section>
+
+          <section class="vc-panel vc-panel-secondary" aria-label="面板 2">
+            <div class="vc-panel-head">
+              <span class="vc-crumb">文件 / 项目 / 资料</span>
+              <span class="vc-search">搜索</span>
+            </div>
+            <div class="vc-list">
+              <div class="vc-row"><span class="vc-fileicon"></span><span>会议记录.md</span><span class="vc-meta">今天 11:05</span></div>
+              <div class="vc-row"><span class="vc-fileicon"></span><span>参考图集</span><span class="vc-meta">昨天 20:12</span></div>
+              <div class="vc-row"><span class="vc-fileicon"></span><span>组件清单.csv</span><span class="vc-meta">10 月 19 日</span></div>
+              <div class="vc-row"><span class="vc-fileicon"></span><span>版本说明.txt</span><span class="vc-meta">10 月 18 日</span></div>
+            </div>
+            <div class="vc-detailbar">未选择文件 · 磁盘</div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <section class="vc-readout" aria-live="polite"></section>
+
+  <footer class="vc-note">
+    <p>对比稿只用于检查，不构成实现授权。选项标签必须与提问一致；数值单位按设计 pt 预览（1pt = 1px）。</p>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const configs = {
+    current: { label: "现状", titlebar: 36, tab: 28, icon: 14, font: 12, radius: 0, pad: 8 },
+    a: { label: "A 宽松", titlebar: 44, tab: 38, icon: 18, font: 13, radius: 9, pad: 12 },
+    b: { label: "B 紧凑", titlebar: 40, tab: 32, icon: 16, font: 12.5, radius: 6, pad: 10 },
+    c: { label: "C 更宽松", titlebar: 48, tab: 40, icon: 18, font: 13, radius: 12, pad: 14 }
+  };
+
+  const apps = document.querySelectorAll(".vc-app");
+
+  apps.forEach((app) => {
+    const controls = app.querySelector(".vc-controls");
+    const readout = app.querySelector(".vc-readout");
+    if (!controls || !readout) return;
+
+    const optionButtons = Array.from(controls.querySelectorAll("[data-option]"));
+    const stateButtons = Array.from(app.querySelectorAll("[data-state]"));
+
+    const updateStateButton = (button) => {
+      const key = button.dataset.state;
+      if (key === "sidebar") {
+        const shown = app.dataset.sidebar === "shown";
+        button.textContent = `侧栏：${shown ? "显示" : "隐藏"}`;
+        button.setAttribute("aria-pressed", String(shown));
+      } else if (key === "layout") {
+        const dual = app.dataset.layout === "dual";
+        button.textContent = `布局：${dual ? "双栏" : "单栏"}`;
+        button.setAttribute("aria-pressed", String(dual));
+      } else if (key === "fullscreen") {
+        const on = app.dataset.fullscreen === "on";
+        button.textContent = `窗口：${on ? "全屏" : "窗口"}`;
+        button.setAttribute("aria-pressed", String(on));
+      }
+    };
+
+    const updateReadout = () => {
+      const key = app.dataset.currentOption || "current";
+      const config = configs[key] || configs.current;
+      const sidebar = app.dataset.sidebar === "hidden" ? "隐藏" : "显示";
+      const layout = app.dataset.layout === "dual" ? "双栏" : "单栏";
+      const screen = app.dataset.fullscreen === "on" ? "全屏" : "窗口";
+
+      readout.textContent = [
+        `当前方案：${config.label}`,
+        `顶栏 ${config.titlebar}pt`,
+        `标签 ${config.tab}pt`,
+        `图标 ${config.icon}pt`,
+        `字号 ${config.font}pt`,
+        `接缝 ${config.radius}pt`,
+        `侧栏 ${sidebar}`,
+        layout,
+        screen
+      ].join(" · ");
+    };
+
+    const setOption = (key) => {
+      const config = configs[key];
+      if (!config) return;
+
+      app.dataset.currentOption = key;
+      app.style.setProperty("--titlebar-h", `${config.titlebar}px`);
+      app.style.setProperty("--tab-h", `${config.tab}px`);
+      app.style.setProperty("--icon-size", `${config.icon}px`);
+      app.style.setProperty("--font-size", `${config.font}px`);
+      app.style.setProperty("--seam-radius", `${config.radius}px`);
+      app.style.setProperty("--pad", `${config.pad}px`);
+
+      optionButtons.forEach((button) => {
+        const active = button.dataset.option === key;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+
+      updateReadout();
+    };
+
+    controls.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-option]");
+      if (!button || !controls.contains(button)) return;
+      setOption(button.dataset.option);
+    });
+
+    stateButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = button.dataset.state;
+
+        if (key === "sidebar") {
+          app.dataset.sidebar = app.dataset.sidebar === "shown" ? "hidden" : "shown";
+        } else if (key === "layout") {
+          app.dataset.layout = app.dataset.layout === "dual" ? "single" : "dual";
+        } else if (key === "fullscreen") {
+          app.dataset.fullscreen = app.dataset.fullscreen === "on" ? "off" : "on";
+        }
+
+        updateStateButton(button);
+        updateReadout();
+      });
+
+      updateStateButton(button);
+    });
+
+    setOption(app.dataset.currentOption || "current");
+  });
+})();
+</script>
+</body>
+</html>

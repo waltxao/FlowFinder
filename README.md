@@ -7,12 +7,15 @@
 **流方达** · macOS 原生文件管理器 — Swift & AppKit · Rust Core · 原生双栏
 
 ![Version](https://img.shields.io/badge/version-0.8.0--beta-blue)
+![Build](https://img.shields.io/badge/build-26102501-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-macOS-green)
 ![Swift](https://img.shields.io/badge/Swift-5.9+-F05138)
 ![Rust](https://img.shields.io/badge/Rust-2021+-DEA584)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
-🌐 [官方网站](https://waltxao.github.io/FlowFinder/) · 📦 [下载最新版](https://github.com/waltxao/FlowFinder/releases) · 📖 [交接文档](docs/HANDOVER.md) · 📝 [变更日志](CHANGELOG.md)
+🌐 [官方网站](https://waltxao.github.io/FlowFinder/) · 📦 [下载最新版](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1) · 📖 [交接文档](docs/HANDOVER.md) · 📝 [变更日志](CHANGELOG.md)
+
+**当前状态：** 0.8.0 Beta · 构建 `0.8.0-26102501` · 分支 `feat/v0.9-overhaul` · 最新 Release [`v0.8.0-b1`](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1)
 
 </div>
 
@@ -22,7 +25,7 @@
 
 FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生文件管理器，采用 **Swift & AppKit** 构建用户界面，**Rust Core** 提供高性能后端引擎，通过 FFI（C ABI）实现跨语言调用。相较于前代 Tauri + React 版本，原生架构带来了 10-30 倍的目录读取性能提升、更低的内存占用，以及与 macOS Finder 一致的视觉和交互体验。
 
-![FlowFinder 主界面](docs/images/app-mockup-main.jpg)
+![FlowFinder 主界面](docs/images/app-window-main.jpg)
 
 > 📌 以上为产品示意图（mockup），实际界面以最新版本为准。
 
@@ -35,6 +38,9 @@ FlowFinder（中文名：**流方达**）是一款专为 macOS 打造的原生�
 - **APFS CoW 复制**：clonefile 零拷贝复制，APFS 卷内复制瞬时完成
 - **按类型自动打标签**：基于扩展名规则的本地标签生成，标签写入 macOS 原生标签属性（格式与访达的完全兼容修正中）
 - **双视图**：列表视图（可拖列宽 + 排序）+ 网格视图（缩略图），跟随系统深浅色主题
+- **可定制详情栏**：底部液态玻璃详情栏 54 / 132 / 240pt 三档，文件名与路径完整换行，图标 48–200pt 与右键预设
+- **底栏工具簇**：查重、批量重命名、批量整理、任务中心按当前选中上下文出现，带任务注水进度与弹性开合
+- **侧栏与搜索**：个人收藏、标签筛选、收藏右键操作；搜索范围支持本栏 / 含子目录 / 双栏
 
 ---
 
@@ -115,6 +121,30 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 ---
 
 ## 更新日志
+
+### v0.8.0 Beta（2026-10-25，当前开发版）
+
+> 完整逐轮记录见 [CHANGELOG.md](CHANGELOG.md)。最新 Release 仍为 [`v0.8.0-b1`](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1)（2026-10-22，构建 `26102209`）；当前开发构建 `0.8.0-26102501` 包含以下未发版内容。
+
+**侧栏与搜索**
+- 侧栏保留 个人收藏 / 位置 / 标签 三段；收藏右键支持 显示简介 / 在新标签页中打开 / 在新窗口中打开 / 上移 / 下移 / 从边栏中移除
+- 修复：当前目录位于某收藏的子目录时，再单击该收藏无响应
+- 修复：清空搜索后按 Return 误打开列表首项
+- 搜索范围 本栏 / 含子目录 / 双栏；双栏时两侧输入同步、各自过滤
+
+**详情栏与工具**
+- 液态玻璃详情栏 54 / 132 / 240pt 三档，拉手或空白切换，图标 48–200pt
+- 底栏工具簇按上下文显示 3/4/1 个文件工具；任务按钮带注水进度与弹性开合动画
+
+**界面与本地化**
+- 第四轮 UI/UX 审计修复：菜单契约、设置接线、对话框、主题与对比度、zh-Hans 本地化
+- 标签新建 / 改色 / 删除；侧栏宽度拖动；列表 / 网格与显示设置
+
+**质量基线**
+- XCTest 最后全量 **542 条 0 失败**（2026-10-24；跳过 2 条既有环境测试）
+- 2026-10-25 新增 1 条回归单测通过（`testSearchEnterWithEmptyQueryDoesNotOpenFirstItem`，0.914s；全套未重跑）
+- 自检 **153 + 20 轮布局压力 0 失败**；Rust **200 通过**
+- 真机补验：六个收藏、侧栏拖宽、标签新建/改色/删除、收藏右键 6 项、双栏/本栏搜索（2026-10-25；本地取证，未随公开仓库上传）
 
 ### v0.7.6（2026-08-28）
 
@@ -207,12 +237,13 @@ FlowFinder Native 相较于原 Tauri + React 版本有显著性能提升：
 
 ### 下载方式
 
-前往 [Releases](https://github.com/waltxao/FlowFinder/releases) 页面下载最新版本：
+前往 [`v0.8.0-b1` Release](https://github.com/waltxao/FlowFinder/releases/tag/v0.8.0-b1) 页面下载：
 
 | 文件 | 说明 | 适用架构 |
 |------|------|---------|
-| `FlowFinder-0.8.0-beta.N.dmg` | DMG 安装镜像（以 Release 页实际文件名为准） | Apple Silicon |
-| `FlowFinder-0.8.0-beta.N.zip` | ZIP 压缩包（含 .app，以 Release 页实际文件名为准） | Apple Silicon |
+| `FlowFinder-0.8.0-b1.dmg` | DMG 安装镜像 | Apple Silicon |
+| `FlowFinder-0.8.0-b1.zip` | ZIP 压缩包（含 .app） | Apple Silicon |
+| `FlowFinder-0.8.0-b1.sha256` | 发布产物校验和 | — |
 
 ### 安装步骤
 
@@ -356,6 +387,17 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 元数据读取在 XCTest harness 下可能阻塞）。若未安装完整 Xcode（仅 Command Line
 Tools），`xcodebuild` 不可用，Swift XCTest 无法运行 —— 这是环境限制，Rust 测试不受影响。
 
+> ⚠️ `make swift-test` 会先结束正在运行的 FlowFinder 进程；运行前请保存工作。
+
+**当前质量基线（2026-10-25）**
+
+| 项 | 当次实测值 |
+|---|---|
+| XCTest 全量 | 542 条 0 失败（2026-10-24；跳过 2 条既有环境测试） |
+| 2026-10-25 新增回归 | `testSearchEnterWithEmptyQueryDoesNotOpenFirstItem` 通过（0.914s；全套未重跑） |
+| 应用内自检 | 153 项 + 20 轮布局压力 0 失败 |
+| Rust | 200 通过 0 失败 |
+
 ### 项目结构
 
 ```
@@ -394,12 +436,14 @@ FlowFinder/
 │   │   └── Resources/            # Info.plist
 │   └── FlowFinder.xcodeproj
 ├── docs/                         # 文档
-│   ├── images/                   # 官网截图
+│   ├── images/                   # 官网截图与真机取证
 │   ├── PRODUCT.md                # 产品定义与取舍顺序
 │   ├── DESIGN-SPEC.md            # 视觉唯一规格
 │   ├── ACCEPTANCE.md             # 验收口径
 │   ├── REQUIREMENTS.md           # 按旅程组织的功能清单
 │   └── HANDOVER.md               # 交接文档（先读这篇）
+├── resources/ai-tools/           # AI Skill / MCP 快照（交接与复盘用）
+├── scripts/                      # 构建、打包、桌面副本部署与集成测试
 ├── Makefile                      # 构建自动化
 └── README.md
 ```

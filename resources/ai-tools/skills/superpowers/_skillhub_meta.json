@@ -1,0 +1,11 @@
+{
+  "name": "Superpowers 工程方法论",
+  "installedAt": 1792238544752,
+  "source": "marketplace",
+  "version": "1.0.0",
+  "skillId": "skill_2095325848845807617",
+  "pay_mode": 0,
+  "description_zh": "Agent 软件工程方法论框架：开始写码前先头脑风暴出规格，写可执行实施计划，强制红绿 TDD，子代理驱动开发，系统化调试与代码评审，收尾合并。当用户要做功能开发、重构、修复 bug、写实施计划、做代码评审，或提到「用 superpowers / 先想清楚再写 / 红绿测试 / 子代理开发」时触发。",
+  "description_en": "An agentic software-development methodology framework. Before writing code, brainstorm a spec, write an executable implementation plan, enforce red-green TDD, drive development with subagents, debug systematically, run code review, and finish the branch. Trigger when the user asks to build a feature, refactor, fix a bug, write an implementation plan, or do code review, or mentions 'superpowers / think before coding / red-green tests / subagent development'.",
+  "iconSource": "letter:auto"
+}

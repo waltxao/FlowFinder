@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Grill Me">
+  <rect width="128" height="128" rx="24" fill="#1f2430"/>
+  <g stroke="#f5a524" stroke-width="8" stroke-linecap="round">
+    <line x1="34" y1="52" x2="94" y2="52"/>
+    <line x1="34" y1="70" x2="94" y2="70"/>
+    <line x1="34" y1="88" x2="94" y2="88"/>
+  </g>
+  <g stroke="#e0563f" stroke-width="6" stroke-linecap="round" fill="none">
+    <path d="M46 40 q-6 -10 0 -18"/>
+    <path d="M64 40 q-6 -10 0 -18"/>
+    <path d="M82 40 q-6 -10 0 -18"/>
+  </g>
+  <text x="64" y="116" font-family="Segoe UI, sans-serif" font-size="16" fill="#cfd3dc" text-anchor="middle">grillme-matt</text>
+</svg>
